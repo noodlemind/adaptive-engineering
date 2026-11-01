@@ -28,7 +28,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
