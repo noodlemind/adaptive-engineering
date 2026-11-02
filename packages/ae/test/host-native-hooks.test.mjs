@@ -127,11 +127,17 @@ test('Windows Git query classification refuses cwd and relative-PATH executable 
 test('Windows SessionStart ignores repository-local Git and PowerShell executables', { skip: process.platform !== 'win32' }, t => {
   const f = fixture(t);
   const git = gitExecutable();
+  // Query classification deliberately refuses configured Git helpers. Keep the
+  // positive control independent of runner/user LFS, pager and fsmonitor setup.
+  const gitConfig = path.join(f.root, 'empty.gitconfig');
+  fs.writeFileSync(gitConfig, '');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')
+    && !['PAGER', 'NODEFAULTCURRENTDIRECTORYINEXEPATH'].includes(key.toUpperCase())));
+  Object.assign(env, { GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_SYSTEM: gitConfig, GIT_CONFIG_NOSYSTEM: '1' });
   for (const args of [['add', 'example.txt'], ['-c', 'user.name=AE fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Fixture']]) {
-    const result = spawnSync(git, args, { cwd: f.workspace, encoding: 'utf8' });
+    const result = spawnSync(git, args, { cwd: f.workspace, env, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
   }
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'nodefaultcurrentdirectoryinexepath'));
   for (const name of ['git.exe', 'powershell.exe']) fs.writeFileSync(path.join(f.workspace, name), 'Invalid image: a repository executable must never be selected.\n');
   // A fresh Node process removes any inherited cwd-search opt-out, including on
   // Node 22. This control proves that bare lookup encounters the planted image.

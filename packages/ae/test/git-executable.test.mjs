@@ -70,7 +70,7 @@ test('installed-home doctor returns failed hook checks when Windows Git is unava
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const workspace = path.join(root, 'workspace'), copilotHome = path.join(root, 'copilot'), home = path.join(root, 'home');
   fs.mkdirSync(workspace);
-  const env = { ...process.env, AE_HOME: home, HARNESS_HOME: home, COPILOT_HOME: copilotHome };
+  const env = { ...process.env, TEMP: root, TMP: root, AE_HOME: home, HARNESS_HOME: home, COPILOT_HOME: copilotHome };
   const installed = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'install', '--target', 'cli', '--workspace', workspace, '--copilot-home', copilotHome, '--ae-home', home, '--json'], { env, encoding: 'utf8', timeout: 30000 });
   assert.equal(installed.status, 0, installed.stderr + installed.stdout);
   const options = { copilotHome, assetsRoot: path.join(packageRoot, 'corpus'), pkgRoot: packageRoot, workspace,

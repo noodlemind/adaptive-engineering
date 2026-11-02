@@ -62,6 +62,16 @@ test('native personal admission rejects other resources effects, malformed argv,
   const f = fixture(t);
   const packageAlias = path.join(f.workspace, 'package-alias');
   fs.symlinkSync(packageRoot, packageAlias, process.platform === 'win32' ? 'junction' : 'dir');
+  const nodeAlias = path.join(f.workspace, 'node-alias');
+  fs.symlinkSync(path.dirname(process.execPath), nodeAlias, process.platform === 'win32' ? 'junction' : 'dir');
+  // path.relative across Windows drives returns an absolute path. Local aliases
+  // keep these negatives relative while still targeting the real installed files.
+  const relativeNode = path.relative(f.workspace, path.join(nodeAlias, path.basename(process.execPath)));
+  const relativeScript = path.relative(f.workspace, path.join(packageAlias, 'bin/ae.mjs'));
+  for (const [relative, installed] of [[relativeNode, f.argv[0]], [relativeScript, f.argv[1]]]) {
+    assert.equal(path.isAbsolute(relative), false);
+    assert.equal(fs.realpathSync.native(path.resolve(f.workspace, relative)), fs.realpathSync.native(installed));
+  }
   const replace = (flag, value) => { const argv = [...f.argv]; argv[argv.indexOf(flag) + 1] = slash(value); return argv; };
   const without = flag => { const argv = [...f.argv]; argv.splice(argv.indexOf(flag), 2); return argv; };
   const cases = [
@@ -84,8 +94,8 @@ test('native personal admission rejects other resources effects, malformed argv,
     ['bare ae executable', ['ae', ...f.argv.slice(2)]],
     ['bare harness executable', ['harness', ...f.argv.slice(2)]],
     ['bare node executable', ['node', ...f.argv.slice(1)]],
-    ['relative Node executable', [slash(path.relative(f.workspace, process.execPath)), ...f.argv.slice(1)]],
-    ['relative package script', [f.argv[0], slash(path.relative(f.workspace, f.argv[1])), ...f.argv.slice(2)]],
+    ['relative Node executable', [slash(relativeNode), ...f.argv.slice(1)]],
+    ['relative package script', [f.argv[0], slash(relativeScript), ...f.argv.slice(2)]],
     ['workspace package alias', [f.argv[0], slash(path.join(packageAlias, 'bin/ae.mjs')), ...f.argv.slice(2)]],
     ['mismatched absolute executable', [slash(path.join(f.workspace, path.basename(process.execPath))), ...f.argv.slice(1)]],
     ['unregistered executable', [process.execPath, slash(path.join(f.workspace, 'other.mjs')), ...f.argv.slice(2)]],
