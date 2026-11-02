@@ -21,8 +21,9 @@ function fixture(t) {
   return { root, workspace, home };
 }
 
-function client(t, options) {
-  const child = spawn(process.execPath, ['--input-type=module', '-e', `import {startMcpServer} from ${JSON.stringify(moduleUrl)}; await startMcpServer(${JSON.stringify(options)});`], { stdio: ['pipe', 'pipe', 'pipe'] });
+function client(t, options, { observeSpawns } = {}) {
+  const probe = observeSpawns ? `import cp from 'node:child_process'; import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module'; const nativeSpawn=cp.spawn; cp.spawn=(command,args,options)=>{fs.appendFileSync(${JSON.stringify(observeSpawns)},JSON.stringify({command,args})+'\\n');return nativeSpawn(command,args,options);};syncBuiltinESMExports();` : '';
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `${probe}import {startMcpServer} from ${JSON.stringify(moduleUrl)}; await startMcpServer(${JSON.stringify(options)});`], { cwd: options.workspace, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   let next = 1, buffer = '', stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -175,4 +176,56 @@ test('bounded CLI capture refuses output overflow rather than returning partial 
   const response = await c.request('tools/call', { name: 'ae_status', arguments: {} }).response;
   assert.equal(response.error.code, -32000);
   assert.match(response.error.message, /output exceeded/);
+});
+
+test('Windows cleanup with no trusted system launcher makes no executable lookup attempt', () => {
+  const script = `
+    import cp from 'node:child_process'; import {syncBuiltinESMExports} from 'node:module';
+    import {EventEmitter} from 'node:events'; import {PassThrough} from 'node:stream';
+    Object.defineProperty(process,'platform',{value:'win32'});
+    for(const key of Object.keys(process.env)) if(key.toUpperCase()==='SYSTEMROOT') delete process.env[key];
+    process.env.SystemRoot='relative-system'; process.env.PATH=process.cwd();
+    const attempted=[]; let cli,kills=0;
+    cp.spawn=(command,args,options)=>{
+      attempted.push(command);const child=new EventEmitter();child.pid=43123;
+      child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();
+      child.kill=()=>{kills++;setImmediate(()=>child.emit('close',null));return true;};
+      if(attempted.length===1)cli=child;else setImmediate(()=>cli.emit('close',null));
+      return child;
+    };syncBuiltinESMExports();
+    const {startMcpServer}=await import(${JSON.stringify(moduleUrl)});
+    const input=new PassThrough(),output=new PassThrough();output.resume();
+    const done=startMcpServer({workspace:process.cwd(),input,output});
+    input.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'probe',version:'1'}}})+'\\n');
+    input.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\\n');
+    input.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'ae_status',arguments:{}}})+'\\n');
+    input.end();await done;console.log(JSON.stringify({attempted,kills}));
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: packageRoot, encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const observed = JSON.parse(result.stdout);
+  assert.deepEqual(observed.attempted, [process.execPath], 'cleanup must not attempt a bare taskkill before falling back');
+  assert.equal(observed.kills, 1);
+});
+
+test('Windows EOF cleanup launches the verified system taskkill instead of the repository shadow', { skip: process.platform !== 'win32' }, async t => {
+  const { windowsTaskkillExecutable } = await import('../corpus/hooks/lib/git-executable.mjs');
+  const f = fixture(t), fakePackage = path.join(f.root, 'fake');
+  fs.mkdirSync(path.join(fakePackage, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(fakePackage, 'package.json'), '{"version":"0.0.0"}');
+  const pidFile = path.join(f.root, 'child.pid'), observations = path.join(f.root, 'spawns.jsonl');
+  fs.writeFileSync(path.join(fakePackage, 'bin/ae.mjs'), `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setTimeout(()=>console.log('{}'),30000);`);
+  fs.writeFileSync(path.join(f.workspace, 'taskkill.exe'), 'repository-controlled executable shadow');
+  const c = client(t, { ...f, packageRoot: fakePackage }, { observeSpawns: observations });
+  await c.init();
+  c.send({ jsonrpc: '2.0', id: 999, method: 'tools/call', params: { name: 'ae_status', arguments: {} } });
+  for (let tries = 0; !fs.existsSync(pidFile) && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(fs.existsSync(pidFile));
+  const pid = +fs.readFileSync(pidFile, 'utf8');
+  c.child.stdin.end();
+  const outcome = await c.exited;
+  assert.equal(outcome.code, 0, outcome.stderr);
+  const spawns = fs.readFileSync(observations, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(spawns.map(item => item.command), [process.execPath, windowsTaskkillExecutable()]);
+  assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH');
 });

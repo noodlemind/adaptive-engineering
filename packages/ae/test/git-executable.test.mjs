@@ -43,6 +43,16 @@ test('Windows native launchers come from an absolute SystemRoot, never cwd or PA
   for (const root of [null, '', '.', 'Windows', 'C:Windows', '\\Windows']) assert.equal(windowsSystemPowerShellPath(root), null);
 });
 
+test('Windows process cleanup selects only taskkill.exe under an absolute SystemRoot', async () => {
+  const { windowsSystemTaskkillPath, windowsTaskkillExecutable } = await import(moduleUrl);
+  assert.equal(windowsSystemTaskkillPath('C:\\Windows'), 'C:\\Windows\\System32\\taskkill.exe');
+  assert.equal(windowsSystemTaskkillPath('\\\\server\\system'), '\\\\server\\system\\System32\\taskkill.exe');
+  for (const root of [null, '', '.', 'Windows', 'C:Windows', '\\Windows']) {
+    assert.equal(windowsSystemTaskkillPath(root), null);
+    assert.throws(() => windowsTaskkillExecutable({ SystemRoot: root, PATH: 'C:\\repo', PATHEXT: '.EXE' }), error => error.code === 'E_SYSTEM_EXECUTABLE');
+  }
+});
+
 test('Windows Git unavailability fails closed while other platforms retain existing lookup', async () => {
   const { gitExecutable } = await import(moduleUrl);
   for (const env of [{}, { PATH: ';.;relative;C:relative;\\relative' }]) {

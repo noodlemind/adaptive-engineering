@@ -69,3 +69,15 @@ export function windowsPowerShellExecutable(env = process.env) {
   if (!full) throw unavailable('System Windows PowerShell is unavailable; native AE hooks require its absolute executable path');
   return full;
 }
+
+/** Cleanup must not let Windows resolve a repository-local taskkill.exe. */
+export function windowsSystemTaskkillPath(systemRoot) {
+  return windowsAbsolute(systemRoot) ? path.win32.join(systemRoot, 'System32', 'taskkill.exe') : null;
+}
+
+export function windowsTaskkillExecutable(env = process.env) {
+  const candidate = windowsSystemTaskkillPath(windowsEnvironmentValue(env, 'SystemRoot'));
+  const full = candidate && realWindowsExecutable(candidate);
+  if (!full) throw Object.assign(new Error('System Windows taskkill is unavailable; cleanup requires its absolute executable path'), { code: 'E_SYSTEM_EXECUTABLE', exit: 1 });
+  return full;
+}

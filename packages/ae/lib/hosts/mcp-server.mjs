@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { windowsTaskkillExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 
 // Explicit legacy stdio compatibility. No claim of the 2026 per-request protocol.
 export const MCP_PROTOCOL_VERSIONS = Object.freeze(['2025-11-25', '2025-03-26', '2024-11-05']);
@@ -63,8 +64,14 @@ function invocation(definition, args) {
 function stopProcess(child) {
   if (!child.pid) return;
   if (process.platform === 'win32') {
-    // taskkill is a fixed platform cleanup operation, never a model-supplied command.
-    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, shell: false });
+    let executable;
+    try { executable = windowsTaskkillExecutable(); }
+    catch (error) {
+      if (error?.code !== 'E_SYSTEM_EXECUTABLE') throw error;
+      child.kill('SIGKILL');
+      return;
+    }
+    const killer = spawn(executable, ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, shell: false });
     killer.on('error', () => child.kill('SIGKILL'));
     killer.on('exit', code => { if (code) child.kill('SIGKILL'); });
   } else {
