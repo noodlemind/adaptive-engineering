@@ -1,7 +1,6 @@
-import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { storeDir, listLearnings, readGovernance, inertLine } from './store.mjs';
 import { deriveGitContext } from '../git-context.mjs';
 import { redactSecrets } from '../secret-scan.mjs';
@@ -79,7 +78,7 @@ export function isBucketBaseSha(value) {
 export function bucketAncestryOk(workspace, meta) {
   if (!meta || !isBucketBaseSha(meta.baseSha)) return null;
   try {
-    const res = spawnSync(gitExecutable(), ['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], {
+    const res = spawnGitSync(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], {
       cwd: workspace,
       encoding: 'utf8',
       timeout: 10_000,

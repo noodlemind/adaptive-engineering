@@ -1,4 +1,4 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { gitExecutable, spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'node:os';
@@ -238,7 +238,7 @@ export async function runVSCodeHookProbe(hookRoot) {
     );
     const git = (args) => {
       try {
-        return spawnSync(gitExecutable(), args, {
+        return spawnGitSync(args, {
           cwd: workspace,
           encoding: 'utf8',
           timeout: 10_000,
@@ -587,7 +587,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
       issues.push(`index meta still records a grammar integrity mismatch (${languages}) that the current wasm no longer has — re-run: ae index --structural`);
     }
         if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
-    const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
+    const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
     const headSha = head.status === 0 ? head.stdout.trim() : null;
     if (index.meta.sha && headSha && index.meta.sha !== headSha) {
       issues.push('meta.sha behind HEAD — re-run: ae index --structural');

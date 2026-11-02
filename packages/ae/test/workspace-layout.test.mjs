@@ -11,6 +11,7 @@ import { runOrient } from '../lib/orient.mjs';
 import { estimateTokens } from '../lib/token-meter.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { repoId } from '../lib/knowledge/store.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import {
   classifyRepo,
   detectWorkspace,
@@ -22,7 +23,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const repoRoot = path.resolve(packageRoot, '..', '..');
 
 function git(cwd, args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 10000 });
+  const result = spawnSync(gitExecutable(), args, { cwd, encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   return result.stdout.trim();
 }
@@ -156,11 +157,12 @@ test('orientation keeps the bound repository when inactive saved workspaces list
   fs.mkdirSync(path.join(parent, '.idea'));
   fs.writeFileSync(path.join(parent, '.idea', 'vcs.xml'), `<project><mapping directory="${beta}" vcs="Git" /></project>`);
   const originalRead = fs.readFileSync, originalOpen = fs.opendirSync, originalSpawn = childProcess.spawnSync;
+  const executable = gitExecutable();
   const reads = [], directories = [], probes = [];
   fs.readFileSync = (file, ...args) => { reads.push(String(file)); return originalRead(file, ...args); };
   fs.opendirSync = (directory, ...args) => { directories.push(String(directory)); return originalOpen(directory, ...args); };
   childProcess.spawnSync = (command, args, options) => {
-    if (command === 'git') probes.push(options?.cwd);
+    if (command === executable) probes.push(options?.cwd);
     return originalSpawn(command, args, options);
   };
   syncBuiltinESMExports();

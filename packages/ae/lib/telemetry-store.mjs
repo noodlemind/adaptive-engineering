@@ -1,7 +1,6 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { eventPath } from './events.mjs';
 import { harnessGlobalHome } from './paths.mjs';
 import { createRedactor, redactedJson } from './redact.mjs';
@@ -15,7 +14,7 @@ function telemetryDir() {
 
 /** Stable, filesystem-safe project slug from the git remote, else the dir name. */
 export function projectSlug(workspace) {
-  const remote = spawnSync(gitExecutable(), ['-C', workspace, 'config', '--get', 'remote.origin.url'], {
+  const remote = spawnGitSync(['-C', workspace, 'config', '--get', 'remote.origin.url'], {
     encoding: 'utf8',
     timeout: 5000,
   });

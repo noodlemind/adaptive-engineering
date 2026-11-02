@@ -120,6 +120,8 @@ test('domain stdin decisions pass bounded hook parsing only for supported plan v
 function cliFixture(t) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'domain-command-journey-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Windows verification took 27s for 570 Git calls; this tests authority, not latency.
+  const commandSeconds = process.platform === 'win32' ? 60 : 30;
   const home = path.join(root, 'home'), copilotHome = path.join(root, 'copilot');
   const roots = {};
   const git = (workspace, ...args) => {
@@ -144,8 +146,8 @@ function cliFixture(t) {
   fs.writeFileSync(path.join(home, 'domains/catalogue.yaml'), YAML.stringify({ domain_version: 2, name: 'catalogue', repos: ['producer', 'consumer'].map(id => ({ id, origin: `https://example.invalid/${id}.git` })), sources: [], bindings: { repos: { producer: roots.producer, consumer: roots.consumer }, sources: {} }, shared_specs: [], shared_conventions: [] }));
   const cli = (command, ...args) => {
     const started = Date.now();
-    const result = spawnSync(process.execPath, [bin, command, ...args, '--workspace', roots.coordinator, '--harness-home', home, '--copilot-home', copilotHome, '--json'], { encoding: 'utf8', timeout: 30_000 });
-    const diagnostic = { elapsedMs: Date.now() - started, timeoutMs: 30_000, status: result.status, signal: result.signal, errorCode: result.error?.code || null };
+    const result = spawnSync(process.execPath, [bin, command, ...args, '--workspace', roots.coordinator, '--harness-home', home, '--copilot-home', copilotHome, '--json'], { encoding: 'utf8', timeout: commandSeconds * 1000 });
+    const diagnostic = { elapsedMs: Date.now() - started, timeoutMs: commandSeconds * 1000, status: result.status, signal: result.signal, errorCode: result.error?.code || null };
     parentProfile.record('fixture-cli', { ...diagnostic, childPid: result.pid });
     return { ...result, diagnostic };
   };
@@ -155,7 +157,7 @@ function cliFixture(t) {
     assert.equal(result.status, 0, `${args.join(' ')}: ${JSON.stringify(result.diagnostic)} ${result.stdout} ${result.stderr}`);
     return JSON.parse(result.stdout);
   };
-  return { root, roots, home, copilotHome, cli, invoke, input, git };
+  return { root, roots, home, copilotHome, cli, invoke, input, git, commandSeconds };
 }
 
 test('domain commands retain opaque home authority and reject symlink selectors', t => {
@@ -195,7 +197,7 @@ test('native parent reads preserve their successful result without granting coor
 test('actual parent CLI routes review, proof, learning, completion and journals only to its authorized domain', async t => {
   const f = cliFixture(t);
   const native = async (argv, decision, { json = false } = {}) => {
-    const outcome = await dispatchToolCall({ id: 'native-domain', name: 'harness', input: { argv: ['domain', ...argv, '--name', 'catalogue'], decision } }, { workspace: f.roots.coordinator, harnessHome: f.home, copilotHome: f.copilotHome, profile: DELIVER_PROFILE, remainingSeconds: 30 });
+    const outcome = await dispatchToolCall({ id: 'native-domain', name: 'harness', input: { argv: ['domain', ...argv, '--name', 'catalogue'], decision } }, { workspace: f.roots.coordinator, harnessHome: f.home, copilotHome: f.copilotHome, profile: DELIVER_PROFILE, remainingSeconds: f.commandSeconds });
     assert.equal(outcome.dispatched, true, outcome.reason);
     assert.equal(outcome.result.status, 'ok', JSON.stringify(outcome.result));
     assert.equal(outcome.result.exitCode, 0, JSON.stringify(outcome.result));

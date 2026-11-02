@@ -1,12 +1,11 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { indexStatus } from './index-status.mjs';
 import { runIndexKnowledge } from './index-knowledge.mjs';
 
 function headSha(workspace) {
-  const result = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
+  const result = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 

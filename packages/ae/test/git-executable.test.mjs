@@ -52,6 +52,30 @@ test('Windows Git unavailability fails closed while other platforms retain exist
   assert.equal(gitExecutable({ platform: 'darwin', env: {} }), 'git');
 });
 
+test('unavailable Windows Git returns a failed spawn without launching a fallback', () => {
+  const script = `
+    import childProcess from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    process.env.PATH = ';.;relative;C:relative';
+    let calls = 0;
+    childProcess.spawnSync = () => { calls++; throw new Error('unavailable Git must never launch a child'); };
+    syncBuiltinESMExports();
+    const { spawnGitSync } = await import(${JSON.stringify(moduleUrl.href)});
+    const result = spawnGitSync(['status'], { cwd: process.argv[1], encoding: 'utf8' });
+    console.log(JSON.stringify({ calls, status: result.status, signal: result.signal, pid: result.pid, output: result.output, code: result.error?.code }));
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, packageRoot], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(JSON.parse(result.stdout), { calls: 0, status: null, signal: null, pid: 0, output: null, code: 'E_GIT_EXECUTABLE' });
+});
+
+test('Git spawn wrapper keeps invalid child-process options as programming errors', async () => {
+  const { spawnGitSync } = await import(moduleUrl);
+  assert.equal(typeof spawnGitSync, 'function');
+  assert.throws(() => spawnGitSync(['--version'], { cwd: 42 }), { code: 'ERR_INVALID_ARG_TYPE' });
+});
+
 test('doctor retains Node and failed Git diagnostics when Windows executable selection is unavailable', async () => {
   const { gitExecutable } = await import(moduleUrl);
   const { prerequisiteChecks } = await import('../lib/doctor.mjs');

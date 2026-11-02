@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 // A drive-relative or root-relative Windows path still depends on cwd.
 const windowsAbsolute = value => typeof value === 'string' && !/[\u0000-\u001f\u007f]/.test(value)
@@ -44,6 +45,17 @@ export function gitExecutable({ platform = process.platform, env = process.env }
   cachedPath = pathValue;
   cachedExecutable = full;
   return full;
+}
+
+/** Preserve failed-spawn handling without ever falling back to Windows cwd. */
+export function spawnGitSync(args, options) {
+  let executable;
+  try { executable = gitExecutable(); }
+  catch (error) {
+    if (error?.code !== 'E_GIT_EXECUTABLE') throw error;
+    return { error, status: null, signal: null, pid: 0, output: null, stdout: undefined, stderr: undefined };
+  }
+  return spawnSync(executable, args, options);
 }
 
 /** Select the system launcher directly; repository-local powershell.exe is never considered. */

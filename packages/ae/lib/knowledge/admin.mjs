@@ -1,8 +1,7 @@
-import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { harnessGlobalHome } from '../paths.mjs';
 import { gitMetadataEnvironment } from '../../corpus/hooks/lib/product-diff.mjs';
 import { adoptStorageAlias, storageIdForRepo } from '../storage-aliases.mjs';
@@ -299,7 +298,7 @@ export function absorbHandEdits({ workspace, home, log = () => {} }) {
   const dir = storeDir(workspace, { home });
   if (!fs.existsSync(dir) || !fs.existsSync(path.join(dir, '.git'))) return empty;
 
-  const status = spawnSync(gitExecutable(), ['status', '--porcelain', '-uall', '-z'], { cwd: dir, encoding: 'utf8' });
+  const status = spawnGitSync(['status', '--porcelain', '-uall', '-z'], { cwd: dir, encoding: 'utf8' });
   // Fail CLOSED (P2): a spawn error or a non-zero `git status` exit used to be
   // coerced to an empty string — read as "tree is clean" — so a later
   // transaction rollback (git reset --hard + clean -fd) could silently destroy
@@ -1100,7 +1099,7 @@ export function rebuildStore({ workspace, home, yes, copilotHome, log = () => {}
 const LEARNING_REL = /^(?:branches\/[^/]+\/)?learnings\/[^/]+\/[^/]+\.md$/;
 
 function gitCapture(cwd, args) {
-  const result = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', ...args], {
+  const result = spawnGitSync(['-c', 'core.fsmonitor=false', ...args], {
     cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024, env: gitMetadataEnvironment(),
   });
   return result.status === 0 ? result.stdout : null;

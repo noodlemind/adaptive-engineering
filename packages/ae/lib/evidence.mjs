@@ -1,11 +1,10 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome } from './domain-context.mjs';
 import { domainAuthorityBinding } from './domain-bindings.mjs';
 import { domainExecutionBinding, domainStatus } from './domain-delivery.mjs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { ensureHarnessDir } from './session.mjs';
 import { collectChangedFiles } from './plan-scope.mjs';
@@ -104,7 +103,7 @@ function gitHead(workspace) {
 }
 
 function readGitHead(workspace) {
-  const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
+  const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
   if (head.error || head.status !== 0) return null;
   return String(head.stdout || '').trim();
 }

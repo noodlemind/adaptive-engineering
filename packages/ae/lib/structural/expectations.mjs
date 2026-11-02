@@ -1,6 +1,5 @@
-import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { extract, SOURCE_EXTENSIONS } from '../repo-map/lexical-extractor.mjs';
 import { readFileSafe } from '../repo-map/scan.mjs';
 import { matchesScope, parseImpactedFiles } from '../plan-scope.mjs';
@@ -29,7 +28,7 @@ function shortSha(sha) {
 }
 
 function baselineIsAncestor(workspace, sha) {
-  const result = spawnSync(gitExecutable(), ['merge-base', '--is-ancestor', sha, 'HEAD'], {
+  const result = spawnGitSync(['merge-base', '--is-ancestor', sha, 'HEAD'], {
     cwd: workspace,
     encoding: 'utf8',
     timeout: 15_000,

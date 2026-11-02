@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { authorityBin } from './authority-bin.mjs';
-import { gitExecutable, windowsEnvironmentValue } from './git-executable.mjs';
+import { windowsEnvironmentValue, spawnGitSync } from './git-executable.mjs';
 
 export const FILE_MUTATION_TOOLS = new Set([
   'Edit',
@@ -561,7 +560,7 @@ function gitQueryIsResolved(tokens, git, workspace) {
   if (process.platform === 'win32' && tokens[0] === 'git' && windowsGitQueryShadow(workspace)) return false;
   if (git.subcommand === 'version') return true;
   if (GIT_DIFF_QUERIES.has(git.subcommand) && process.env.GIT_EXTERNAL_DIFF) return false;
-  const result = spawnSync(gitExecutable(), ['--no-pager', 'config', '--includes', '--null', '--get-regexp', GIT_HELPER_CONFIG], {
+  const result = spawnGitSync(['--no-pager', 'config', '--includes', '--null', '--get-regexp', GIT_HELPER_CONFIG], {
     cwd: workspace, encoding: 'utf8', timeout: 1000, maxBuffer: 64 * 1024, windowsHide: true,
   });
   if (result.error || ![0, 1].includes(result.status) || result.status === 1 && result.stdout) return false;

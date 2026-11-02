@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
 import YAML from 'yaml';
 import { readDomain } from '../lib/domain-contract.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import { snapshotDomain } from '../lib/domain-bindings.mjs';
 import { approveProject, isProjectTrusted, trustStatus } from '../lib/trust.mjs';
 import { resolveDomainContext, authorizeDomainPlan } from '../lib/domain-context.mjs';
@@ -24,7 +25,7 @@ import { domainExecutionBinding, domainPrerequisites, runDomainJointChecks, doma
 import { withGitObservationCache } from '../lib/git-observation-cache.mjs';
 
 function git(root, args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 4000 });
+  const result = spawnSync(gitExecutable(), args, { cwd: root, encoding: 'utf8', timeout: 4000 });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
@@ -73,9 +74,10 @@ test('participating content keeps literal mode-bound evidence and selected-home 
   assert.equal(trustStatus({ workspace: f.roots.producer, copilotHome: f.copilotHome }).state, 'untrusted');
   assert.equal(trustStatus({ workspace: f.roots.producer, copilotHome: f.copilotHome, home: f.home }).state, 'trusted');
   const spawn = childProcess.spawnSync;
+  const executable = gitExecutable();
   const redundant = [];
   t.mock.method(childProcess, 'spawnSync', function(command, args, options) {
-    if (command === 'git' && args.length === 4 && args[0] === '-C' && args[2] === 'rev-parse' && args[3] === 'HEAD' && Object.values(f.roots).includes(args[1])) redundant.push(args[1]);
+    if (command === executable && args.length === 4 && args[0] === '-C' && args[2] === 'rev-parse' && args[3] === 'HEAD' && Object.values(f.roots).includes(args[1])) redundant.push(args[1]);
     return spawn.apply(this, arguments);
   });
   syncBuiltinESMExports();
@@ -91,9 +93,10 @@ test('participating content keeps literal mode-bound evidence and selected-home 
 test('one completion reuses the git observation of each checkout', t => {
   const f = fixture(t);
   const spawn = childProcess.spawnSync;
+  const executable = gitExecutable();
   let gitCalls = 0;
   t.mock.method(childProcess, 'spawnSync', function (command, args, options) {
-    if (path.basename(String(command)).toLowerCase().replace(/\.exe$/, '') === 'git') gitCalls += 1;
+    if (command === executable) gitCalls += 1;
     return spawn.apply(this, arguments);
   });
   syncBuiltinESMExports();

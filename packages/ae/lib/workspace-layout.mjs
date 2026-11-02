@@ -1,7 +1,6 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { projectStoreDir } from './project-layout.mjs';
 
@@ -115,7 +114,7 @@ export function classifyRepo(root) {
 export function detectWorkspace(workspace, { home } = {}) {
   const layout = emptyLayout();
   try {
-    const result = spawnSync(gitExecutable(), ['rev-parse', '--show-toplevel'], {
+    const result = spawnGitSync(['rev-parse', '--show-toplevel'], {
       cwd: workspace, encoding: 'utf8', timeout: GIT_TIMEOUT, maxBuffer: 64 * 1024,
       env: gitMetadataEnvironment(), windowsHide: true,
     });

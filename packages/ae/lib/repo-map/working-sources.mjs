@@ -1,8 +1,7 @@
-import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { MAX_FILES_SCANNED, inspectSourceFile } from './scan.mjs';
 import { SOURCE_EXTENSIONS } from './lexical-extractor.mjs';
 
@@ -20,8 +19,8 @@ const EXTRACTOR_REVISION = digest(JSON.stringify(['scan.mjs', 'facts.mjs', 'impo
 
 export function captureWorkingSources(workspace, { allowUnborn = false } = {}) {
   const options = { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024 };
-  const listed = spawnSync(gitExecutable(), ['-C', workspace, 'ls-files', '-z'], options);
-  const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], options);
+  const listed = spawnGitSync(['-C', workspace, 'ls-files', '-z'], options);
+  const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], options);
   if (listed.status !== 0 || head.status !== 0 && !allowUnborn) return { valid: false, reason: 'source state unavailable' };
   const sourceHead = head.status === 0 ? head.stdout.trim() : null;
   const paths = [...new Set(listed.stdout.split('\0').filter(Boolean))].sort();

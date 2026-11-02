@@ -1,8 +1,7 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { projectStoreDir } from './project-layout.mjs';
 import { harnessGlobalHome } from './paths.mjs';
 import { resolveDefaultBranch } from './git-context.mjs';
@@ -78,7 +77,7 @@ function parse(bytes, label) {
   try { return JSON.parse(bytes.toString('utf8')); } catch { throw error(`invalid ${label} JSON`); }
 }
 function git(workspace, args, { input, maxBuffer = INDEX_BYTES, buffer = false } = {}) {
-  const result = spawnSync(gitExecutable(), ['--no-pager', '--no-replace-objects', '--no-lazy-fetch', '-c', 'core.fsmonitor=false', ...args], { cwd: workspace, input, ...(buffer ? {} : { encoding: 'utf8' }), maxBuffer, timeout: 10_000, env: { ...gitMetadataEnvironment(), GIT_NO_LAZY_FETCH: '1' } });
+  const result = spawnGitSync(['--no-pager', '--no-replace-objects', '--no-lazy-fetch', '-c', 'core.fsmonitor=false', ...args], { cwd: workspace, input, ...(buffer ? {} : { encoding: 'utf8' }), maxBuffer, timeout: 10_000, env: { ...gitMetadataEnvironment(), GIT_NO_LAZY_FETCH: '1' } });
   if (result.status !== 0 && /unknown option:\s*--no-lazy-fetch\b/i.test(String(result.stderr || ''))) throw error('Upgrade Git to a version supporting --no-lazy-fetch before using application flow models. Reads remain disabled to prevent automatic fetches.');
   if (result.error || result.status !== 0) throw error('committed Git metadata is unavailable or exceeds its bounds');
   return result.stdout;

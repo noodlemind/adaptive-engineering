@@ -1,7 +1,6 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { createStyle, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive } from './fs-safe.mjs';
@@ -15,7 +14,7 @@ const OBSERVED_CAP = 24;
 const SKIP_TOPS = new Set(['.harness', 'node_modules']);
 
 function listedPaths(workspace) {
-  const listed = spawnSync(gitExecutable(), ['-C', workspace, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+  const listed = spawnGitSync(['-C', workspace, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     encoding: 'buffer',
     timeout: 10_000,
   });
@@ -24,7 +23,7 @@ function listedPaths(workspace) {
 }
 
 function gitWorkTree(workspace) {
-  const inside = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', '--is-inside-work-tree'], {
+  const inside = spawnGitSync(['-C', workspace, 'rev-parse', '--is-inside-work-tree'], {
     encoding: 'utf8',
     timeout: 10_000,
   });
@@ -32,7 +31,7 @@ function gitWorkTree(workspace) {
 }
 
 function pathIgnored(workspace, rel) {
-  const checked = spawnSync(gitExecutable(), ['-C', workspace, 'check-ignore', '-q', '--', rel], {
+  const checked = spawnGitSync(['-C', workspace, 'check-ignore', '-q', '--', rel], {
     encoding: 'utf8',
     timeout: 10_000,
   });

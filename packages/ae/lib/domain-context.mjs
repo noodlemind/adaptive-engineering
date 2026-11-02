@@ -1,8 +1,7 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readDomain } from './domain-contract.mjs';
 import { harnessGlobalHome } from './paths.mjs';
 import { assertNoSymlinkAncestors, canonicalPath } from './fs-safe.mjs';
@@ -36,7 +35,7 @@ function coordinatorIdentity(workspace) {
 function readCoordinatorIdentity(workspace) {
   const root = safePath(workspace);
   if (!fs.lstatSync(root).isDirectory()) throw failure('coordinator is not a directory');
-  const result = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { cwd: root, encoding: 'utf8', timeout: 4000, maxBuffer: 16384, env: gitMetadataEnvironment() });
+  const result = spawnGitSync(['-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { cwd: root, encoding: 'utf8', timeout: 4000, maxBuffer: 16384, env: gitMetadataEnvironment() });
   const values = String(result.stdout || '').trimEnd().split('\n');
   if (result.error || result.status !== 0 || values.length !== 3) throw failure('coordinator Git identity is unavailable');
   const identity = values.map(value => canonicalPath(safePath(path.resolve(root, value))));

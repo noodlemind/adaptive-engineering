@@ -1,8 +1,7 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { planRecordRoot } from './domain-context.mjs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readGitArgs, gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { parseImpactedText } from '../corpus/hooks/lib/impacted-files.mjs';
 import { readPlanRecord } from './plan-record.mjs';
@@ -11,7 +10,7 @@ import { cachedGitObservation } from './git-observation-cache.mjs';
 export { parseImpactedText };
 
 function runGit(workspace, args, prefix) {
-  return spawnSync(gitExecutable(), [...prefix, ...args], { cwd: workspace, encoding: 'utf8', timeout: 30_000, env: gitMetadataEnvironment() });
+  return spawnGitSync([...prefix, ...args], { cwd: workspace, encoding: 'utf8', timeout: 30_000, env: gitMetadataEnvironment() });
 }
 
 function lines(output) {

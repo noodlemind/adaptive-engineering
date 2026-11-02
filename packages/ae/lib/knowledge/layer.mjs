@@ -1,7 +1,6 @@
-import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { deriveGitContext, resolveDefaultBranch, isDetachedKey } from '../git-context.mjs';
 import { branchesRoot, bucketDirFor, listBuckets, bucketAncestryOk, isSafeBucketKey } from './overlay.mjs';
 import { readSession } from '../session.mjs';
@@ -81,7 +80,7 @@ export function ensureBucket(dir, { key, branch = null, baseSha = null }) {
 /** Every ref name (`refs/heads/...`, `refs/remotes/...`) in the workspace. */
 function listRefs(workspace) {
   try {
-    const res = spawnSync(gitExecutable(), ['show-ref'], { cwd: workspace, encoding: 'utf8', timeout: 10_000 });
+    const res = spawnGitSync(['show-ref'], { cwd: workspace, encoding: 'utf8', timeout: 10_000 });
     if (res.status !== 0) return null;
     return res.stdout
       .split('\n')

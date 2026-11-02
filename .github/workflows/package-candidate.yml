@@ -39,6 +39,18 @@ jobs:
         run: |
           npm run --prefix packages/ae check:release
           npm run --prefix packages/ae check:repo
+      - name: Validate Git integration regressions
+        run: >-
+          node --test --test-concurrency=2
+          packages/ae/test/domain-contract.test.mjs
+          packages/ae/test/domain-context.test.mjs
+          packages/ae/test/domain-delivery.test.mjs
+          packages/ae/test/storage-aliases.test.mjs
+          packages/ae/test/workspace-layout.test.mjs
+          packages/ae/test/migrate-layout.test.mjs
+          packages/ae/test/package-standalone.test.mjs
+          packages/ae/test/unchanged-retry.test.mjs
+          packages/ae/test/domain-commands.test.mjs
       - name: Pack and identify candidate
         run: |
           mkdir artifacts

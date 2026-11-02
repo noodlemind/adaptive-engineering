@@ -1,8 +1,7 @@
-import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { readGitArgs } from '../corpus/hooks/lib/product-diff.mjs';
 import { EXIT } from './style.mjs';
 import { deriveGitContext, resolveDefaultBranch } from './git-context.mjs';
@@ -17,7 +16,7 @@ const CI_TRUE = new Set(['1', 'true', 'TRUE', 'yes', 'YES']);
 
 function gitOut(cwd, args) {
   try {
-    const res = spawnSync(gitExecutable(), args, { cwd, encoding: 'utf8', timeout: 15_000 });
+    const res = spawnGitSync(args, { cwd, encoding: 'utf8', timeout: 15_000 });
     return res.status === 0 ? String(res.stdout || '').trim() : null;
   } catch {
     return null;
@@ -275,7 +274,7 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
   const safeArgs = ['--no-pager', ...prefix, '-c', `core.hooksPath=${hooksDir}`];
   let added = false;
   try {
-    const res = spawnSync(gitExecutable(), [...safeArgs, ...args], { cwd: root, encoding: 'utf8', timeout: 15_000 });
+    const res = spawnGitSync([...safeArgs, ...args], { cwd: root, encoding: 'utf8', timeout: 15_000 });
     if (res.status !== 0) {
       throw Object.assign(new Error(`worktree: git worktree add failed: ${(res.stderr || res.stdout || '').trim()}`), { exit: 1 });
     }
@@ -283,7 +282,7 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
     // Branch-conditional includes become active only after the target HEAD exists.
     const checkoutPrefix = readGitArgs(dest);
     if (!checkoutPrefix) throw usage('worktree: target Git helper configuration could not be resolved safely');
-    const checkout = spawnSync(gitExecutable(), ['--no-pager', ...checkoutPrefix, '-c', `core.hooksPath=${hooksDir}`, 'reset', '--hard', 'HEAD'], {
+    const checkout = spawnGitSync(['--no-pager', ...checkoutPrefix, '-c', `core.hooksPath=${hooksDir}`, 'reset', '--hard', 'HEAD'], {
       cwd: dest, encoding: 'utf8', timeout: 15_000,
     });
     if (checkout.status !== 0) {
@@ -291,7 +290,7 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
     }
   } catch (error) {
     if (added) {
-      const cleanup = spawnSync(gitExecutable(), [...safeArgs, 'worktree', 'remove', '--force', dest], { cwd: root, encoding: 'utf8', timeout: 15_000 });
+      const cleanup = spawnGitSync([...safeArgs, 'worktree', 'remove', '--force', dest], { cwd: root, encoding: 'utf8', timeout: 15_000 });
       if (cleanup.status !== 0) error.message += `; cleanup failed: ${(cleanup.stderr || cleanup.stdout || '').trim()}`;
     }
     throw error;
