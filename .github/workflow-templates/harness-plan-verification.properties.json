@@ -1,6 +1,9 @@
 {
-  "name": "Harness plan verification",
-  "description": "Bind product changes to one explicit plan, run trusted named checks, validate scope, and upload verification evidence.",
+  "name": "AE plan diagnostics (manual)",
+  "description": "Manually inspect a committed plan and token budgets with a checksum-pinned AE archive.",
   "iconName": "shield-check",
-  "categories": ["Continuous integration", "Code review"]
+  "categories": [
+    "Continuous integration",
+    "Code review"
+  ]
 }
