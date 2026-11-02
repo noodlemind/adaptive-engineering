@@ -4,6 +4,11 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import YAML from 'yaml';
 
+test('Windows test shards allow the observed full-suite runtime with margin', () => {
+  const workflow = YAML.parse(fs.readFileSync(new URL('../../../.github/workflows/harness-windows.yml', import.meta.url), 'utf8'));
+  assert.ok(workflow.jobs.tests['timeout-minutes'] >= 60);
+});
+
 test('the Windows workflow gate rejects failed or unavailable suite and probe verdicts', {
   skip: process.platform !== 'win32' ? 'Executes the actual Windows PowerShell gate' : false,
 }, () => {
