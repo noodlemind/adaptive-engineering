@@ -1,3 +1,4 @@
+import { gitExecutable } from './git-executable.mjs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -8,7 +9,7 @@ export function gitMetadataEnvironment(source = process.env) {
 
 export function readGitArgs(workspace, { timeout = 4000, env = process.env } = {}) {
   const args = ['-c', 'core.fsmonitor=false'];
-  const config = spawnSync('git', ['--no-pager', ...args, 'config', '--includes', '--null', '--get-regexp', '^filter\\..*\\.(clean|smudge|process|required)$'], {
+  const config = spawnSync(gitExecutable(), ['--no-pager', ...args, 'config', '--includes', '--null', '--get-regexp', '^filter\\..*\\.(clean|smudge|process|required)$'], {
     cwd: workspace, encoding: 'utf8', timeout, maxBuffer: 64 * 1024, env,
   });
   if (config.error || ![0, 1].includes(config.status)) return null;
@@ -40,7 +41,7 @@ export function readProductDiff(workspace, { base = 'HEAD', planPath, timeout = 
     const rel = path.relative(workspace, path.resolve(workspace, planPath)).replace(/\\/g, '/');
     if (rel && !rel.startsWith('../') && !path.isAbsolute(rel)) args.push(`:(literal,exclude)${rel}`);
   }
-  const diff = spawnSync('git', args, { cwd: workspace, encoding: 'utf8', timeout, env });
+  const diff = spawnSync(gitExecutable(), args, { cwd: workspace, encoding: 'utf8', timeout, env });
   if (diff.error || diff.status !== 0) return null;
   return String(diff.stdout || '').split(/\r?\n/).filter(line => !/^index [0-9a-f]+\.\.[0-9a-f]+(?:\s|$)/.test(line)).join('\n');
 }

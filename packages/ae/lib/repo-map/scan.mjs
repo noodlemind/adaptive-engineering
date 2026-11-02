@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -20,7 +21,7 @@ export function listRepoFiles(workspace, { prefix = '' } = {}) {
   const scope = filePrefix(prefix);
   const args = ['-C', workspace, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'];
   if (scope) args.push('--', scope);
-  const res = spawnSync('git', args, {
+  const res = spawnSync(gitExecutable(), args, {
     encoding: 'utf8',
     timeout: 15_000,
     maxBuffer: 64 * 1024 * 1024,
@@ -43,7 +44,7 @@ export function listRepoFiles(workspace, { prefix = '' } = {}) {
 }
 
 export function trackedSourceFiles(workspace) {
-  const res = spawnSync('git', ['-C', workspace, 'ls-files', '-z'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024 });
+  const res = spawnSync(gitExecutable(), ['-C', workspace, 'ls-files', '-z'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024 });
   if (res.error || res.status !== 0) return { files: [], total: 0, inventoryHash: null, unavailable: true };
   const all = [...new Set(res.stdout
     .split('\0')

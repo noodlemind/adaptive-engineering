@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -9,7 +10,7 @@ export function ensureLocalGitExclude(workspace, patterns, { dryRun = false } = 
   if (!Array.isArray(patterns) || patterns.some(pattern => !['/.harness/', '/.worktrees/'].includes(pattern))) return null;
   const env = gitMetadataEnvironment();
   const options = { cwd: workspace, encoding: 'utf8', timeout: 5000, maxBuffer: 16 * 1024, env };
-  const observed = spawnSync('git', ['-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], options);
+  const observed = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', 'rev-parse', '--git-common-dir'], options);
   if (observed.error || observed.status !== 0) {
     try {
       const marker = fs.lstatSync(path.join(workspace, '.git'), { throwIfNoEntry: false });
@@ -19,7 +20,7 @@ export function ensureLocalGitExclude(workspace, patterns, { dryRun = false } = 
   // Observe paths separately: a valid checkout name may itself contain a newline.
   const trimTerminator = value => String(value || '').replace(process.platform === 'win32' ? /\r?\n$/ : /\n$/, '');
   const common = trimTerminator(observed.stdout);
-  const checkout = spawnSync('git', ['-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel'], options);
+  const checkout = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel'], options);
   if (checkout.error || checkout.status !== 0) return null;
   const toplevel = trimTerminator(checkout.stdout);
   if (!common || !toplevel || common.includes('\0') || toplevel.includes('\0')) return null;
@@ -54,7 +55,7 @@ export function ensureLocalGitExclude(workspace, patterns, { dryRun = false } = 
     // Product .gitignore rules have higher precedence. Report that conflict
     // rather than claim private state is excluded or rewrite authored policy.
     for (const pattern of patterns) {
-      const checked = spawnSync('git', ['-c', 'core.fsmonitor=false', 'check-ignore', '--quiet', '--no-index', '--', pattern.slice(1)], options);
+      const checked = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', 'check-ignore', '--quiet', '--no-index', '--', pattern.slice(1)], options);
       if (checked.error || checked.status !== 0) return null;
     }
   }

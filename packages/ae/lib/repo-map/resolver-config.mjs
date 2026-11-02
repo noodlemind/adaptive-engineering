@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -15,7 +16,7 @@ function jsonConfig(text) {
 /** Only tracked, bounded regular configuration participates in resolution. */
 export function loadResolverConfigs(workspace) {
   if (!workspace) return [];
-  const listed = spawnSync('git', ['-C', workspace, 'ls-files', '-z'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024 });
+  const listed = spawnSync(gitExecutable(), ['-C', workspace, 'ls-files', '-z'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024 });
   if (listed.status !== 0) return [];
   const files = [...new Set(listed.stdout.split('\0').filter(Boolean))].filter(file => /^(?:tsconfig|jsconfig)\.json$/.test(path.posix.basename(file))).sort();
   if (files.length > 64) return [{ directory: '.', unsupported: true, evidence: { path: '', reason: 'configuration-budget' } }];

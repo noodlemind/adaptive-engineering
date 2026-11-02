@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { authorityBin } from './authority-bin.mjs';
+import { gitExecutable, windowsEnvironmentValue } from './git-executable.mjs';
 
 export const FILE_MUTATION_TOOLS = new Set([
   'Edit',
@@ -530,14 +531,37 @@ function isSystemCommand(token, base) {
   return token === base || token === `/usr/bin/${base}` || token === `/bin/${base}`;
 }
 
+function windowsGitQueryShadow(workspace) {
+  const names = new Set(['git', 'git.exe', 'git.com', 'git.cmd', 'git.bat', 'git.ps1']);
+  for (const suffix of (windowsEnvironmentValue(process.env, 'PATHEXT') || '').split(';')) {
+    const extension = suffix.trim().toLowerCase();
+    if (extension && !/[\\/\x00-\x1f\x7f]/.test(extension)) names.add(`git${extension.startsWith('.') ? extension : `.${extension}`}`);
+  }
+  const directories = new Set([workspace]);
+  for (const entry of (windowsEnvironmentValue(process.env, 'PATH') || '').split(';')) {
+    const directory = entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry;
+    // Drive-relative and root-relative entries also depend on the execution cwd.
+    if (directory && !/^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(directory)) directories.add(path.resolve(workspace, directory));
+  }
+  for (const directory of directories) {
+    try {
+      if (fs.readdirSync(directory, { withFileTypes: true }).some(entry => names.has(entry.name.toLowerCase()) && !entry.isDirectory())) return true;
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR'].includes(error.code)) return true;
+    }
+  }
+  return false;
+}
+
 function gitQueryIsResolved(tokens, git, workspace) {
   const args = tokens.slice(1);
   if (!GIT_QUERIES.has(git.subcommand) || args[0] !== git.subcommand) return false;
   if (args.some(arg => /^--(?:output|exec-path|config-env|ext-diff|textconv|open-files-in-pager|show-signature)(?:=|$)/.test(arg)
     || git.subcommand === 'grep' && /^(?:-[^-]*O|--op)/.test(arg) || /%G[?NGSKFPTR]/.test(arg))) return false;
+  if (process.platform === 'win32' && tokens[0] === 'git' && windowsGitQueryShadow(workspace)) return false;
   if (git.subcommand === 'version') return true;
   if (GIT_DIFF_QUERIES.has(git.subcommand) && process.env.GIT_EXTERNAL_DIFF) return false;
-  const result = spawnSync(tokens[0], ['--no-pager', 'config', '--includes', '--null', '--get-regexp', GIT_HELPER_CONFIG], {
+  const result = spawnSync(gitExecutable(), ['--no-pager', 'config', '--includes', '--null', '--get-regexp', GIT_HELPER_CONFIG], {
     cwd: workspace, encoding: 'utf8', timeout: 1000, maxBuffer: 64 * 1024, windowsHide: true,
   });
   if (result.error || ![0, 1].includes(result.status) || result.status === 1 && result.stdout) return false;
@@ -563,19 +587,100 @@ function gitQueryIsResolved(tokens, git, workspace) {
   return !pager || ['cat', '/bin/cat', '/usr/bin/cat'].includes(pager);
 }
 
+function nativeResourcePath(full, kind, missing = false) {
+  if (typeof full !== 'string' || !path.isAbsolute(full) || Buffer.byteLength(full) > 4096 || /[\x00-\x1f\x7f]/.test(full)) return false;
+  const resolved = path.resolve(full), base = path.parse(resolved).root;
+  let current = base;
+  const parts = path.relative(base, resolved).split(path.sep).filter(Boolean);
+  for (let index = 0; index <= parts.length; index++) {
+    if (index) current = path.join(current, parts[index - 1]);
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) return missing;
+    if (stat.isSymbolicLink() || (index < parts.length || kind === 'directory' ? !stat.isDirectory() : !stat.isFile())) return false;
+  }
+  return true;
+}
+
+function nativeResourceObject(full) {
+  if (!nativeResourcePath(full, 'file')) return null;
+  const fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const stat = fs.fstatSync(fd), max = 1024 * 1024;
+    if (!stat.isFile() || stat.size > max) return null;
+    const bytes = Buffer.alloc(max + 1);
+    let total = 0, count;
+    while ((count = fs.readSync(fd, bytes, total, bytes.length - total, null)) > 0) {
+      total += count;
+      if (total > max) return null;
+    }
+    const value = JSON.parse(bytes.subarray(0, total).toString('utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } finally { fs.closeSync(fd); }
+}
+
+/** The native writer owns schema/CAS checks; this admits only its saved binding. */
+function nativePersonalSkillControl(args, workspace) {
+  if (args[1] !== 'create' || args[2] !== 'skill' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args[3] || '')) return null;
+  const boolean = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
+  const valued = new Set(['--file', '--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home']);
+  const seen = new Set(), values = new Map();
+  for (let index = 4; index < args.length; index++) {
+    const token = args[index], split = token.indexOf('='), name = split < 0 ? token : token.slice(0, split);
+    const key = name === '-v' ? '--verbose' : name === '--harness-home' ? '--ae-home' : name;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    if (boolean.has(name) && split < 0) continue;
+    if (!valued.has(name)) return null;
+    const value = split < 0 ? args[++index] : token.slice(split + 1);
+    if (!value || value.startsWith('-') && !(name === '--file' && value === '-') || Buffer.byteLength(value) > 4096 || /[\x00-\x1f\x7f]/.test(value)) return null;
+    // The CLI's copilot-home equals form takes only the first '=' component.
+    if (name === '--copilot-home' && split >= 0 && value.includes('=')) return null;
+    values.set(key, value);
+  }
+  try {
+    const host = process.env.AE_HOST;
+    if (!['claude-code', 'codex', 'cursor', 'terminal'].includes(host) || process.env.HARNESS_HOST && process.env.HARNESS_HOST !== host) return null;
+    const bindings = [['--copilot-home', process.env.COPILOT_HOME], ['--skills-home', process.env.AE_SKILLS_HOME], ['--ae-home', process.env.AE_HOME]];
+    for (const [flag, selected] of bindings) {
+      const value = values.get(flag);
+      if (!value || !selected || !path.isAbsolute(value) || !path.isAbsolute(selected) || path.resolve(value) !== path.resolve(selected)
+        || !nativeResourcePath(value, 'directory', flag === '--ae-home')) return null;
+    }
+    if (process.env.HARNESS_SKILLS_HOME && path.resolve(process.env.HARNESS_SKILLS_HOME) !== path.resolve(process.env.AE_SKILLS_HOME)
+      || process.env.HARNESS_HOME && path.resolve(process.env.HARNESS_HOME) !== path.resolve(process.env.AE_HOME)) return null;
+    if (values.has('--workspace') && path.resolve(values.get('--workspace')) !== path.resolve(workspace)) return null;
+    const config = path.resolve(values.get('--copilot-home')), skills = path.resolve(values.get('--skills-home'));
+    const manifest = nativeResourceObject(path.join(config, '.ae-host.json')), owner = nativeResourceObject(path.join(skills, '.ae-host-skills.json'));
+    if (manifest?.schema !== 1 || owner?.schema !== 1 || manifest.host !== host || owner.host !== host || manifest.configHome !== config || owner.configHome !== config
+      || manifest.skillsHome !== skills || owner.skillsHome !== skills || !Array.isArray(manifest.files)) return null;
+    for (const file of manifest.files) {
+      if (!file || typeof file !== 'object' || !['config', 'skills'].includes(file.root) || typeof file.path !== 'string' || path.isAbsolute(file.path)
+        || file.path.includes('\\') || file.path.split('/').some(part => !part || part === '.' || part === '..') || typeof file.owned !== 'boolean' || !/^[a-f0-9]{64}$/.test(file.sha256 || '')) return null;
+      if (file.root === 'skills' && file.path.startsWith(`${args[3]}/`)) return null;
+    }
+    const input = values.get('--file');
+    if (!input || input !== '-' && !nativeResourcePath(path.resolve(workspace, input), 'file')) return null;
+    if (!nativeResourcePath(path.join(skills, args[3], 'SKILL.md'), 'file', true)) return null;
+    return 'resources';
+  } catch { return null; }
+}
+
 export function harnessControlCommand(tokens, workspace) {
-  let args;
+  let args, nativeWriterAuthority = false;
   if (tokens[0] === 'ae' || tokens[0] === 'harness') args = tokens.slice(1);
-  else if ((tokens[0] === 'node' || tokens[0] === process.execPath) && tokens[1]) {
+  else if ((tokens[0] === 'node' || path.isAbsolute(tokens[0] || '') && path.resolve(tokens[0]) === path.resolve(process.execPath)) && tokens[1]) {
     const bin = authorityBin();
     if (!bin) return null;
     try {
       if (fs.realpathSync(path.resolve(workspace, tokens[1])) !== fs.realpathSync(bin)) return null;
+      nativeWriterAuthority = path.isAbsolute(tokens[0]) && path.isAbsolute(tokens[1]) && path.resolve(tokens[1]) === path.resolve(bin)
+        && fs.realpathSync.native(tokens[0]) === fs.realpathSync.native(process.execPath);
     } catch { return null; }
     args = tokens.slice(2);
   } else return null;
   if (!args.length) return 'help';
   if (HARNESS_CONTROL.has(args[0])) return args[0];
+  if (args[0] === 'resources') return nativeWriterAuthority ? nativePersonalSkillControl(args, workspace) : null;
   if (args[0] === 'diagrams') {
     // Hydrated hooks cannot import package lib/. Keep this bounded grammar in
     // step with diagram-cmd.mjs; diagram-native tests cover the shared forms.

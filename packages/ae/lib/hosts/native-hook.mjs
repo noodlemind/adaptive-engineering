@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readBoundedInput } from '../fs-safe.mjs';
+import { windowsPowerShellExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import { FILE_MUTATION_TOOLS, READ_ONLY_TOOLS, TERMINAL_TOOLS } from '../../corpus/hooks/lib/tool-payload.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -20,12 +21,15 @@ function assertHost(host) {
   if (!HOSTS.has(host)) throw new Error(`Unsupported native host: ${host}`);
 }
 
-function command(args) {
+export function nativeHookCommand(args, { platform = process.platform, powerShellExecutable } = {}) {
   const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
-  if (process.platform !== 'win32') return args.map(quote).join(' ');
+  if (platform !== 'win32') return args.map(quote).join(' ');
   // Explicit PowerShell avoids cmd/PowerShell ambiguity in native command fields.
+  const executable = powerShellExecutable || windowsPowerShellExecutable();
+  if (!path.win32.isAbsolute(executable) || path.win32.parse(executable).root === '\\' || /["%!?<>|\u0000-\u001f\u007f]/.test(executable) || !/\.exe$/i.test(executable)) throw new Error('Native hooks require an absolute system PowerShell executable');
+  const launcher = /[\s&()^]/.test(executable) ? `"${executable}"` : executable;
   const ps = '& ' + args.map(value => `'${String(value).replaceAll("'", "''")}'`).join(' ');
-  return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`;
+  return `${launcher} -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`;
 }
 
 /** Native configuration only; the installer owns merging and hook ownership. */
@@ -34,7 +38,7 @@ export function nativeHookConfig({ host, configHome, skillsHome, home, packageRo
   for (const value of [configHome, skillsHome, home, root]) {
     if (typeof value !== 'string' || !path.isAbsolute(value)) throw new Error('Native hook roots must be absolute paths');
   }
-  const invoke = event => command([process.execPath, path.join(root, 'lib/hosts/native-hook.mjs'), '--host', host, '--event', event,
+  const invoke = event => nativeHookCommand([process.execPath, path.join(root, 'lib/hosts/native-hook.mjs'), '--host', host, '--event', event,
     '--config-home', configHome, '--skills-home', skillsHome, '--ae-home', home]);
   if (host === 'cursor') {
     const hooks = {};

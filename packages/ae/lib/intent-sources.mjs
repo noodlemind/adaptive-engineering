@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -64,7 +65,7 @@ function preferredBasename(item) {
 
 function catalog(workspace) {
   if (!workspace) return [];
-  const listed = spawnSync('git', ['-C', workspace, '-c', 'core.fsmonitor=false', '-c', 'core.longpaths=true', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+  const listed = spawnSync(gitExecutable(), ['-C', workspace, '-c', 'core.fsmonitor=false', '-c', 'core.longpaths=true', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     encoding: 'buffer',
     timeout: 10_000,
     maxBuffer: 1024 * 1024,

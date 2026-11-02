@@ -6,9 +6,20 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { nativeHookConfig } from '../lib/hosts/native-hook.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = path.join(packageRoot, 'lib/hosts/native-hook.mjs');
+
+test('Windows native command formatting binds an absolute system launcher', async () => {
+  const { nativeHookCommand } = await import('../lib/hosts/native-hook.mjs');
+  assert.equal(typeof nativeHookCommand, 'function');
+  const powerShellExecutable = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const invoke = nativeHookCommand(['C:\\Program Files\\nodejs\\node.exe', "C:\\AE's config\\hook.mjs"], { platform: 'win32', powerShellExecutable });
+  assert.ok(invoke.startsWith(powerShellExecutable + ' '));
+  const decoded = Buffer.from(invoke.match(/-EncodedCommand ([A-Za-z0-9+/=]+)$/)[1], 'base64').toString('utf16le');
+  assert.equal(decoded, "& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\AE''s config\\hook.mjs'");
+});
 
 function fixture(t, configName = 'config home') {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-native-hook-')));
@@ -81,6 +92,84 @@ test('generated command executes with quoted home paths and native workspace ide
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), '{}');
   assert.equal(fs.existsSync(path.join(f.configHome, '.harness')), false);
+});
+
+test('Windows Git query classification refuses cwd and relative-PATH executable shadows without running them', t => {
+  const f = fixture(t);
+  const toolPayload = new URL('../corpus/hooks/lib/tool-payload.mjs', import.meta.url).href;
+  const script = `import { analyzeTerminalEffects } from ${JSON.stringify(toolPayload)}; Object.defineProperty(process, 'platform', { value: 'win32' }); console.log(JSON.stringify(analyzeTerminalEffects('git version', process.argv[1])));`;
+  const inspect = (pathValue = '') => {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !['PATH', 'PATHEXT'].includes(key.toUpperCase())));
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, f.workspace], {
+      cwd: f.workspace, env: { ...env, PATH: pathValue, PATHEXT: '.EXE;.AEFIXTURE' }, encoding: 'utf8', timeout: 15000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout).hasOpaque;
+  };
+  assert.equal(inspect(), false, 'ordinary Git version remains a query');
+  for (const name of ['git', 'git.exe', 'git.COM', 'git.cmd', 'git.bat', 'git.ps1', 'git.AEFIXTURE']) {
+    const full = path.join(f.workspace, name);
+    fs.writeFileSync(full, 'This planted executable must never run.\n');
+    assert.equal(inspect(), true, name);
+    fs.rmSync(full);
+  }
+  const directory = path.join(f.workspace, 'git.exe');
+  fs.mkdirSync(directory);
+  assert.equal(inspect(), false, 'an ordinary directory is not an executable shadow');
+  fs.rmdirSync(directory);
+  fs.mkdirSync(path.join(f.workspace, 'bin'));
+  fs.writeFileSync(path.join(f.workspace, 'bin/git.cmd'), 'This relative PATH executable must never run.\n');
+  assert.equal(inspect('bin'), true);
+  fs.rmSync(path.join(f.workspace, 'bin/git.cmd'));
+  assert.equal(inspect('bin'), false);
+});
+
+test('Windows SessionStart ignores repository-local Git and PowerShell executables', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t);
+  const git = gitExecutable();
+  for (const args of [['add', 'example.txt'], ['-c', 'user.name=AE fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Fixture']]) {
+    const result = spawnSync(git, args, { cwd: f.workspace, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'nodefaultcurrentdirectoryinexepath'));
+  for (const name of ['git.exe', 'powershell.exe']) fs.writeFileSync(path.join(f.workspace, name), 'Invalid image: a repository executable must never be selected.\n');
+  // A fresh Node process removes any inherited cwd-search opt-out, including on
+  // Node 22. This control proves that bare lookup encounters the planted image.
+  for (const name of ['git', 'powershell.exe']) {
+    const control = spawnSync(process.execPath, ['--input-type=module', '-e',
+      'import { spawnSync } from "node:child_process"; const command = process.argv[1]; const args = command === "git" ? ["--version"] : ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 0"]; const child = spawnSync(command, args); console.log(JSON.stringify({ status: child.status, error: child.error?.code }));', name],
+    { cwd: f.workspace, env, encoding: 'utf8' });
+    assert.equal(control.status, 0, control.stderr);
+    const result = JSON.parse(control.stdout);
+    assert.ok(result.error || result.status !== 0, `${name} control unexpectedly bypassed the planted image`);
+  }
+  assert.equal(spawnSync(git, ['--version'], { cwd: f.workspace, env }).status, 0);
+  const preGit = (host, query) => {
+    const native = nativeHookConfig({ host, ...f, packageRoot });
+    const command = host === 'cursor' ? native.value.hooks.preToolUse[0].command : native.value.hooks.PreToolUse[0].hooks[0].command;
+    const result = spawnSync(command, { shell: true, cwd: f.workspace, env, encoding: 'utf8', timeout: 20000,
+      input: JSON.stringify({ cwd: f.workspace, session_id: 'untrusted-native-query', tool_name: host === 'cursor' ? 'Shell' : 'Bash', tool_input: { command: query } }) });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  for (const host of ['claude-code', 'codex', 'cursor']) for (const query of ['git status', 'git version']) {
+    const decision = preGit(host, query);
+    assert.equal(host === 'cursor' ? decision.permission : decision.hookSpecificOutput?.permissionDecision, 'deny', `${host}: ${query}`);
+    assert.match(host === 'cursor' ? decision.agent_message : decision.hookSpecificOutput.permissionDecisionReason, /missing-implement-gate/);
+  }
+  const config = nativeHookConfig({ host: 'claude-code', ...f, packageRoot });
+  const invoke = config.value.hooks.SessionStart[0].hooks[0].command;
+  const started = spawnSync(invoke, { shell: true, cwd: f.workspace, env, encoding: 'utf8', timeout: 20000,
+    input: JSON.stringify({ cwd: f.workspace, session_id: 'untrusted-native-start' }) });
+  assert.equal(started.status, 0, started.stderr);
+  const context = JSON.parse(started.stdout).hookSpecificOutput.additionalContext;
+  const slice = JSON.parse(context.split('harness-orient-slice: ')[1]);
+  assert.match(slice.contextEvidence.sourceState.digest, /^[a-f0-9]{64}$/);
+  assert.equal(slice.trust.state, 'untrusted');
+  fs.rmSync(path.join(f.workspace, 'git.exe'));
+  for (const host of ['claude-code', 'codex', 'cursor']) for (const query of ['git status', 'git version']) {
+    assert.deepEqual(preGit(host, query), {}, `${host}: ${query} without a Git shadow`);
+  }
 });
 
 test('Codex apply_patch is treated as an edit rather than a read or shell exemption', t => {

@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,7 @@ function gitWorkspace(workspace) {
   const env = { ...process.env };
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
   try {
-    const root = execFileSync('git', ['-C', fs.realpathSync(workspace), 'rev-parse', '--show-toplevel'], {
+    const root = execFileSync(gitExecutable(), ['-C', fs.realpathSync(workspace), 'rev-parse', '--show-toplevel'], {
       env, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     return fs.realpathSync(root);

@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -54,7 +55,7 @@ function writeRecord(root, name, record) {
 function git(workspace, args, { input, index } = {}) {
   const env = { ...gitMetadataEnvironment(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_LITERAL_PATHSPECS: '1' };
   if (index) env.GIT_INDEX_FILE = index;
-  const result = spawnSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgSign=false', '-c', 'core.untrackedCache=false', ...args], { cwd: workspace, env, input, timeout: 10000, maxBuffer: 2 * MAX_BYTES });
+  const result = spawnSync(gitExecutable(), ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgSign=false', '-c', 'core.untrackedCache=false', ...args], { cwd: workspace, env, input, timeout: 10000, maxBuffer: 2 * MAX_BYTES });
   if (result.error || result.status !== 0) throw fail('private snapshot Git operation failed');
   return result.stdout;
 }
@@ -104,7 +105,7 @@ export function createExperimentSnapshot({ workspace, root, id, paths, now = Dat
     const tree = git(workspace, ['write-tree'], { index }).toString().trim();
     const timestamp = Math.floor(now / 1000);
     const env = { ...gitMetadataEnvironment(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'Harness Experiment', GIT_AUTHOR_EMAIL: 'experiment@harness.invalid', GIT_COMMITTER_NAME: 'Harness Experiment', GIT_COMMITTER_EMAIL: 'experiment@harness.invalid', GIT_AUTHOR_DATE: `${timestamp} +0000`, GIT_COMMITTER_DATE: `${timestamp} +0000` };
-    const committed = spawnSync('git', ['-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', 'commit-tree', tree, '-p', head], { cwd: workspace, env, input: `Harness experiment ${id}\n`, encoding: 'utf8', timeout: 10000 });
+    const committed = spawnSync(gitExecutable(), ['-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', 'commit-tree', tree, '-p', head], { cwd: workspace, env, input: `Harness experiment ${id}\n`, encoding: 'utf8', timeout: 10000 });
     const oid = committed.stdout?.trim();
     if (committed.status !== 0 || !OID.test(oid || '')) throw fail('private snapshot commit failed');
     snapshot = { version: 1, id, head, tree, oid, ref, candidate, files };
@@ -127,7 +128,7 @@ export function publishExperimentSnapshot({ workspace, root, snapshot, expectedC
   const intent = JSON.parse(raw);
   if (JSON.stringify(intent.snapshot) !== JSON.stringify(snapshot) || intent.next !== snapshot.oid || intent.ref !== snapshot.ref || intent.old !== '0'.repeat(snapshot.oid.length)) throw fail('snapshot publication intent changed');
   verifyExperimentSnapshot({ workspace, snapshot, requireRef: false });
-  const old = spawnSync('git', ['rev-parse', '--verify', snapshot.ref], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 4000 });
+  const old = spawnSync(gitExecutable(), ['rev-parse', '--verify', snapshot.ref], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 4000 });
   if (old.status === 0 && old.stdout.trim() !== snapshot.oid) throw fail('private snapshot ref conflicts');
   if (old.status !== 0) git(workspace, ['update-ref', snapshot.ref, snapshot.oid, intent.old]);
   writeRecord(authority, `${snapshot.id}.json`, snapshot);

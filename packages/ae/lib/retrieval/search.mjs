@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -87,7 +88,7 @@ function digestOf(parts) {
 }
 
 function workspaceGeneration(workspace) {
-  const res = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
+  const res = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
   return res.status === 0 && res.stdout.trim() ? res.stdout.trim() : null;
 }
 

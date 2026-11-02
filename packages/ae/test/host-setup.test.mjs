@@ -16,6 +16,64 @@ function fixture(t, host = 'claude-code') {
   return { root, options, run: (verb, extra = {}) => runHostSetup({ ...options, verb, ...extra }) };
 }
 
+function snapshotFixture(t, host = 'terminal') {
+  const f = fixture(t, host);
+  f.options.packageRoot = path.join(f.root, 'package');
+  const corpus = path.join(f.options.packageRoot, 'corpus');
+  fs.mkdirSync(path.join(corpus, 'skills/probe'), { recursive: true });
+  fs.writeFileSync(path.join(f.options.packageRoot, 'package.json'), '{"version":"1.0.0"}\n');
+  fs.writeFileSync(path.join(corpus, 'copilot-instructions.md'), '# Shared fixture\n');
+  fs.writeFileSync(path.join(corpus, 'skills/probe/SKILL.md'), '---\nname: probe\ndescription: Probe the fixture.\n---\n\n# Probe\n');
+  fs.writeFileSync(path.join(corpus, 'skills/probe/retired.md'), 'Retired fixture.\n');
+  return f;
+}
+
+function afterInitialObservation(target, edit, action) {
+  const open = fs.openSync, close = fs.closeSync, exists = fs.existsSync;
+  const descriptors = new Set();
+  let edited = false;
+  const inject = () => { edited = true; edit(); };
+  fs.openSync = function(full, ...args) {
+    const fd = open.call(this, full, ...args);
+    if (!edited && path.resolve(String(full)) === target) descriptors.add(fd);
+    return fd;
+  };
+  fs.closeSync = function(fd) {
+    const matched = descriptors.delete(fd);
+    const result = close.call(this, fd);
+    if (matched && !edited) inject();
+    return result;
+  };
+  fs.existsSync = function(full) {
+    const result = exists.call(this, full);
+    if (!edited && full === target && !result) inject();
+    return result;
+  };
+  let result;
+  try { result = action(); }
+  finally { fs.openSync = open; fs.closeSync = close; fs.existsSync = exists; }
+  assert.equal(edited, true, 'the edit must follow the original read or absence observation');
+  return result;
+}
+
+function assertPlanningEditPreserved(f, target, editedBytes, verb) {
+  const witnesses = [path.join(f.options.configHome, '.ae-host.json'), path.join(f.options.skillsHome, '.ae-host-skills.json'), path.join(f.options.configHome, 'copilot-instructions.md')]
+    .filter(full => full !== target)
+    .map(full => [full, fs.existsSync(full) ? fs.readFileSync(full) : null]);
+  const result = afterInitialObservation(target, () => {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, editedBytes);
+  }, () => f.run(verb));
+  assert.equal(result.status, 'failed', JSON.stringify(result));
+  assert.match(result.reason, /changed during setup/);
+  assert.deepEqual(fs.readFileSync(target), Buffer.from(editedBytes));
+  for (const [full, previous] of witnesses) {
+    assert.deepEqual(fs.existsSync(full) ? fs.readFileSync(full) : null, previous, full);
+  }
+  assert.equal(fs.existsSync(path.join(f.options.configHome, '.ae-host.lock')), false);
+  assert.equal(fs.existsSync(path.join(f.options.skillsHome, '.ae-host-skills.lock')), false);
+}
+
 test('list, absent status, and setup dry-run create no directories', t => {
   const f = fixture(t);
   assert.equal(runHostSetup({ verb: 'list' }).exitCode, 0);
@@ -192,6 +250,78 @@ test('settings changed by an editor during asset publication survive and trigger
   assert.equal(JSON.parse(fs.readFileSync(settings, 'utf8')).personal, 'concurrent edit');
   assert.equal(fs.existsSync(path.join(f.options.configHome, '.ae-host.json')), false);
   assert.equal(fs.existsSync(path.join(f.options.configHome, 'agents/engineer.md')), false);
+});
+
+test('asset planning retains the bytes used to authorize create, update and removal', async t => {
+  for (const scenario of ['upgrade', 'retirement', 'removal', 'new unowned file']) {
+    await t.test(scenario, t => {
+      const f = snapshotFixture(t);
+      if (scenario !== 'new unowned file') assert.equal(f.run('setup').exitCode, 0);
+      const relative = scenario === 'retirement' ? 'probe/retired.md' : 'probe/SKILL.md';
+      if (scenario === 'upgrade') fs.appendFileSync(path.join(f.options.packageRoot, 'corpus/skills', relative), '\nAccepted upgrade.\n');
+      if (scenario === 'retirement') fs.unlinkSync(path.join(f.options.packageRoot, 'corpus/skills', relative));
+      assertPlanningEditPreserved(f, path.join(f.options.skillsHome, relative), 'Concurrent personal asset.\n', scenario === 'removal' ? 'remove' : 'setup');
+    });
+  }
+});
+
+test('native settings planning retains the document used to merge or remove hooks', async t => {
+  for (const verb of ['setup', 'remove']) {
+    await t.test(verb, t => {
+      const f = snapshotFixture(t, 'claude-code');
+      assert.equal(f.run('setup').exitCode, 0);
+      const target = path.join(f.options.configHome, 'settings.json');
+      const edited = JSON.stringify({ ...JSON.parse(fs.readFileSync(target, 'utf8')), personal: 'Concurrent setting' });
+      assertPlanningEditPreserved(f, target, edited, verb);
+    });
+  }
+});
+
+test('ownership snapshots remain dependencies even when setup would not rewrite them', async t => {
+  for (const record of ['manifest', 'skills owner']) {
+    for (const verb of ['setup', 'remove']) {
+      await t.test(`${record} ${verb}`, t => {
+        const f = snapshotFixture(t);
+        assert.equal(f.run('setup').exitCode, 0);
+        const target = record === 'manifest' ? path.join(f.options.configHome, '.ae-host.json') : path.join(f.options.skillsHome, '.ae-host-skills.json');
+        const previous = JSON.parse(fs.readFileSync(target, 'utf8'));
+        const edit = record === 'manifest' ? { concurrentMarker: true } : { host: 'codex', configHome: path.join(f.root, 'other-config') };
+        assertPlanningEditPreserved(f, target, JSON.stringify({ ...previous, ...edit }), verb);
+      });
+    }
+  }
+});
+
+test('unchanged ownership dependencies are checked after publication and preserve edits during rollback', async t => {
+  for (const record of ['manifest', 'skills owner']) {
+    await t.test(record, t => {
+      const f = snapshotFixture(t, 'claude-code');
+      assert.equal(f.run('setup').exitCode, 0);
+      const settings = path.join(f.options.configHome, 'settings.json');
+      const originalSettings = JSON.stringify(JSON.parse(fs.readFileSync(settings, 'utf8')));
+      fs.writeFileSync(settings, originalSettings);
+      const target = record === 'manifest' ? path.join(f.options.configHome, '.ae-host.json') : path.join(f.options.skillsHome, '.ae-host-skills.json');
+      const editedBytes = JSON.stringify({ ...JSON.parse(fs.readFileSync(target, 'utf8')), concurrentMarker: true });
+      const rename = fs.renameSync;
+      let edited = false;
+      fs.renameSync = function(source, destination) {
+        const result = rename.call(this, source, destination);
+        if (!edited && destination === settings) {
+          edited = true;
+          fs.writeFileSync(target, editedBytes);
+        }
+        return result;
+      };
+      let result;
+      try { result = f.run('setup'); }
+      finally { fs.renameSync = rename; }
+      assert.equal(edited, true);
+      assert.equal(result.status, 'failed', JSON.stringify(result));
+      assert.match(result.reason, /changed during setup/);
+      assert.equal(fs.readFileSync(target, 'utf8'), editedBytes);
+      assert.equal(fs.readFileSync(settings, 'utf8'), originalSettings);
+    });
+  }
 });
 
 test('a held skills boundary lock blocks another config root before ownership publication', t => {

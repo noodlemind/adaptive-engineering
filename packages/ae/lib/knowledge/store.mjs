@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -25,7 +26,7 @@ _Rebuilt by \`ae consolidate --apply\`. One line per active learning._
 `;
 
 function gitOut(cwd, args) {
-  const res = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 30_000, env: gitMetadataEnvironment() });
+  const res = spawnSync(gitExecutable(), args, { cwd, encoding: 'utf8', timeout: 30_000, env: gitMetadataEnvironment() });
   return res.status === 0 ? res.stdout.trim() : null;
 }
 
@@ -347,11 +348,11 @@ export function ensureStore(workspace, { home, dryRun = false } = {}) {
   fs.mkdirSync(path.join(dir, 'learnings'), { recursive: true });
   let gitOk = fs.existsSync(path.join(dir, '.git'));
   if (!gitOk) {
-    gitOk = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() }).status === 0;
+    gitOk = spawnSync(gitExecutable(), ['init', '-q'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() }).status === 0;
   }
   if (gitOk) {
-        spawnSync('git', ['config', 'core.autocrlf', 'false'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
-    spawnSync('git', ['config', 'core.eol', 'lf'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+        spawnSync(gitExecutable(), ['config', 'core.autocrlf', 'false'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+    spawnSync(gitExecutable(), ['config', 'core.eol', 'lf'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   }
     const seed = (file, content) => {
     const state = storeFileState(file);
@@ -859,19 +860,18 @@ export function commitStore(dir, message) {
       stderr: `refusing to stage the store: a symlink stands at store-owned director${plantedDirs.length > 1 ? 'ies' : 'y'} ${plantedDirs.join(', ')} — staging it would commit the link into store history and hide every learning under it`,
     };
   }
-  const addRes = spawnSync('git', ['add', '-A'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+  const addRes = spawnSync(gitExecutable(), ['add', '-A'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   if (addRes.status !== 0) {
     return { committed: false, ok: false, stderr: addRes.stderr || `git add exited ${addRes.status}` };
   }
-  const statusRes = spawnSync('git', ['status', '--porcelain', '-z'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+  const statusRes = spawnSync(gitExecutable(), ['status', '--porcelain', '-z'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   if (statusRes.status !== 0) {
     return { committed: false, ok: false, stderr: statusRes.stderr || `git status exited ${statusRes.status}` };
   }
   if (!statusRes.stdout.trim()) {
     return { committed: false, ok: true };
   }
-  const commitRes = spawnSync(
-    'git',
+  const commitRes = spawnSync(gitExecutable(),
     ['-c', 'user.name=harness', '-c', 'user.email=harness@local', 'commit', '-q', '-m', message],
     { cwd: dir, encoding: 'utf8', timeout: 15000, env: gitMetadataEnvironment() }
   );
@@ -1214,11 +1214,11 @@ export function acquireStoreLock(lockPath) {
  * caller acts on it; none may ignore it.
  */
 export function rollbackStore(dir, targetSha) {
-  const reset = spawnSync('git', targetSha ? ['reset', '--hard', targetSha] : ['reset', '--hard'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+  const reset = spawnSync(gitExecutable(), targetSha ? ['reset', '--hard', targetSha] : ['reset', '--hard'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   if (reset.error || reset.status !== 0) {
     return { ok: false, stderr: reset.error ? reset.error.message : reset.stderr || `git reset exited ${reset.status}` };
   }
-  const clean = spawnSync('git', ['clean', '-fd'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+  const clean = spawnSync(gitExecutable(), ['clean', '-fd'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   if (clean.error || clean.status !== 0) {
     return { ok: false, stderr: clean.error ? clean.error.message : clean.stderr || `git clean exited ${clean.status}` };
   }
@@ -1309,7 +1309,7 @@ export function parsePorcelainZ(stdout) {
 /** The store's current HEAD commit sha, or null on a store with no commits
  * yet (`git rev-parse HEAD` fails closed rather than throwing). */
 function currentHeadSha(dir) {
-  const res = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' });
+  const res = spawnSync(gitExecutable(), ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' });
   return res.status === 0 ? res.stdout.trim() : null;
 }
 
@@ -1326,7 +1326,7 @@ function currentHeadSha(dir) {
  * not actually inspect.
  */
 function dirtyPaths(dir) {
-  const res = spawnSync('git', ['status', '--porcelain', '-uall', '-z'], { cwd: dir, encoding: 'utf8' });
+  const res = spawnSync(gitExecutable(), ['status', '--porcelain', '-uall', '-z'], { cwd: dir, encoding: 'utf8' });
   if (res.error || res.status !== 0) return null;
   return parsePorcelainZ(res.stdout).map((e) => e.path);
 }
@@ -1427,8 +1427,8 @@ function journalDirtySet(journal) {
 function discardResiduePath(dir, rel, targetSha) {
   const ref = targetSha || 'HEAD';
   const opts = { cwd: dir, encoding: 'utf8' };
-  spawnSync('git', ['reset', '-q', ref, '--', rel], opts);
-  if (spawnSync('git', ['checkout', '-q', '--', rel], opts).status === 0) return;
+  spawnSync(gitExecutable(), ['reset', '-q', ref, '--', rel], opts);
+  if (spawnSync(gitExecutable(), ['checkout', '-q', '--', rel], opts).status === 0) return;
   // Not present in `ref` at all — the dead writer planted it.
   const full = assertRealpathContained(dir, rel);
   if (!full) return;
@@ -1515,8 +1515,8 @@ function healSymlinkedStoreDirectories(dir, git) {
     // discardResiduePath does: `reset` first so a staged deletion cannot make
     // `checkout` a no-op, then `checkout` to materialize the files again.
     const opts = { cwd: dir, encoding: 'utf8' };
-    spawnSync('git', ['reset', '-q', 'HEAD', '--', rel], opts);
-    spawnSync('git', ['checkout', '-q', '--', rel], opts);
+    spawnSync(gitExecutable(), ['reset', '-q', 'HEAD', '--', rel], opts);
+    spawnSync(gitExecutable(), ['checkout', '-q', '--', rel], opts);
   }
   return { planted, note: notes.join('; ') };
 }

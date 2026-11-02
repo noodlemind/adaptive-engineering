@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,7 +9,7 @@ import { structuralCurrentness } from './repo-map/working-sources.mjs';
 import { loadManifest } from './recall-rank.mjs';
 
 function git(workspace, args) {
-  const r = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', timeout: 10_000 });
+  const r = spawnSync(gitExecutable(), ['-C', workspace, ...args], { encoding: 'utf8', timeout: 10_000 });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 

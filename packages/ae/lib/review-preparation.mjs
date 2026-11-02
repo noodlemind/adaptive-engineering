@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { planContractText } from './work-contract.mjs';
 import { domainContextOf, domainPlanPath, planHome, planRecordRoot } from './domain-context.mjs';
@@ -228,7 +229,7 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
   if (performance?.state === 'invalid') failures.push('Performance profile is invalid; inspect the current profile before completing review');
   const refs = selectedDocument ? scope.files : covered.map(file => selectedRefs.get(file) || source(workspace, file, 'product'));
   const diff = selectedDocument ? null : readProductDiff(workspace, { base: scope.base || 'HEAD', planPath: plan?.path });
-  const branchResult = spawnSync('git', ['branch', '--show-current'], { cwd: workspace, encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
+  const branchResult = spawnSync(gitExecutable(), ['branch', '--show-current'], { cwd: workspace, encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
   const budget = Math.max(1024, Math.min(maxBytes, 131072));
   const included = [], omitted = [];
   let bytes = 0;

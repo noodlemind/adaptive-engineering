@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,7 +13,7 @@ import { assertRealpathContained } from '../fs-safe.mjs';
 function mergedBranches(workspace, defaultBranch) {
   if (!defaultBranch) return null;
   for (const ref of [`origin/${defaultBranch.name}`, defaultBranch.name]) {
-    const res = spawnSync('git', ['branch', '--format=%(refname:short)', '--merged', ref], {
+    const res = spawnSync(gitExecutable(), ['branch', '--format=%(refname:short)', '--merged', ref], {
       cwd: workspace,
       encoding: 'utf8',
       timeout: 10_000,

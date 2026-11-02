@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { tokenize } from '../tokenize.mjs';
@@ -31,7 +32,7 @@ function requestRel(workspace, raw) {
 
 function currentStructuralFiles(workspace, home) {
   try {
-    const head = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 15_000 });
+    const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 15_000 });
     if (head.status !== 0) return null;
     const index = readStructuralIndex(workspace, { home, expectedSha: head.stdout.trim() });
     const source = captureWorkingSources(workspace);
@@ -50,7 +51,7 @@ function fileFacts(workspace, rels, { extract = lexicalExtract, preferStructural
 
 
 function listTracked(workspace) {
-  const res = spawnSync('git', ['-C', workspace, 'ls-files', '-z'], {
+  const res = spawnSync(gitExecutable(), ['-C', workspace, 'ls-files', '-z'], {
     encoding: 'utf8',
     timeout: 15_000,
     maxBuffer: 64 * 1024 * 1024,
@@ -149,7 +150,7 @@ export function buildNeighborhood({ workspace, files = [], maxFiles = MAX_FILES_
     const input = inspectSourceFile(workspace, rel);
     let state = input.state;
     if (['readable', 'oversized'].includes(state) && !trackedAllSet.has(rel)) {
-      const ignored = spawnSync('git', ['-C', workspace, 'check-ignore', '-q', '--', rel], { timeout: 15_000 });
+      const ignored = spawnSync(gitExecutable(), ['-C', workspace, 'check-ignore', '-q', '--', rel], { timeout: 15_000 });
       state = ignored.status === 1 ? 'new' : 'excluded';
     }
     inputs.push({ rel, state, ...(input.hash ? { hash: input.hash } : {}) });

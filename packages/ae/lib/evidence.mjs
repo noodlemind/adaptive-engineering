@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome } from './domain-context.mjs';
@@ -103,7 +104,7 @@ function gitHead(workspace) {
 }
 
 function readGitHead(workspace) {
-  const head = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
+  const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
   if (head.error || head.status !== 0) return null;
   return String(head.stdout || '').trim();
 }

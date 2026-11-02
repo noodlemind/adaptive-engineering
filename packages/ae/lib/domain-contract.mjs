@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -179,7 +180,7 @@ function gitEnvironment() {
 
 function gitObservation(root, prefix, args) {
   try {
-    const result = spawnSync('git', ['--no-pager', ...prefix, ...args], {
+    const result = spawnSync(gitExecutable(), ['--no-pager', ...prefix, ...args], {
       cwd: root, env: gitEnvironment(), encoding: 'utf8', timeout: GIT_TIMEOUT, maxBuffer: GIT_MAX_BYTES,
     });
     if (!result || result.error || result.signal || !Number.isInteger(result.status)) return null;

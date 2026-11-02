@@ -15,6 +15,8 @@ import './host-projection.test.mjs';
 import './host-setup.test.mjs';
 import './host-cli.test.mjs';
 import './host-native-hooks.test.mjs';
+import './host-personal-admission.test.mjs';
+import './git-executable.test.mjs';
 import './mcp-server.test.mjs';
 import './plugin-package.test.mjs';
 

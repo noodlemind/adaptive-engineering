@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import { flowMaintenance } from './flow-model.mjs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
@@ -440,7 +441,7 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     }
   }
 
-  const head = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
+  const head = spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
   if (!flags.dryRun && head.status === 0 && codeIndex && !codeIndex.written) {
     return {
       pass: false,

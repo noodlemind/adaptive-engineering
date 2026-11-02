@@ -59,9 +59,9 @@ function parseObject(value, label) {
   return parsed;
 }
 
-function readManifest(roots, host) {
-  const full = filename(roots, 'config', MANIFEST), raw = bytes(full);
-  if (raw === null) return null;
+function readManifest(roots, host, read) {
+  const full = filename(roots, 'config', MANIFEST), raw = read(full);
+  if (raw === null) return { full, raw, manifest: null };
   const manifest = parseObject(raw, full);
   if (manifest.schema !== 1 || manifest.host !== host || manifest.configHome !== roots.configHome || manifest.skillsHome !== roots.skillsHome || !Array.isArray(manifest.files) || !object(manifest.hooks) || !Array.isArray(manifest.hooks.groups)) throw new Error(`Invalid or mismatched host ownership record: ${full}`);
   const seen = new Set();
@@ -74,19 +74,19 @@ function readManifest(roots, host) {
   if (typeof manifest.hooks.created !== 'boolean' || ![null, host === 'claude-code' ? 'settings.json' : 'hooks.json'].includes(manifest.hooks.path)) throw new Error(`Invalid native hook ownership in ${full}`);
   if (manifest.hooks.path !== null) filename(roots, 'config', manifest.hooks.path);
   for (const entry of manifest.hooks.groups) if (!object(entry) || typeof entry.event !== 'string' || !object(entry.group)) throw new Error(`Invalid owned hook in ${full}`);
-  return manifest;
+  return { full, raw, manifest };
 }
 
-function readOwner(roots) {
-  const full = filename(roots, 'skills', SKILLS_OWNER), raw = bytes(full);
-  if (raw === null) return null;
+function readOwner(roots, read) {
+  const full = filename(roots, 'skills', SKILLS_OWNER), raw = read(full);
+  if (raw === null) return { full, raw, owner: null };
   const owner = parseObject(raw, full);
   if (owner.schema !== 1 || typeof owner.host !== 'string' || typeof owner.configHome !== 'string' || typeof owner.skillsHome !== 'string') throw new Error(`Invalid skills ownership record: ${full}`);
-  return owner;
+  return { full, raw, owner };
 }
 
-function hookDocument(roots, relative) {
-  const full = filename(roots, 'config', relative), raw = bytes(full);
+function hookDocument(roots, relative, read = bytes) {
+  const full = filename(roots, 'config', relative), raw = read(full);
   const document = raw === null ? {} : parseObject(raw, full);
   if (document.hooks !== undefined && !object(document.hooks)) throw new Error(`Invalid hooks object in ${full}`);
   for (const [event, groups] of Object.entries(document.hooks || {})) {
@@ -107,8 +107,7 @@ function stripOwnedGroups(document, groups) {
   return missing;
 }
 
-function addChange(changes, full, next) {
-  const previous = bytes(full);
+function addChange(changes, full, previous, next) {
   if (!equal(previous, next)) changes.push({ full, previous, next });
 }
 
@@ -119,11 +118,14 @@ function atomicWrite(full, value) {
   finally { fs.rmSync(temporary, { force: true }); }
 }
 
-function applyChanges(roots, changes) {
-  if (!changes.length) return;
+function applyChanges(roots, changes, snapshots) {
   const locks = [path.join(roots.configHome, '.ae-host.lock'), path.join(roots.skillsHome, '.ae-host-skills.lock')].sort();
   const acquired = [];
   const completed = [];
+  // Ownership remains authority even without a queued write; only our own
+  // successful publications may advance these guards.
+  const ownership = new Map([path.join(roots.configHome, MANIFEST), path.join(roots.skillsHome, SKILLS_OWNER)]
+    .map(full => [full, { ...snapshots.get(full) }]));
   const checkSnapshot = item => {
     const root = item.full === roots.skillsHome || item.full.startsWith(roots.skillsHome + path.sep) ? roots.skillsHome : roots.configHome;
     if (!assertNoSymlinkAncestors(root, path.relative(root, item.full)) || !equal(bytes(item.full), item.previous)) throw new Error(`Host asset changed during setup: ${item.full}`);
@@ -137,15 +139,18 @@ function applyChanges(roots, changes) {
       catch (error) { if (error.code === 'EEXIST') throw new Error(`Host setup is already locked: ${lock}`); throw error; }
       acquired.push(lock);
     }
-    // Both ownership boundaries are locked. Recheck before any publication and
-    // again at each destination so an editor update during a large install survives.
-    for (const item of changes) checkSnapshot(item);
+    // Revalidate the exact observations that authorized this plan, including
+    // unchanged ownership records and absent destinations.
+    for (const item of snapshots.values()) checkSnapshot(item);
     for (const item of changes) {
+      for (const dependency of ownership.values()) checkSnapshot(dependency);
       checkSnapshot(item);
       if (item.next === null) fs.unlinkSync(item.full);
       else atomicWrite(item.full, item.next);
       completed.push(item);
+      if (ownership.has(item.full)) ownership.get(item.full).previous = item.next;
     }
+    for (const dependency of ownership.values()) checkSnapshot(dependency);
   } catch (error) {
     const failures = [];
     for (const item of completed.reverse()) {
@@ -185,8 +190,15 @@ export function runHostSetup(options = {}) {
     result.roots = roots;
     const packageRoot = path.resolve(options.packageRoot || fileURLToPath(new URL('../..', import.meta.url)));
     const packageVersion = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version;
-    const manifest = readManifest(roots, result.host);
-    const owner = readOwner(roots);
+    const snapshots = new Map();
+    const read = full => {
+      const previous = bytes(full);
+      if (snapshots.has(full) && !equal(snapshots.get(full).previous, previous)) throw new Error(`Host asset changed during setup: ${full}`);
+      snapshots.set(full, { full, previous });
+      return previous;
+    };
+    const { full: manifestFile, raw: manifestRaw, manifest } = readManifest(roots, result.host, read);
+    const { full: ownerFile, raw: ownerRaw, owner } = readOwner(roots, read);
     const ownerMatches = !owner || owner.host === result.host && owner.configHome === roots.configHome && owner.skillsHome === roots.skillsHome;
     if (!ownerMatches) {
       result.conflicts.push(filename(roots, 'skills', SKILLS_OWNER));
@@ -203,25 +215,25 @@ export function runHostSetup(options = {}) {
       const nextFiles = [];
       const seen = new Set();
       for (const file of projection.files) {
-        const full = filename(roots, file.root, file.path), current = bytes(full), desired = Buffer.from(file.content);
+        const full = filename(roots, file.root, file.path), current = read(full), desired = Buffer.from(file.content);
         if (seen.has(full) || [MANIFEST, SKILLS_OWNER].includes(file.path)) throw new Error(`Duplicate or reserved projection path: ${full}`);
         seen.add(full);
         const old = previous.get(`${file.root}/${file.path}`);
         previous.delete(`${file.root}/${file.path}`);
         const owned = Boolean(old?.owned || current === null);
         if (current !== null && (!old?.owned || hash(current) !== old.sha256) && !current.equals(desired)) result.conflicts.push(full);
-        else addChange(changes, full, desired);
+        else addChange(changes, full, current, desired);
         nextFiles.push({ root: file.root, path: file.path, sha256: hash(desired), owned });
       }
       for (const old of previous.values()) {
-        const full = filename(roots, old.root, old.path), current = bytes(full);
-        if (old.owned && current !== null && hash(current) === old.sha256) addChange(changes, full, null);
+        const full = filename(roots, old.root, old.path), current = read(full);
+        if (old.owned && current !== null && hash(current) === old.sha256) addChange(changes, full, current, null);
         else if (current !== null) result.preserved.push(full);
       }
       let hookRecord = { path: null, groups: [], created: false };
       const native = result.host === 'terminal' ? null : nativeHookConfig({ host: result.host, packageRoot, ...roots });
       if (native?.path) {
-        const { document, full, raw } = hookDocument(roots, native.path);
+        const { document, full, raw } = hookDocument(roots, native.path, read);
         if (manifest?.hooks.path && manifest.hooks.path !== native.path) throw new Error('Native hook configuration path changed; remove the previous integration first');
         if (stripOwnedGroups(document, manifest?.hooks.groups || []).length) result.conflicts.push(full);
         if (native.value.version !== undefined && document.version !== undefined && document.version !== native.value.version) throw new Error(`Unsupported native hooks version: ${full}`);
@@ -238,35 +250,35 @@ export function runHostSetup(options = {}) {
           }
         }
         hookRecord = { path: native.path, groups: ownedGroups, created: manifest?.hooks.created ?? raw === null };
-        addChange(changes, full, json(document));
+        addChange(changes, full, raw, json(document));
       }
       if (result.conflicts.length) return { ...result, status: 'conflict', exitCode: 1, reason: 'Unowned or modified host assets were preserved', actions: [] };
-      addChange(changes, filename(roots, 'skills', SKILLS_OWNER), json({ schema: 1, host: result.host, configHome: roots.configHome, skillsHome: roots.skillsHome }));
+      addChange(changes, ownerFile, ownerRaw, json({ schema: 1, host: result.host, configHome: roots.configHome, skillsHome: roots.skillsHome }));
       const next = { schema: 1, host: result.host, ...roots, packageRoot, packageVersion, capabilities: projection.capabilities, limitations: projection.limitations, files: nextFiles, hooks: hookRecord };
-      addChange(changes, filename(roots, 'config', MANIFEST), json(next));
+      addChange(changes, manifestFile, manifestRaw, json(next));
       result.configured = true;
       result.assetState = 'current';
     } else {
       for (const file of manifest.files) {
-        const full = filename(roots, file.root, file.path), current = bytes(full);
-        if (file.owned && current !== null && hash(current) === file.sha256) addChange(changes, full, null);
+        const full = filename(roots, file.root, file.path), current = read(full);
+        if (file.owned && current !== null && hash(current) === file.sha256) addChange(changes, full, current, null);
         else if (current !== null) result.preserved.push(full);
       }
       if (manifest.hooks.path) {
-        const { document, full, raw } = hookDocument(roots, manifest.hooks.path);
+        const { document, full, raw } = hookDocument(roots, manifest.hooks.path, read);
         if (raw !== null) {
           if (stripOwnedGroups(document, manifest.hooks.groups).length) result.preserved.push(full);
           const empty = !Object.keys(document.hooks || {}).length && Object.keys(document).every(key => ['version', 'hooks'].includes(key));
-          addChange(changes, full, manifest.hooks.created && empty ? null : json(document));
+          addChange(changes, full, raw, manifest.hooks.created && empty ? null : json(document));
         }
       }
-      if (owner) addChange(changes, filename(roots, 'skills', SKILLS_OWNER), null);
-      addChange(changes, filename(roots, 'config', MANIFEST), null);
+      if (owner) addChange(changes, ownerFile, ownerRaw, null);
+      addChange(changes, manifestFile, manifestRaw, null);
       result.assetState = 'absent';
     }
     result.actions = changes.map(change => ({ kind: change.next === null ? 'remove' : change.previous === null ? 'create' : 'update', path: change.full }));
     result.dryRun = Boolean(options.dryRun);
-    if (!options.dryRun) applyChanges(roots, changes);
+    if (!options.dryRun) applyChanges(roots, changes, snapshots);
     return result;
   } catch (error) {
     return { ...result, status: 'failed', exitCode: 2, configured: false, reason: error.message, actions: [] };

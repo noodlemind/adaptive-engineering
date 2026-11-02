@@ -1,3 +1,4 @@
+import { gitExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -80,7 +81,7 @@ export function ensureBucket(dir, { key, branch = null, baseSha = null }) {
 /** Every ref name (`refs/heads/...`, `refs/remotes/...`) in the workspace. */
 function listRefs(workspace) {
   try {
-    const res = spawnSync('git', ['show-ref'], { cwd: workspace, encoding: 'utf8', timeout: 10_000 });
+    const res = spawnSync(gitExecutable(), ['show-ref'], { cwd: workspace, encoding: 'utf8', timeout: 10_000 });
     if (res.status !== 0) return null;
     return res.stdout
       .split('\n')

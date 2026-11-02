@@ -1,3 +1,4 @@
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -10,7 +11,7 @@ const DETACHED_SHORT_SHA_LEN = 12;
 
 function gitOut(cwd, args) {
   try {
-    const res = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
+    const res = spawnSync(gitExecutable(), args, { cwd, encoding: 'utf8', timeout: 10_000, env: gitMetadataEnvironment() });
     return res.status === 0 ? res.stdout.trim() : null;
   } catch {
     return null;

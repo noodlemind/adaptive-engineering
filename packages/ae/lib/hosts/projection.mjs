@@ -73,7 +73,7 @@ export function projectHostCorpus({ packageRoot, host, configHome, skillsHome, h
         const doc = splitDocument(content);
         const instructions = rel.replaceAll('\\', '/') === 'engineer/SKILL.md' ? `Read \`${skills}/engineer/references/ae-instructions.md\` with the host read tool and apply the guidance relevant to this task.\n\n` : '';
         const personal = rel.replaceAll('\\', '/') === 'create-primitive/SKILL.md'
-          ? 'Native personal skills use a schema 1 decision with `ae resources create skill <name> --file <decision.json>` and this integration\'s explicit CLI bindings. Native personal agents and instructions are an unmapped capability: stop that creation, prepare a proposal or report the limitation. Do not fall back to Copilot metadata or legacy bundle mutators for a native personal role/instruction.\n\n'
+          ? `Native personal skills use a schema 1 decision with \`ae resources create skill <name> --file <decision.json>\`. For this writer, use these literal argv elements: \`${JSON.stringify([nativePath(process.execPath), packageCli, 'resources', 'create', 'skill', '<name>', '--file', '<decision.json>', ...cliArgs, '--json'])}\`. Replace only the name and decision-file placeholders. The absolute installed Node executable and package entry point are required; bare ae, harness or node aliases are not admitted for this writer. Native personal agents and instructions are an unmapped capability: stop that creation, prepare a proposal or report the limitation. Do not fall back to Copilot metadata or legacy bundle mutators for a native personal role/instruction.\n\n`
           : '';
         content = markdown(doc.metadata, `${cliBinding}\n${instructions}${personal}${doc.body}`);
       }
