@@ -71,9 +71,9 @@ function stopProcess(child) {
       child.kill('SIGKILL');
       return;
     }
-    const killer = spawn(executable, ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, shell: false });
+    const killer = spawn(executable, ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, shell: false, timeout: 5000, killSignal: 'SIGKILL' });
     killer.on('error', () => child.kill('SIGKILL'));
-    killer.on('exit', code => { if (code) child.kill('SIGKILL'); });
+    killer.on('exit', code => { if (code !== 0) child.kill('SIGKILL'); });
   } else {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
   }

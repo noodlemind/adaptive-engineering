@@ -12,18 +12,29 @@ const moduleUrl = pathToFileURL(path.join(packageRoot, 'lib/hosts/mcp-server.mjs
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-mcp-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cleanups = [];
+  // Windows locks a process's cwd. Close every client before deleting fixtures,
+  // including when the body or an earlier cleanup assertion has failed.
+  t.after(async () => {
+    const errors = [];
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup(); } catch (error) { errors.push(error); }
+    }
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'MCP fixture cleanup failed');
+  });
   const workspace = path.join(root, 'workspace'), home = path.join(root, 'state');
   fs.mkdirSync(workspace);
   spawnSync('git', ['init', '-q', workspace]);
   fs.writeFileSync(path.join(workspace, 'hello.txt'), 'hello\n');
   spawnSync('git', ['-C', workspace, 'add', 'hello.txt']);
-  return { root, workspace, home };
+  return { root, workspace, home, registerCleanup: cleanup => cleanups.push(cleanup) };
 }
 
-function client(t, options, { observeSpawns } = {}) {
+function client(t, options, { observeSpawns, cwd } = {}) {
   const probe = observeSpawns ? `import cp from 'node:child_process'; import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module'; const nativeSpawn=cp.spawn; cp.spawn=(command,args,options)=>{fs.appendFileSync(${JSON.stringify(observeSpawns)},JSON.stringify({command,args})+'\\n');return nativeSpawn(command,args,options);};syncBuiltinESMExports();` : '';
-  const child = spawn(process.execPath, ['--input-type=module', '-e', `${probe}import {startMcpServer} from ${JSON.stringify(moduleUrl)}; await startMcpServer(${JSON.stringify(options)});`], { cwd: options.workspace, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `${probe}import {startMcpServer} from ${JSON.stringify(moduleUrl)}; await startMcpServer(${JSON.stringify(options)});`], { ...(cwd ? { cwd } : {}), stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   let next = 1, buffer = '', stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -38,7 +49,32 @@ function client(t, options, { observeSpawns } = {}) {
     }
   });
   const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal, stderr })));
-  t.after(async () => { child.stdin.end(); const timer = setTimeout(() => child.kill('SIGKILL'), 3000); await exited; clearTimeout(timer); });
+  const diagnostic = () => {
+    let observations;
+    try { observations = observeSpawns && fs.readFileSync(observeSpawns, 'utf8'); } catch {}
+    return JSON.stringify({ pid: child.pid, cwd: cwd || process.cwd(), workspace: options.workspace,
+      exitCode: child.exitCode, signalCode: child.signalCode, stderr: stderr.slice(-4000), observations });
+  };
+  const waitForExit = async (timeout = 7000) => {
+    let timer;
+    try {
+      return await Promise.race([exited, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`MCP server did not exit within ${timeout}ms: ${diagnostic()}`)), timeout);
+      })]);
+    } finally { clearTimeout(timer); }
+  };
+  const cleanup = async () => {
+    child.stdin.end();
+    try { await waitForExit(); }
+    catch (error) {
+      child.kill('SIGKILL');
+      try { await waitForExit(2000); }
+      catch { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); child.unref(); }
+      throw error;
+    }
+  };
+  if (typeof options.registerCleanup === 'function') options.registerCleanup(cleanup);
+  else t.after(cleanup);
   const send = value => child.stdin.write(`${JSON.stringify(value)}\n`);
   const request = (method, params = {}) => {
     const id = next++;
@@ -59,7 +95,7 @@ function client(t, options, { observeSpawns } = {}) {
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
     return result;
   };
-  return { child, send, request, raw, init, exited };
+  return { child, send, request, raw, init, get exited() { return waitForExit(); } };
 }
 
 test('stdio lifecycle negotiates explicit legacy versions and lists bounded typed tools', async t => {
@@ -201,11 +237,48 @@ test('Windows cleanup with no trusted system launcher makes no executable lookup
     input.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'ae_status',arguments:{}}})+'\\n');
     input.end();await done;console.log(JSON.stringify({attempted,kills}));
   `;
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: packageRoot, encoding: 'utf8', timeout: 15000 });
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: packageRoot, encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const observed = JSON.parse(result.stdout);
   assert.deepEqual(observed.attempted, [process.execPath], 'cleanup must not attempt a bare taskkill before falling back');
   assert.equal(observed.kills, 1);
+});
+
+test('Windows cleanup bounds its system launcher and kills the owned CLI after a signalled exit', () => {
+  const taskkill = 'C:\\Windows\\System32\\taskkill.exe';
+  const script = `
+    import cp from 'node:child_process'; import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
+    import {EventEmitter} from 'node:events'; import {PassThrough} from 'node:stream';
+    Object.defineProperty(process,'platform',{value:'win32'});
+    for(const key of Object.keys(process.env)) if(key.toUpperCase()==='SYSTEMROOT') delete process.env[key];
+    process.env.SystemRoot=${JSON.stringify('C:\\Windows')};
+    const taskkill=${JSON.stringify(taskkill)},realpath=fs.realpathSync.native,stat=fs.statSync;
+    fs.realpathSync.native=(candidate,...args)=>candidate===taskkill?taskkill:realpath(candidate,...args);
+    fs.statSync=(candidate,...args)=>candidate===taskkill?{isFile:()=>true}:stat(candidate,...args);
+    const attempted=[];let cli,kills=0,cleanupOptions;
+    cp.spawn=(command,args,options)=>{
+      attempted.push(command);const child=new EventEmitter();child.pid=43123;
+      child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();
+      child.kill=()=>{kills++;setImmediate(()=>child.emit('close',null));return true;};
+      if(attempted.length===1)cli=child;
+      else {cleanupOptions=options;setImmediate(()=>child.emit('exit',null,'SIGKILL'));}
+      return child;
+    };syncBuiltinESMExports();
+    const {startMcpServer}=await import(${JSON.stringify(moduleUrl)});
+    const input=new PassThrough(),output=new PassThrough();output.resume();
+    const done=startMcpServer({workspace:process.cwd(),input,output});
+    input.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'probe',version:'1'}}})+'\\n');
+    input.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\\n');
+    input.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'ae_status',arguments:{}}})+'\\n');
+    input.end();await done;console.log(JSON.stringify({attempted,kills,cleanupOptions}));
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: packageRoot, encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL' });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const observed = JSON.parse(result.stdout);
+  assert.deepEqual(observed.attempted, [process.execPath, taskkill]);
+  assert.equal(observed.cleanupOptions.timeout, 5000);
+  assert.equal(observed.cleanupOptions.killSignal, 'SIGKILL');
+  assert.equal(observed.kills, 1, 'a null exit code from the signalled launcher must trigger owned-child cleanup');
 });
 
 test('Windows EOF cleanup launches the verified system taskkill instead of the repository shadow', { skip: process.platform !== 'win32' }, async t => {
@@ -216,7 +289,7 @@ test('Windows EOF cleanup launches the verified system taskkill instead of the r
   const pidFile = path.join(f.root, 'child.pid'), observations = path.join(f.root, 'spawns.jsonl');
   fs.writeFileSync(path.join(fakePackage, 'bin/ae.mjs'), `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setTimeout(()=>console.log('{}'),30000);`);
   fs.writeFileSync(path.join(f.workspace, 'taskkill.exe'), 'repository-controlled executable shadow');
-  const c = client(t, { ...f, packageRoot: fakePackage }, { observeSpawns: observations });
+  const c = client(t, { ...f, packageRoot: fakePackage }, { observeSpawns: observations, cwd: f.workspace });
   await c.init();
   c.send({ jsonrpc: '2.0', id: 999, method: 'tools/call', params: { name: 'ae_status', arguments: {} } });
   for (let tries = 0; !fs.existsSync(pidFile) && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 10));
