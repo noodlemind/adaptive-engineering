@@ -1,4 +1,5 @@
 import { EXIT } from './style.mjs';
+import path from 'node:path';
 import { validStorageSourceId } from './storage-aliases.mjs';
 
 function invalidFlag(name, value, hint) {
@@ -101,6 +102,7 @@ export function parseFlags(argv) {
     configurePath: false,
     autonomy: null,
     copilotHome: null,
+    skillsHome: null,
     harnessHome: null,
     fromId: null,
     targets: new Set(['vscode', 'cli', 'intellij']),
@@ -235,6 +237,11 @@ export function parseFlags(argv) {
     else if (a === '--autonomy') flags.autonomy = scan[++i];
     else if (a.startsWith('--copilot-home=')) flags.copilotHome = a.split('=')[1];
     else if (a === '--copilot-home') flags.copilotHome = scan[++i];
+    else if (a === '--skills-home' || a.startsWith('--skills-home=')) {
+      const value = a === '--skills-home' ? scan[++i] : a.slice('--skills-home='.length);
+      if (!value || value.startsWith('--')) invalidFlag('--skills-home', value, 'requires a directory path');
+      flags.skillsHome = path.resolve(value);
+    }
     else if (a.startsWith('--from-home=') || a === '--from-home') {
       const value = a === '--from-home' ? scan[++i] : a.slice('--from-home='.length);
       if (!value || value.startsWith('--')) invalidFlag('--from-home', value, 'requires a directory path');

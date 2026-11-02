@@ -758,7 +758,7 @@ test('the loop never RAISES a timeout the operator lowered in their config', asy
 
 test('`agent` is in the SIGINT bridge, so cancellation runs its cleanup', () => {
   const source = fs.readFileSync(binPath, 'utf8');
-  const match = /\[([^\]]*)\]\.includes\(command\)/.exec(source);
+  const match = /let signal;[\s\S]*?\[([^\]]*)\]\.includes\(command\)/.exec(source);
   assert.ok(match, 'the signal bridge should still be a declared list');
   assert.match(match[1], /'agent'/,
     'without it Ctrl-C skips the `finally` that closes the provider');
@@ -850,6 +850,11 @@ test('every declared value-taking agent flag is one the task parser knows about'
   const missing = declared.filter((name) => !AGENT_VALUE_FLAGS.includes(name));
   assert.deepEqual(missing, [],
     'a value-taking flag missing from the set silently eats the first word of the task');
+});
+
+test('native skills-home binding is not included in the agent task', () => {
+  assert.equal(taskFromArgv(['--skills-home', '/native skills', 'fix', 'the', 'bug']), 'fix the bug');
+  assert.equal(taskFromArgv(['--skills-home=/native skills', 'fix', 'it']), 'fix it');
 });
 
 test('nothing in AGENT_VALUE_FLAGS is actually a boolean that would skip a task word', () => {

@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "adapters": {
+    "copilot": {
+      "skillsRoot": "<copilot-home>/skills",
+      "frontmatter": {
+        "disable-model-invocation": true,
+        "description": "Accountable full-cycle engineer for investigation, implementation, and verification.",
+        "tools": [
+          "agent",
+          "search/codebase",
+          "search",
+          "read",
+          "edit/editFiles",
+          "search/changes",
+          "execute",
+          "read/terminalLastCommand",
+          "execute/getTerminalOutput",
+          "read/problems",
+          "search/usages",
+          "web/fetch",
+          "githubRepo"
+        ],
+        "agents": [
+          "code-implementer",
+          "code-review-coordinator",
+          "plan-coordinator",
+          "repo-research-analyst",
+          "best-practices-researcher",
+          "framework-docs-researcher",
+          "bug-reproduction-validator",
+          "security-sentinel",
+          "performance-oracle",
+          "architecture-strategist",
+          "git-history-analyzer",
+          "java-reviewer",
+          "python-reviewer",
+          "sql-reviewer",
+          "aws-reviewer",
+          "code-simplicity-reviewer",
+          "pattern-recognition-specialist",
+          "compounding-typescript-reviewer",
+          "data-integrity-guardian",
+          "spec-flow-analyzer",
+          "delivery-classifier"
+        ],
+        "handoffs": [
+          {
+            "label": "Code Review",
+            "agent": "engineer",
+            "prompt": "Run code-review to prepare the packet and collect judgments."
+          },
+          {
+            "label": "Harness Doctor",
+            "agent": "engineer",
+            "prompt": "Run /harness-doctor."
+          },
+          {
+            "label": "Capture for Later",
+            "agent": "engineer",
+            "prompt": "Capture the finding as an open, unlocked issue without implementing it.",
+            "send": false
+          },
+          {
+            "label": "Plan and Fix",
+            "agent": "engineer",
+            "prompt": "Promote the finding into a proportional plan, implement, and verify.",
+            "send": false
+          }
+        ]
+      }
+    },
+    "claude-code": {
+      "skillsRoot": "~/.claude/skills",
+      "frontmatter": {
+        "name": "engineer",
+        "description": "Experimental AE Engineer export for investigation, implementation, and verification. Requires separately prepared AE skills and CLI.",
+        "tools": "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"
+      }
+    }
+  }
+}

@@ -1,8 +1,9 @@
 ---
+# Generated; npm run generate:engineer
 disable-model-invocation: true
 description: Accountable full-cycle engineer for investigation, implementation, and verification.
-tools: ["agent", "search/codebase", "search", "read", "edit/editFiles", "search/changes", "execute", "read/terminalLastCommand", "execute/getTerminalOutput", "read/problems", "search/usages", "web/fetch", "githubRepo"]
-agents: ["code-implementer", "code-review-coordinator", "plan-coordinator", "repo-research-analyst", "best-practices-researcher", "framework-docs-researcher", "bug-reproduction-validator", "security-sentinel", "performance-oracle", "architecture-strategist", "git-history-analyzer", "java-reviewer", "python-reviewer", "sql-reviewer", "aws-reviewer", "code-simplicity-reviewer", "pattern-recognition-specialist", "compounding-typescript-reviewer", "data-integrity-guardian", "spec-flow-analyzer", "delivery-classifier"]
+tools: [ agent, search/codebase, search, read, edit/editFiles, search/changes, execute, read/terminalLastCommand, execute/getTerminalOutput, read/problems, search/usages, web/fetch, githubRepo ]
+agents: [ code-implementer, code-review-coordinator, plan-coordinator, repo-research-analyst, best-practices-researcher, framework-docs-researcher, bug-reproduction-validator, security-sentinel, performance-oracle, architecture-strategist, git-history-analyzer, java-reviewer, python-reviewer, sql-reviewer, aws-reviewer, code-simplicity-reviewer, pattern-recognition-specialist, compounding-typescript-reviewer, data-integrity-guardian, spec-flow-analyzer, delivery-classifier ]
 handoffs:
   - label: Code Review
     agent: engineer

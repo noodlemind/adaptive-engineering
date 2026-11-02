@@ -308,7 +308,7 @@ const TOOL_NAMES = new Set(DELIVER_AGENT_TOOLS.map((t) => t.name));
 
 export const AGENT_VALUE_FLAGS = Object.freeze([
   '--agent', '--provider', '--model', '--max-turns', '--max-seconds', '--tool-timeout',
-  '--workspace', '--copilot-home', '--ae-home', '--harness-home', '--output', '--plan', '--host', '--limit', '--query',
+  '--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home', '--output', '--plan', '--host', '--limit', '--query',
   '--profile', '--verify-cmd',
   '--retention-policy',
   '--context-policy', '--file',

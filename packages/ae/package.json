@@ -1,7 +1,7 @@
 {
   "name": "ae-harness",
   "version": "0.14.0",
-  "description": "Adaptive Engineering CLI for GitHub Copilot",
+  "description": "Host-neutral Adaptive Engineering CLI and native agent integrations",
   "homepage": "https://github.com/noodlemind/prompt-library",
   "license": "UNLICENSED",
   "type": "module",
@@ -20,10 +20,13 @@
     "retired.json",
     "README.md",
     "THIRD-PARTY-NOTICES.md",
-    "scripts/check-release.mjs"
+    "scripts/check-release.mjs",
+    "scripts/generate-engineer.mjs"
   ],
   "//bundledDependencies": "All hard runtime dependencies ship inside the tarball for offline installation and diagram rendering. Pinned Pele, D2/WASM, and resvg-wasm need no separate executable, service, browser, or download. Diagram PNG text uses the OFL Source Sans 3 files under lib/diagrams/fonts plus any WOFF faces embedded in a D2 SVG. Pinned Tree-sitter loader/runtime and selected grammar WASM assets ship under lib/repo-map/vendor with upstream licenses and integrity manifests; no native bindings or optional package installation is required. Bundled dependency updates require an AE release and license/advisory review.",
   "scripts": {
+    "generate:engineer": "node ./scripts/generate-engineer.mjs --write",
+    "check:engineer": "node ./scripts/generate-engineer.mjs --check",
     "check:release": "node ./scripts/check-release.mjs",
     "check:repo": "node --test ./test/release-version.test.mjs ./test/prompt-library-contracts.test.mjs",
     "preversion": "npm run check:release",

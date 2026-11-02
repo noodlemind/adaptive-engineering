@@ -93,7 +93,11 @@ test('library code spawns only git or node', () => {
   for (const file of walk(lib).filter((full) => full.endsWith('.mjs'))) {
     const text = fs.readFileSync(file, 'utf8');
     for (const match of text.matchAll(literal)) {
-      const windowsTreeKill = match[2] === 'taskkill' && file.endsWith(`${path.sep}lib${path.sep}runner.mjs`);
+      // Both process owners use a fixed argv Windows descendant cleanup;
+      // neither exposes command selection or shell execution to callers.
+      const windowsTreeKill = match[2] === 'taskkill' && [
+        path.join(lib, 'runner.mjs'), path.join(lib, 'hosts', 'mcp-server.mjs'),
+      ].includes(file);
       if (match[2] !== 'git' && !windowsTreeKill) problems.push(`${path.relative(packageRoot, file)} spawns ${match[2]}`);
     }
     if (/\b(?:which|where|taskkill|powershell|pwsh)\b/.test(text) && !text.includes('Do not')) {

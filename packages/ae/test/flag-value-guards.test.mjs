@@ -81,6 +81,14 @@ test('the value-flag set covers every flag parseFlags reads a value for', () => 
   assert.deepEqual(missing, []);
 });
 
+test('host path flags do not become positional arguments or verbs', () => {
+  for (const flag of ['--skills-home', '--config-home', '--host-home', '--output-directory']) {
+    assert.deepEqual(positionalsOf([flag, '/native host', 'setup']), ['setup'], flag);
+    assert.deepEqual(positionalsOf([`${flag}=/native host`, 'setup', 'sample']), ['setup', 'sample'], flag);
+    assert.equal(verbOf([flag, '/native host', 'setup'], ['list', 'setup']), 'setup', flag);
+  }
+});
+
 test('a boolean flag never consumes the token after it', () => {
   assert.deepEqual(positionalsOf(['--json', 'list']), ['list']);
   assert.deepEqual(positionalsOf(['--verbose', 'run', 'slow']), ['run', 'slow']);

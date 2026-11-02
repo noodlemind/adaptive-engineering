@@ -1,14 +1,16 @@
 ---
 name: engineer
-description: "Route questions, substantial investigation, or end-to-end software delivery to @engineer, which selects Answer, Investigate, Review, or Deliver mode. Not for review-only requests."
+description: "Own questions, substantial investigation, or end-to-end software delivery in Answer, Investigate, Review, or Deliver mode. Not for review-only requests."
 argument-hint: "[describe the engineering outcome]"
 ---
 
-# Engineer entry adapter
+# Engineer
 
-Route the user's outcome and any explicit plan path to `@engineer`. The agent selects Answer, Investigate, Deliver, or Review mode; its nine-step lifecycle is canonical only for Deliver mode. It loads detailed skills only when their procedure is needed.
+Read [the Engineer contract](references/contract.md) in full with the host read tool and follow it for the user's outcome and any explicit plan path. This is the authored behavioral source; native agent definitions are generated projections, not separate workflow owners. Load detailed skills only when their procedure is needed.
 
-Read `<copilot-home>/skills/engineer/references/performance-engineering.md` with the host read tool during applicable code authoring and review. Outside the enforce hook, `ae get --reference skills/engineer/references/performance-engineering.md --json` prints the same file. Read the full reference for journey goals, architecture/flow gaps, or implementation/dependency investigations.
+Resolve `<skills-root>` in that contract to the parent of this skill's directory in the selected AE corpus. Read [performance engineering](references/performance-engineering.md) during applicable code authoring and review. Read its full reference for journey goals, architecture/flow gaps, or implementation/dependency investigations.
+
+Host capabilities and observed qualification are separate. If required tools, independent review, or workflow activation cannot be established, report the missing prerequisite; do not claim an equivalent successful fallback. A skill read does not install hooks or specialists. Supporting skills still contain Copilot addressing until their own adapters are implemented.
 
 ## Trigger Examples
 
@@ -29,14 +31,14 @@ Read `<copilot-home>/skills/engineer/references/performance-engineering.md` with
 ## Confusable Boundaries
 
 - `/engineer` routes questions, substantial investigation, or full-cycle delivery to the accountable agent.
-- `@engineer` Answer mode owns quick read-only answers without ceremony.
-- `@engineer` Deliver mode owns execution of an explicit locked plan.
+- Engineer Answer mode owns quick read-only answers without ceremony.
+- Engineer Deliver mode owns execution of an explicit locked plan.
 - The code-review skill owns review-only requests.
 
-- Locked-plan execution → `@engineer` Deliver mode
+- Locked-plan execution → Engineer Deliver mode
 - Review only → the code-review skill
-- Quick answer without edits → `@engineer` Answer mode
-- Substantial evidence-only diagnosis → `@engineer` Investigate mode
+- Quick answer without edits → Engineer Answer mode
+- Substantial evidence-only diagnosis → Engineer Investigate mode
 - Setup diagnosis → `/harness-doctor`
 
-Do not duplicate runtime steps here. Contract: `@engineer`. Read `<copilot-home>/skills/references/harness-tool-contract.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/references/harness-tool-contract.md --json` prints the same file.
+Do not duplicate runtime steps here. Read `<skills-root>/references/harness-tool-contract.md` with the host read tool when command semantics are needed. A CLI retrieval is not a substitute for required native skill-read activation.

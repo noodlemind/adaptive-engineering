@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { EXIT } from '../style.mjs';
 import { redactSecrets } from '../secret-scan.mjs';
 import { readFileNoFollow } from '../fs-safe.mjs';
@@ -87,7 +87,7 @@ function digestOf(parts) {
 }
 
 function workspaceGeneration(workspace) {
-  const res = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
+  const res = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
   return res.status === 0 && res.stdout.trim() ? res.stdout.trim() : null;
 }
 

@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { projectStoreDir } from './project-layout.mjs';
 import { harnessGlobalHome } from './paths.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
@@ -17,7 +17,7 @@ const fail = message => Object.assign(new Error(`experiment: ${message}`), { cod
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function git(workspace, args) {
-  const result = spawnSync('git', ['-c', 'core.fsmonitor=false', ...args], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 5000, maxBuffer: MAX_BYTES });
+  const result = spawnGitSync(['-c', 'core.fsmonitor=false', ...args], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 5000, maxBuffer: MAX_BYTES });
   if (result.error?.code === 'ENOENT') throw fail('git is not installed or not on PATH');
   if (result.error || result.status !== 0) throw fail('workspace Git identity is unavailable');
   return result.stdout.trim();

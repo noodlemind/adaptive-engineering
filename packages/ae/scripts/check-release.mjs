@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { estimateTokens } from '../lib/token-meter.mjs';
 import { CONTEXT_PACK_MAX_BYTES } from '../lib/context-pack.mjs';
 import { assertNoSymlinkAncestors } from '../lib/fs-safe.mjs';
+import { checkEngineerExports } from '../lib/hosts/engineer-exports.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-z-][\da-z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-z-][\da-z-]*))*)?(?:\+[\da-z-]+(?:\.[\da-z-]+)*)?$/i;
@@ -22,6 +23,7 @@ function dependencyMatches(version, range) {
 }
 
 export function validateRelease() {
+  assert.deepEqual(checkEngineerExports(packageRoot), [], 'Engineer exports drifted; run npm run generate:engineer');
   const read = rel => fs.readFileSync(path.join(packageRoot, rel), 'utf8').replace(/\r\n/g, '\n');
   const json = rel => JSON.parse(read(rel));
   const manifest = json('package.json');

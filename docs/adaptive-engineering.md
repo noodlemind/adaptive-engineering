@@ -1,8 +1,12 @@
 # Adaptive Engineering
 
-The executable is `ae`, distributed as `ae-harness`. `@engineer` and `/engineer` remain the entry points. Fresh state uses `~/.ae`; existing populated `~/.harness` homes are discovered in place. An explicit `ae migrate --from-home <old-home> --ae-home <new-home>` copies the complete state with the original retained as backup. See [the migration guide](migration/ae.md) before switching homes or renaming a remote.
+The executable is `ae`, distributed as `ae-harness`. Copilot retains `@engineer` and `/engineer`; other integrations use their generated Engineer entry. Fresh state uses `~/.ae`; existing populated `~/.harness` homes are discovered in place. An explicit `ae migrate --from-home <old-home> --ae-home <new-home>` copies the complete state with the original retained as backup. See [the migration guide](migration/ae.md) before switching homes or renaming a remote.
 
 You start with two parts. The Engineer decides what to do. The Harness checks the work and keeps the record.
+
+Engineer's shared behavior is authored in [the contract](../packages/ae/corpus/skills/engineer/references/contract.md), inside the existing corpus. The Engineer skill activates that contract. The committed Copilot and Claude example exports derive from this source and `packages/ae/corpus/hosts/engineer-adapters.json`. Runtime host setup projects the full current corpus, including skills, specialist roles and scoped instructions, with selected native roots. Generated files are projections, not separately authored workflows. Copilot's inline projection retains its immediate behavior without an additional activation prerequisite.
+
+Run `npm --prefix packages/ae run generate:engineer` after changing an example source, then `npm --prefix packages/ae run check:engineer`. Release validation rejects drift. The [host-portability plan](../.audit/ae-host-portability-plan-2026-10-30.md) records the implemented setup, hooks, local MCP and portable-package mechanics, while keeping native qualification open.
 
 The [native architecture research and implementation record](../.audit/ae-native-architecture-2026-10-29.md) maps pstack's mechanisms and iteration history to AE's own contracts, reassesses PR #104, and records the resulting changes and qualification.
 
@@ -18,8 +22,85 @@ After `ae verify` passes, compounding records what the task taught. A detail tha
 
 ```bash
 npm install -g ./packages/ae
-ae install --configure-vscode
+ae host list
+ae host setup --host claude-code
+ae host status --host claude-code
 ```
+
+Package installation installs the executable. Choose `claude-code`, `codex`,
+`cursor`, `terminal`, or an explicit legacy Copilot host with `ae host setup`.
+The old `ae install`/`upgrade` commands retain their Copilot behavior for existing
+users. A fresh TUI does not select VS Code automatically; upkeep for an already
+selected legacy installation remains available.
+
+### Host setup and guarantees
+
+`ae host setup`, `status` and `remove` take `--host`, optional `--config-home`,
+`--skills-home` and `--ae-home`, plus `--json`. Use the same root overrides for
+later status/removal. `--dry-run` reports intended mutations without publishing
+them. Setup tracks file ownership, merges owned hook groups with existing user
+configuration and refuses conflicting unowned or modified assets. Removal
+preserves user changes and unrelated configuration; it does not remove project
+state or approve trust.
+
+| Host | Default configuration | Default skills | Important boundary |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude` | `~/.claude/skills` | Main-agent delegation and subagent mode have different capabilities. |
+| Codex | `~/.codex` | `~/.agents/skills` | Review/trust configured hooks with `/hooks`; parent permissions remain authoritative. |
+| Cursor | `~/.cursor` | `~/.cursor/skills` | Stop follow-up is advisory and bounded, not hard completion blocking. |
+| Terminal | `<AE_HOME>/terminal` | `<AE_HOME>/terminal/skills` | Manual CLI use; no native hooks or isolated agent registration. |
+
+`AE_SKILLS_HOME` selects the native skill root independently of the configuration
+root. This lets direct CLI reads and native activation checks resolve Codex's
+separate skills directory rather than infer it from `~/.codex`. Host setup
+translates known corpus-root references and supplies matching instruction
+criteria. Native before/after-tool, context and completion bridges reuse the
+existing kernel. Unknown native tool effects are refused; an arbitrary MCP
+namespace is not a blanket read-only exception.
+
+Setup reports declared capabilities and `nativeQualification: unverified`.
+Neither generated configuration nor automated event fixtures proves the host
+loaded its hooks, blocked an actual native edit, or completed a model-driven
+journey. No user host configuration or trust is changed by this repository's
+automated disposable fixtures. Qualify the actual runtime/version, surface, OS,
+settings and mutation paths before relying on a native enforcement claim.
+
+### Native personal resources
+
+`ae resources create skill <name> --file - --copilot-home <config> --skills-home <skills>`
+accepts a schema 1 JSON decision on stdin containing the complete skill text.
+It requires a current selected-host binding and validates the skill before
+publication. Shipped setup-owned skills cannot be replaced by this writer;
+changing a personal skill requires its observed `expectedDigest`. Personal
+skills survive host removal.
+
+`resources list`, `show` and `validate` with the same selected roots discover
+native skills and inspect managed role/rule bytes. This is resource-format and
+asset-integrity evidence, not native invocation proof. Native personal agent
+and instruction creation is explicitly unavailable
+(`personalRoleCreation: false`); legacy mutation commands are refused under a
+selected native binding. Prepare a capability proposal for an unmapped role or
+instruction writer rather than using a Copilot-format fallback. Existing
+shipped roles/instructions still project through host setup.
+
+### Local tools and portable distribution
+
+`ae mcp serve --workspace <repo> --copilot-home <config> --skills-home <skills>`
+starts a local stdio server bound to the selected workspace and roots. Its ten
+fixed tools forward authored decisions and operations to the existing CLI;
+there is no new model loop, network listener or generic shell/tool broker. The
+implemented compatibility versions are `2025-11-25`, `2025-03-26` and
+`2024-11-05`; the server does not claim the 2026 per-request MCP protocol.
+Existing trust, native skill-read evidence, review and proof requirements still
+apply. MCP guards routed AE operations, not unrelated host tools.
+
+`ae host export --output-directory <new-directory> --workspace <repo>` writes an
+Agent Plugins 1.0 package into a new directory. It contains skills, specialist
+judgment criteria and an MCP configuration explicitly bound to that existing
+Git workspace. The client still needs a compatible installed `ae` CLI and
+Node.js >=20. Export does not install hooks or native agents, embed credentials,
+grant trust or establish independent review provenance. Export again for a
+different workspace; the plugin directory is never inferred to be the product.
 
 On an existing repository that has no spec or ADR yet, seed the workspace and the starter docs:
 
@@ -56,7 +137,7 @@ install guidance is refreshed while custom and newer runners are preserved.
 
 New `init-repo` policy stubs use `enforce`; existing authored policies remain unchanged. Initialization leaves behavioral checks for the project owner to define and reports that prerequisite. A person reviews the exact check commands and pinned policy files before approving trust. Installing AE or passing doctor does not grant that approval or prove a task. Unreadable, redirected, nonregular or oversized pinned sources cannot establish current trust. Ordinary policy changes require a new authority decision; agents manage routine lifecycle recovery within the accepted authority.
 
-Then select `@engineer` in Copilot Chat.
+Then select the generated Engineer entry in the configured host. In Copilot Chat, select `@engineer`.
 
 Use `ae doctor --target vscode`, `--target cli`, or `--target intellij` to inspect one installed surface and its selected home. Doctor separates customization files, mechanical hook checks and live-host evidence. CLI checks do not require VS Code settings. IntelliJ customization can be healthy while native lifecycle hooks are unavailable; installed agents and instructions do not establish enforced mutation denial there. A mechanical probe is not an observed editor/model trial.
 

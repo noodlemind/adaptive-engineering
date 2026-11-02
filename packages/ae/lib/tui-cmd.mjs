@@ -1408,16 +1408,21 @@ export async function ensureFirstRunInstall({
 } = {}) {
   if (process.env.HARNESS_SKIP_FIRST_RUN_INSTALL === '1') return false;
   const lock = readLock(copilotHome);
+  // A fresh CLI/TUI is host-neutral. Setup is an explicit user selection.
+  if (!lock) return false;
+  const targets = Array.isArray(lock.targets) && lock.targets.length ? lock.targets.filter(target => ['vscode', 'cli'].includes(target)) : ['vscode', 'cli'];
+  if (!targets.length) return false;
+  const usesVSCode = targets.includes('vscode');
   const currentVersion = packageVersion || readVersion();
   if (lock && isNewerPackageVersion(lock.version, currentVersion)) return false;
-  if (lock && !isNewerPackageVersion(currentVersion, lock.version) && hasInstalledVSCodeBridge(lock)) return false;
+  if (lock && !isNewerPackageVersion(currentVersion, lock.version) && (!usesVSCode || hasInstalledVSCodeBridge(lock))) return false;
   const command = lock ? 'upgrade' : 'install';
   const runInstall = install || (await import('./commands.mjs')).cmdInstallOrUpgrade;
   const args = [
     '--copilot-home', copilotHome,
     '--workspace', workspace,
-    '--target', 'vscode,cli',
-    '--configure-vscode',
+    '--target', targets.join(','),
+    ...(usesVSCode ? ['--configure-vscode'] : []),
     ...(verbose ? ['--verbose'] : []),
     ...(dryRun ? ['--dry-run'] : []),
   ];

@@ -14,6 +14,7 @@ import { storageIdForRepo } from '../lib/storage-aliases.mjs';
 import { externalPlansDir, normalizePlanRel } from '../lib/project-layout.mjs';
 import { externalPlansDir as hookPlansDir } from '../corpus/hooks/lib/external-plans.mjs';
 import { loadPlan, reloadPlan } from '../lib/plan-parse.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 
 function fixture() {
   const ws = tempDir('storage-alias-workspace-');
@@ -41,15 +42,16 @@ function run(c, args) {
 test('Windows storage lookup observes a linked primary once and refreshes the next lookup', { skip: process.platform !== 'win32' }, t => {
   const c = fixture();
   const parent = tempDir('storage-identity-linked-'), linked = path.join(parent, 'checkout');
-  const added = spawnSync('git', ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: c.ws, encoding: 'utf8' });
+  const added = spawnSync(gitExecutable(), ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: c.ws, encoding: 'utf8' });
   assert.equal(added.status, 0, added.stderr);
   t.after(() => {
-    spawnSync('git', ['worktree', 'remove', '--force', linked], { cwd: c.ws });
+    spawnSync(gitExecutable(), ['worktree', 'remove', '--force', linked], { cwd: c.ws });
     for (const dir of [parent, c.ws, c.home]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 });
   });
   const calls = [], original = childProcess.spawnSync;
+  const executable = gitExecutable();
   t.mock.method(childProcess, 'spawnSync', function(command, args) {
-    if (command === 'git' && args[0] === 'worktree') calls.push(args);
+    if (command === executable && args[0] === 'worktree') calls.push(args);
     return original.apply(this, arguments);
   });
   syncBuiltinESMExports();
@@ -57,7 +59,7 @@ test('Windows storage lookup observes a linked primary once and refreshes the ne
     const local = `local-${crypto.createHash('sha256').update(fs.realpathSync.native(c.ws)).digest('hex').slice(0, 12)}`;
     assert.equal(storeDir(linked, { home: c.home }), path.join(c.home, 'knowledge', local));
     assert.equal(calls.length, 1, 'canonical and legacy storage candidates must share one primary observation');
-    const remote = spawnSync('git', ['remote', 'add', 'origin', 'https://github.com/example/storage-fresh.git'], { cwd: c.ws, encoding: 'utf8' });
+    const remote = spawnSync(gitExecutable(), ['remote', 'add', 'origin', 'https://github.com/example/storage-fresh.git'], { cwd: c.ws, encoding: 'utf8' });
     assert.equal(remote.status, 0, remote.stderr);
     const suffix = crypto.createHash('sha256').update('github.com/example/storage-fresh').digest('hex').slice(0, 8);
     assert.equal(storeDir(linked, { home: c.home }), path.join(c.home, 'knowledge', `github.com-example-storage-fresh-${suffix}`));
@@ -91,13 +93,13 @@ test('unchanged external plans reload when legacy realpath spelling differs from
 test('a remote rename keeps the original plan readable and gateable after explicit adoption', t => {
   const c = fixture();
   t.after(() => { for (const dir of [c.ws, c.home]) fs.rmSync(dir, { recursive: true, force: true }); });
-  assert.equal(spawnSync('git', ['remote', 'add', 'origin', 'https://github.com/example/before.git'], { cwd: c.ws }).status, 0);
+  assert.equal(spawnSync(gitExecutable(), ['remote', 'add', 'origin', 'https://github.com/example/before.git'], { cwd: c.ws }).status, 0);
   const oldId = repoId(c.ws);
   const plans = path.join(c.home, 'projects', oldId, 'plans');
   fs.renameSync(path.dirname(c.plans), path.dirname(plans));
   fs.renameSync(c.knowledge, path.join(c.home, 'knowledge', oldId));
   const plan = path.join(plans, path.basename(c.plan)), saved = fs.readFileSync(plan);
-  assert.equal(spawnSync('git', ['remote', 'set-url', 'origin', 'https://github.com/example/after.git'], { cwd: c.ws }).status, 0);
+  assert.equal(spawnSync(gitExecutable(), ['remote', 'set-url', 'origin', 'https://github.com/example/after.git'], { cwd: c.ws }).status, 0);
   assert.notEqual(repoId(c.ws), oldId);
   const dry = run(c, ['knowledge', 'migrate-store', '--from-id', oldId, '--dry-run']);
   assert.equal(dry.status, 0, dry.stdout + dry.stderr);
@@ -135,14 +137,14 @@ test('migrate-store adopts old local knowledge and plans without an origin or mo
     else process.env.HARNESS_HOME = previousHome;
   }
   const linked = path.join(tempDir('storage-alias-linked-'), 'checkout');
-  const added = spawnSync('git', ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: c.ws, encoding: 'utf8' });
+  const added = spawnSync(gitExecutable(), ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: c.ws, encoding: 'utf8' });
   assert.equal(added.status, 0, added.stderr);
   try {
     assert.equal(repoId(linked), repoId(c.ws));
     assert.equal(storeDir(linked, { home: c.home }), c.knowledge);
     assert.equal(externalPlansDir(linked, { home: c.home }), c.plans);
   } finally {
-    spawnSync('git', ['worktree', 'remove', '--force', linked], { cwd: c.ws });
+    spawnSync(gitExecutable(), ['worktree', 'remove', '--force', linked], { cwd: c.ws });
   }
   const replay = run(c, ['knowledge', 'migrate-store', '--from-id', c.fromId]);
   assert.equal(replay.status, 0, replay.stdout + replay.stderr);

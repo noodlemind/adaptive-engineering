@@ -9,6 +9,16 @@ import { estimateTokens } from '../lib/token-meter.mjs';
 import { CONTEXT_PACK_MAX_BYTES } from '../lib/context-pack.mjs';
 import { hasCommand, describeCommand } from '../lib/registry.mjs';
 import { harnessControlCommand } from '../corpus/hooks/lib/tool-payload.mjs';
+// Keep projection behavior and standalone/drift controls in the named prompt-contracts check.
+import './engineer-exports.test.mjs';
+import './host-projection.test.mjs';
+import './host-setup.test.mjs';
+import './host-cli.test.mjs';
+import './host-native-hooks.test.mjs';
+import './host-personal-admission.test.mjs';
+import './git-executable.test.mjs';
+import './mcp-server.test.mjs';
+import './plugin-package.test.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 

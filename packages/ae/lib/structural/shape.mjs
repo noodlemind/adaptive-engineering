@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { harnessGlobalHome } from '../paths.mjs';
 import { repoId } from '../knowledge/store.mjs';
 import { currentSnapshotDir, readSnapshot } from './snapshot.mjs';
@@ -16,7 +16,7 @@ export function worktreeId(workspace) {
   const cached = worktreeIds.get(key);
   if (cached) return cached;
   let root = key;
-  const top = spawnSync('git', ['-C', key, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 10_000 });
+  const top = spawnGitSync(['-C', key, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 10_000 });
   if (top.status === 0 && top.stdout.trim()) root = top.stdout.trim();
   try {
     root = fs.realpathSync(root);

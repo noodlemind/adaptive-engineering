@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { test } from 'node:test';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const cli = (...args) => spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), ...args], { encoding: 'utf8' });
+test('host CLI is discoverable and list does not configure any host', () => {
+  const result = cli('host', 'list', '--json');
+  assert.equal(result.status, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.ok(data.hosts.some(host => host.id === 'codex'));
+  assert.ok(data.hosts.some(host => host.id === 'copilot-cli'));
+  assert.match(cli('host', '--help').stdout, /setup|status|remove/);
+  assert.notEqual(cli('host', 'setup', '--host', 'unknown', '--json').status, 0);
+});
+test('legacy status and removal require evidence for the selected surface', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-host-legacy-status-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, '.harness-lock.json');
+  fs.writeFileSync(file, JSON.stringify({ package: 'ae-harness', files: [], targets: ['vscode'] }));
+  const args = ['--host', 'copilot-cli', '--config-home', dir, '--json'];
+  assert.equal(JSON.parse(cli('host', 'status', ...args).stdout).configured, false);
+  assert.notEqual(cli('host', 'remove', ...args).status, 0);
+  fs.writeFileSync(file, JSON.stringify({ package: 'ae-harness', files: [] }));
+  assert.equal(JSON.parse(cli('host', 'status', ...args).stdout).configured, null);
+  assert.notEqual(cli('host', 'remove', ...args).status, 0);
+  assert.ok(fs.existsSync(file));
+});
+test('Codex CLI setup binds separate skill roots and preserves unrelated settings through removal', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-host-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const config = path.join(dir, 'codex'), skills = path.join(dir, 'agents/skills'), home = path.join(dir, 'ae');
+  const args = ['--host', 'codex', '--config-home', config, '--skills-home', skills, '--ae-home', home, '--json'];
+  assert.equal(cli('host', 'setup', ...args, '--dry-run').status, 0);
+  assert.equal(fs.existsSync(config), false);
+  const setup = cli('host', 'setup', ...args);
+  assert.equal(setup.status, 0, setup.stderr + setup.stdout);
+  assert.ok(fs.existsSync(path.join(skills, 'engineer/SKILL.md')));
+  assert.ok(fs.existsSync(path.join(config, 'agents/engineer.toml')));
+  fs.writeFileSync(path.join(config, 'user-note.txt'), 'keep\n');
+  const reference = spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), 'get', '--reference', 'skills/engineer/SKILL.md', '--copilot-home', config, '--skills-home', skills, '--ae-home', home, '--json'], { encoding: 'utf8' });
+  assert.equal(reference.status, 0, reference.stderr);
+  assert.match(JSON.parse(reference.stdout).excerpt, /Engineer/);
+  const refused = cli('resources', 'create', 'agent', 'native-reviewer', '--copilot-home', config, '--skills-home', skills, '--json');
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Native personal agents/);
+  assert.equal(fs.existsSync(path.join(config, 'agents/native-reviewer.agent.md')), false);
+  const skillText = '---\nname: personal-cli-probe\ndescription: Check a personal probe when asked to inspect it.\n---\n\n# Personal probe\n\n## Should trigger\n- inspect a probe\n- explain a probe\n- assess a probe\n\n## Should not trigger\n- publish production\n- manage secrets\n- review unrelated code\n';
+  const created = spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), 'resources', 'create', 'skill', 'personal-cli-probe', '--file', '-', '--copilot-home', config, '--skills-home', skills, '--ae-home', home, '--json'], { encoding: 'utf8', input: JSON.stringify({ schema: 1, text: skillText }) });
+  assert.equal(created.status, 0, created.stderr);
+  assert.equal(fs.readFileSync(path.join(skills, 'personal-cli-probe/SKILL.md'), 'utf8'), skillText);
+  for (const verb of ['list', 'show', 'validate']) {
+    const read = cli('resources', verb, ...(verb === 'show' ? ['personal-cli-probe'] : []), '--copilot-home', config, '--skills-home', skills, '--json');
+    assert.equal(read.status, 0, `${verb}: ${read.stderr}${read.stdout}`);
+    const data = JSON.parse(read.stdout);
+    if (verb === 'show') assert.equal(data.primitive.text, skillText);
+    else assert.ok(data.primitives.some(item => item.name === 'personal-cli-probe'));
+  }
+  const oversized = path.join(skills, 'oversized-personal');
+  fs.mkdirSync(oversized);
+  fs.writeFileSync(path.join(oversized, 'SKILL.md'), 'x'.repeat(65537));
+  const invalidRead = cli('resources', 'validate', '--copilot-home', config, '--skills-home', skills, '--json');
+  assert.notEqual(invalidRead.status, 0, 'oversized skills must not disappear from validation');
+  assert.ok(JSON.parse(invalidRead.stdout).primitives.some(item => item.name === 'oversized-personal' && !item.valid));
+  fs.rmSync(oversized, { recursive: true });
+  const status = JSON.parse(cli('host', 'status', ...args).stdout);
+  assert.equal(status.nativeQualification, 'unverified');
+  assert.equal(cli('host', 'remove', ...args).status, 0);
+  assert.equal(fs.readFileSync(path.join(config, 'user-note.txt'), 'utf8'), 'keep\n');
+  assert.ok(fs.existsSync(path.join(skills, 'personal-cli-probe/SKILL.md')), 'removal preserves personal skills');
+});

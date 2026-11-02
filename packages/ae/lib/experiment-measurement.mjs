@@ -1,9 +1,9 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import { projectAuthorityFile } from './project-authority.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { runNamedCheck, loadNamedChecks } from './checks.mjs';
 import { validateCheckArtifacts } from './check-artifacts.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors, writeFileContained } from './fs-safe.mjs';
@@ -60,7 +60,7 @@ export function snapshotExperimentInputs({ workspace, plan, copilotHome, home } 
   if (!isProjectTrusted({ workspace, copilotHome, home })) fail('selected-home project trust is required');
   const candidateRead = fileBinding(workspace, experiment.candidate);
   const candidateValue = validateLinearCandidate(parseExperimentJson(candidateRead.bytes));
-  const tracked = spawnSync('git', ['-c', 'core.fsmonitor=false', 'ls-files', '--error-unmatch', '--', experiment.candidate], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 10000 });
+  const tracked = spawnGitSync(['-c', 'core.fsmonitor=false', 'ls-files', '--error-unmatch', '--', experiment.candidate], { cwd: workspace, env: gitMetadataEnvironment(), encoding: 'utf8', timeout: 10000 });
   if (tracked.status !== 0) fail('candidate must be tracked in the accepted workspace');
   const workloadRead = fileBinding(workspace, experiment.dependencies[0]);
   validateLinearWorkload(parseExperimentJson(workloadRead.bytes), candidateValue.weights.length);

@@ -197,7 +197,7 @@ test('getCorpusRoot is the packaged corpus and does not rebuild hooks', () => {
   assert.equal(fs.existsSync(path.join(packageRoot, '..', '..', 'scripts', 'build-harness-assets.mjs')), false);
 });
 
-test('TUI launch installs or version-upgrades once with VS Code configuration enabled', async () => {
+test('TUI launch leaves fresh homes untouched and upgrades only selected legacy hosts', async () => {
   const previousExtensions = process.env.HARNESS_VSCODE_EXTENSIONS_DIR;
   const copilotHome = tempDir('first-tui-home-');
   const workspace = tempDir('first-tui-workspace-');
@@ -228,8 +228,12 @@ test('TUI launch installs or version-upgrades once with VS Code configuration en
     return 0;
   };
 
+  assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, install, packageVersion }), false);
+  assert.deepEqual(calls, []);
+  assert.equal(fs.existsSync(path.join(copilotHome, '.harness-lock.json')), false);
+  fs.writeFileSync(path.join(copilotHome, '.harness-lock.json'), JSON.stringify({ package: 'harness', version: '0.0.1', files: ['skills'], targets: ['vscode', 'cli'] }));
   assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, install, packageVersion }), true);
-  assert.deepEqual(calls.map((c) => c.command), ['install']);
+  assert.deepEqual(calls.map((c) => c.command), ['upgrade']);
   assert.ok(calls[0].argv.includes('--configure-vscode'));
   assert.deepEqual(calls[0].argv.slice(calls[0].argv.indexOf('--target'), calls[0].argv.indexOf('--target') + 2), [
     '--target',
@@ -244,7 +248,7 @@ test('TUI launch installs or version-upgrades once with VS Code configuration en
     JSON.stringify({ package: 'harness', version: '0.0.1', files: ['skills'] }),
   );
   assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, install, packageVersion }), true);
-  assert.deepEqual(calls.map((c) => c.command), ['install', 'upgrade']);
+  assert.deepEqual(calls.map((c) => c.command), ['upgrade', 'upgrade']);
   assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, install, packageVersion }), false);
   assert.equal(calls.length, 2, 'the upgraded lock suppresses another upgrade');
 
@@ -264,6 +268,7 @@ test('TUI dry-run install does not report hydration for the walkthrough', async 
   const copilotHome = tempDir('dry-tui-home-');
   const workspace = tempDir('dry-tui-workspace-');
   const calls = [];
+  fs.writeFileSync(path.join(copilotHome, '.harness-lock.json'), JSON.stringify({ package: 'harness', version: '0.0.1', files: [], targets: ['cli'] }));
   const result = await ensureFirstRunInstall({
     copilotHome,
     workspace,
@@ -276,6 +281,19 @@ test('TUI dry-run install does not report hydration for the walkthrough', async 
   });
   assert.equal(result, false, 'a simulated install must not claim assets were written');
   assert.ok(calls[0].argv.includes('--dry-run'));
+});
+
+test('TUI never adds VS Code to an explicitly CLI-only installation', async () => {
+  const copilotHome = tempDir('cli-only-tui-home-');
+  const workspace = tempDir('cli-only-tui-workspace-');
+  fs.writeFileSync(path.join(copilotHome, '.harness-lock.json'), JSON.stringify({ package: 'harness', version: '1.0.0', files: [], targets: ['cli'] }));
+  const calls = [];
+  const install = async (command, argv) => { calls.push({ command, argv }); return 0; };
+  assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, packageVersion: '1.0.0', install }), false);
+  assert.equal(calls.length, 0);
+  assert.equal(await ensureFirstRunInstall({ copilotHome, workspace, packageVersion: '1.1.0', install }), true);
+  assert.deepEqual(calls[0].argv.slice(calls[0].argv.indexOf('--target'), calls[0].argv.indexOf('--target') + 2), ['--target', 'cli']);
+  assert.equal(calls[0].argv.includes('--configure-vscode'), false);
 });
 
 test('TUI launch repairs a same-version legacy install that has no VS Code bridge', async () => {

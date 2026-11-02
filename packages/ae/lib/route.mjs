@@ -38,6 +38,15 @@ export function discoverInventory(roots) {
       }
     }
   }
+  if (process.env.AE_SKILLS_HOME) {
+    const selected = path.resolve(process.env.AE_SKILLS_HOME);
+    inventory.skills.clear();
+    if (fs.existsSync(selected)) for (const id of fs.readdirSync(selected)) {
+      if (!ID_RE.test(id)) continue;
+      const file = containedFile(selected, path.join(id, 'SKILL.md'));
+      if (file) inventory.skills.set(id, file);
+    }
+  }
   return inventory;
 }
 

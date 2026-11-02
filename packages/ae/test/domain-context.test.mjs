@@ -23,6 +23,7 @@ import { preparationIsCurrent } from '../lib/review-preparation.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
 import { resolveIndexDir } from '../lib/recall-config.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 
 test('a valid experiment contract stays current before candidate edit permission exists', t => {
   const f = experimentCliFixture(t); f.create(); f.start();
@@ -38,13 +39,13 @@ function fixture(t) {
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const workspace = path.join(base, 'coordinator'), home = path.join(base, 'home');
   fs.mkdirSync(workspace); fs.mkdirSync(path.join(home, 'domains'), { recursive: true });
-  assert.equal(spawnSync('git', ['init', '--quiet', workspace]).status, 0);
-  assert.equal(spawnSync('git', ['-C', workspace, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'seed']).status, 0);
+  assert.equal(spawnSync(gitExecutable(), ['init', '--quiet', workspace]).status, 0);
+  assert.equal(spawnSync(gitExecutable(), ['-C', workspace, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'seed']).status, 0);
   fs.writeFileSync(path.join(home, 'domains', 'catalogue.yaml'), YAML.stringify({ domain_version: 2, name: 'catalogue', repos: [{ id: 'producer', local_identity: { id: 'producer', approved: true } }], sources: [], bindings: { repos: { producer: workspace }, sources: {} } }));
   const context = resolveDomainContext({ workspace, home, name: 'catalogue' });
   const full = path.join(home, 'domains', 'catalogue', 'plans', '2026-10-12-feat-catalogue-plan.hplan');
   fs.mkdirSync(path.dirname(full), { recursive: true });
-  const skeleton = buildPlanSkeleton({ date: '2026-10-12', slug: 'catalogue', intent: 'Coordinate catalogue delivery.', status: 'open', criteria: ['Joint contract passes.'], planSchema: 3, domainParent: { version: 1, name: 'catalogue', coordinator: snapshotDomainCoordinator(workspace), repos: [{ id: 'producer', initial_head: spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), touched_scope: [], depends_on: [], child_plan_id: null, child_plan_path: null }], joint_checks: [{ repo: 'producer', check: 'joint' }], release_order: ['producer'], rollback: 'Producer owner restores prior release.' }, domainBinding: snapshotDomain(readDomain('catalogue', { home })) });
+  const skeleton = buildPlanSkeleton({ date: '2026-10-12', slug: 'catalogue', intent: 'Coordinate catalogue delivery.', status: 'open', criteria: ['Joint contract passes.'], planSchema: 3, domainParent: { version: 1, name: 'catalogue', coordinator: snapshotDomainCoordinator(workspace), repos: [{ id: 'producer', initial_head: spawnSync(gitExecutable(), ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), touched_scope: [], depends_on: [], child_plan_id: null, child_plan_path: null }], joint_checks: [{ repo: 'producer', check: 'joint' }], release_order: ['producer'], rollback: 'Producer owner restores prior release.' }, domainBinding: snapshotDomain(readDomain('catalogue', { home })) });
   fs.writeFileSync(full, skeleton.content);
   return { workspace, home, context, full };
 }
@@ -70,7 +71,7 @@ for (const getter of ['path', 'authorize', 'record-root']) for (const mutation o
   const foreign = path.join(path.dirname(f.workspace), 'foreign');
   if (mutation === 'git-root') {
     fs.mkdirSync(foreign);
-    assert.equal(spawnSync('git', ['init', '--quiet', foreign]).status, 0);
+    assert.equal(spawnSync(gitExecutable(), ['init', '--quiet', foreign]).status, 0);
   }
   const native = fs.realpathSync.native;
   let changed = false;
@@ -102,10 +103,11 @@ for (const getter of ['path', 'authorize', 'record-root']) test(`parent ${getter
   const referent = path.join(path.dirname(f.full), 'owned-plan-content');
   fs.writeFileSync(referent, original);
   const spawn = childProcess.spawnSync;
+  const executable = gitExecutable();
   let changed = false;
   t.mock.method(childProcess, 'spawnSync', function(command, args, options) {
     const result = spawn.apply(this, arguments);
-    if (!changed && command === 'git' && args.includes('--git-common-dir') && options.cwd === f.workspace) {
+    if (!changed && command === executable && args.includes('--git-common-dir') && options.cwd === f.workspace) {
       changed = true;
       fs.unlinkSync(f.full);
       fs.symlinkSync(referent, f.full, 'file');
@@ -131,11 +133,12 @@ for (const getter of ['path', 'authorize', 'record-root']) test(`parent ${getter
   fs.linkSync(f.full, alias);
   fs.writeFileSync(referent, original);
   const native = fs.realpathSync.native, spawn = childProcess.spawnSync;
+  const executable = gitExecutable();
   t.mock.method(fs.realpathSync, 'native', (file, ...args) => native(path.resolve(String(file)) === alias ? f.full : file, ...args));
   let changed = false;
   t.mock.method(childProcess, 'spawnSync', function(command, args, options) {
     const result = spawn.apply(this, arguments);
-    if (!changed && command === 'git' && args.includes('--git-common-dir') && options.cwd === f.workspace) {
+    if (!changed && command === executable && args.includes('--git-common-dir') && options.cwd === f.workspace) {
       changed = true;
       fs.unlinkSync(alias);
       fs.symlinkSync(referent, alias, 'file');
@@ -158,7 +161,7 @@ for (const getter of ['path', 'authorize', 'record-root']) test(`parent ${getter
 
 test('contexts reject mismatched coordinators, wrong domain paths and swapped symlink storage', t => {
   const f = fixture(t), other = path.join(path.dirname(f.workspace), 'other');
-  fs.mkdirSync(other); spawnSync('git', ['init', '--quiet', other]);
+  fs.mkdirSync(other); spawnSync(gitExecutable(), ['init', '--quiet', other]);
   assert.equal(loadPlan(other, f.full, { domainContext: f.context }), null);
   const wrong = path.join(f.home, 'domains', 'other', 'plans', path.basename(f.full));
   fs.mkdirSync(path.dirname(wrong), { recursive: true }); fs.copyFileSync(f.full, wrong);

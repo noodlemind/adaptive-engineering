@@ -1,6 +1,6 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'fs';
 import path from 'path';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { parseFlags, hasFlag } from './flags.mjs';
 import { resolveCopilotHome, resolveIntelliJHome } from './paths.mjs';
@@ -91,7 +91,7 @@ function log(flags, msg) {
 
 function spawnSyncHead(workspace) {
   try {
-    const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const result = spawnGitSync(['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
     if (result.error?.code === 'ENOENT') return null;
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {

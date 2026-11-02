@@ -10,6 +10,7 @@ export function installedCorpusHomes({ copilotHome } = {}) {
   const homes = [];
   const copilot = path.resolve(copilotHome || resolveCopilotHome());
   homes.push(copilot);
+  if (process.env.AE_SKILLS_HOME) return homes;
   const intellij = path.resolve(resolveIntelliJHome());
   if (intellij !== copilot) homes.push(intellij);
   return homes;
@@ -22,6 +23,7 @@ export function normalizeReferenceSpec(spec) {
   if (hash >= 0) text = text.slice(0, hash);
   if (text.startsWith('~/')) text = text.replace(/^~\/\.copilot\//, '');
   if (text.startsWith('<copilot-home>/')) text = text.slice('<copilot-home>/'.length);
+  if (text.startsWith('<skills-root>/')) text = `skills/${text.slice('<skills-root>/'.length)}`;
   text = text.replace(/^\.\//, '');
   if (!text || text.split('/').includes('..')) return null;
   return text;
@@ -43,6 +45,16 @@ export function resolveInstalledReference(spec, homes) {
   for (const home of homes) {
     if (!home) continue;
     for (const rel of candidates) {
+      if (process.env.AE_SKILLS_HOME && rel.startsWith('skills/')) {
+        const skillsRoot = path.resolve(process.env.AE_SKILLS_HOME);
+        const selected = safeResolveUnderRoot(skillsRoot, rel.slice('skills/'.length));
+        if (selected) {
+          try {
+            if (fs.statSync(selected).isFile()) return { rel, fullPath: selected, readRoot: skillsRoot };
+          } catch { /* A selected skill never falls back to a different host. */ }
+        }
+        continue;
+      }
       const full = safeResolveUnderRoot(home, rel);
       if (!full) continue;
       try {

@@ -196,14 +196,15 @@ function planEntity({ workspace, identifier }) {
 function skillEntity({ identifier, copilotHome }) {
   const rel = path.posix.join('skills', identifier, 'SKILL.md');
   const roots = [];
-  if (copilotHome) roots.push({ root: path.resolve(copilotHome), source: 'copilot-home' });
+  if (process.env.AE_SKILLS_HOME) roots.push({ root: path.resolve(process.env.AE_SKILLS_HOME), rel: `${identifier}/SKILL.md`, source: 'host-skills' });
+  else if (copilotHome) roots.push({ root: path.resolve(copilotHome), source: 'copilot-home' });
   try {
-    roots.push({ root: getCorpusRoot(), source: 'corpus' });
+    if (!process.env.AE_SKILLS_HOME) roots.push({ root: getCorpusRoot(), source: 'corpus' });
   } catch {
     // A missing corpus still lets a home skill resolve.
   }
   for (const candidate of roots) {
-    const full = safeResolveUnderRoot(candidate.root, rel);
+    const full = safeResolveUnderRoot(candidate.root, candidate.rel || rel);
     if (!full) continue;
     const raw = readFileNoFollow(full, { root: candidate.root });
     if (raw === null) continue;

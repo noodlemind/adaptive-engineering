@@ -1,12 +1,12 @@
 # Adaptive Engineering CLI
 
-CLI for the **Adaptive Engineer Harness**: install/hydrate Copilot assets, run the deterministic kernel (orient → gate → verify → compound), optional TUI, and opt-in headless agent.
+CLI for the **Adaptive Engineer Harness**: configure a selected host from a shared corpus, run the deterministic kernel (orient → gate → verify → compound), optional TUI, and opt-in headless agent.
 
 - Package name: **`ae-harness`** · command: **`ae`**
 - Explanation: [docs/adaptive-engineering.md](../../docs/adaptive-engineering.md)
 - Tool contract: [harness-tool-contract.md](corpus/skills/references/harness-tool-contract.md)
 
-Developers use Copilot **`@engineer`**. The kernel never starts an LLM on the host path.
+Choose the generated Engineer entry in the configured host; Copilot uses **`@engineer`**. The kernel never starts an LLM on the host path.
 
 AE's native formal-evidence compiler is informed by [Lauren Tan's pstack `/statechart`
 v0.15.36](https://github.com/cursor/plugins/tree/4dd1d05818d19792e7cd6e818f1667f95f7e1dbe/pstack/skills/statechart).
@@ -27,25 +27,134 @@ AE ships no pstack implementation. See [third-party notices](THIRD-PARTY-NOTICES
 npm install -g ./packages/ae
 ```
 
-That installs the `ae` command from this checkout. Then:
+That installs the `ae` command from this checkout. Select a host explicitly:
 
 ```bash
-ae tui                    # first launch hydrates VS Code + CLI automatically
-ae doctor --host vscode
+ae host list
+ae host setup --host claude-code
+ae host status --host claude-code
 ```
 
-`ae tui` hydrates when no install lock exists, upgrades when the running
-package is newer, and repairs a same-version lock whose VS Code bridge is
-missing. A current bridge install does nothing. Reload VS Code after
-installation or upgrade. `ae install --configure-vscode` and
-`ae upgrade` remain available for explicit/non-TUI setup.
+Choose `claude-code`, `codex`, `cursor` or `terminal`. `copilot-vscode`,
+`copilot-cli` and `copilot-intellij` delegate to the existing Copilot installer;
+legacy `vscode`, `cli` and `intellij` aliases remain accepted by host setup.
+The old `ae install`/`upgrade` paths retain backward compatibility. A fresh
+`ae tui` does not install VS Code automatically; it can maintain a previously
+selected legacy installation.
 
-The npm package includes `corpus/`. `ae install` copies that tree onto the Copilot home.
+The npm package includes `corpus/`. Runtime setup projects its skills, specialist
+roles and applicable instructions for the selected host and merges AE-owned
+native hook groups while preserving unrelated user configuration. No setup
+command grants project trust or proves live host activation.
 
 Knowledge indexes bind their actual corpus and retain project-private metadata
 beside each project's postings. Global notes remain shared. Older unbound private
 rows are omitted with rebuild guidance until `ae index` runs in that repository;
 another project's private rows are never a fallback corpus.
+
+### Host homes, status and removal
+
+| Host | Configuration root | Skills root | Declared limitation |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude` | `~/.claude/skills` | Engineer main-agent delegation differs from Claude subagent mode. |
+| Codex | `~/.codex` | `~/.agents/skills` | Review/trust hooks with `/hooks`; role prose does not isolate parent permissions. |
+| Cursor | `~/.cursor` | `~/.cursor/skills` | Stop follow-up is advisory, with a loop limit. |
+| Terminal | `<AE_HOME>/terminal` | `<AE_HOME>/terminal/skills` | Manual CLI use; no native hooks or isolated agents. |
+
+Override roots with `--config-home`, `--skills-home` and `--ae-home`; repeat the
+same overrides for status/removal. `AE_SKILLS_HOME` separates native skill reads
+from the configuration root, including Codex's independent skills directory.
+
+```bash
+ae host setup --host codex --dry-run --json
+ae host status --host codex --json
+ae host remove --host codex --dry-run --json
+```
+
+Setup records owned assets and preserves unowned or modified files on conflict.
+Removal deletes unchanged AE-owned assets and hook groups while preserving user
+changes and unrelated configuration. Neither operation deletes project state.
+Use `--dry-run` before publication/removal; it reports actions without writes.
+
+Setup reports declared capabilities separately from
+`nativeQualification: unverified`. Native pre/post-tool and completion bridges
+reuse existing kernel checks; unknown tool effects are refused. Configured
+hooks, successful fixtures and a healthy status do not prove native editor
+activation, actual mutation denial or a model-driven delivery. Cursor's stop
+follow-up is not hard completion blocking. No command automatically approves
+host hook trust or project check trust.
+
+### Personal resources in a selected native host
+
+After host setup, create a personal skill through the validated schema 1 writer:
+
+```bash
+ae resources create skill my-skill --file - --copilot-home <config> --skills-home <skills> --json
+ae resources list --copilot-home <config> --skills-home <skills> --json
+ae resources show my-skill --copilot-home <config> --skills-home <skills> --json
+ae resources validate --copilot-home <config> --skills-home <skills> --json
+```
+
+The first command reads a JSON decision on stdin: `schema: 1`, `text` containing
+the complete valid `SKILL.md`, and optional `expectedDigest` for replacement.
+It requires the saved host setup binding, refuses replacement of shipped
+setup-managed skills, and requires the observed digest before changing an
+existing personal skill. Personal skills remain user-owned and survive host
+removal. Discovery and validation inspect the selected native roots; managed
+role/rule byte checks remain separate from native invocation proof.
+
+Native personal agents/instructions are not yet mapped writers
+(`personalRoleCreation: false`). Their creation and legacy bundle/primitive
+mutators are explicitly refused for a selected native host; use a capability
+proposal instead of falling back to Copilot metadata. This limit does not
+prevent setup from projecting AE's existing shipped roles and instructions.
+
+### Engineer source and generated examples
+
+Engineer behavior is authored once in
+[the shared contract](corpus/skills/engineer/references/contract.md), activated
+by the Engineer skill. `corpus/hosts/engineer-adapters.json` supplies metadata for
+the two committed Copilot/Claude examples. Runtime setup uses
+`lib/hosts/projection.mjs` to project the complete current corpus and selected
+roots; the committed examples remain inspectable source projections.
+
+After editing an example source, run from this package:
+
+```bash
+npm run generate:engineer
+npm run check:engineer
+```
+
+The equivalent direct script uses `node scripts/generate-engineer.mjs --write`
+or `--check`. Release validation rejects stale generated examples. Do not edit
+generated bodies independently of the canonical behavior.
+
+### Local MCP tools and portable package
+
+```bash
+ae mcp serve --workspace <repo> --copilot-home <config> --skills-home <skills>
+ae host export --output-directory <new-directory> --workspace <repo>
+```
+
+The MCP command serves ten fixed AE tools over local stdio. Calls reuse the
+existing CLI authority, startup workspace and selected roots; there is no new
+LLM loop, network listener or unrestricted command broker. Supported negotiated
+compatibility versions are `2025-11-25`, `2025-03-26` and `2024-11-05`; this is
+not a claim of 2026 MCP support. Existing trust and proof requirements still
+apply, and required native skill activation cannot be replaced by a reference
+retrieval. Unrelated host tools remain outside MCP mediation.
+
+Portable export writes an Agent Plugins 1.0 package into a new directory. It
+contains skills, specialist judgment criteria and explicit-workspace MCP
+configuration. A compatible installed `ae` CLI and Node.js >=20 remain required.
+The package supplies no native hooks, native agent registration, credentials or
+trust. Criteria files do not establish isolated/independent review provenance.
+Export again when selecting a different existing Git workspace.
+
+The [implementation and qualification plan](../../.audit/ae-host-portability-plan-2026-10-30.md)
+records software mechanics, migration boundaries and the remaining native
+runtime/model/OS qualification. Automated disposable fixtures do not configure
+the user's real hosts or approve trust.
 
 ### Validate and pack
 
@@ -111,6 +220,9 @@ The optional `ae agent --profile deliver` loop enforces explicit orientation wit
 
 | Command | Purpose |
 |---------|---------|
+| `host list/setup/status/remove` | Select one integration, merge owned assets/hooks, inspect configured state, or remove unchanged owned assets |
+| `host export` | Write a portable Agent Plugins package bound to an explicit Git workspace |
+| `mcp serve` | Serve ten fixed AE operations over workspace-bound local stdio |
 | `install` / `upgrade` | Hydrate `~/.copilot/` and install the VS Code bridge; upgrade retires lock paths |
 | `doctor` | Health; `--host vscode` runs hook probes |
 | `inventory show` / `inventory refresh --editor <family>` | Optional sourced local IDE snapshot in the selected Harness home |

@@ -136,6 +136,8 @@ test('AC8: the audit does not flag a fully declared usage line', () => {
 // a `tui: 'verb'` disposition quietly downgraded) removes a capability from
 // the palette without any usage line changing. These fixtures are the pin.
 const DECLARED_VERBS = Object.freeze({
+  host: ['list', 'setup', 'status', 'remove', 'export'],
+  mcp: ['serve'],
   graph: ['deps', 'dependents', 'path', 'explain', 'impact'],
   knowledge: ['on', 'suggest', 'off', 'freeze', 'capture-only', 'status', 'promote', 'prune', 'purge', 'commit', 'migrate-store'],
   learning: ['retire', 'dispute', 'confirm', 'promote'],
@@ -288,7 +290,7 @@ test('AC8: every declared verb reaches the palette as its own row', () => {
   const modalFamilies = new Set(
     Object.keys(DECLARED_VERBS).filter((name) => {
       const entry = getCommand(name);
-      if (!entry) return false;
+      if (!entry || !entry.surfaces.includes('tui')) return false;
       if (entry.tuiPicker) return true;
       return (entry.verbs || []).length >= 2 && entry.tuiFold !== false;
     }),
@@ -307,6 +309,11 @@ test('AC8: every declared verb reaches the palette as its own row', () => {
   }
 
   for (const [command, verbs] of Object.entries(DECLARED_VERBS)) {
+    if (!getCommand(command).surfaces.includes('tui')) {
+      for (const verb of verbs) assert.ok(cliRows.some(row => row.id === `verb:${command}:${verb}`), `${command} ${verb} stays available on CLI`);
+      assert.equal(rows.some(row => row.id === `command:${command}` || row.command === command), false, `${command} is explicitly CLI-only`);
+      continue;
+    }
     if (modalFamilies.has(command)) continue;
     for (const verb of verbs) {
       const row = byId.get(`verb:${command}:${verb}`);

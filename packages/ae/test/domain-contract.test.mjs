@@ -8,9 +8,10 @@ import { test } from 'node:test';
 import YAML from 'yaml';
 import { readDomain, inspectDomain, observeDomainRepositoryIdentity } from '../lib/domain-contract.mjs';
 import { domainResultOf, cmdDomain, DOMAIN_VERBS } from '../lib/domain-cmd.mjs';
+import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 
 function git(root, args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 10000 });
+  const result = spawnSync(gitExecutable(), args, { cwd: root, encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.error?.message || result.stderr);
   return result.stdout.trim();
 }
@@ -45,9 +46,10 @@ const BATCH_ARGS = [...IDENTITY_ARGS, '--verify', 'HEAD'];
 
 function observeGitCalls(t, override = () => undefined) {
   const native = childProcess.spawnSync;
+  const executable = gitExecutable();
   const calls = [];
   t.mock.method(childProcess, 'spawnSync', function(command, args, options) {
-    if (command !== 'git') return native.apply(this, arguments);
+    if (command !== executable) return native.apply(this, arguments);
     calls.push({ args, options });
     const replaced = override(args, options);
     return replaced === undefined ? native.apply(this, arguments) : replaced;
@@ -308,7 +310,7 @@ test('a real Git directory ending in a carriage return cannot become its clean s
   fs.renameSync(path.join(f.root, '.git'), actualGit);
   fs.mkdirSync(cleanSibling);
   fs.writeFileSync(path.join(f.root, '.git'), `gitdir: ${actualGit}/\n`);
-  const response = spawnSync('git', BATCH_ARGS, { cwd: f.root, encoding: 'utf8', timeout: 4000 });
+  const response = spawnSync(gitExecutable(), BATCH_ARGS, { cwd: f.root, encoding: 'utf8', timeout: 4000 });
   assert.equal(response.status, 0, response.stderr);
   assert.equal(response.stdout, `${f.root}\n${actualGit}\n${actualGit}\n${git(f.root, ['rev-parse', 'HEAD'])}\n`);
   const calls = observeGitCalls(t);
@@ -505,7 +507,7 @@ test('SHA-256 HEAD remains exact on Git versions that support it', t => {
   const f = fixture(t);
   const root = path.join(f.dir, 'sha256');
   fs.mkdirSync(root);
-  const initialized = spawnSync('git', ['init', '-b', 'main', '--object-format=sha256'], { cwd: root, encoding: 'utf8', timeout: 4000 });
+  const initialized = spawnSync(gitExecutable(), ['init', '-b', 'main', '--object-format=sha256'], { cwd: root, encoding: 'utf8', timeout: 4000 });
   if (initialized.status !== 0) { t.skip('Installed Git has no SHA-256 repository support'); return; }
   git(root, ['-c', 'user.name=Domain Test', '-c', 'user.email=domain@example.invalid', 'commit', '--allow-empty', '-m', 'SHA-256 seed']);
   f.config.repos[0].root = root;

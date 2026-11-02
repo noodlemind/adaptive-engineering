@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { harnessGlobalHome } from '../paths.mjs';
 import { inertLine } from '../knowledge/store.mjs';
 import { structuralCacheDir, structuralDir } from '../structural/shape.mjs';
@@ -26,7 +26,7 @@ const MAX_UNRESOLVED = 4_000;
 const MAX_DELTA_NAMES = 50;
 
 function git(workspace, args) {
-  const r = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', timeout: 15_000 });
+  const r = spawnGitSync(['-C', workspace, ...args], { encoding: 'utf8', timeout: 15_000 });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 

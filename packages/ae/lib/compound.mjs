@@ -1,9 +1,9 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import { flowMaintenance } from './flow-model.mjs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
-import { spawnSync } from 'node:child_process';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
 import { readSession, writeSession } from './session.mjs';
@@ -440,7 +440,7 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     }
   }
 
-  const head = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
+  const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
   if (!flags.dryRun && head.status === 0 && codeIndex && !codeIndex.written) {
     return {
       pass: false,

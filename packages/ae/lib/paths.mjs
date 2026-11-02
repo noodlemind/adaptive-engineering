@@ -60,8 +60,18 @@ export function harnessGlobalHome() {
 }
 
 /** Apply --harness-home before any command reads the home. The flag wins over HARNESS_HOME. A repeated flag uses the last path, matching parseFlags. */
-export function applyHarnessHomeFlag(argv) {
+export function applyHarnessHomeFlag(argv, { valueFlags = new Set() } = {}) {
   const scan = argv.slice(0, argv.indexOf('--') === -1 ? argv.length : argv.indexOf('--'));
+  for (let i = 0; i < scan.length; i++) {
+    const token = scan[i];
+    if (token !== '--skills-home' && !token.startsWith('--skills-home=')) {
+      if (!token.includes('=') && valueFlags.has(token)) i++;
+      continue;
+    }
+    const value = token === '--skills-home' ? scan[++i] : token.slice('--skills-home='.length);
+    if (!value || value.startsWith('--') || /[\u0000-\u001f\u007f]/.test(value)) throw Object.assign(new Error('--skills-home requires a directory path'), { code: 'E_USAGE', exit: 2 });
+    process.env.AE_SKILLS_HOME = path.resolve(value);
+  }
   let chosen = null;
   const selections = new Map();
   for (let i = 0; i < scan.length; i++) {

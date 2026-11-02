@@ -21,7 +21,7 @@ function skillSource(root, skill) {
   try {
     const base = fs.realpathSync.native(root);
     let full = base;
-    for (const part of ['skills', skill, 'SKILL.md']) {
+    for (const part of [skill, 'SKILL.md']) {
       full = path.join(full, part);
       const stat = fs.lstatSync(full);
       if (stat.isSymbolicLink() || (part === 'SKILL.md' ? !stat.isFile() || stat.size > MAX_SKILL_BYTES : !stat.isDirectory())) return null;
@@ -38,7 +38,12 @@ function skillSource(root, skill) {
 }
 
 function selectedSources(skill, copilotHome) {
-  return homes(copilotHome).map(root => ({ root, source: skillSource(root, skill) })).filter(item => item.source);
+  if (process.env.AE_SKILLS_HOME) {
+    const skillsRoot = path.resolve(process.env.AE_SKILLS_HOME);
+    const source = skillSource(skillsRoot, skill);
+    return source ? [{ root: path.dirname(skillsRoot), source }] : [];
+  }
+  return homes(copilotHome).map(root => ({ root, source: skillSource(path.join(root, 'skills'), skill) })).filter(item => item.source);
 }
 
 function coversSource(input, text) {

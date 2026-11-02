@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { harnessGlobalHome } from './paths.mjs';
 import { workspaceStorageId } from './knowledge/store.mjs';
 import { createHash } from 'node:crypto';
@@ -193,7 +193,7 @@ function workspaceHasGitDir(workspace) {
 
 function gitSpawn(workspace, args, { timeout = 10_000, maxBuffer } = {}) {
   try {
-    return spawnSync('git', args, { cwd: workspace, encoding: 'utf8', timeout, ...(maxBuffer ? { maxBuffer } : {}), env: gitMetadataEnvironment() });
+    return spawnGitSync(args, { cwd: workspace, encoding: 'utf8', timeout, ...(maxBuffer ? { maxBuffer } : {}), env: gitMetadataEnvironment() });
   } catch (err) {
     return { status: 1, stdout: '', stderr: String(err?.message || err || ''), error: err };
   }

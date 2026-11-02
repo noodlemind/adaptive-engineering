@@ -21,6 +21,8 @@ function fixture(t, { separate = false } = {}) {
   fs.mkdirSync(workspace);
   if (separate) git(workspace, ['init', '-q', '--separate-git-dir', path.join(root, 'metadata')]);
   initGit(workspace);
+  // Worktree checkout and isolated helper commands must use the same byte policy.
+  git(workspace, ['config', 'core.autocrlf', 'false']);
   return { root, workspace };
 }
 
@@ -59,6 +61,8 @@ test('worktree setup preserves root ignore bytes and uses common Git-local metad
   fs.writeFileSync(path.join(tree.path, '.harness', 'run.mjs'), '// local\n');
   assert.equal(git(tree.path, ['status', '--porcelain', '--untracked-files=all']), '');
   assert.equal(fs.existsSync(path.join(tree.path, '.gitignore')), false);
+  fs.appendFileSync(path.join(tree.path, 'src', 'example.js'), '// tracked product edit\n');
+  assert.equal(git(tree.path, ['status', '--porcelain', '--untracked-files=all']), 'M src/example.js');
 });
 
 test('separate Git directories receive private exclusions without product changes', (t) => {

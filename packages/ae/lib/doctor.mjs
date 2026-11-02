@@ -1,3 +1,4 @@
+import { gitExecutable, spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'node:os';
@@ -235,13 +236,16 @@ export async function runVSCodeHookProbe(hookRoot) {
       path.join(workspace, '.github', 'harness', 'checks.yaml'),
       `version: 1\nchecks:\n  hook-probe:\n    command: ${JSON.stringify([process.execPath, '-e', 'process.exit(0)'])}\n`
     );
-    const git = (args) =>
-      spawnSync('git', args, {
-        cwd: workspace,
-        encoding: 'utf8',
-        timeout: 10_000,
-        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
-      });
+    const git = (args) => {
+      try {
+        return spawnGitSync(args, {
+          cwd: workspace,
+          encoding: 'utf8',
+          timeout: 10_000,
+          env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+        });
+      } catch (error) { return { status: null, error }; }
+    };
     if (git(['init', '-q']).status !== 0) return result;
     git(['config', 'user.email', 'harness@example.test']);
     git(['config', 'user.name', 'Harness Doctor']);
@@ -583,7 +587,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
       issues.push(`index meta still records a grammar integrity mismatch (${languages}) that the current wasm no longer has — re-run: ae index --structural`);
     }
         if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
-    const head = spawnSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
+    const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
     const headSha = head.status === 0 ? head.stdout.trim() : null;
     if (index.meta.sha && headSha && index.meta.sha !== headSha) {
       issues.push('meta.sha behind HEAD — re-run: ae index --structural');
@@ -627,10 +631,12 @@ function routingPolicyCheck(workspace) {
   };
 }
 
-function prerequisiteChecks() {
+export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
   const major = Number(String(process.versions.node).split('.')[0]);
   const nodeOk = Number.isInteger(major) && major >= 20;
-  const git = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 5_000 });
+  let git;
+  try { git = spawnSync(resolveGit(), ['--version'], { encoding: 'utf8', timeout: 5_000 }); }
+  catch (error) { git = { error }; }
   const gitOk = !git.error && git.status === 0 && Boolean(String(git.stdout || '').trim());
   return [
     {
@@ -643,7 +649,7 @@ function prerequisiteChecks() {
       id: 'R2',
       name: 'git',
       pass: gitOk,
-      hint: gitOk ? String(git.stdout).trim() : 'git is not installed or not on PATH',
+      hint: gitOk ? String(git.stdout).trim() : git.error?.code === 'E_GIT_EXECUTABLE' ? git.error.message : 'git is not installed or not on PATH',
     },
   ];
 }
@@ -755,7 +761,6 @@ export async function runDoctor({ copilotHome, assetsRoot, pkgRoot, flags, vscod
 
   const { entries: manifestEntries, updated: manifestUpdatedRaw, sha256: manifestSha256, error: manifestError } = loadManifest(copilotHome, flags.workspace, { home: flags.harnessHome || flags.home });
   const manifestUpdated = manifestStamp(manifestUpdatedRaw);
-  const indexDir = resolveIndexDir(copilotHome, flags.workspace, flags.harnessHome || flags.home);
   if (manifestError) {
     checks.push({
       id: 'H10',
@@ -794,12 +799,17 @@ export async function runDoctor({ copilotHome, assetsRoot, pkgRoot, flags, vscod
       pass: enrichedCount / manifestEntries.length >= MIN_ENRICHED_RATIO,
       hint: 'Run: ae index — rebuilds symptom, module, trigger, summary, and excerpt from solution files',
     });
-    const indexFresh = fs.existsSync(path.join(indexDir, 'meta.json')) && !isIndexStale(indexDir, manifestUpdated, manifestSha256);
+    let indexFresh = false;
+    let indexError = null;
+    try {
+      const indexDir = resolveIndexDir(copilotHome, flags.workspace, flags.harnessHome || flags.home);
+      indexFresh = fs.existsSync(path.join(indexDir, 'meta.json')) && !isIndexStale(indexDir, manifestUpdated, manifestSha256);
+    } catch (error) { indexError = error.message; }
     checks.push({
       id: 'H11',
       name: 'BM25 postings index fresh',
       pass: indexFresh,
-      hint: 'Run: ae index — rebuild the knowledge postings index',
+      hint: indexError || 'Run: ae index — rebuild the knowledge postings index',
     });
   }
 

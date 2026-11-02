@@ -83,6 +83,8 @@ import { cmdGraph, graphResultOf, parseGraphArguments, GRAPH_OPERATIONS } from '
 import { prepareGraph } from './graph.mjs';
 import { cmdFlows, flowsResultOf, FLOW_VERBS } from './flow-model-cmd.mjs';
 import { cmdDiagrams, diagramsResultOf, DIAGRAM_VERBS } from './diagram-cmd.mjs';
+import { cmdHost, hostResultOf, HOST_VERBS } from './hosts/command.mjs';
+import { cmdMcp } from './hosts/mcp-server.mjs';
 
 const REGISTRY = new Map();
 
@@ -108,6 +110,7 @@ export const GLOBAL_FLAGS = [
   },
   { name: '--workspace', type: 'string', valueName: 'path', description: 'repo root (default: cwd)', required: false, default: null, tui: 'cli-only' },
   { name: '--copilot-home', type: 'string', valueName: 'path', description: 'override ~/.copilot', required: false, default: null, tui: 'cli-only' },
+  { name: '--skills-home', type: 'string', valueName: 'path', description: 'select native skills separately from host configuration', required: false, default: null, tui: 'cli-only' },
   { name: '--ae-home', type: 'string', valueName: 'path', description: 'select the AE state directory for this command', required: false, default: null, tui: 'cli-only' },
   { name: '--harness-home', type: 'string', valueName: 'path', description: 'legacy alias for --ae-home', required: false, default: null, tui: 'cli-only' },
   {
@@ -779,6 +782,29 @@ const INSTALL_FLAGS = [
   { name: '--force-knowledge-reset', type: 'boolean', description: 'overwrite knowledge/solutions (danger)', required: false, default: false, tui: 'cli-only' },
     { name: '--preserve-knowledge', type: 'boolean', description: 'keep existing knowledge/solutions (default)', required: false, default: true, tui: 'cli-only' },
 ];
+
+registerCommand({
+  name: 'host', summary: 'select, configure, inspect or remove an AE host integration', group: 'setup', sideEffect: 'mutate',
+  usage: '<list|setup|status|remove|export> [--host <id>] [--config-home <path>] [--skills-home <path>] [--output-directory <path>]',
+  instrument: false, workspaceJournal: false, surfaces: ['cli'],
+  verbs: HOST_VERBS.map(verb => ({ verb, summary: `${verb} host integration`, ...(['list', 'status'].includes(verb) ? { sideEffect: 'read' } : {}) })),
+  args: { positionals: [{ name: 'verb', required: false, description: HOST_VERBS.join('|'), default: 'list' }], flags: [
+    { name: '--host', type: 'string', valueName: 'id', description: 'claude-code, codex, cursor, terminal or copilot-vscode/cli/intellij' },
+    { name: '--config-home', aliases: ['--host-home'], type: 'string', valueName: 'path', description: 'selected host configuration directory' },
+    { name: '--skills-home', type: 'string', valueName: 'path', description: 'native skill directory (Codex defaults to ~/.agents/skills)' },
+    { name: '--output-directory', type: 'string', valueName: 'path', description: 'new directory for portable Agent Plugins export', verbs: ['export'] },
+  ] }, handler: cmdHost, resultOf: hostResultOf, exitOf: result => result.exitCode,
+});
+
+registerCommand({
+  name: 'mcp', summary: 'serve bounded AE tools over local MCP stdio', group: 'setup', sideEffect: 'execute',
+  usage: '<serve> [--skills-home <path>]',
+  instrument: false, workspaceJournal: false, surfaces: ['cli'], outputModes: ['ledger'],
+  verbs: [{ verb: 'serve', summary: 'start a workspace-bound MCP stdio server' }],
+  args: { positionals: [{ name: 'verb', required: true, description: 'serve' }], flags: [
+    { name: '--skills-home', type: 'string', valueName: 'path', description: 'selected native skill directory' },
+  ] }, handler: cmdMcp,
+});
 
 registerCommand({
   name: 'install',

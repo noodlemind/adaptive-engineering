@@ -1,7 +1,7 @@
+import { spawnGitSync } from '../corpus/hooks/lib/git-executable.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 import { readFileNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { listPlanRels, normalizePlanRel, planFromText } from './plan-parse.mjs';
@@ -103,7 +103,7 @@ function declaredGraph(root, directories) {
 export function buildFactualReport({ workspace, copilotHome, planPath = null, maxBytes = 16384 }) {
   if (!Number.isInteger(maxBytes) || maxBytes < 2048 || maxBytes > 65536) throw Object.assign(new Error('Factual report --max-bytes must be 2048–65536'), { exit: 2, code: 'E_USAGE' });
   const diagnostics = [], versions = [], extensions = Object.create(null), directories = Object.create(null);
-  const listed = spawnSync('git', ['ls-files', '-c', '-o', '--exclude-standard', '-z'], { cwd: workspace, encoding: 'utf8', timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
+  const listed = spawnGitSync(['ls-files', '-c', '-o', '--exclude-standard', '-z'], { cwd: workspace, encoding: 'utf8', timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
   const paths = listed.status === 0 ? [...new Set(listed.stdout.split('\0').filter(Boolean))].sort() : null;
   const regular = [];
   for (const rel of paths || []) {

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { inspect } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { createStyle, keyWidthFor, EXIT } from '../lib/style.mjs';
-import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested } from '../lib/registry.mjs';
+import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested, GLOBAL_FLAGS } from '../lib/registry.mjs';
 import { createProcessEventRegistry, detectActor } from '../lib/event-registry.mjs';
 import { parseFlags, hasFlag } from '../lib/flags.mjs';
 import { applyHarnessHomeFlag, resolveCopilotHome } from '../lib/paths.mjs';
@@ -23,7 +23,7 @@ const ui = createStyle({ argv: args, stream: process.stderr });
 const out = createStyle({ argv: args });
 
 export const HELP_COMMAND_ORDER = [
-  'install', 'upgrade', 'doctor', 'inventory', 'domain', 'experiment', 'performance', 'flows', 'diagrams', 'status', 'uninstall',
+  'host', 'mcp', 'install', 'upgrade', 'doctor', 'inventory', 'domain', 'experiment', 'performance', 'flows', 'diagrams', 'status', 'uninstall',
   'init-repo', 'prepare', 'migrate', 'index', 'plan-new', 'plan-update', 'worktree', 'route', 'config',
   'model', 'trust', 'resources', 'review', 'graph',
     'orient', 'gate', 'verify', 'checks', 'exec', 'bash', 'agent', 'validate-plan', 'compound', 'recall', 'get', 'edit', 'write', 'apply', 'todo', 'undo', 'search', 'lookup', 'tree', 'run', 'inspect', 'tui', 'events', 'report',
@@ -40,6 +40,7 @@ const GLOBAL_OPTIONS = [
   ['--no-color', 'plain ascii output (also honors NO_COLOR; auto when piped)'],
   ['--workspace <path>', 'repo root (default: cwd)'],
   ['--copilot-home <path>', 'override ~/.copilot'],
+  ['--skills-home <path>', 'select native skills independently from host configuration'],
   ['--ae-home <path>', 'select the AE state directory; --harness-home remains supported'],
   ['--no-events', 'do not write any local record: .harness/events.jsonl or runs.jsonl'],
 ];
@@ -68,8 +69,8 @@ function groupedForHelp() {
 
 function renderHelp() {
   const lines = [];
-  lines.push(`ae ${out.paint('muted', '— Adaptive Engineer Harness for GitHub Copilot')}`);
-  lines.push(out.paint('muted', 'ae · VS Code · CLI · IntelliJ'));
+  lines.push(`ae ${out.paint('muted', '— Adaptive Engineer Harness')}`);
+  lines.push(out.paint('muted', 'Choose a host: ae host list · ae host setup --host <id>'));
   lines.push('');
   lines.push(`Usage: ae ${out.paint('muted', '<command> [options]')}`);
   lines.push('');
@@ -165,7 +166,17 @@ export async function main() {
   // What the command said happened, if it said. Preferred over the exit map.
   let reportedStatus = null;
   try {
-    applyHarnessHomeFlag(args);
+    const valuedFlags = new Set([...GLOBAL_FLAGS, ...(getCommand(command)?.args?.flags || [])]
+      .filter(flag => flag.type !== 'boolean').flatMap(flag => [flag.name, ...(flag.aliases || [])]));
+    applyHarnessHomeFlag(args, { valueFlags: valuedFlags });
+    // Apply the new shared skill-root binding once; legacy command parsers need
+    // not interpret a host setup flag as a positional query or primitive name.
+    if (!['host', 'mcp'].includes(command)) for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--') break;
+      if (args[i] === '--skills-home') { args.splice(i, 2); i--; }
+      else if (args[i].startsWith('--skills-home=')) { args.splice(i, 1); i--; }
+      else if (!args[i].includes('=') && valuedFlags.has(args[i])) i++;
+    }
         if (command === '--version' || command === '-V') {
       console.log(readPkgVersion());
     } else if (command === 'help' || command === '--help' || command === '-h') {

@@ -13,6 +13,8 @@ import { getCorpusRoot } from './assets.mjs';
 import { resourceInput, scaffoldPrimitive, createStructuredPrimitive, validateResourceInventory } from './resource-validation.mjs';
 import { resourceCandidates, proposeResource } from './resource-candidates.mjs';
 import { readBoundedInput } from './fs-safe.mjs';
+import { createHostSkill } from './hosts/personal-skill.mjs';
+import { nativeResourceRead } from './hosts/resource-read.mjs';
 import {
   createPersonalPrimitive,
   discardPrimitive,
@@ -36,7 +38,7 @@ function usageError(message, hint) {
 
 /** Flags on this entry that take a value — a BOOLEAN flag before the verb must
  * not swallow it, which is the bug the same parser had in `run`. */
-const VALUE_FLAGS = new Set(['--workspace', '--copilot-home', '--ae-home', '--harness-home', '--file', '--path']);
+const VALUE_FLAGS = new Set(['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home', '--file', '--path']);
 
 function context(argv) {
   const flags = parseFlags(argv);
@@ -126,6 +128,20 @@ export async function resourcesResultOf(argv, ctx = {}) {
   const { flags, verb, target, name, copilotHome } = context(argv);
   if (!RESOURCES_VERBS.includes(verb)) {
     throw usageError(`unknown resources verb: ${verb}`, `one of ${RESOURCES_VERBS.join(', ')}`);
+  }
+  if (process.env.AE_SKILLS_HOME) {
+    if (['list', 'show', 'validate'].includes(verb) && !flags.corpus && !flags.path) {
+      return nativeResourceRead({ verb, target, configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME });
+    }
+    if (verb === 'create') {
+      if (target !== 'skill') throw usageError('Native personal agents/instructions require a mapped host writer; Copilot-format fallback is refused', 'Create a capability proposal; native personal skills use resources create skill --file');
+      if (!flags.files?.length) throw usageError('Native personal skills require a schema 1 decision through --file', 'ae resources create skill <name> --file -');
+      const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
+      return createHostSkill({ configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME, name, input: resourceInput(inputFlags), dryRun: flags.dryRun });
+    }
+    if (['add', 'update', 'remove', 'register', 'unregister', 'discard'].includes(verb)) {
+      throw usageError('Legacy bundle and primitive mutation is not mapped for the selected native host', 'Use ae host setup/status/remove for managed assets; preserve personal files');
+    }
   }
   if (verb === 'scaffold') return scaffoldPrimitive(target, name);
   if (verb === 'validate') return validateResourceInventory(flags.corpus ? getCorpusRoot() : flags.path ? path.resolve(flags.workspace, flags.path) : copilotHome, { shipped: flags.corpus, shippedFiles: !flags.path ? shippedAssetFiles() : new Set() });

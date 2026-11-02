@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
+import { checkEngineerExports } from '../lib/hosts/engineer-exports.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const corpus = path.join(packageRoot, 'corpus');
@@ -73,10 +74,15 @@ test('slash commands in always-on instructions, agents, and invocable skills res
   assert.deepEqual(problems, []);
 });
 
-test('the Investigate confirmation rule lives in one place', () => {
+test('the Investigate confirmation rule has one authored source and exact native projections', () => {
   const phrase = 'confirmed only when evidence demonstrates';
   const hits = filesUnder(corpus).filter((file) => /\.(md|mjs)$/.test(file) && read(file).includes(phrase));
-  assert.deepEqual(hits.map((file) => path.relative(corpus, file).replaceAll('\\', '/')), ['agents/engineer.agent.md']);
+  assert.deepEqual(hits.map((file) => path.relative(corpus, file).replaceAll('\\', '/')).sort(), [
+    'agents/engineer.agent.md',
+    'hosts/claude-code/engineer.md',
+    'skills/engineer/references/contract.md',
+  ]);
+  assert.deepEqual(checkEngineerExports(packageRoot), [], 'copies must be exact generated projections of the authored contract');
   const contradicted = filesUnder(corpus).filter((file) => /\.(md|mjs)$/.test(file) && read(file).includes('confirmed race/retry defect'));
   assert.deepEqual(contradicted, []);
 });
