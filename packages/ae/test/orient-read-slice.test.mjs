@@ -24,6 +24,7 @@ const SLICE_KEYS = [
   'verification',
   'planGoal',
   'trust',
+  'checkReadiness',
   'reviewCoverage',
   'learnings',
   'skills',
@@ -125,6 +126,10 @@ function assertColdSlice(slice, { contextVersion = 1 } = {}) {
   assert.deepEqual(slice.instructions, []);
   assert.deepEqual(slice.contacts, []);
   assert.deepEqual(slice.index, { knowledge: 'missing', structural: 'missing' });
+  assert.equal(slice.checkReadiness.status, 'missing');
+  assert.equal(slice.checkReadiness.ready, false);
+  assert.equal(slice.checkReadiness.remediation.owner, 'engineer');
+  assert.equal(fs.existsSync(slice.checkReadiness.source), false, 'cold orientation must not initialize the missing check source');
   assert.equal(slice.gateStatus, 'blocked');
   assert.equal(slice.activePlan, null);
   assert.equal(slice.layout.kind, 'product-repo');
@@ -186,6 +191,7 @@ test('a broken index read still returns JSON with both labels missing', () => {
     const slice = sliceFrom(output.additionalContext);
     assert.equal(slice.neighborhood, null);
     assert.deepEqual(slice.index, { knowledge: 'missing', structural: 'missing' });
+    assert.equal(slice.checkReadiness, null, 'unavailable orientation must not invent check readiness');
     assert.deepEqual(Object.keys(slice), SLICE_KEYS);
   } finally {
     removeRepo(c);

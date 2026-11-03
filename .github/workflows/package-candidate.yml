@@ -5,6 +5,9 @@ on:
     paths:
       - 'packages/ae/**'
       - '.github/workflows/package-candidate.yml'
+      - '.github/ci/**'
+      - 'scripts/ci-tests.mjs'
+      - 'scripts/ci-test-reporter.mjs'
       - '.npmrc'
       - 'LICENSE*'
   workflow_dispatch:
@@ -17,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  package:
+  archive:
     strategy:
       fail-fast: false
       matrix:
@@ -34,23 +37,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/ae/package-lock.json
       - run: npm ci --prefix packages/ae
       - name: Validate release contracts
         run: |
           npm run --prefix packages/ae check:release
           npm run --prefix packages/ae check:repo
-      - name: Validate Git integration regressions
-        run: >-
-          node --test --test-concurrency=2
-          packages/ae/test/domain-contract.test.mjs
-          packages/ae/test/domain-context.test.mjs
-          packages/ae/test/domain-delivery.test.mjs
-          packages/ae/test/storage-aliases.test.mjs
-          packages/ae/test/workspace-layout.test.mjs
-          packages/ae/test/migrate-layout.test.mjs
-          packages/ae/test/package-standalone.test.mjs
-          packages/ae/test/unchanged-retry.test.mjs
-          packages/ae/test/domain-commands.test.mjs
       - name: Pack and identify candidate
         run: |
           mkdir artifacts
@@ -82,3 +75,77 @@ jobs:
         with:
           name: ae-candidate-${{ matrix.os }}-node${{ matrix.node }}-${{ github.sha }}
           path: artifacts/
+
+  # The same nine source regressions still run on every supported OS/runtime.
+  # They no longer delay archive feedback and Windows runs three bounded batches.
+  git-regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '20', shard: 1, shards: 1 }
+          - { os: ubuntu-latest, node: '24', shard: 1, shards: 1 }
+          - { os: windows-latest, node: '20', shard: 1, shards: 3 }
+          - { os: windows-latest, node: '20', shard: 2, shards: 3 }
+          - { os: windows-latest, node: '20', shard: 3, shards: 3 }
+          - { os: windows-latest, node: '24', shard: 1, shards: 3 }
+          - { os: windows-latest, node: '24', shard: 2, shards: 3 }
+          - { os: windows-latest, node: '24', shard: 3, shards: 3 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/ae/package-lock.json
+      - run: npm ci --prefix packages/ae
+      - name: Validate Git integration regressions
+        run: node scripts/ci-tests.mjs --suite git --shard ${{ matrix.shard }} --shards ${{ matrix.shards }} 2>&1 | tee git-regressions.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: git-regressions-${{ matrix.os }}-node${{ matrix.node }}-${{ matrix.shard }}
+          path: |
+            ci-test-results/
+            git-regressions.log
+
+  # Preserve the existing required package check names. A green archive alone
+  # cannot satisfy them: all same-revision Git batches and their inventory must pass.
+  package:
+    name: package (${{ matrix.os }}, ${{ matrix.node }})
+    needs: [archive, git-regressions]
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '20', shards: 1, platform: linux }
+          - { os: ubuntu-latest, node: '24', shards: 1, platform: linux }
+          - { os: windows-latest, node: '20', shards: 3, platform: win32 }
+          - { os: windows-latest, node: '24', shards: 3, platform: win32 }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: git-regressions-${{ matrix.os }}-node${{ matrix.node }}-*
+          path: git-shards
+      - name: Require complete same-revision Git inventory
+        run: node scripts/ci-tests.mjs --verify-manifests git-shards --suite git --shards ${{ matrix.shards }} --platform ${{ matrix.platform }} --node-major ${{ matrix.node }}
+      - name: Require archive and Git regression success
+        if: always()
+        env:
+          ARCHIVE_RESULT: ${{ needs.archive.result }}
+          GIT_RESULT: ${{ needs['git-regressions'].result }}
+        run: node --input-type=module -e "if (process.env.ARCHIVE_RESULT !== 'success' || process.env.GIT_RESULT !== 'success') process.exit(1)"

@@ -64,6 +64,7 @@ export function buildContextPack({
   intentDiscovery = null,
   worktree = null,
   trust = null,
+  checkReadiness = null,
   verification = null,
   performance = null,
   flowModel = null,
@@ -149,6 +150,7 @@ export function buildContextPack({
   }
 
   if (trust) lines.push('', '## Trust', `- ${trust.state}: ${inertLine(trust.reason)}`, ...(trust.trusted ? [] : ['- A person must review and approve policy; the agent cannot approve it.']));
+  if (checkReadiness && !checkReadiness.ready) lines.push('', '## Check readiness', `- ${checkReadiness.status}; Engineer prepares commands before approval. Inspect returned checkReadiness for the source and bound invocation.`);
 
   lines.push('', '## Gate (preview)');
   if (deliveryContract) lines.push('- implement preview only; completion requires review, verify and a learning decision.');

@@ -30,6 +30,8 @@ Read selected intent sources and task-relevant repository context. Use /recall f
 
 Choose the smallest approach that meets the goal. Identify impacted paths and meaningful acceptance criteria. Inspect trusted named checks from the selected configuration source reported by `ae checks list --json`; judge assertion adequacy rather than matching a check name. Record source-backed reasoning, constraints, unresolved questions, and risk-aware review needs.
 
+When named checks are missing or inadequate, follow `<copilot-home>/skills/create-primitive/references/named-checks.md`. Prepare the concrete configuration through the bounded writer before requesting a necessary approval. Keep the plan draft until its prerequisites pass; do not delegate configuration authoring back to the user.
+
 For transaction races, lost updates, duplicate writes, or flush/commit misconceptions, require a failing concurrent reproduction before strategy selection. Route domain review when needed. Repeated missing capability becomes a proposal, not an inline installation.
 
 ## Submit the plan decision

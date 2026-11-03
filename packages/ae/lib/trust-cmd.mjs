@@ -5,6 +5,7 @@ import { resolveCopilotHome } from './paths.mjs';
 import { createStyle, keyWidthFor, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
 import { approveProject, revokeProject, trustStatus } from './trust.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 
 const ui = createStyle({ argv: process.argv.slice(2) });
 
@@ -26,17 +27,17 @@ function context(argv) {
 }
 
 export async function trustResultOf(argv, ctx = {}) {
-  const { verb, workspace, copilotHome } = context(argv);
+  const { verb, workspace, copilotHome, flags } = context(argv);
   if (!TRUST_VERBS.includes(verb)) {
     throw usageError(`unknown trust verb: ${verb}`, `one of ${TRUST_VERBS.join(', ')}`);
   }
 
-  if (verb === 'status') return { verb, ...trustStatus({ workspace, copilotHome }) };
+  if (verb === 'status') return { verb, ...trustStatus({ workspace, copilotHome, home: flags.harnessHome }), checkReadiness: inspectCheckReadiness({ workspace, copilotHome, home: flags.harnessHome }) };
 
-  const before = trustStatus({ workspace, copilotHome });
+  const before = trustStatus({ workspace, copilotHome, home: flags.harnessHome });
   const after = verb === 'approve'
-    ? approveProject({ workspace, copilotHome })
-    : revokeProject({ workspace, copilotHome });
+    ? approveProject({ workspace, copilotHome, home: flags.harnessHome })
+    : revokeProject({ workspace, copilotHome, home: flags.harnessHome });
 
     const events = ctx?.events;
   const sink = typeof events?.withCommand === 'function' ? events.withCommand('trust') : events;
@@ -71,6 +72,7 @@ export async function cmdTrust(argv, ctx = {}) {
     console.log(ui.line({ key: 'project', value: result.project, keyWidth }));
     console.log(ui.line({ key: 'pinned', value: result.pinned.join(', '), keyWidth }));
     console.log(ui.line({ key: 'store', value: result.store, keyWidth }));
+    if (result.checkReadiness && !result.checkReadiness.ready) console.log(ui.line({ state: 'warn', key: 'checks', value: result.checkReadiness.status, note: 'Engineer prepares concrete verification commands before delivery; trust is a separate decision', keyWidth }));
     if (result.state === 'stale') {
       console.log(ui.paint('muted', '  the pinned files changed — a person must read them and re-approve: ae trust approve'));
     } else if (result.state !== 'trusted' && result.verb === 'status') {

@@ -86,13 +86,18 @@ shipped roles/instructions still project through host setup.
 ### Local tools and portable distribution
 
 `ae mcp serve --workspace <repo> --copilot-home <config> --skills-home <skills>`
-starts a local stdio server bound to the selected workspace and roots. Its ten
+starts a local stdio server bound to the selected workspace and roots. Its twelve
 fixed tools forward authored decisions and operations to the existing CLI;
 there is no new model loop, network listener or generic shell/tool broker. The
 implemented compatibility versions are `2025-11-25`, `2025-03-26` and
 `2024-11-05`; the server does not claim the 2026 per-request MCP protocol.
 Existing trust, native skill-read evidence, review and proof requirements still
 apply. MCP guards routed AE operations, not unrelated host tools.
+
+`ae_checks_list` reports the bound workspace's selected check source and digest.
+`ae_checks_configure` forwards the bounded configuration decision without
+executing its commands or granting trust, so MCP delivery has the same recovery
+path as the CLI.
 
 `ae host export --output-directory <new-directory> --workspace <repo>` writes an
 Agent Plugins 1.0 package into a new directory. It contains skills, specialist
@@ -135,7 +140,17 @@ refreshes a private codebase map rather than rewriting a shared authored map.
 The generated runner is checked by content and ownership, so stale generated
 install guidance is refreshed while custom and newer runners are preserved.
 
-New `init-repo` policy stubs use `enforce`; existing authored policies remain unchanged. Initialization leaves behavioral checks for the project owner to define and reports that prerequisite. A person reviews the exact check commands and pinned policy files before approving trust. Installing AE or passing doctor does not grant that approval or prove a task. Unreadable, redirected, nonregular or oversized pinned sources cannot establish current trust. Ordinary policy changes require a new authority decision; agents manage routine lifecycle recovery within the accepted authority.
+New `init-repo` policy stubs use `enforce`; existing authored policies remain unchanged. Initialization does not guess behavioral commands. Engineer inspects the product's tests and prepares any missing declarations through `ae checks configure --file - --json`. That bounded writer can run before an implement gate and changes only the selected check configuration; it never runs commands or grants trust. A person reviews the resulting command arrays and pinned policy files before approving changed execution authority. Engineer then resumes the accepted task without repeating intake or requesting the same approval again. Installing AE or passing doctor does not grant that approval or prove a task. Unreadable, redirected, nonregular or oversized pinned sources cannot establish current trust.
+
+### Existing workspaces and verification readiness
+
+Upgrade preserves authored project checks and policy. A CLI upgrade alone does not require renewed project approval. Its `checkReadiness` result and orientation distinguish usable checks from missing, empty, invalid, or unusable configuration, independently of the trust result. `trusted: true` with no checks means the current configuration is approved, while delivery still needs a meaningful proof command.
+
+Engineer owns recovery rather than asking the person to write YAML. It inspects the existing test setup and relevant assertions, reads the selected path and `sourceDigest` from `ae checks list --json`, and submits concrete upserts through `ae checks configure --file - --json`. The schema 1 decision contains `expectedDigest`, `checks`, and `rationale`. The writer preserves unrelated checks and refuses concurrent changes. A no-op preserves existing approval. Changed commands are presented for a necessary person approval before execution. The [named-check procedure](../packages/ae/corpus/skills/create-primitive/references/named-checks.md) supplies the decision shape and recovery details.
+
+Use the same workspace and AE home throughout the task. A subfolder that would hide an enclosing repository's shared configuration is reported with a concrete root retry; AE does not silently adopt a different execution root. Resolve that selection before creating new checks.
+
+Recording review and executing verification are separate operations. Missing executable checks do not prevent `ae review prepare` or `ae review assemble`. `ae verify` can report diagnostics, but cannot pass delivery without required behavioral proof. Settle configuration and approval before the final review, since changes to policy or trust stale earlier review packets. After that one authority decision, Engineer continues plan start, implementation, review, verification, learning, and completion within the accepted scope.
 
 Then select the generated Engineer entry in the configured host. In Copilot Chat, select `@engineer`.
 

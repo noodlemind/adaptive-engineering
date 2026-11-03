@@ -32,6 +32,7 @@ const SLICE_KEYS = [
   'verification',
   'planGoal',
   'trust',
+  'checkReadiness',
   'reviewCoverage',
   'learnings',
   'skills',
@@ -103,6 +104,8 @@ function arm(fx, files = ['src/example.js']) {
   const body = expectExit(harness(fx, [
     'orient', '--read', '--query', CLAIM, ...files.flatMap((file) => ['--file', file]),
   ]), 0, 'orient --read');
+  assert(body.checkReadiness?.status === 'ready' && body.checkReadiness.ready === true, 'configured behavioral checks were not visible as ready', body.checkReadiness);
+  assert(body.checkReadiness.behavioralChecks.includes('unit-tests'), 'ready checks omitted the configured behavioral check', body.checkReadiness);
   assert(exists(fx, '.harness/repo-map.md') === false, 'orient --read wrote a repo map');
   assert(exists(fx, '.harness/context-pack.md') === false, 'orient --read wrote a context pack');
   return body;
@@ -261,6 +264,8 @@ const RUNGS = [
       assert(body.neighborhood === null, 'cold neighborhood was filled', body);
       assert(body.gateStatus === 'blocked', 'cold gate was not blocked', body);
       assert(body.activePlan === null, 'cold read selected a plan', body);
+      assert(body.checkReadiness?.status === 'missing' && body.checkReadiness.ready === false, 'cold read did not expose missing named checks', body.checkReadiness);
+      assert(body.checkReadiness.remediation?.owner === 'engineer', 'cold read did not give Engineer the check setup action', body.checkReadiness);
       assert(Array.isArray(body.learnings) && body.learnings.length === 0, 'cold read served learnings', body);
       assert(body.index?.knowledge === 'missing' && body.index?.structural === 'missing', 'cold index was not missing', body);
       assert(readSession(fx) === null, 'cold read wrote a session', readSession(fx));
@@ -279,6 +284,7 @@ const RUNGS = [
         'orient', '--read', '--query', 'compile the weekly report', '--file', 'src/example.js',
       ]), 0, 'ranked orient --read');
       assert(JSON.stringify(Object.keys(body)) === JSON.stringify(SLICE_KEYS), 'ranked slice keys changed', body);
+      assert(body.checkReadiness?.status === 'missing' && body.checkReadiness.ready === false, 'ranked read hid its missing check configuration', body.checkReadiness);
       const session = readSession(fx);
       assert(session.lastQuery === 'compile the weekly report', 'lastQuery was not stored', session);
       assert(JSON.stringify(session.files) === JSON.stringify(['src/example.js']), 'file list was not stored', session);

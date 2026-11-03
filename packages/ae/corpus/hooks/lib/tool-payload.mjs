@@ -1,9 +1,11 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { authorityBin } from './authority-bin.mjs';
 import { windowsEnvironmentValue, spawnGitSync } from './git-executable.mjs';
+import { runtimeHome, runtimeSetting } from './runtime-identity.mjs';
 
 export const FILE_MUTATION_TOOLS = new Set([
   'Edit',
@@ -617,6 +619,84 @@ function nativeResourceObject(full) {
   } finally { fs.closeSync(fd); }
 }
 
+const CONFIGURATION_ROOT_FLAGS = ['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home'];
+const CONTROL_BOOLEAN_FLAGS = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
+
+function boundedControlFlags(args, start, extra = [], { repeatable = [] } = {}) {
+  const valued = new Set([...CONFIGURATION_ROOT_FLAGS, ...extra]);
+  const seen = new Set(), values = new Map();
+  for (let index = start; index < args.length; index++) {
+    const token = args[index], split = token.indexOf('='), name = split < 0 ? token : token.slice(0, split);
+    const key = name === '-v' ? '--verbose' : name === '--harness-home' ? '--ae-home' : name;
+    if (seen.has(key) && !repeatable.includes(key)) return null;
+    seen.add(key);
+    if ((CONTROL_BOOLEAN_FLAGS.has(name) || name === '--read') && split < 0) {
+      if (name === '--read' && args[0] !== 'orient') return null;
+      continue;
+    }
+    if (!valued.has(name)) return null;
+    const value = split < 0 ? args[++index] : token.slice(split + 1);
+    if (!value || value.startsWith('-') && !(name === '--file' && value === '-') || Buffer.byteLength(value) > 4096 || /[\x00-\x1f\x7f]/.test(value)) return null;
+    // Keep the hook's interpretation identical to the CLI's copilot-home parser.
+    if (name === '--copilot-home' && split >= 0 && value.includes('=')) return null;
+    values.set(key, value);
+  }
+  return values;
+}
+
+function selectedControlRoots(values, workspace) {
+  if (!values || !path.isAbsolute(values.get('--workspace') || '') || path.resolve(values.get('--workspace')) !== path.resolve(workspace)
+    || !nativeResourcePath(values.get('--workspace'), 'directory')) return false;
+  const home = runtimeHome();
+  const xdg = process.env.XDG_CONFIG_HOME && path.join(process.env.XDG_CONFIG_HOME, 'copilot');
+  const copilot = process.env.COPILOT_HOME || (xdg && fs.existsSync(xdg) ? xdg : path.join(os.homedir(), '.copilot'));
+  const skills = runtimeSetting('SKILLS_HOME') || path.join(copilot, 'skills');
+  runtimeSetting('HOST'); // Conflicting native aliases cannot select a different binding.
+  for (const [flag, selected] of [['--ae-home', home], ['--copilot-home', copilot], ['--skills-home', skills]]) {
+    if (!values.has(flag)) continue;
+    const value = values.get(flag);
+    if (!path.isAbsolute(value) || path.resolve(value) !== path.resolve(selected) || !nativeResourcePath(value, 'directory', flag === '--ae-home')) return false;
+  }
+  return true;
+}
+
+/** Configuration authorship cannot execute checks, approve trust or edit policy. */
+function checkConfigurationControl(args, workspace) {
+  if (args[1] !== 'configure') return null;
+  try {
+    const values = boundedControlFlags(args, 2, ['--file']);
+    return values?.get('--file') === '-' && selectedControlRoots(values, workspace) ? 'checks' : null;
+  } catch { return null; }
+}
+
+/** Only installed, bounded non-executing commands recover a changed manifest. */
+export function checkConfigurationRecoveryControl(tokens, workspace) {
+  try {
+    const bin = authorityBin();
+    if (!bin || tokens.length < 3 || !path.isAbsolute(tokens[0]) || !path.isAbsolute(tokens[1])
+      || path.resolve(tokens[0]) !== path.resolve(process.execPath) || path.resolve(tokens[1]) !== path.resolve(bin)
+      || fs.realpathSync.native(tokens[0]) !== fs.realpathSync.native(process.execPath)
+      || fs.realpathSync.native(tokens[1]) !== fs.realpathSync.native(bin)) return null;
+    const args = tokens.slice(2), command = args[0];
+    if (command === 'checks' && args[1] === 'configure') return checkConfigurationControl(args, workspace);
+    let start = 1, extra = [], repeatable = [];
+    if (command === 'checks') {
+      if (!['list', 'show'].includes(args[1])) return null;
+      start = args[1] === 'show' ? 3 : 2;
+      if (args[1] === 'show' && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args[2] || '')) return null;
+    } else if (command === 'trust') {
+      if (args[1] !== 'status') return null;
+      start = 2;
+    } else if (command === 'plan-update') extra = ['--plan', '--file'];
+    else if (command === 'orient') { extra = ['--plan', '--query', '--file', '--context-version', '--intent-page', '--intent-page-size']; repeatable = ['--file']; }
+    else return null;
+    const values = boundedControlFlags(args, start, extra, { repeatable });
+    if (!selectedControlRoots(values, workspace)) return null;
+    if (command === 'plan-update' && (!values.has('--plan') || values.get('--file') !== '-')) return null;
+    return command;
+  } catch { return null; }
+}
+
 /** The native writer owns schema/CAS checks; this admits only its saved binding. */
 function nativePersonalSkillControl(args, workspace) {
   if (args[1] !== 'create' || args[2] !== 'skill' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args[3] || '')) return null;
@@ -679,6 +759,7 @@ export function harnessControlCommand(tokens, workspace) {
   } else return null;
   if (!args.length) return 'help';
   if (HARNESS_CONTROL.has(args[0])) return args[0];
+  if (args[0] === 'checks' && args[1] === 'configure') return nativeWriterAuthority ? checkConfigurationControl(args, workspace) : null;
   if (args[0] === 'resources') return nativeWriterAuthority ? nativePersonalSkillControl(args, workspace) : null;
   if (args[0] === 'diagrams') {
     // Hydrated hooks cannot import package lib/. Keep this bounded grammar in
@@ -902,7 +983,10 @@ export function analyzeTerminalEffects(command, workspace = process.cwd()) {
       || (base === 'find' && !args.some(arg => /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/.test(arg)))
       || (git && gitQueryIsResolved(tokens, git, workspace))
       || (['node', 'python', 'python3', 'npm'].includes(base) && args.length === 1 && ['--version', '-v', '--help'].includes(args[0])));
-    if (!parsed.ambiguous && !wrapped && (query || harnessControlCommand(tokens, workspace))) continue;
+    const controlCommand = !parsed.ambiguous && !wrapped ? harnessControlCommand(tokens, workspace) : null;
+    const configuration = controlCommand === 'checks' && tokens[2] === 'checks' && tokens[3] === 'configure';
+    if (!parsed.ambiguous && !wrapped && (query || controlCommand)
+      && (!configuration || parsed.segments.length === 1 && !parsed.redirection)) continue;
     const inner = wrapped ? unwrapShellSegments(segment) : [tokens];
     const explicit = inner.length > 0 && inner.every(argv => {
       const executable = path.basename(argv[0] || '').toLowerCase();
@@ -914,6 +998,10 @@ export function analyzeTerminalEffects(command, workspace = process.cwd()) {
     if (wrapped) ambiguous = true;
     opaqueInvocations.push(tokens);
   }
+  // A literal stdin decision adds input redirection, not a second executable.
+  // Only the same closed installed recovery grammar may discard that marker.
+  if (!parsed.ambiguous && !parsed.opaqueExpansion && !parsed.redirection && invocations.length === 1 && !opaqueInvocations.length
+    && checkConfigurationRecoveryControl(invocations[0], workspace)) ambiguous = false;
   return { opaqueInvocations, invocations, ambiguous, hasOpaque: opaqueInvocations.length > 0 };
 }
 

@@ -1742,15 +1742,16 @@ registerCommand({
 
 registerCommand({
   name: 'checks',
-  summary: 'list, inspect, or run one named check from the trusted check config',
+  summary: 'inspect, configure, or run named project checks',
   group: 'engineer loop',
     sideEffect: 'execute',
   capabilities: [],
   outputModes: ['ledger', 'json'],
-  usage: '<list|show|run> [name]',
+  usage: '<list|show|configure|run> [name]',
   verbs: [
     { verb: 'list', summary: 'every check the workspace declares, with its argv and timeout', sideEffect: 'read' },
     { verb: 'show', summary: 'one check: the exact argv it will execute, and whether it validates', sideEffect: 'read', positionals: ['name'] },
+    { verb: 'configure', summary: 'prepare digest-bound check declarations without executing or approving them', sideEffect: 'mutate' },
     { verb: 'run', summary: 'execute one check on its own and exit non-zero if it does not pass', positionals: ['name'] },
   ],
   args: {
@@ -1758,7 +1759,7 @@ registerCommand({
       { name: 'verb', description: CHECKS_VERBS.join('|'), required: true, default: null },
       { name: 'name', description: 'the check name, for show and run', required: false, default: null },
     ],
-    flags: [],
+    flags: [{ name: '--file', type: 'string', valueName: 'decision.json|-', description: 'schema 1 check configuration decision, or - for stdin', required: false, default: null, tui: 'cli-only' }],
   },
   handler: cmdChecks,
   resultOf: checksResultOf,

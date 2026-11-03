@@ -35,6 +35,7 @@ import { grammarStatus, packageGrammarRoots } from './repo-map/treesitter-extrac
 import { assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { leftoverWorkspaceArtifacts } from './migrate-layout.mjs';
 import { planReadDirs } from './project-layout.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 
 const MIN_ENRICHED_RATIO = 0.5;
 
@@ -905,6 +906,8 @@ export async function runDoctor({ copilotHome, assetsRoot, pkgRoot, flags, vscod
   }
 
   checks.push(routingPolicyCheck(workspace));
+  const checkReadiness = inspectCheckReadiness({ workspace, copilotHome, home: flags.harnessHome || flags.home });
+  checks.push({ id: 'P1', name: 'Behavioral check configuration', pass: checkReadiness.ready, optional: true, readiness: checkReadiness, hint: checkReadiness.ready ? checkReadiness.message : `${checkReadiness.message} Source: ${checkReadiness.source || 'resolve the workspace first'}. Read ae checks list --json; Engineer owns preparation.` });
   let effectivePolicy = null;
   let policyError = null;
   try {

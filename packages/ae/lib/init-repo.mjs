@@ -11,6 +11,7 @@ import { harnessGlobalHome } from './paths.mjs';
 import { runMigrateLayout } from './migrate-layout.mjs';
 import { loadConfiguredChecks } from './plan-readiness.mjs';
 import { validateCommand } from './checks.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 import { resolveProjectAuthority, promoteProjectAuthority, PROJECT_AUTHORITY_FILES, assertExternalStateHome } from './project-authority.mjs';
 import { readFileNoFollow, writeFileContained } from './fs-safe.mjs';
 
@@ -182,9 +183,10 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
 
   const configured = loadConfiguredChecks(workspace, { home: flags.home });
   if (!Object.entries(configured.checks || {}).some(([name, check]) => !validateCommand(name, check) && check.proof !== 'type-check')) {
-    const message = `Declare at least one real behavioral check in ${authority.files['checks.yaml']}, then have a person review the exact commands and approve project trust before delivery.`;
+    const message = `Engineer prepares real behavioral checks in ${authority.files['checks.yaml']} through ae checks configure --file -, then presents the exact commands for a person's trust approval before delivery.`;
     stats.prerequisites = [{ id: 'named-checks', message }];
     log(message);
   }
+  stats.checkReadiness = inspectCheckReadiness({ workspace, copilotHome, home: flags.home });
   return stats;
 }

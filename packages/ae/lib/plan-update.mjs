@@ -19,6 +19,7 @@ import { runGate, publishGateSession } from './gate.mjs';
 import { loadPolicy } from './policy.mjs';
 import { validatePlanSchema } from './plan-schema.mjs';
 import { validatePlanReadiness, gapEvidenceCheck } from './plan-readiness.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 import { validatePlanScope } from './plan-scope.mjs';
 import { readReviewRecord, publishReviewRecord, recordHash } from './review.mjs';
 import { reviewHash } from './review-preparation.mjs';
@@ -497,7 +498,12 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
       const prerequisites = completionPrerequisites({ workspace, plan: proposed, copilotHome });
       if (!prerequisites.pass) missing.push(prerequisites.message);
     }
-    if (missing.length || gate && (!gate.pass || gate.exitCode !== 0)) return { status: 'blocked', path: full, missing: [...new Set(missing)], allowedNextActions: ['Repair the named prerequisites, then retry the same decision if the revision is unchanged'], ...(gate?.nextTools ? { nextTools: gate.nextTools } : {}), updated: false };
+    if (missing.length || gate && (!gate.pass || gate.exitCode !== 0)) {
+      const checkReadiness = inspectCheckReadiness({ workspace, copilotHome, home: planHome(workspace, proposed) });
+      return { status: 'blocked', path: full, missing: [...new Set(missing)], checkReadiness,
+        allowedNextActions: checkReadiness.ready ? ['Repair the named prerequisites, then retry the same decision if the revision is unchanged'] : ['Engineer inspects the project tests and prepares the concrete check declarations; request person approval only after showing the changed commands, then resume this task'],
+        ...(gate?.nextTools ? { nextTools: gate.nextTools } : {}), updated: false };
+    }
     if (!decision.amendments.every(source => source.newHash === null || hashIntentFile(workspace, source.path) === source.newHash)) throw usage('intent source changed while applying the amendment');
     if (input.intentSelection && !intentSourcesCheck(proposed, workspace).pass) throw usage('selected intent source changed before amendment publication');
     if (gate && !intentSourcesCheck(proposed, workspace).pass) throw usage('selected intent source changed before start publication');

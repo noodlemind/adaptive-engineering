@@ -3,7 +3,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { partitionTests, readManifests, readTestFiles, runShard, verifyShardManifests } from '../../../scripts/ci-tests.mjs';
+import { GIT_REGRESSION_FILES, partitionTests, readManifests, readSuiteFiles, readTestFiles, runShard, verifyShardManifests } from '../../../scripts/ci-tests.mjs';
+import timingReporter from '../../../scripts/ci-test-reporter.mjs';
+
+test('the reporter retains Node20 terminal counters without accepting partial or nested summaries', async () => {
+  const diagnostic = (message, extra = {}) => ({ type: 'test:diagnostic', data: { nesting: 0, message, ...extra } });
+  const counters = ['tests 3', 'suites 0', 'pass 3', 'fail 0', 'cancelled 0', 'skipped 0', 'todo 0', 'duration_ms 123.45'].map(message => diagnostic(message));
+  const collect = async values => {
+    const result = [];
+    for await (const line of timingReporter((async function* () { yield* values; })())) result.push(JSON.parse(line));
+    return result;
+  };
+  const [summary] = await collect(counters);
+  assert.equal(summary.success, true);
+  assert.equal(summary.counts.tests, 3);
+  assert.equal(summary.durationMs, 123.45);
+  assert.deepEqual(await collect(counters.slice(0, -1)), []);
+  assert.deepEqual(await collect(counters.map(event => ({ ...event, data: { ...event.data, file: '/test/child.mjs' } }))), []);
+  assert.equal((await collect(counters.map(event => event.data.message === 'fail 0' ? diagnostic('fail 1') : event)))[0].success, false);
+  const native = { type: 'test:summary', data: { counts: { tests: 4 }, duration_ms: 456, success: false } };
+  assert.deepEqual(await collect([...counters, native]), [{ kind: 'summary', counts: { tests: 4 }, durationMs: 456, success: false }]);
+});
 
 test('weighted shards are deterministic, disjoint, complete and include unmeasured files', () => {
   const files = ['a.test.mjs', 'b.test.mjs', 'c.test.mjs', 'd.test.mjs', 'new.test.mjs'];
@@ -19,12 +39,14 @@ test('weighted shards are deterministic, disjoint, complete and include unmeasur
   assert.throws(() => partitionTests(files, costs, 6), /shard/i);
 });
 
-test('the actual discovered source inventory is assigned exactly once across four shards', () => {
+test('the discovered source inventory is assigned exactly once across Linux and Windows shards', () => {
   const root = path.resolve(import.meta.dirname, '../../..');
   const files = readTestFiles(root);
   const costs = JSON.parse(fs.readFileSync(path.join(root, '.github/ci/windows-test-costs.json'), 'utf8')).files;
-  const shards = partitionTests(files, costs, 4);
-  assert.deepEqual(shards.flatMap(shard => shard.files).sort(), files);
+  for (const count of [4, 12]) {
+    const shards = partitionTests(files, costs, count);
+    assert.deepEqual(shards.flatMap(shard => shard.files).sort(), files);
+  }
   assert.ok(files.includes('ci-test-shards.test.mjs'));
   assert.ok(files.includes('deterministic-delivery.test.mjs'));
 });
@@ -51,7 +73,27 @@ test('real Node execution retains file timings and a complete same-source manife
   assert.deepEqual(manifest.results.map(result => result.file).sort(), manifest.files);
   assert.ok(manifest.results.every(result => result.passed && Number.isFinite(result.durationMs)));
   assert.equal(manifest.counts.tests, 3);
+  assert.equal(manifest.suite, 'source');
+  assert.equal(manifest.platform, process.platform);
+  assert.equal(manifest.nodeMajor, Number(process.versions.node.split('.')[0]));
   assert.deepEqual(verifyShardManifests([manifest], { files: manifest.files, sourceSha: 'fixture-source', shards: 1 }), { files: 2, shards: 1 });
+});
+
+test('the Git regression suite runs its exact inventory once and binds platform and runtime', async t => {
+  const f = fixture(t);
+  assert.throws(() => readSuiteFiles(f.root, 'git'), /inventory|missing/i);
+  for (const file of GIT_REGRESSION_FILES) fs.writeFileSync(path.join(f.root, 'packages/ae/test', file), "import {test} from 'node:test'; test('git regression fixture', () => {});\n");
+  assert.deepEqual(readSuiteFiles(f.root, 'git'), [...GIT_REGRESSION_FILES].sort());
+  assert.equal(readSuiteFiles(f.root, 'source').length, GIT_REGRESSION_FILES.length + 2);
+  assert.throws(() => readSuiteFiles(f.root, 'unknown'), /suite/i);
+  const manifests = [];
+  for (const shard of [1, 2, 3]) manifests.push(await runShard({ repoRoot: f.root, suite: 'git', shard, shards: 3, costs: {}, env: f.env }));
+  const expected = { files: readSuiteFiles(f.root, 'git'), sourceSha: 'fixture-source', shards: 3, suite: 'git', platform: process.platform, nodeMajor: Number(process.versions.node.split('.')[0]) };
+  assert.deepEqual(verifyShardManifests(manifests, expected), { files: GIT_REGRESSION_FILES.length, shards: 3 });
+  for (const patch of [{ suite: 'source' }, { platform: 'another-platform' }, { nodeMajor: 1 }]) {
+    assert.throws(() => verifyShardManifests([{ ...manifests[0], ...patch }, ...manifests.slice(1)], expected), /suite|platform|runtime/i);
+  }
+  assert.throws(() => verifyShardManifests(manifests.slice(1), expected), /shard/i);
 });
 
 test('a failing real test preserves its nonzero exit and cannot satisfy the aggregate gate', async t => {

@@ -106,11 +106,16 @@ test('an unknown verb is a usage error, distinct from an absent check', () => {
   assert.match(res.stderr, /E_USAGE/);
 });
 
-test('a workspace with no check config reports that, rather than an empty list', () => {
+test('a workspace with no check config exposes the selected missing source and preparation token', () => {
   const ws = tempDir('checks-none-');
-  const res = run(['checks', 'list'], ws);
-  assert.equal(res.status, EXIT.notFound, res.stderr);
-  assert.match(res.stderr, /Trusted check config not found/);
+  const res = run(['checks', 'list', '--json'], ws);
+  assert.equal(res.status, 0, res.stderr);
+  const result = JSON.parse(res.stdout);
+  assert.equal(result.missing, true);
+  assert.equal(result.sourceDigest, null);
+  assert.equal(result.sourceMode, 'local');
+  assert.deepEqual(result.checks, []);
+  assert.match(result.config, /checks\.yaml$/);
 });
 
 test('a malformed check entry is listed and marked invalid, not dropped', () => {

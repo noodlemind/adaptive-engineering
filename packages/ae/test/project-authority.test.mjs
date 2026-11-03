@@ -76,6 +76,101 @@ test('shared authority remains selected and preserves the historical digest', t 
   assert.equal(policyDigest(f.workspace), historical.digest('hex'));
 });
 
+function initRepository(workspace) {
+  const result = spawnSync('git', ['init', '-q'], { cwd: workspace, encoding: 'utf8', timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr);
+}
+
+test('a subfolder refuses to hide enclosing shared checks behind an empty private source', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'src');
+  initRepository(f.workspace);
+  fs.mkdirSync(nested);
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks:\n  unit-tests:\n    command: [node, --test]\n');
+  assert.deepEqual(loadNamedChecks(f.workspace).checks['unit-tests'].command, ['node', '--test']);
+  assert.throws(() => resolveProjectAuthority(nested), error => {
+    assert.equal(error.code, 'E_PROJECT_WORKSPACE');
+    assert.ok(error.message.includes(f.workspace));
+    assert.match(error.message, /--workspace/);
+    assert.ok(error.hint.includes(f.workspace));
+    return true;
+  });
+  assert.match(loadNamedChecks(nested).error, /--workspace/);
+  assert.match(loadConfiguredChecks(nested).error, /--workspace/);
+  assert.equal(fs.existsSync(path.join(f.home, 'projects')), false, 'diagnosis must not initialize replacement authority');
+});
+
+test('a nested shared project keeps its explicitly configured authority', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'packages/app');
+  initRepository(f.workspace);
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks:\n  root-tests:\n    command: [node, root.test.mjs]\n');
+  write(path.join(nested, '.github/harness'), 'checks.yaml', 'version: 1\nchecks:\n  app-tests:\n    command: [node, app.test.mjs]\n');
+  assert.equal(resolveProjectAuthority(nested).directory, path.join(nested, '.github/harness'));
+  assert.deepEqual(Object.keys(loadNamedChecks(nested).checks), ['app-tests']);
+});
+
+test('an explicit nested shared setup can establish a separate project', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'packages/app');
+  initRepository(f.workspace);
+  fs.mkdirSync(nested, { recursive: true });
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  const selected = resolveProjectAuthority(nested, { mode: 'shared' });
+  assert.equal(selected.directory, path.join(nested, '.github/harness'));
+  assert.equal(selected.present, false);
+});
+
+test('an existing private source is not replaced by an enclosing shared project hint', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'src');
+  initRepository(f.workspace);
+  fs.mkdirSync(nested);
+  const privateSource = resolveProjectAuthority(nested).directory;
+  write(privateSource, 'checks.yaml', 'version: 1\nchecks:\n  personal-tests:\n    command: [node, personal.test.mjs]\n');
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  assert.equal(resolveProjectAuthority(nested).directory, privateSource);
+  assert.deepEqual(Object.keys(loadNamedChecks(nested).checks), ['personal-tests']);
+});
+
+test('an independent nested repository never consults its parent shared authority', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'independent');
+  initRepository(f.workspace);
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  fs.mkdirSync(nested);
+  initRepository(nested);
+  assert.equal(resolveProjectAuthority(nested).mode, 'local');
+  assert.equal(loadConfiguredChecks(nested).present, false);
+});
+
+test('a registered nested worktree .git file stops the enclosing authority search', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'linked');
+  initRepository(f.workspace);
+  for (const args of [
+    ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-qm', 'baseline'],
+    ['worktree', 'add', '-q', '--detach', nested, 'HEAD'],
+  ]) {
+    const result = spawnSync('git', args, { cwd: f.workspace, encoding: 'utf8', timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  assert.equal(fs.lstatSync(path.join(nested, '.git')).isFile(), true);
+  assert.equal(resolveProjectAuthority(nested).mode, 'local');
+  assert.equal(loadConfiguredChecks(nested).present, false);
+});
+
+test('enclosing shared authority diagnosis refuses redirected configuration directories', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'src'), outside = path.join(path.dirname(f.workspace), 'outside');
+  initRepository(f.workspace);
+  fs.mkdirSync(nested);
+  write(path.join(outside, 'harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  fs.symlinkSync(outside, path.join(f.workspace, '.github'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => resolveProjectAuthority(nested), /unsafe or nonregular/);
+});
+
+test('non-Git parent configuration is not inferred as the selected project', t => {
+  const f = fixture(t), nested = path.join(f.workspace, 'unrelated');
+  write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
+  fs.mkdirSync(nested);
+  assert.equal(resolveProjectAuthority(nested).mode, 'local');
+});
+
 test('both local and shared configuration refuse instead of overlaying or silently switching', t => {
   const f = fixture(t), local = resolveProjectAuthority(f.workspace).directory;
   write(local, 'checks.yaml', 'version: 1\nchecks: {}\n');

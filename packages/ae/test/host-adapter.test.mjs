@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { binPath, runHarness } from './helpers/cli.mjs';
 
-const SLICE_KEYS = ['activePlan', 'contacts', 'contextEvidence', 'gateStatus', 'graph', 'index', 'instructions', 'intentDetail', 'intentDiscovery', 'intentSources', 'layout', 'learnings', 'neighborhood', 'planGoal', 'procedure', 'reviewCoverage', 'skills', 'trust', 'verification'];
+const SLICE_KEYS = ['activePlan', 'checkReadiness', 'contacts', 'contextEvidence', 'gateStatus', 'graph', 'index', 'instructions', 'intentDetail', 'intentDiscovery', 'intentSources', 'layout', 'learnings', 'neighborhood', 'planGoal', 'procedure', 'reviewCoverage', 'skills', 'trust', 'verification'];
 
 function git(cwd, args) {
   return spawnSync('git', args, {
@@ -100,6 +100,9 @@ test('doctor --adapter checks the installed file and grok-build start preserves 
   const slice = JSON.parse(started.stdout);
   assert.deepEqual(Object.keys(slice).sort(), SLICE_KEYS);
   assert.equal(slice.trust.trusted, false);
+  assert.equal(slice.checkReadiness.status, 'missing');
+  assert.equal(slice.checkReadiness.ready, false);
+  assert.equal(slice.checkReadiness.remediation.owner, 'engineer');
   assert.equal(slice.planGoal, null);
   assert.equal(slice.neighborhood, null);
   assert.equal(slice.layout.boundRoot, fs.realpathSync.native(ws));

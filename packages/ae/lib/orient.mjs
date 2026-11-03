@@ -53,7 +53,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
   const home = flags.harnessHome || flags.home;
   const facts = collectOrientationFacts({ workspace, copilotHome, flags, query: q, files });
   const { active, session, namedFiles, gate: gatePreview, routingLines, status, procedure, obligation } = facts;
-  const { planGoal, learnings, trust, reviewCoverage, index, skills, instructions, contacts, neighborhood, verification, intentDiscovery, intentDetail, performance, flowModel } = facts.slice;
+  const { planGoal, learnings, trust, checkReadiness, reviewCoverage, index, skills, instructions, contacts, neighborhood, verification, intentDiscovery, intentDetail, performance, flowModel } = facts.slice;
   const recall = rankRecall(q, {
     copilotHome,
     workspace,
@@ -112,6 +112,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     ? ['ae gate --phase implement', 'read plan ## Impacted Files', `ae review prepare --plan ${active?.path || '<path>'}`, 'ae verify', `ae compound --plan ${active?.path || '<path>'} --learning-decision -`, `ae plan-update --workspace "${workspace}" --plan "${active?.path || '<path>'}" --file - --json\n{"version":1,"id":"complete-decision","action":"complete","expect":"<observed revision>"}`]
     : [`ae gate --plan ${active?.path || '<path>'}`, 'read ensure-plan/SKILL.md'];
   if (!trust.trusted) nextTools.push('ae trust status  # a person must approve policy before named checks run');
+  if (!checkReadiness.ready) nextTools.unshift('Use checkReadiness.inspectionCommand');
 
   const intentSources = obligation.paths;
   const isolation = inspectIsolation({ workspace, home, allowInplace: flags.allowInplace });
@@ -157,6 +158,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     intentDiscovery,
     reviewCoverage,
     trust,
+    checkReadiness,
     query: q,
     recall,
     learnings,
@@ -215,6 +217,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     intentDiscovery,
     intentDetail,
     trust,
+    checkReadiness,
     learnings,
     deliveredLearnings,
     explain,

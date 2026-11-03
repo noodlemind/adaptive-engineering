@@ -29,6 +29,8 @@ Fill each section with observed commands and prerequisites from this product. Le
 
 Register the doctor and drive helpers in the selected check source reported by `ae checks list --json` before the plan requires them. A drive may own its doctor and the rest of the lifecycle in one registered helper. Declare the corresponding check IDs on the accepted plan. Each required check must assert behavior and return a failed status when the assertion fails.
 
+Use [named-checks.md](named-checks.md) when executable registration is missing. Engineer prepares the concrete declarations through the bounded configuration writer before requesting any necessary person approval. This configuration step can precede the implement gate; recipe, helper, feature-map, and product-code edits still need their accepted scope and successful gate.
+
 Harness runs configured argv without a shell. Do not run an unknown helper beside the authoritative named-check path. An opaque terminal command still needs its existing gate and trust authority. A standalone audit that cannot register a missing check inside its accepted scope reports that prerequisite gap.
 
 For declared artifact output, use explicit relative JSON filenames in the check's `artifacts` list. Write them beneath the runner-supplied `HARNESS_CHECK_ARTIFACT_DIR`. Each invocation receives a separate directory. Do not overwrite a shared latest receipt. The initial contract accepts at most 16 JSON objects of at most 1 MiB each. It rejects missing, malformed, symlinked, nonregular, or escaping files. Harness redacts the stored receipt and records its path, byte length, and SHA-256. Evidence validation rereads required artifacts before accepting current proof.

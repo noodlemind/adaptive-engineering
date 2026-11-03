@@ -14,7 +14,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  suites:
+    name: linux-tests (${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     steps:
       # persist-credentials: false — nothing in this job talks to GitHub after
@@ -48,13 +53,38 @@ jobs:
         shell: bash
         env:
           HARNESS_PROOF_LOG: ${{ github.workspace }}/delivery-transcripts.jsonl
-        run: npm --prefix packages/ae test 2>&1 | tee harness-tests.log
+        run: node scripts/ci-tests.mjs --shard ${{ matrix.shard }} --shards 4 2>&1 | tee harness-tests.log
 
       - name: Preserve test and installed-delivery output
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: harness-tests-linux-output
+          name: linux-tests-${{ matrix.shard }}
           path: |
             harness-tests.log
+            ci-test-results/
             delivery-transcripts.jsonl
+
+  # Keep the required check named "test" and reject incomplete or failed shards.
+  test:
+    needs: suites
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: linux-tests-*
+          path: linux-shards
+      - name: Require complete same-revision test inventory
+        run: node scripts/ci-tests.mjs --verify-manifests linux-shards --shards 4 --platform linux --node-major 22
+      - name: Require every shard job to succeed
+        if: always()
+        env:
+          SUITES_RESULT: ${{ needs.suites.result }}
+        run: node --input-type=module -e "if (process.env.SUITES_RESULT !== 'success') process.exit(1)"

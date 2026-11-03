@@ -15,7 +15,7 @@ import { syncSessionIdentity } from './lib/session-state.mjs';
 import { skillActivationSourceCurrent } from './lib/skill-activation.mjs';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { loadHookPolicy, projectTrustIsCurrent } from './lib/policy.mjs';
-import { harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
+import { checkConfigurationRecoveryControl, harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
 import { parseImpactedText } from './lib/impacted-files.mjs';
 
 const startedAt = Date.now();
@@ -335,15 +335,18 @@ if (normalized.command) {
       const planText = activePlan ? fs.readFileSync(resolvePlanFile(normalized.workspace, activePlan), 'utf8') : '';
       const currentDigest = configuredChecksDigest(normalized.workspace);
       const control = soleHarnessControl();
+      const effects = normalized.terminalEffects;
+      const recovery = control && checkConfigurationRecoveryControl(effects.invocations[0], normalized.workspace);
       if (Object.hasOwn(session, 'gatedChecksDigest')
         && session.gatedChecksDigest !== currentDigest
         && !(session.gatedChecksDigest === null && control)
-        && !['gate', 'worktree'].includes(control)) {
+        && !['gate', 'worktree'].includes(control)
+        && !recovery) {
         deny(
           'changed-check-config',
           session.gatedChecksDigest === null
             ? 'The failed implement gate has no accepted check binding. Run a standalone canonical ae control command to recover before product execution'
-            : 'The configured check manifest changed after the implement gate. Rerun ae gate before running terminal commands',
+            : 'The configured check manifest changed after the implement gate. Inspect and repair it through the installed checks, trust status, orient or plan-update recovery commands, then obtain required approval and refresh the gate before execution',
           'invalid'
         );
       }

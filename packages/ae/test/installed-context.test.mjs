@@ -53,7 +53,11 @@ test('clean installed package expands current context and rejects stale source r
   ok('install');
   assert.ok(fs.existsSync(path.join(copilotHome, 'skills/references/context-budget.md')));
   const binding = ok('orient', '--read');
-  assert.equal(Object.keys(binding).length, 18);
+  assert.equal(Object.keys(binding).length, 19);
+  assert.equal(binding.checkReadiness.status, 'missing');
+  assert.equal(binding.checkReadiness.ready, false);
+  assert.equal(binding.checkReadiness.sourceMode, 'local');
+  assert.equal(fs.realpathSync.native(binding.checkReadiness.remediation.command[1]), fs.realpathSync.native(path.join(runtime, 'bin/ae.mjs')));
   assert.equal(binding.layout.boundRoot, fs.realpathSync.native(workspace));
   assert.equal(path.relative(harnessHome, binding.layout.projectStore).split(path.sep)[0], 'projects');
   assert.deepEqual(binding.layout.roots, []);

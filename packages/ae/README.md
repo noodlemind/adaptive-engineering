@@ -136,7 +136,7 @@ ae mcp serve --workspace <repo> --copilot-home <config> --skills-home <skills>
 ae host export --output-directory <new-directory> --workspace <repo>
 ```
 
-The MCP command serves ten fixed AE tools over local stdio. Calls reuse the
+The MCP command serves twelve fixed AE tools over local stdio. Calls reuse the
 existing CLI authority, startup workspace and selected roots; there is no new
 LLM loop, network listener or unrestricted command broker. Supported negotiated
 compatibility versions are `2025-11-25`, `2025-03-26` and `2024-11-05`; this is
@@ -185,6 +185,27 @@ publishes shared project configuration; commit the returned inventory as a
 reviewed setup change before product work. A teammate installs their own AE
 runtime and reviews the commands with their own local approval.
 
+Upgrade preserves those authored checks and approvals when their authority is
+unchanged. Upgrade and orientation report `checkReadiness` separately from
+trust: an approved empty check configuration is not ready to verify delivery.
+Engineer inspects the product's actual tests and prepares missing commands
+through `ae checks configure --file - --json`; users do not need to hand-author
+YAML. This bounded operation changes only the selected check declarations and
+can precede the implement gate. It never executes commands or grants trust.
+
+`ae checks list --json` reports the selected configuration and `sourceDigest`.
+The configuration decision supplies `schema: 1`, that `expectedDigest`, named
+`checks`, and a `rationale`. Existing unrelated entries are preserved; stale
+observations are refused. Engineer presents changed commands for a necessary
+person approval, then resumes the accepted task. Adequate unchanged checks need
+no rewrite or renewed approval. See the
+[named-check procedure](corpus/skills/create-primitive/references/named-checks.md).
+
+Missing executable checks do not prevent recording a review with
+`ae review assemble`. Verification can report the gap, but delivery cannot pass
+without executed behavioral checks. Complete configuration and approval before
+the final review, since changed policy or trust stales an earlier packet.
+
 Keep `--ae-home` outside the product checkout. Setup refuses an in-repository
 state home before creating artifacts; it does not silently hide that directory.
 
@@ -222,7 +243,7 @@ The optional `ae agent --profile deliver` loop enforces explicit orientation wit
 |---------|---------|
 | `host list/setup/status/remove` | Select one integration, merge owned assets/hooks, inspect configured state, or remove unchanged owned assets |
 | `host export` | Write a portable Agent Plugins package bound to an explicit Git workspace |
-| `mcp serve` | Serve ten fixed AE operations over workspace-bound local stdio |
+| `mcp serve` | Serve twelve fixed AE operations over workspace-bound local stdio |
 | `install` / `upgrade` | Hydrate `~/.copilot/` and install the VS Code bridge; upgrade retires lock paths |
 | `doctor` | Health; `--host vscode` runs hook probes |
 | `inventory show` / `inventory refresh --editor <family>` | Optional sourced local IDE snapshot in the selected Harness home |

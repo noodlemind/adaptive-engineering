@@ -78,6 +78,7 @@ export function buildContextRecord({ workspace, flags = {}, query = '', facts })
     selection: { queryHash: identity.selection.queryHash, filesHash: digest(JSON.stringify(facts.namedFiles)), fileCount: facts.namedFiles.length },
     sourceState: snapshot.state ? { version: snapshot.state.version, digest: snapshot.state.digest, extractorRevision: snapshot.state.extractorRevision, configDigest: snapshot.state.configDigest } : null,
     evidence: [], slice: null,
+    checkReadiness: facts.slice.checkReadiness ? { status: facts.slice.checkReadiness.status, ready: facts.slice.checkReadiness.ready, source: facts.slice.checkReadiness.source, sourceDigest: facts.slice.checkReadiness.sourceDigest, message: facts.slice.checkReadiness.message, inspectionCommand: facts.slice.checkReadiness.inspectionCommand, remediation: facts.slice.checkReadiness.remediation } : null,
     coverage: { sourceState: record.coverage.sourceState, validationReason: record.coverage.validationReason, semanticCompleteness: 'unverified', maxBytes: MAX_RECORD_BYTES, renderBarrier: true, evidenceOmitted: paths.length },
     expansion: { command: 'ae orient --read --context-version 2', reason: 'Read the source plan or task contract, then request a smaller explicit file batch. This response contains no partial editing context.' },
   };

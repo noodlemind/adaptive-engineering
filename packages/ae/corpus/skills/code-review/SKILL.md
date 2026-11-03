@@ -46,6 +46,8 @@ Read these installed files with the host read tool. Do not search the product wo
 
 Use `ae review prepare --plan <path> --base <base> --json` for delivery review. Omit `--plan` for standalone review. The packet supplies current head, working changes, required reviewers, applicable checks, source hashes, excerpts, retrieval paths, and explicit omissions. Use the host's PR tools to establish the requested comparison when reviewing a PR. A missing base or omitted source is an investigation input, never evidence of an empty scope.
 
+Review criteria and executable named checks have separate roles. Missing executable checks or unapproved project trust do not prevent `prepare` or `assemble`; preserve the actual review results. For delivery, complete any needed check configuration and approval before the final review, because changing policy or trust makes an earlier packet stale. Diagnose a refused assembly from its actual error rather than attributing it to missing executable checks.
+
 Read the full packet at `packetPath` and retrieve omitted source content before judging that area. Do not manually discover checks or reconstruct the packet. A changed source requires fresh preparation.
 
 ### 2. Gather Context and Detect Intent
@@ -121,6 +123,8 @@ Before delivering the review, verify:
 Assess fix authority and behavior before acting. `autofix_class` is advisory routing metadata; it never grants permissions. Apply a finding only when it names a defect in the spec. Reject a finding whose fix only adds a helper, option, comment, abstraction, or defensive check the plan did not name. Before finishing, the diff is the smallest change that meets the spec. Apply authorized fixes, then prepare a new packet. The previous packet is stale once a reviewed file changes. Dispatch the packet's required reviewers for that packet. One filing reviewer does not complete coverage. Stop after two rounds and report the findings that remain. Clearing a plan string cannot discharge a recorded critical finding.
 
 When current coverage is complete and critical findings are resolved, run `ae verify`. Completion and Stop consume this same bound review record. After passed verification, record durable learning or explicit no-learning with `ae compound --learning-decision <file>`, then submit a complete plan-update decision. A standalone read-only review ends with its report and has no delivery completion ceremony.
+
+If verification reports missing check declarations, Engineer prepares the bounded configuration recovery described in `<copilot-home>/skills/create-primitive/references/named-checks.md`. `ae verify` can report diagnostics before that repair, but cannot pass delivery without its required checks. Refresh the affected plan/gate and review after authority changes, then continue automatically within the user's accepted scope.
 
 ## Error Handling
 

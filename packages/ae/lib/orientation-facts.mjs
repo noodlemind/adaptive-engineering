@@ -10,6 +10,7 @@ import { discoverInventory, routingCards, routingReadPointers, primitiveReadRoot
 import { extractGoalFromPlan } from './plan-goal.mjs';
 import { parseImpactedFiles } from './plan-scope.mjs';
 import { trustStatus } from './trust.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 import { reviewCoverageFacts } from './report-facts.mjs';
 import { captureWorkingSources } from './repo-map/working-sources.mjs';
 import { caffeinatedPointer } from './playbook-binding.mjs';
@@ -82,6 +83,7 @@ export function collectOrientationFacts({ workspace, copilotHome, flags = {}, qu
     verification: locateVerification(workspace, active?.fm?.verification?.recipe),
     planGoal: active ? extractGoalFromPlan(active) : null,
     trust: trustStatus({ workspace, copilotHome, home }),
+    checkReadiness: inspectCheckReadiness({ workspace, copilotHome, home }),
     reviewCoverage: reviewCoverageFacts({ workspace, plan: active, copilotHome }),
     learnings, skills: procedure && !skills.some(skill => skill.id === procedure.id) ? [...skills, procedure] : skills, procedure: procedureFact, instructions, contacts,
     index: { knowledge: indexPlane(status?.knowledge), structural: indexPlane(status?.structural) },

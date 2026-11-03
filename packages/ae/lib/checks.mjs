@@ -1,6 +1,7 @@
 import { planRecordRoot } from './domain-context.mjs';
 import { assertNoSymlinkAncestors, readFileNoFollow } from './fs-safe.mjs';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import YAML from 'yaml';
 import { runProcess } from './runner.mjs';
@@ -39,13 +40,13 @@ export function loadNamedChecks(workspace, options) {
     source = projectAuthorityFile(workspace, 'checks.yaml', options);
     const full = source.path;
     if (!fs.lstatSync(full, { throwIfNoEntry: false })) return { checks: null, error: `Trusted check config not found: ${full}`, source: full };
-    const content = readFileNoFollow(full, { root: source.root, maxBytes: 1024 * 1024 });
+    const content = readFileNoFollow(full, { root: source.root, maxBytes: 1024 * 1024, encoding: null });
     if (content === null) throw new Error('Named check source is unreadable or nonregular');
-    const parsed = YAML.parse(content, { maxAliasCount: 50 });
+    const parsed = YAML.parse(content.toString('utf8'), { maxAliasCount: 50 });
     if (parsed?.version !== 1 || !parsed.checks || typeof parsed.checks !== 'object' || Array.isArray(parsed.checks)) {
       return { checks: null, error: `${source.display} must declare version: 1 and checks` };
     }
-    return { checks: parsed.checks, error: null, source: source.path, sourceRoot: source.root, sourceMode: source.mode };
+    return { checks: parsed.checks, error: null, source: source.path, sourceRoot: source.root, sourceMode: source.mode, sourceDigest: createHash('sha256').update(content).digest('hex') };
   } catch (error) {
     return { checks: null, error: `Invalid project checks${source ? ` ${source.display}` : ''}: ${error.message}` };
   }
@@ -170,10 +171,14 @@ export async function runNamedCheck(workspace, name, config, { signal, onStdout,
     try { isolated = experiment.prepare({ artifactRoot: path.join(recordRoot, artifactRoot) }); }
     catch (error) { if (artifactRoot) discardCheckArtifacts(recordRoot, artifactRoot); return finish(resultCheck(name, 'unavailable', error.message)); }
   }
+  // A named check is a new run, not a worker of an enclosing node:test process.
+  // Inheriting this private marker makes `node --test` skip its assertions.
+  const checkEnv = isolated ? { ...isolated.env } : { ...(envReport ? envReport.env : process.env), ...(artifactRoot ? { HARNESS_CHECK_ARTIFACT_DIR: path.join(recordRoot, artifactRoot) } : {}), ...extraEnv };
+  delete checkEnv.NODE_TEST_CONTEXT;
   const execution = await runProcess({
     argv: isolated?.argv || [...networkWrapper, ...config.command],
     cwd: workspace,
-    ...(isolated ? { env: isolated.env } : artifactRoot || envReport || controllerEnv ? { env: { ...(envReport ? envReport.env : process.env), ...(artifactRoot ? { HARNESS_CHECK_ARTIFACT_DIR: path.join(recordRoot, artifactRoot) } : {}), ...extraEnv } } : {}),
+    env: checkEnv,
     timeoutMs: isolated?.timeoutMs ?? timeoutSeconds * 1000,
     signal,
     ...(process.platform === 'win32' && artifactRoot && !experiment ? { cancellationFile: path.join(recordRoot, artifactRoot, '.harness-cancel.json') } : {}),

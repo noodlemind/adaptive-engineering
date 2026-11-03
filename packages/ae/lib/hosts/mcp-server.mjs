@@ -12,6 +12,8 @@ const DECISION = { type: 'object' };
 const DEFINITIONS = [
   { name: 'ae_orient', command: 'orient', description: 'Read current AE context for the startup-bound workspace. Does not establish skill activation.', properties: { query: TEXT, files: { type: 'array', items: TEXT, maxItems: 64 } }, read: true },
   { name: 'ae_status', command: 'status', description: 'Read AE installation and workspace status.', properties: {}, read: true },
+  { name: 'ae_checks_list', command: 'checks', verb: 'list', description: 'Inspect named checks and the exact source digest for the startup-bound workspace without running commands.', properties: {}, read: true },
+  { name: 'ae_checks_configure', command: 'checks', verb: 'configure', description: 'Prepare digest-bound named checks in the selected project configuration. Does not execute checks or approve trust; a person reviews the resulting commands before approval.', properties: { decision: DECISION }, required: ['decision'] },
   { name: 'ae_get_reference', command: 'get', description: 'Read a reference from the selected AE corpus. Not a substitute for required native skill activation.', properties: { reference: TEXT }, required: ['reference'], read: true },
   { name: 'ae_gate', command: 'gate', description: 'Ask the existing kernel for an implement gate on an accepted plan.', properties: { plan: TEXT }, required: ['plan'] },
   { name: 'ae_verify', command: 'verify', description: 'Run existing plan verification; repo-authored checks require the existing person-approved trust decision.', properties: { plan: TEXT, base: TEXT }, required: ['plan', 'base'] },

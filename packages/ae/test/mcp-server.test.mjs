@@ -108,8 +108,11 @@ test('stdio lifecycle negotiates explicit legacy versions and lists bounded type
   assert.deepEqual((await c.request('ping').response).result, {});
   const tools = (await c.request('tools/list').response).result.tools;
   assert.deepEqual(tools, describeMcpTools());
+  assert.equal(tools.length, 12);
   assert.ok(tools.some(tool => tool.name === 'ae_orient'));
   assert.ok(tools.some(tool => tool.name === 'ae_plan_update'));
+  assert.ok(tools.some(tool => tool.name === 'ae_checks_configure'));
+  assert.equal(tools.find(tool => tool.name === 'ae_checks_list').annotations.readOnlyHint, true);
   assert.ok(tools.every(tool => tool.inputSchema.additionalProperties === false));
   assert.ok(!tools.some(tool => /exec|shell|trust|install/.test(tool.name)));
   assert.equal(tools.find(tool => tool.name === 'ae_verify').annotations.readOnlyHint, false);
