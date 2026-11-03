@@ -181,8 +181,10 @@ ae migrate      # move gitignored docs/plans and docs/solutions out of the produ
 
 Personal configuration lives in `~/.ae/projects/<repo-id>/authority/`. Existing
 `.github/harness/` configuration remains selected. `ae init-repo --shared`
-publishes shared project configuration; commit the returned inventory as a
-reviewed setup change before product work. A teammate installs their own AE
+publishes shared project configuration with a reviewable inventory. A bounded
+check repair can stay in the authorized product task: include only the exact
+prepared shared check source alongside the product files in its accepted plan,
+then review both together. No separate setup plan or commit is required. A teammate installs their own AE
 runtime and reviews the commands with their own local approval.
 
 Upgrade preserves those authored checks and approvals when their authority is

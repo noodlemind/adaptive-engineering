@@ -178,6 +178,7 @@ test('a changed check binding admits bounded recovery and keeps execution blocke
     [...prefix, 'checks', 'show', 'unit-tests', ...roots],
     [...prefix, 'trust', 'status', ...roots],
     [...prefix, 'orient', '--read', '--context-version', '2', '--query', 'Repair verification readiness', ...roots],
+    [...prefix, 'plan-new', '--file', '-', ...roots],
     [...prefix, 'plan-update', '--plan', '/fixture/plan.md', '--file', '-', ...roots],
   ];
   for (const argv of recovery) {
@@ -188,6 +189,10 @@ test('a changed check binding admits bounded recovery and keeps execution blocke
     [...prefix, 'verify', '--plan', '/fixture/plan.md', ...roots],
     [...prefix, 'checks', 'run', 'unit-tests', ...roots],
     [...prefix, 'trust', 'approve', ...roots],
+    [...prefix, 'plan-new', '--file', 'decision.json', ...roots],
+    [...prefix, 'plan-new', '--file', '-', '--plan', '/fixture/plan.md', ...roots],
+    [...prefix, 'plan-new', '--file', '-', 'unexpected', ...roots],
+    [...prefix, 'plan-new', '--file', '-', '--execute', 'unit-tests', ...roots],
     [...prefix, 'plan-update', '--plan', '/fixture/plan.md', '--file', 'decision.json', ...roots],
     ['ae', 'orient', ...roots],
   ]) {
@@ -195,6 +200,34 @@ test('a changed check binding admits bounded recovery and keeps execution blocke
     const output = f.pre(commandOf(argv));
     assert.equal(output.permission ?? output.hookSpecificOutput?.permissionDecision, 'deny', commandOf(argv));
   }
+});
+
+test('a stale prior check binding permits a new authored plan after check preparation', t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.workspace, '.harness'), { recursive: true });
+  fs.writeFileSync(path.join(f.workspace, '.harness/session.json'), JSON.stringify({ gatedChecksDigest: '0'.repeat(64) }));
+  f.admitted(commandOf(f.argv));
+  const configured = spawnSync(f.argv[0], f.argv.slice(1), { cwd: f.workspace, env: f.env, input: JSON.stringify(f.decision), encoding: 'utf8', timeout: 15000 });
+  assert.equal(configured.status, 0, configured.stdout + configured.stderr);
+  const argv = [...f.argv.slice(0, 2), 'plan-new', '--file', '-', '--workspace', slash(f.workspace), '--ae-home', slash(f.home), '--copilot-home', slash(f.copilotHome), '--json'];
+  const decision = {
+    version: 1, format: 'full', slug: 'prepared-check-recovery', status: 'planned', goal: 'Keep the product value equal to seven.',
+    acceptance: ['The existing value assertion passes.'], constraints: ['Use the prepared behavioral check.'],
+    scope: ['app.json', '.github/harness/checks.yaml'], check: 'unit-tests', skillsUsed: ['engineer'],
+  };
+  withEnv(f.env, () => assert.equal(checkConfigurationRecoveryControl(argv, f.workspace), 'plan-new'));
+  f.admitted(commandOf(argv));
+  f.admitted(`${commandOf(argv)} <<'AE_PLAN'\n${JSON.stringify(decision)}\nAE_PLAN`);
+  const created = spawnSync(argv[0], argv.slice(1), { cwd: f.workspace, env: f.env, input: JSON.stringify(decision), encoding: 'utf8', timeout: 15000 });
+  assert.equal(created.status, 0, created.stdout + created.stderr);
+  const plan = JSON.parse(created.stdout);
+  assert.ok(plan.path.startsWith(f.home + path.sep));
+  const document = fs.readFileSync(plan.path, 'utf8');
+  assert.match(document, /status: planned/);
+  assert.match(document, /unit-tests/);
+  assert.match(document, /\.github\/harness\/checks\.yaml/);
+  assert.equal(fs.existsSync(path.join(f.home, 'trust.yaml')), false);
+  assert.equal(fs.existsSync(f.executed), false);
 });
 
 test('a literal stdin decision remains a single recovery operation', t => {

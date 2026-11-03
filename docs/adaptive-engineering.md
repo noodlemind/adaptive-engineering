@@ -120,8 +120,9 @@ Initialization defaults to personal configuration under
 `~/.ae/projects/<repo-id>/authority/`, with no new product configuration to
 commit. Existing shared `.github/harness/` authority remains selected.
 `ae init-repo --shared` explicitly publishes shared configuration and returns
-the exact commit inventory. Complete that setup change before locking an
-unrelated product plan. Approval is always user-local; cloning team policy does
+the exact commit inventory. Review that inventory within its accepted setup
+scope. A bounded check repair may accompany the authorized product task as
+described below; it needs no separate setup plan or commit. Approval is always user-local; cloning team policy does
 not clone a person's execution decision.
 
 The state home must stay outside the product checkout. An in-repository
@@ -146,7 +147,7 @@ New `init-repo` policy stubs use `enforce`; existing authored policies remain un
 
 Upgrade preserves authored project checks and policy. A CLI upgrade alone does not require renewed project approval. Its `checkReadiness` result and orientation distinguish usable checks from missing, empty, invalid, or unusable configuration, independently of the trust result. `trusted: true` with no checks means the current configuration is approved, while delivery still needs a meaningful proof command.
 
-Engineer owns recovery rather than asking the person to write YAML. It inspects the existing test setup and relevant assertions, reads the selected path and `sourceDigest` from `ae checks list --json`, and submits concrete upserts through `ae checks configure --file - --json`. The schema 1 decision contains `expectedDigest`, `checks`, and `rationale`. The writer preserves unrelated checks and refuses concurrent changes. A no-op preserves existing approval. Changed commands are presented for a necessary person approval before execution. The [named-check procedure](../packages/ae/corpus/skills/create-primitive/references/named-checks.md) supplies the decision shape and recovery details.
+Engineer owns recovery rather than asking the person to write YAML. It inspects the existing test setup and relevant assertions, reads the selected path and `sourceDigest` from `ae checks list --json`, and submits concrete upserts through `ae checks configure --file - --json`. The schema 1 decision contains `expectedDigest`, `checks`, and `rationale`. The writer preserves unrelated checks and refuses concurrent changes. A no-op preserves existing approval. Changed commands are presented for a necessary person approval before execution. The accepted task plan may include the exact prepared shared check source alongside its product files, reviewing both together without a separate setup plan or unguarded commit. Private configuration stays outside product scope. The [named-check procedure](../packages/ae/corpus/skills/create-primitive/references/named-checks.md) supplies the decision shape and recovery details.
 
 Use the same workspace and AE home throughout the task. A subfolder that would hide an enclosing repository's shared configuration is reported with a concrete root retry; AE does not silently adopt a different execution root. Resolve that selection before creating new checks.
 

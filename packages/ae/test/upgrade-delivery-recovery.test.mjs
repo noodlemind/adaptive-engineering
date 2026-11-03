@@ -45,20 +45,27 @@ function fixture(t, { shared = true, populated = false } = {}) {
     fs.writeFileSync(path.join(path.dirname(config), 'policy.yaml'), 'version: 1\nenforcement: enforce\n');
   }
   git(['add', '.']); git(['commit', '-qm', 'existing product and behavioral assertion']);
-  const raw = (args, input) => spawnSync(process.execPath, [bin, ...args, '--workspace', workspace, '--copilot-home', copilotHome, '--ae-home', home, '--json', '--no-events'],
+  const argvFor = args => [bin, ...args, '--workspace', workspace, '--copilot-home', copilotHome, '--ae-home', home, '--json', '--no-events'];
+  const raw = (args, input) => spawnSync(process.execPath, argvFor(args),
     { cwd: workspace, env, input: input === undefined ? undefined : JSON.stringify(input), encoding: 'utf8', timeout: 60_000 });
   const cli = (args, input) => {
     const result = raw(args, input);
     assert.equal(result.status, 0, `${args.join(' ')}\n${result.stderr}\n${result.stdout}`);
     return JSON.parse(result.stdout);
   };
-  const hook = command => {
-    const result = spawnSync(process.execPath, [path.join(packageRoot, 'corpus/hooks/require-plan-gate.mjs')], {
+  const toolHook = (name, payload) => {
+    const result = spawnSync(process.execPath, [path.join(packageRoot, 'corpus/hooks', name)], {
       cwd: workspace, env, encoding: 'utf8', timeout: 30_000,
-      input: JSON.stringify({ workspace, session_id: 'upgrade-recovery-fixture', tool_name: 'run_in_terminal', tool_input: { command } }),
+      input: JSON.stringify({ workspace, session_id: 'upgrade-recovery-fixture', ...payload }),
     });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout.trim().split('\n').at(-1));
+  };
+  const hook = command => toolHook('require-plan-gate.mjs', { tool_name: 'run_in_terminal', tool_input: { command } });
+  const control = (args, input) => {
+    const admission = hook([process.execPath, ...argvFor(args)].map(quote).join(' '));
+    assert.equal(admission.continue, true, JSON.stringify(admission));
+    return cli(args, input);
   };
   let approvals = 0;
   const personApprovesFixturePolicy = () => {
@@ -76,7 +83,7 @@ function fixture(t, { shared = true, populated = false } = {}) {
     assert.equal(result.status, 0, result.stderr + result.stdout);
     return JSON.parse(result.stdout);
   };
-  return { root, workspace, home, copilotHome, env, config, checks, git, raw, cli, hook, configure, personApprovesFixturePolicy, approvals: () => approvals };
+  return { root, workspace, home, copilotHome, env, config, checks, git, raw, cli, hook, toolHook, control, configure, personApprovesFixturePolicy, approvals: () => approvals };
 }
 
 test('trusted empty shared setup recovers through upgrade, hooks and the complete delivery lifecycle', { timeout: 180_000 }, t => {
@@ -102,28 +109,38 @@ test('trusted empty shared setup recovers through upgrade, hooks and the complet
   assert.equal(agentApproval.permissionDecision, 'deny', 'configuration recovery must not admit agent approval of executable policy');
   assert.notEqual(f.raw(['checks', 'run', 'value-behavior']).status, 0);
   assert.equal(fs.readFileSync(path.join(f.workspace, 'src/value.mjs'), 'utf8'), 'export const value = 1;\n');
-  f.git(['add', '.github/harness/checks.yaml']); f.git(['commit', '-qm', 'reviewable behavioral check declaration']);
+  assert.match(f.git(['status', '--porcelain']), /\.github\/harness\/checks\.yaml/, 'prepared shared checks stay dirty for the same delivery plan');
   f.personApprovesFixturePolicy();
   const beforeChange = f.raw(['checks', 'run', 'value-behavior']);
   assert.notEqual(beforeChange.status, 0, `the real check must reject the unchanged behavior: ${beforeChange.stdout}\n${beforeChange.stderr}`);
   const ready = f.cli(['orient', '--read', '--query', 'Make the observable value equal two.', '--file', 'src/value.mjs']);
   assert.equal(ready.checkReadiness.status, 'ready');
   assert.equal(ready.trust.trusted, true);
-  const created = f.cli(['plan-new', '--file', '-'], {
+  const created = f.control(['plan-new', '--file', '-'], {
     version: 1, format: 'full', slug: 'upgrade-recovery', status: 'planned', goal: 'Make the observable value equal two.',
     acceptance: ['The exported value is two and the existing behavioral assertion passes.'],
-    constraints: ['Change only the exported product value.'], scope: ['src/value.mjs'], check: 'value-behavior', skillsUsed: ['engineer'],
+    constraints: ['Change only the exported product value and its exact named-check declaration.'],
+    scope: ['src/value.mjs', '.github/harness/checks.yaml'], check: 'value-behavior', skillsUsed: ['engineer'],
   });
+  f.cli(['orient', '--read', '--context-version', '2', '--plan', created.path, '--query', 'Make the observable value equal two.',
+    '--file', 'src/value.mjs', '--file', '.github/harness/checks.yaml']);
   const decide = (id, action, extra = {}) => {
     const revision = digest(fs.readFileSync(created.path));
-    return f.cli(['plan-update', '--plan', created.path, '--file', '-'], { version: 1, id, action, expect: revision, ...extra });
+    return f.control(['plan-update', '--plan', created.path, '--file', '-'], { version: 1, id, action, expect: revision, ...extra });
   };
   const started = decide('recovery-start', 'start');
   assert.equal(started.status, 'ok', JSON.stringify(started));
+  const edit = { tool_name: 'replace_string_in_file', tool_input: { filePath: 'src/value.mjs', oldString: 'export const value = 1;', newString: 'export const value = 2;' } };
+  for (const name of ['block-destructive-commands.mjs', 'guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+    const admission = f.toolHook(name, edit);
+    assert.equal(admission.continue, true, `${name}: ${JSON.stringify(admission)}`);
+  }
   fs.writeFileSync(path.join(f.workspace, 'src/value.mjs'), 'export const value = 2;\n');
+  assert.equal(f.toolHook('record-successful-edit.mjs', { ...edit, hook_event_name: 'PostToolUse', success: true }).continue, true);
   const progress = decide('recovery-progress', 'progress', { progress: { criteria: ['AC1'], tasks: ['P1T1'] } });
   assert.equal(progress.status, 'ok');
   const packet = f.cli(['review', 'prepare', '--plan', created.path, '--base', 'HEAD']);
+  assert.deepEqual(packet.scope.changedFiles, ['.github/harness/checks.yaml', 'src/value.mjs']);
   const review = f.cli(['review', 'assemble', '--plan', created.path, '--packet', packet.id, '--file', '-'], {
     packet: packet.id,
     results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [],

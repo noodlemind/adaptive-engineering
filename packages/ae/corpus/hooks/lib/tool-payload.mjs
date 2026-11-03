@@ -687,12 +687,14 @@ export function checkConfigurationRecoveryControl(tokens, workspace) {
     } else if (command === 'trust') {
       if (args[1] !== 'status') return null;
       start = 2;
-    } else if (command === 'plan-update') extra = ['--plan', '--file'];
+    } else if (command === 'plan-new') extra = ['--file'];
+    else if (command === 'plan-update') extra = ['--plan', '--file'];
     else if (command === 'orient') { extra = ['--plan', '--query', '--file', '--context-version', '--intent-page', '--intent-page-size']; repeatable = ['--file']; }
     else return null;
     const values = boundedControlFlags(args, start, extra, { repeatable });
     if (!selectedControlRoots(values, workspace)) return null;
-    if (command === 'plan-update' && (!values.has('--plan') || values.get('--file') !== '-')) return null;
+    if (['plan-new', 'plan-update'].includes(command) && values.get('--file') !== '-') return null;
+    if (command === 'plan-update' && !values.has('--plan')) return null;
     return command;
   } catch { return null; }
 }

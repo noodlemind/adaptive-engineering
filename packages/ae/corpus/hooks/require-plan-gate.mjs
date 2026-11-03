@@ -346,7 +346,7 @@ if (normalized.command) {
           'changed-check-config',
           session.gatedChecksDigest === null
             ? 'The failed implement gate has no accepted check binding. Run a standalone canonical ae control command to recover before product execution'
-            : 'The configured check manifest changed after the implement gate. Inspect and repair it through the installed checks, trust status, orient or plan-update recovery commands, then obtain required approval and refresh the gate before execution',
+            : 'The configured check manifest changed after the implement gate. Inspect and repair it through the installed checks, trust status, orient or authored plan decision commands, then obtain required approval and refresh the gate before execution',
           'invalid'
         );
       }
