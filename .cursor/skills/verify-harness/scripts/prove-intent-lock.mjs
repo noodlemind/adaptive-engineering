@@ -5,6 +5,7 @@ import {
   assertEqual,
   assertMatch,
   cleanup,
+  git,
   initWorkspace,
   parseFrontmatter,
   runHarness,
@@ -178,11 +179,19 @@ Relock hashes.
   assertEqual(missingCheck.pass, false, 'C-intent-sources missing source');
   assertMatch(missingCheck.message, /docs\/specs\/checkout\.md/, 'C-intent-sources names the spec');
 
+  // These siblings form one discovery fixture; their intermediate commits are
+  // not part of the intent contract. Publish the same tracked tree together.
+  const siblingPaths = [];
   for (let i = 1; i <= 12; i += 1) {
-    writeTracked(ctx.ws, `docs/specs/n${String(i).padStart(2, '0')}.md`, `# n${i}\n`);
+    const rel = `docs/specs/n${String(i).padStart(2, '0')}.md`;
+    fs.writeFileSync(path.join(ctx.ws, rel), `# n${i}\n`);
+    siblingPaths.push(rel);
   }
   const winnerRel = 'docs/specs/n13.md';
-  writeTracked(ctx.ws, winnerRel, '# n13\n\nrefund buyer\n');
+  fs.writeFileSync(path.join(ctx.ws, winnerRel), '# n13\n\nrefund buyer\n');
+  siblingPaths.push(winnerRel);
+  git(ctx.ws, ['add', '--', ...siblingPaths]);
+  git(ctx.ws, ['commit', '-qm', 'add sibling discovery fixtures']);
   const siblingPlan = await runHarness(
     [
       'plan-new',
