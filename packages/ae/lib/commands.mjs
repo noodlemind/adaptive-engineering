@@ -19,6 +19,7 @@ import { approvedBundleNames, syncBundles } from './bundle-sync.mjs';
 import { runDoctor } from './doctor.mjs';
 import { runInitRepo } from './init-repo.mjs';
 import { inspectCheckReadiness } from './check-readiness.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 import { leftoverWorkspaceArtifacts, runMigrateLayout } from './migrate-layout.mjs';
 import { migrateHome } from './migrate-home.mjs';
 import { selectIntent, intentSourcesCheck } from './intent-sources.mjs';
@@ -404,6 +405,10 @@ export function statusDomainResult(flags, copilotHome) {
   if (flags.effectivePolicy) {
     return publishPolicySnapshot(path.resolve(flags.workspace), { copilotHome, override: flags.enforcement });
   }
+  return withGitIdentityCache(() => readStatusDomainResult(flags, copilotHome));
+}
+
+function readStatusDomainResult(flags, copilotHome) {
   if (flags.contractDigest || flags.validateEvidence || flags.validateCompletion) {
     const workspace = path.resolve(flags.workspace);
     const plan = loadPlan(workspace, flags.plan, { home: flags.harnessHome });

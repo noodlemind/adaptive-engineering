@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { normalizeToolPayload } from './lib/tool-payload.mjs';
-import { loadHookPolicy } from './lib/policy.mjs';
 
 let policy = { enforcement: 'enforce' };
 
@@ -81,7 +80,6 @@ try {
 }
 
 const mutation = normalizeToolPayload(payload);
-policy = loadHookPolicy(mutation.workspace, { rule: 'critical' });
 if (!mutation.mutation) {
   output({ continue: true });
   process.exit(0);
@@ -93,6 +91,8 @@ for (const target of mutation.targets) {
     .map((value) => value.replace(/\\/g, '/'));
   for (const candidate of candidates) {
     if (BLOCKED.some((pattern) => pattern.test(candidate))) {
+      const { loadHookPolicy } = await import('./lib/policy.mjs');
+      policy = loadHookPolicy(mutation.workspace, { rule: 'critical' });
       deny(`sensitive-path: ${target}`);
     }
   }

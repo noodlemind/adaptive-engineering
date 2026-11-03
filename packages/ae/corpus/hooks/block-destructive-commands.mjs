@@ -3,7 +3,6 @@
 import fs from 'node:fs';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { normalizeToolPayload, unwrapShellSegments } from './lib/tool-payload.mjs';
-import { loadHookPolicy } from './lib/policy.mjs';
 
 let policy = { enforcement: 'enforce' };
 
@@ -91,12 +90,9 @@ try {
 }
 
 const { command, workspace } = normalizeToolPayload(payload);
-policy = loadHookPolicy(workspace, { rule: 'destructive' });
-if (destructiveProtectedPush(command)) {
-  deny('destructive-command: command blocked by Harness policy');
-}
-for (const pattern of BLOCKED) {
-  if (!pattern.test(command)) continue;
+if (destructiveProtectedPush(command) || BLOCKED.some(pattern => pattern.test(command))) {
+  const { loadHookPolicy } = await import('./lib/policy.mjs');
+  policy = loadHookPolicy(workspace, { rule: 'destructive' });
   deny('destructive-command: command blocked by Harness policy');
 }
 

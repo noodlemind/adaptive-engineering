@@ -17,8 +17,13 @@ import { validatePlanSchema } from './plan-schema.mjs';
 import { intentSourcesCheck } from './intent-sources.mjs';
 import { inspectIsolation, isolatedWorktreeDestination, planSlugFromPath, worktreeGateMessage } from './worktree.mjs';
 import { recoveryDiagnostics } from './diagnostics.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 
-export function runGate({ workspace, flags, query = '', planOverride = null, domainContext = null }) {
+export function runGate(options) {
+  return withGitIdentityCache(() => readGate(options));
+}
+
+function readGate({ workspace, flags, query = '', planOverride = null, domainContext = null }) {
   const sessionRoot = domainContext ? validateDomainContext(domainContext, workspace).root : planOverride ? planRecordRoot(workspace, planOverride) : workspace;
   const session = readSession(sessionRoot);
   const phase = flags.phase || 'implement';

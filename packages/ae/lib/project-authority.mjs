@@ -4,7 +4,6 @@ import { withPlanUpdateLock } from './plan-update.mjs';
 import path from 'node:path';
 import { projectStoreDir } from './project-layout.mjs';
 import { harnessGlobalHome } from './paths.mjs';
-import { cachedGitObservation } from './git-observation-cache.mjs';
 import { selectProjectAuthority, PROJECT_AUTHORITY_FILES, assertExternalStateHome } from '../corpus/hooks/lib/project-authority.mjs';
 
 export { PROJECT_AUTHORITY_FILES, assertExternalStateHome };
@@ -12,7 +11,9 @@ export { PROJECT_AUTHORITY_FILES, assertExternalStateHome };
 export function resolveProjectAuthority(workspace, { home = harnessGlobalHome(), mode } = {}) {
   const root = path.resolve(workspace);
   home = path.resolve(home || harnessGlobalHome());
-  const project = cachedGitObservation(['authority-project-store', root, home], () => projectStoreDir(root, { home }));
+  // Alias routing and competing local/shared files stay live even within an
+  // identity read phase; only the underlying Git identity may be reused.
+  const project = projectStoreDir(root, { home });
   return selectProjectAuthority(root, project, { home, mode });
 }
 

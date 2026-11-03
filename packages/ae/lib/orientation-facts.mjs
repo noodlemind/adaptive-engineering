@@ -21,6 +21,7 @@ import { performanceContext } from './performance.mjs';
 import { buildChangeImpactContext } from './change-impact.mjs';
 import { flowModelContext } from './flow-model.mjs';
 import { detectWorkspace, emptyLayout } from './workspace-layout.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 
 function indexPlane(plane) {
   if (!plane?.indexed) return 'missing';
@@ -28,7 +29,11 @@ function indexPlane(plane) {
   return plane.stale ? 'stale' : 'current';
 }
 
-export function collectOrientationFacts({ workspace, copilotHome, flags = {}, query = '', files, graphPreparation } = {}) {
+export function collectOrientationFacts(options = {}) {
+  return withGitIdentityCache(() => readOrientationFacts(options));
+}
+
+function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', files, graphPreparation } = {}) {
   const session = readSession(workspace) || {};
   const q = query || flags.query || (flags.contextVersion === 2 ? session.lastQuery || '' : '');
   const sourceSnapshot = flags.contextVersion === 2 ? captureWorkingSources(workspace) : null;
