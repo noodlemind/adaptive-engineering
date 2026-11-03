@@ -20,7 +20,8 @@ test('the engineer agent drops the numbered delivery checklist', () => {
   assert.match(source, /\*\*Deliver\*\*/);
   assert.match(source, /\*\*Review\*\*/);
   assert.match(source, /create-primitive\/SKILL\.md/);
-  assert.match(source, /A person approves a new skill or specialist before it is installed/);
-  assert.match(source, /Before the first edit, call `ae orient --read --context-version 2` with the task text and target files/);
+  assert.match(source, /A person approves a new skill or specialist before installation/);
+  assert.match(source, /Before edits, call `ae orient --read --context-version 2` with task text and target files/);
+  assert.match(source, /Check readiness apart from trust; recover through ensure-plan/);
   assert.equal(fs.existsSync(path.join(packageRoot, 'assets', 'agents', 'engineer.agent.md')), false);
 });

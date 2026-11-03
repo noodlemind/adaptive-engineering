@@ -8,10 +8,12 @@ import { CHECKS_REL, loadNamedChecks, validateCommand, runNamedCheck, CHECK_TIME
 import { resolveCopilotHome } from './paths.mjs';
 import { projectAuthorityFile } from './project-authority.mjs';
 import { isProjectTrusted } from './trust.mjs';
+import { configureCheckConfiguration, inspectCheckConfiguration } from './check-configuration.mjs';
+import { readBoundedInput, readFileNoFollow } from './fs-safe.mjs';
 
 const ui = createStyle({ argv: process.argv.slice(2) });
 
-export const CHECKS_VERBS = Object.freeze(['list', 'show', 'run']);
+export const CHECKS_VERBS = Object.freeze(['list', 'show', 'run', 'configure']);
 
 function usageError(message, hint) {
   return Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
@@ -58,7 +60,19 @@ export async function checksResultOf(argv, ctx = {}) {
   if (!CHECKS_VERBS.includes(verb)) {
     throw usageError(`unknown checks verb: ${verb}`, `one of ${CHECKS_VERBS.join(', ')}`);
   }
-  const checks = readChecks(workspace, { home: flags.harnessHome });
+  if (verb === 'configure') {
+    if (name || flags.files?.length !== 1) throw usageError('checks configure requires exactly one --file decision and no check-name argument', 'ae checks configure --file - --json');
+    const selected = flags.files[0], full = path.resolve(workspace, selected);
+    const text = selected === '-' ? readBoundedInput(0, { maxBytes: 1024 * 1024 })
+      : readFileNoFollow(full, { root: path.dirname(full), maxBytes: 1024 * 1024 });
+    if (text === null) throw usageError('Check configuration decision is missing, redirected, unreadable or exceeds 1 MiB', 'ae checks configure --file - --json');
+    let input;
+    try { input = JSON.parse(text); } catch { throw usageError('Check configuration decision must be JSON', 'ae checks configure --file - --json'); }
+    return configureCheckConfiguration({ workspace, home: flags.harnessHome, copilotHome, input, dryRun: flags.dryRun });
+  }
+  if (flags.files?.length) throw usageError('--file is only supported for checks configure', 'ae checks configure --file - --json');
+  const listed = verb === 'list' ? inspectCheckConfiguration({ workspace, home: flags.harnessHome }) : null;
+  const checks = listed ? listed.checks : readChecks(workspace, { home: flags.harnessHome });
   const source = projectAuthorityFile(workspace, 'checks.yaml', { home: flags.harnessHome });
   const configPath = source.mode === 'shared' ? CHECKS_REL : source.path;
   const names = Object.keys(checks).sort();
@@ -68,6 +82,9 @@ export async function checksResultOf(argv, ctx = {}) {
       schema: 1,
       verb,
       config: configPath,
+      sourceMode: listed.sourceMode,
+      sourceDigest: listed.sourceDigest,
+      missing: listed.missing,
       checks: names.map((n) => describeCheck(n, checks[n])),
     };
   }
@@ -114,6 +131,10 @@ export async function cmdChecks(argv, ctx = {}) {
 
   if (flags.json) {
     console.log(redactedJson(result, { pretty: flags.verbose }));
+  } else if (result.verb === 'configure') {
+    console.log(ui.line({ state: 'ok', key: 'checks', value: result.dryRun ? 'configuration preview' : result.changed ? 'configuration prepared' : 'unchanged', note: result.config }));
+    for (const change of result.changes) console.log(ui.line({ key: change.name, value: change.current.command.join(' ') }));
+    for (const action of result.nextActions) console.log(ui.paint('muted', `  ${action}`));
   } else if (result.verb === 'list') {
     const keyWidth = keyWidthFor(['checks', ...result.checks.map((c) => c.name)]);
     console.log(ui.line({ key: 'checks', value: `${result.checks.length} defined`, note: result.config, keyWidth }));

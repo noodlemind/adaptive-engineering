@@ -427,7 +427,7 @@ export async function cmdPlanNew(argv) {
     .map(([name]) => name);
   const draft = ['open', 'needs-info'].includes(opts.status);
   if (names.length === 0 && !draft) {
-    throw new Error('plan-new: configure at least one named check in .github/harness/checks.yaml before generating a gate-ready plan');
+    throw new Error(`plan-new: configure at least one named check in ${configured.source}; Engineer inspects the project tests and prepares declarations with ae checks configure --file - before generating a gate-ready plan`);
   }
   if (opts.check) {
     if (!names.includes(opts.check)) {

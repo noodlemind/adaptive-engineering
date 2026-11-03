@@ -1216,8 +1216,12 @@ function withExternalHome(run) {
   } finally {
     if (previous === undefined) delete process.env.HARNESS_HOME;
     else process.env.HARNESS_HOME = previous;
-    fs.rmSync(workspace, { recursive: true, force: true });
-    fs.rmSync(home, { recursive: true, force: true });
+    const cleanup = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+    try {
+      fs.rmSync(workspace, cleanup);
+    } finally {
+      fs.rmSync(home, cleanup);
+    }
   }
 }
 

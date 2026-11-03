@@ -151,7 +151,7 @@ const DECLARED_VERBS = Object.freeze({
   tree: ['workspace', 'knowledge'],
   // `run` executes a repo-authored argv; `list`/`show` override DOWN to read,
   // so the palette warns about the verb that actually executes.
-  checks: ['list', 'show', 'run'],
+  checks: ['list', 'show', 'configure', 'run'],
   // `set` writes a file; the three read verbs override DOWN, so the palette
   // warns about the one verb that mutates.
   config: ['show', 'get', 'set', 'validate'],

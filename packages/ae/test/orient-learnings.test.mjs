@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { ensureStore } from '../lib/knowledge/store.mjs';
+import { writeChecks } from './helpers/cli-fixtures.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binPath = path.join(packageRoot, 'bin', 'ae.mjs');
@@ -126,9 +127,16 @@ test('orient records only the learning ids that SURVIVED into the 2KB pack, neve
   fs.writeFileSync(opsPath, JSON.stringify(ops));
   assert.equal(applyOps({ workspace: ws, opsPath, home: harnessHome }).exitCode, 0);
 
+  // Keep this fixture ready for behavioral verification so the 2KB pressure
+  // exercises partial memory packing rather than missing-check setup guidance.
+  fs.writeFileSync(path.join(ws, 'assert-episode.mjs'), "import assert from 'node:assert/strict';\nimport fs from 'node:fs';\nassert.equal(fs.readFileSync('docs/solutions/perf/big-0.md', 'utf8'), 'Body 0.\\n');\n");
+  writeChecks(ws, { 'episode-behavior': { command: [process.execPath, 'assert-episode.mjs'] } });
+
   const res = orient({ ws, home, harnessHome }, 'auth token refresh session cookie rotation');
   assert.equal(res.status, 0, res.stderr || res.stdout);
-  const ranked = JSON.parse(res.stdout).learnings.map((l) => l.id);
+  const output = JSON.parse(res.stdout);
+  assert.equal(output.checkReadiness.status, 'ready');
+  const ranked = output.learnings.map((l) => l.id);
   assert.equal(ranked.length, 3, 'all three learnings rank');
 
   const pack = fs.readFileSync(path.join(ws, '.harness', 'context-pack.md'), 'utf8');

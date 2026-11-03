@@ -52,6 +52,21 @@ function present(root, directory) {
   });
 }
 
+/** Diagnose a subfolder without inheriting another root's configuration. */
+function enclosingSharedProject(workspace) {
+  const parents = [];
+  for (let current = path.resolve(workspace); ; current = path.dirname(current)) {
+    if (fs.lstatSync(path.join(current, '.git'), { throwIfNoEntry: false })) {
+      // A directory or worktree .git file marks this repository's boundary.
+      // No Git command or parent policy is executed or selected by this probe.
+      return parents.find(parent => present(parent, path.join(parent, '.github', 'harness'))) || null;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    parents.push(parent);
+  }
+}
+
 /** The CLI and hydrated hooks select one complete source, never an overlay. */
 export function selectProjectAuthority(workspace, projectStore, { home, mode } = {}) {
   assertExternalStateHome(workspace, home, projectStore);
@@ -60,6 +75,15 @@ export function selectProjectAuthority(workspace, projectStore, { home, mode } =
   const local = path.join(projectStore, 'authority');
   const sharedPresent = present(workspace, shared);
   const localPresent = present(home, local);
+  if (!mode && !sharedPresent && !localPresent) {
+    const enclosing = enclosingSharedProject(workspace);
+    if (enclosing) {
+      throw Object.assign(new Error(`Selected workspace ${workspace} is inside a project with shared configuration at ${path.join(enclosing, '.github', 'harness')}; retry with --workspace ${JSON.stringify(enclosing)}.`), {
+        code: 'E_PROJECT_WORKSPACE', exit: 1,
+        hint: `Use --workspace ${JSON.stringify(enclosing)} to select that project explicitly, or initialize separate shared configuration for this nested project.`,
+      });
+    }
+  }
   if (sharedPresent && localPresent) throw failure(`Both local and shared project authority exist: ${local} and ${shared}`);
   if (mode === 'shared' && localPresent) throw failure(`Local project authority already exists at ${local}; explicitly migrate the reviewed files before selecting shared setup`);
   if (mode === 'local' && sharedPresent) throw failure(`Shared project authority already exists at ${shared}; existing team configuration must remain selected`);

@@ -8,12 +8,25 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const reporter = new URL('./ci-test-reporter.mjs', import.meta.url).href;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sorted = values => [...values].sort();
+export const GIT_REGRESSION_FILES = Object.freeze([
+  'domain-contract.test.mjs', 'domain-context.test.mjs', 'domain-delivery.test.mjs',
+  'storage-aliases.test.mjs', 'workspace-layout.test.mjs', 'migrate-layout.test.mjs',
+  'package-standalone.test.mjs', 'unchanged-retry.test.mjs', 'domain-commands.test.mjs',
+]);
 
 export function readTestFiles(repoRoot) {
   const directory = path.join(repoRoot, 'packages/ae/test');
   const files = fs.readdirSync(directory).filter(name => name.endsWith('.test.mjs')).sort();
   if (!files.length || files.some(name => !fs.lstatSync(path.join(directory, name)).isFile())) throw new Error('Test inventory is empty or contains a non-regular file');
   return files;
+}
+
+export function readSuiteFiles(repoRoot, suite = 'source') {
+  const all = readTestFiles(repoRoot);
+  if (suite === 'source') return all;
+  if (suite !== 'git') throw new Error('Unknown test suite');
+  if (GIT_REGRESSION_FILES.some(file => !all.includes(file))) throw new Error('Git regression inventory is missing a required file');
+  return sorted(GIT_REGRESSION_FILES);
 }
 
 export function partitionTests(files, costs, count) {
@@ -32,12 +45,15 @@ export function partitionTests(files, costs, count) {
   return bins;
 }
 
-export function verifyShardManifests(manifests, { files, sourceSha, shards }) {
+export function verifyShardManifests(manifests, { files, sourceSha, shards, suite, platform, nodeMajor }) {
   if (manifests.length !== shards || new Set(manifests.map(item => item.shard)).size !== shards) throw new Error('Missing or duplicate shard');
   const inventory = sorted(files), executed = [];
   for (const item of manifests) {
     if (item.version !== 1 || item.shards !== shards || !Number.isInteger(item.shard) || item.shard < 1 || item.shard > shards) throw new Error('Invalid shard manifest');
     if (item.sourceSha !== sourceSha) throw new Error('Shard source revision differs');
+    if (suite !== undefined && item.suite !== suite) throw new Error('Shard test suite differs');
+    if (platform !== undefined && item.platform !== platform) throw new Error('Shard platform differs');
+    if (nodeMajor !== undefined && item.nodeMajor !== nodeMajor) throw new Error('Shard runtime differs');
     if (item.exitCode !== 0 || !Array.isArray(item.results) || item.results.some(result => result.passed !== true)) throw new Error('Shard did not pass');
     if (!same(item.allFiles, inventory) || !Array.isArray(item.files) || !item.files.length) throw new Error('Shard inventory differs');
     if (!same(sorted(item.results.map(result => result.file)), sorted(item.files))) throw new Error('Shard execution inventory is incomplete');
@@ -47,8 +63,8 @@ export function verifyShardManifests(manifests, { files, sourceSha, shards }) {
   return { files: files.length, shards };
 }
 
-export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs, env = process.env }) {
-  const allFiles = readTestFiles(repoRoot);
+export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs, suite = 'source', env = process.env }) {
+  const allFiles = readSuiteFiles(repoRoot, suite);
   const selectedCosts = costs ?? JSON.parse(fs.readFileSync(path.join(repoRoot, '.github/ci/windows-test-costs.json'), 'utf8')).files;
   const groups = partitionTests(allFiles, selectedCosts, shards);
   if (!Number.isInteger(shard) || shard < 1 || shard > shards) throw new Error('Invalid shard index');
@@ -59,7 +75,7 @@ export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs
   const argv = ['--import', './test/helpers/isolate-runtime-env.mjs', '--test', '--test-concurrency=2',
     '--test-reporter=tap', `--test-reporter=${reporter}`, '--test-reporter-destination=stdout', `--test-reporter-destination=${timingFile}`,
     ...files.map(file => `./test/${file}`)];
-  console.log(`Windows test shard ${shard}/${shards}: ${files.length}/${allFiles.length} files, estimated ${Math.round(groups[shard - 1].estimatedMs / 1000)} aggregate test-seconds`);
+  console.log(`CI ${suite} test shard ${shard}/${shards}: ${files.length}/${allFiles.length} files, estimated ${Math.round(groups[shard - 1].estimatedMs / 1000)} aggregate test-seconds`);
   const started = Date.now();
   const child = spawn(process.execPath, argv, { cwd: path.join(repoRoot, 'packages/ae'), env, stdio: 'inherit' });
   const outcome = await new Promise(resolve => {
@@ -71,7 +87,7 @@ export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs
   const summary = records.findLast(record => record.kind === 'summary');
   let exitCode = outcome.code;
   if (exitCode === 0 && (summary?.success !== true || !same(sorted(results.map(result => result.file)), sorted(files)) || results.some(result => !result.passed))) exitCode = 1;
-  const manifest = { version: 1, sourceSha: env.GITHUB_SHA || null, shard, shards, allFiles, files, results, counts: summary?.counts ?? null, durationMs: Date.now() - started, exitCode, ...(outcome.error ? { error: outcome.error } : {}) };
+  const manifest = { version: 1, sourceSha: env.GITHUB_SHA || null, suite, platform: process.platform, nodeMajor: Number(process.versions.node.split('.')[0]), shard, shards, allFiles, files, results, counts: summary?.counts ?? null, durationMs: Date.now() - started, exitCode, ...(outcome.error ? { error: outcome.error } : {}) };
   fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   return manifest;
 }
@@ -86,14 +102,14 @@ export function readManifests(directory) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { shard: { type: 'string' }, shards: { type: 'string', default: '4' }, 'verify-manifests': { type: 'string' } } });
+    const { values } = parseArgs({ options: { shard: { type: 'string' }, shards: { type: 'string', default: '4' }, suite: { type: 'string', default: 'source' }, platform: { type: 'string' }, 'node-major': { type: 'string' }, 'verify-manifests': { type: 'string' } } });
     const count = Number(values.shards);
     if (values['verify-manifests']) {
       if (values.shard) throw new Error('Cannot execute and verify shards together');
-      const result = verifyShardManifests(readManifests(values['verify-manifests']), { files: readTestFiles(repositoryRoot), sourceSha: process.env.GITHUB_SHA || null, shards: count });
+      const result = verifyShardManifests(readManifests(values['verify-manifests']), { files: readSuiteFiles(repositoryRoot, values.suite), sourceSha: process.env.GITHUB_SHA || null, shards: count, suite: values.suite, platform: values.platform, nodeMajor: values['node-major'] === undefined ? undefined : Number(values['node-major']) });
       console.log(`Verified ${result.files} test files exactly once across ${result.shards} passing shards`);
     } else {
-      const result = await runShard({ shard: Number(values.shard), shards: count });
+      const result = await runShard({ shard: Number(values.shard), shards: count, suite: values.suite });
       process.exitCode = result.exitCode;
     }
   } catch (error) {

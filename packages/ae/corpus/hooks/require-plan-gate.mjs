@@ -15,13 +15,14 @@ import { syncSessionIdentity } from './lib/session-state.mjs';
 import { skillActivationSourceCurrent } from './lib/skill-activation.mjs';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { loadHookPolicy, projectTrustIsCurrent } from './lib/policy.mjs';
-import { harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
+import { checkConfigurationRecoveryControl, harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
 import { parseImpactedText } from './lib/impacted-files.mjs';
 
 const startedAt = Date.now();
 let payload = {};
 let normalized = null;
 let policy = { enforcement: 'enforce', ttl: 30 };
+let policyObserved = false;
 const RECOVER_MISSING_GATE = 'Read <copilot-home>/skills/ensure-plan/SKILL.md with the host read tool. A not-truncated read of that SKILL.md is activation. Create or amend only the canonical plan, then submit a standalone ae plan-update --file start decision. Harness binds state and the implement gate. Wait for explicit success before retrying the product mutation in a later tool call';
 const NEW_PLAN_PATH = /^(?:docs|\.harness)\/plans\/\d{4}-\d{2}-\d{2}-(?:feat|fix|docs|refactor|chore)-[a-z0-9]+(?:-[a-z0-9]+)*-plan\.md$/;
 
@@ -57,7 +58,14 @@ function record(fields) {
   });
 }
 
+function observePolicy() {
+  if (policyObserved || !normalized?.workspace) return;
+  policyObserved = true;
+  policy = loadHookPolicy(normalized.workspace, { ttlKey: 'gate_ttl_minutes', ttlDefault: 30 });
+}
+
 function deny(reason, message, gate = 'missing') {
+  try { observePolicy(); } catch { policy = { enforcement: 'enforce', ttl: 30 }; }
   const detail = `${reason}: ${message}`;
   console.error(`[harness hook] ${detail}`);
   if (policy.enforcement !== 'enforce') {
@@ -323,7 +331,6 @@ try {
 
 try {
   normalized = normalizeToolPayload(payload);
-  policy = loadHookPolicy(normalized.workspace, { ttlKey: 'gate_ttl_minutes', ttlDefault: 30 });
 } catch (error) { deny('invalid-runtime-configuration', error.message, 'invalid'); }
 try { syncSessionIdentity(normalized.workspace, normalized.sessionId); }
 catch (error) { deny('invalid-session-identity', error.message, 'invalid'); }
@@ -335,15 +342,18 @@ if (normalized.command) {
       const planText = activePlan ? fs.readFileSync(resolvePlanFile(normalized.workspace, activePlan), 'utf8') : '';
       const currentDigest = configuredChecksDigest(normalized.workspace);
       const control = soleHarnessControl();
+      const effects = normalized.terminalEffects;
+      const recovery = control && checkConfigurationRecoveryControl(effects.invocations[0], normalized.workspace);
       if (Object.hasOwn(session, 'gatedChecksDigest')
         && session.gatedChecksDigest !== currentDigest
         && !(session.gatedChecksDigest === null && control)
-        && !['gate', 'worktree'].includes(control)) {
+        && !['gate', 'worktree'].includes(control)
+        && !recovery) {
         deny(
           'changed-check-config',
           session.gatedChecksDigest === null
             ? 'The failed implement gate has no accepted check binding. Run a standalone canonical ae control command to recover before product execution'
-            : 'The configured check manifest changed after the implement gate. Rerun ae gate before running terminal commands',
+            : 'The configured check manifest changed after the implement gate. Inspect and repair it through the installed checks, trust status, orient or authored plan decision commands, then obtain required approval and refresh the gate before execution',
           'invalid'
         );
       }
@@ -364,6 +374,8 @@ if (!normalized.mutation) {
   output({ continue: true });
   process.exit(0);
 }
+try { observePolicy(); }
+catch (error) { deny('invalid-runtime-configuration', error.message, 'invalid'); }
 const opaque = normalized.terminalEffects.hasOpaque;
 if (!normalized.targetResolved && !opaque) {
   deny('unresolved-mutation-target', 'Mutation target could not be resolved for scope validation; next: retry the edit with an explicit file path, or read <copilot-home>/skills/ensure-plan/SKILL.md with the host read tool', 'unresolved');

@@ -18,6 +18,8 @@ import {
 import { approvedBundleNames, syncBundles } from './bundle-sync.mjs';
 import { runDoctor } from './doctor.mjs';
 import { runInitRepo } from './init-repo.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 import { leftoverWorkspaceArtifacts, runMigrateLayout } from './migrate-layout.mjs';
 import { migrateHome } from './migrate-home.mjs';
 import { selectIntent, intentSourcesCheck } from './intent-sources.mjs';
@@ -262,6 +264,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }, flags.dryRun);
   }
 
+  const checkReadiness = inspectCheckReadiness({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
   if (flags.json) {
         console.log(
       redactedJson(
@@ -274,6 +277,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
           vscodeBridge: allStats.vscodeBridge,
           intellij: allStats.intellij,
           runner: allStats.runner ?? null,
+          checkReadiness,
           ...(ownershipWarnings.length ? { ownershipWarnings } : {}),
         },
         { pretty: true }
@@ -327,6 +331,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }
     if (flags.dryRun) console.log(ui.paint('muted', '  dry-run — no files written'));
     else {
+      if (!checkReadiness.ready) console.log(ui.line({ state: 'warn', key: 'workspace', value: `checks ${checkReadiness.status}`, note: `${checkReadiness.source || 'select the repository root'}; Engineer prepares the check configuration before delivery`, keyWidth }));
       printNext('ae doctor');
             if (command === 'upgrade') {
         const workspace = path.resolve(flags.workspace);
@@ -400,6 +405,10 @@ export function statusDomainResult(flags, copilotHome) {
   if (flags.effectivePolicy) {
     return publishPolicySnapshot(path.resolve(flags.workspace), { copilotHome, override: flags.enforcement });
   }
+  return withGitIdentityCache(() => readStatusDomainResult(flags, copilotHome));
+}
+
+function readStatusDomainResult(flags, copilotHome) {
   if (flags.contractDigest || flags.validateEvidence || flags.validateCompletion) {
     const workspace = path.resolve(flags.workspace);
     const plan = loadPlan(workspace, flags.plan, { home: flags.harnessHome });

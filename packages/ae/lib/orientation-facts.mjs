@@ -10,6 +10,7 @@ import { discoverInventory, routingCards, routingReadPointers, primitiveReadRoot
 import { extractGoalFromPlan } from './plan-goal.mjs';
 import { parseImpactedFiles } from './plan-scope.mjs';
 import { trustStatus } from './trust.mjs';
+import { inspectCheckReadiness } from './check-readiness.mjs';
 import { reviewCoverageFacts } from './report-facts.mjs';
 import { captureWorkingSources } from './repo-map/working-sources.mjs';
 import { caffeinatedPointer } from './playbook-binding.mjs';
@@ -20,6 +21,7 @@ import { performanceContext } from './performance.mjs';
 import { buildChangeImpactContext } from './change-impact.mjs';
 import { flowModelContext } from './flow-model.mjs';
 import { detectWorkspace, emptyLayout } from './workspace-layout.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 
 function indexPlane(plane) {
   if (!plane?.indexed) return 'missing';
@@ -27,7 +29,11 @@ function indexPlane(plane) {
   return plane.stale ? 'stale' : 'current';
 }
 
-export function collectOrientationFacts({ workspace, copilotHome, flags = {}, query = '', files, graphPreparation } = {}) {
+export function collectOrientationFacts(options = {}) {
+  return withGitIdentityCache(() => readOrientationFacts(options));
+}
+
+function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', files, graphPreparation } = {}) {
   const session = readSession(workspace) || {};
   const q = query || flags.query || (flags.contextVersion === 2 ? session.lastQuery || '' : '');
   const sourceSnapshot = flags.contextVersion === 2 ? captureWorkingSources(workspace) : null;
@@ -82,6 +88,7 @@ export function collectOrientationFacts({ workspace, copilotHome, flags = {}, qu
     verification: locateVerification(workspace, active?.fm?.verification?.recipe),
     planGoal: active ? extractGoalFromPlan(active) : null,
     trust: trustStatus({ workspace, copilotHome, home }),
+    checkReadiness: inspectCheckReadiness({ workspace, copilotHome, home }),
     reviewCoverage: reviewCoverageFacts({ workspace, plan: active, copilotHome }),
     learnings, skills: procedure && !skills.some(skill => skill.id === procedure.id) ? [...skills, procedure] : skills, procedure: procedureFact, instructions, contacts,
     index: { knowledge: indexPlane(status?.knowledge), structural: indexPlane(status?.structural) },

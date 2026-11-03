@@ -17,6 +17,7 @@ function emptyOrientSlice() {
     verification: { state: 'unknown', path: null, warnings: [] },
     planGoal: null,
     trust: null,
+    checkReadiness: null,
     reviewCoverage: null,
     learnings: [],
     skills: [],

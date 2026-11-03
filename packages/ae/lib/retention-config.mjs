@@ -2,8 +2,13 @@ import { resolveConfig } from './config.mjs';
 import { isProjectTrusted } from './trust.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { DEFAULT_RETENTION_DAYS } from './retention.mjs';
+import { withGitIdentityCache } from './git-observation-cache.mjs';
 
 export function retentionDaysFor(workspace, flags = {}) {
+  return withGitIdentityCache(() => readRetentionDays(workspace, flags));
+}
+
+function readRetentionDays(workspace, flags) {
   try {
     const copilotHome = resolveCopilotHome(flags.copilotHome);
     const policyWorkspace = flags.workspace || workspace;

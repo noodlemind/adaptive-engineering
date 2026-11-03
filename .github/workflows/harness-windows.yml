@@ -22,11 +22,11 @@ concurrency:
 
 jobs:
   tests:
-    name: windows-tests (${{ matrix.shard }}/4)
+    name: windows-tests (${{ matrix.shard }}/12)
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -54,7 +54,7 @@ jobs:
         run: |
           $preloadRoot = $env:GITHUB_WORKSPACE.Replace('\', '/')
           $env:NODE_OPTIONS = '--require="' + $preloadRoot + '/packages/ae/test/helpers/domain-parent-profile.cjs"'
-          node scripts/ci-tests.mjs --shard ${{ matrix.shard }} --shards 4 2>&1 | Tee-Object -FilePath windows-tests.log
+          node scripts/ci-tests.mjs --shard ${{ matrix.shard }} --shards 12 2>&1 | Tee-Object -FilePath windows-tests.log
           exit $LASTEXITCODE
 
       - name: Preserve shard timings and proof
@@ -94,7 +94,7 @@ jobs:
       - name: Require complete same-revision test inventory
         id: inventory
         continue-on-error: true
-        run: node scripts/ci-tests.mjs --verify-manifests windows-shards
+        run: node scripts/ci-tests.mjs --verify-manifests windows-shards --shards 12 --platform win32 --node-major 22
 
       - name: CLI scenarios
         continue-on-error: true

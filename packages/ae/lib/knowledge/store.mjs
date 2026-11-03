@@ -7,6 +7,7 @@ import { applicabilityLines } from './applicability.mjs';
 import { storageIdForRepo } from '../storage-aliases.mjs';
 import { assertNoSymlinkAncestors, assertRealpathContained, readFileNoFollow } from '../fs-safe.mjs';
 import { gitMetadataEnvironment } from '../../corpus/hooks/lib/product-diff.mjs';
+import { cachedGitObservation } from '../git-observation-cache.mjs';
 import {
   readLearningFile,
   readStoreFile,
@@ -267,6 +268,12 @@ export function repositoryLabel(workspace) {
 }
 
 function observeRepoIdentity(workspace) {
+  const environment = Object.entries(gitMetadataEnvironment()).sort(([a], [b]) => a.localeCompare(b));
+  const environmentDigest = crypto.createHash('sha256').update(JSON.stringify(environment)).digest('hex');
+  return cachedGitObservation(['repo-identity', path.resolve(workspace), environmentDigest], () => readRepoIdentity(workspace));
+}
+
+function readRepoIdentity(workspace) {
   const remote = gitOut(workspace, ['remote', 'get-url', 'origin']);
   if (remote) {
     const canonical = remote

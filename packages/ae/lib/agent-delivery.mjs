@@ -24,12 +24,30 @@ function inlineDecisionFlag(input) {
   const offset = ['domain', 'experiment'].includes(input.argv[0]) ? 1 : 0;
   const operation = input.argv[offset];
   const flag = operation === 'compound' ? '--learning-decision' : '--file';
-  if (!(input.argv[0] === 'experiment' ? ['begin', 'resolve'] : ['plan-new', 'plan-update', 'compound', 'review']).includes(operation)
+  const checkConfiguration = operation === 'checks' && input.argv[1] === 'configure';
+  if ((!checkConfiguration && !(input.argv[0] === 'experiment' ? ['begin', 'resolve'] : ['plan-new', 'plan-update', 'compound', 'review']).includes(operation))
     || operation === 'review' && input.argv[offset + 1] !== 'assemble'
     || input.argv.some(arg => arg === flag || arg.startsWith(`${flag}=`))) {
-    throw new Error('decision requires plan-new, plan-update, review assemble, compound, experiment begin or experiment resolve without an existing input file');
+    throw new Error('decision requires plan-new, plan-update, review assemble, compound, checks configure, experiment begin or experiment resolve without an existing input file');
   }
   return flag;
+}
+
+function checkRecoveryInput(input) {
+  const [command, verb, ...args] = input.argv;
+  if (command !== 'checks' || !['list', 'show', 'configure'].includes(verb)) return false;
+  if (verb === 'configure' && input.decision === undefined) return false;
+  const flags = new Set(['--json', '--no-events', '--verbose', '-v', ...(verb === 'configure' ? ['--dry-run'] : [])]);
+  const seen = new Set();
+  let name = null;
+  for (const arg of args) {
+    if (flags.has(arg)) {
+      if (seen.has(arg)) return false;
+      seen.add(arg);
+    } else if (verb === 'show' && name === null && /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/i.test(arg) && arg.length <= 80) name = arg;
+    else return false;
+  }
+  return verb !== 'show' || name !== null;
 }
 
 function toolPayload(call, workspace, sessionId) {
@@ -76,7 +94,7 @@ export function beforeDeliveryTool(call, options) {
     try { decisionFlag = inlineDecisionFlag(call.input); }
     catch (error) { return { pass: false, reason: error.message }; }
     const effectiveArgv = decisionFlag ? [...argv, decisionFlag, path.join(os.tmpdir(), 'harness-agent-decision-placeholder', 'decision.json')] : argv;
-    if (!(COMMANDS.has(argv[0]) || ['todo', 'inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && harnessControlCommand(['harness', ...effectiveArgv], options.workspace) === argv[0])) return { pass: false, reason: 'ae requires argv for a supported lifecycle command or exact diagnostic/worklist control' };
+    if (!(COMMANDS.has(argv[0]) || checkRecoveryInput(call.input) || ['todo', 'inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && harnessControlCommand(['harness', ...effectiveArgv], options.workspace) === argv[0])) return { pass: false, reason: 'ae requires argv for a supported lifecycle command or exact diagnostic/worklist control' };
     if (argv[0] === 'trust' && argv[1] && argv[1] !== 'status') return { pass: false, reason: 'Trust approval or revocation requires a person; the agent may read trust status only.' };
     if (argv.some(arg => /^--(?:workspace|copilot-home|ae-home|harness-home|home)(?:=|$)/.test(arg))) return { pass: false, reason: 'Lifecycle commands are bound to this run workspace and homes.' };
     return { pass: true };
