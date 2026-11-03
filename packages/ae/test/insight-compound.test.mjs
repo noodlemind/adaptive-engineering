@@ -282,31 +282,87 @@ test('compound --insight reads body from --body-file and indexes the doc', () =>
 });
 
 test('P1#1: N concurrent same-title captures never overwrite — N distinct files and N distinct reported paths', async t => {
-  const ws = keepSolutionsInWorkspace(tempDir('insight-race-ws-'));
-  const home = tempDir('insight-race-home-');
-  t.after(() => [ws, home].forEach(dir => fs.rmSync(dir, { recursive: true, force: true })));
+  const root = tempDir('insight-race-');
+  const ws = keepSolutionsInWorkspace(path.join(root, 'product'));
+  const home = path.join(root, 'copilot'); fs.mkdirSync(home);
   const N = 16;
-  const args = [
-    'compound', '--insight', '--title', 'Concurrent duplicate lesson',
-    '--body', 'Racing observation.', '--workspace', ws, '--copilot-home', home, '--json',
-  ];
-  const capture = async () => {
-    const deadline = Date.now() + 30000;
-    let result;
-    for (let attempt = 0; attempt < 4 && Date.now() < deadline; attempt++) {
-      result = await runAsync(args, {}, { timeoutMs: Math.max(1, deadline - Date.now()) });
-      // This exact refusal occurs before the publication callback. Other errors
-      // may follow a write and cannot safely retry an anonymous capture.
-      if (!captureAcquisitionBusy(result)) return result;
+  // Other cases exercise CLI parsing. Here all sixteen independent processes
+  // finish module loading before entering the actual writer together, so the
+  // publication budget measures contention rather than CLI cold starts.
+  const worker = path.join(root, 'capture-worker.mjs');
+  fs.writeFileSync(worker, `
+import { runInsightCompound } from ${JSON.stringify(pathToFileURL(path.join(packageRoot, 'lib/compound.mjs')).href)};
+const index = Number(process.argv[2]);
+process.once('message', () => {
+  const started = Date.now(), deadline = started + 30000;
+  let attempts = 0;
+  try {
+    while (attempts < 4 && Date.now() < deadline) {
+      attempts++;
+      try {
+        const result = runInsightCompound({ workspace: ${JSON.stringify(ws)}, copilotHome: ${JSON.stringify(home)}, home: ${JSON.stringify(path.join(home, 'hh'))},
+          flags: { title: 'Concurrent duplicate lesson', body: 'Racing observation from writer ' + index + '.' }, log: () => {} });
+        process.stdout.write(JSON.stringify({ ...result, worker: index, attempts, elapsedMs: Date.now() - started }) + '\\n');
+        process.exitCode = result.pass ? 0 : 1;
+        return;
+      } catch (error) {
+        // Only this acquisition refusal precedes publication. Never retry an
+        // error that could follow a write and duplicate an anonymous capture.
+        if (error.code !== 'E_USAGE' || error.message !== 'plan-update: plan is locked by another update') throw error;
+        if (attempts === 4) throw error;
+      }
     }
-    return result;
+    throw new Error('Capture publication deadline expired');
+  } catch (error) {
+    process.stderr.write(JSON.stringify({ worker: index, attempts, elapsedMs: Date.now() - started, code: error.code, message: error.message }) + '\\n');
+    process.exitCode = 1;
+  } finally { process.disconnect(); }
+});
+process.send({ ready: true, worker: index });
+`);
+  const workers = [];
+  t.after(async () => {
+    for (const { child } of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await Promise.all(workers.map(value => value.done));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  const launch = index => {
+    const started = Date.now(), child = spawn(process.execPath, [worker, String(index)], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    let stdout = '', stderr = '', startupTimedOut = false, publicationTimedOut = false, publicationTimer, ready = false, spawnError;
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', error => { spawnError = error.message; });
+    const startupTimer = setTimeout(() => { startupTimedOut = true; child.kill('SIGKILL'); }, 30000);
+    let readyResolve, readyReject;
+    const loaded = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+    child.once('message', message => {
+      if (message?.ready === true && message.worker === index) { ready = true; clearTimeout(startupTimer); readyResolve(); }
+    });
+    const done = new Promise(resolve => child.once('close', (status, signal) => {
+      clearTimeout(startupTimer); clearTimeout(publicationTimer);
+      const result = { status, signal, stdout, stderr, worker: index, elapsedMs: Date.now() - started, startupTimedOut, publicationTimedOut, spawnError, root };
+      if (!ready) readyReject(new Error(`Capture worker did not reach its start barrier: ${JSON.stringify(result)}`));
+      resolve(result);
+    }));
+    const value = { child, loaded, done, start() {
+      publicationTimer = setTimeout(() => { publicationTimedOut = true; child.kill('SIGKILL'); }, 30000);
+      child.send('capture');
+    } };
+    workers.push(value); return value;
   };
-  const results = await Promise.all(Array.from({ length: N }, capture));
-  for (const r of results) assert.equal(r.status, 0, r.stderr || r.stdout);
+  const captures = Array.from({ length: N }, (_, index) => launch(index));
+  await Promise.all(captures.map(value => value.loaded));
+  for (const value of captures) value.start();
+  const results = await Promise.all(captures.map(value => value.done));
+  for (const result of results) assert.equal(result.status, 0, JSON.stringify(result));
 
   const reported = results.map((r) => JSON.parse(r.stdout).path);
   assert.equal(new Set(reported).size, N, `every process must report a DISTINCT path (got ${new Set(reported).size}/${N})`);
-  for (const p of reported) assert.ok(fs.existsSync(cliEpisode(ws, home, p)), `reported path ${p} must exist on disk`);
+  for (const [index, p] of reported.entries()) {
+    const full = cliEpisode(ws, home, p);
+    assert.ok(fs.existsSync(full), `reported path ${p} must exist on disk`);
+    assert.match(fs.readFileSync(full, 'utf8'), new RegExp(`Racing observation from writer ${index}\\.`), `writer ${index} must retain its own content`);
+  }
 
   const dir = path.join(projectStoreDir(ws, { home: path.join(home, 'hh') }), 'docs', 'solutions', 'insights');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));

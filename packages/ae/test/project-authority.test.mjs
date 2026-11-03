@@ -90,8 +90,9 @@ test('a subfolder refuses to hide enclosing shared checks behind an empty privat
   assert.throws(() => resolveProjectAuthority(nested), error => {
     assert.equal(error.code, 'E_PROJECT_WORKSPACE');
     assert.ok(error.message.includes(f.workspace));
-    assert.match(error.message, /--workspace/);
-    assert.ok(error.hint.includes(f.workspace));
+    const retry = `--workspace ${JSON.stringify(f.workspace)}`;
+    assert.ok(error.message.includes(retry));
+    assert.ok(error.hint.includes(retry));
     return true;
   });
   assert.match(loadNamedChecks(nested).error, /--workspace/);
