@@ -38,7 +38,7 @@ test('both native exports contain exactly the canonical behavior with only skill
 
 test('Copilot authority and handoffs are preserved; Claude gets native metadata without permission escalation', () => {
   const copilot = metadata(renderEngineerExport(root, 'copilot'));
-  assert.deepEqual(copilot.tools, ['agent', 'search/codebase', 'search', 'read', 'edit/editFiles', 'search/changes', 'execute', 'read/terminalLastCommand', 'execute/getTerminalOutput', 'read/problems', 'search/usages', 'web/fetch', 'githubRepo']);
+  assert.deepEqual(copilot.tools, ['agent', 'search/codebase', 'search', 'read', 'edit', 'search/changes', 'execute', 'read/terminalLastCommand', 'execute/getTerminalOutput', 'read/problems', 'search/usages', 'web/fetch', 'githubRepo']);
   const registry = YAML.parse(fs.readFileSync(path.join(root, 'corpus/knowledge/capability-registry.yaml'), 'utf8'));
   assert.deepEqual([...copilot.agents].sort(), [...registry.engineer_allowlist].sort());
   assert.equal(copilot.handoffs.find(item => item.label === 'Capture for Later').send, false);
@@ -55,6 +55,15 @@ test('Copilot authority and handoffs are preserved; Claude gets native metadata 
   assert.doesNotMatch(skill, /@engineer|copilot-home/);
   assert.doesNotMatch(renderEngineerExport(root, 'claude-code'), /copilot-home|search\/codebase|edit\/editFiles/);
   assert.throws(() => renderEngineerExport(root, 'unknown'), /Unsupported Engineer export/);
+});
+
+test('implementation roles expose native editing and creation while reviewers retain read-only tools', () => {
+  for (const name of ['code-implementer', 'bug-reproduction-validator']) {
+    const role = metadata(fs.readFileSync(path.join(root, `corpus/agents/${name}.agent.md`), 'utf8'));
+    assert.ok(role.tools.includes('edit'), `${name} needs the native edit group, including file creation`);
+  }
+  const reviewer = metadata(fs.readFileSync(path.join(root, 'corpus/agents/security-sentinel.agent.md'), 'utf8'));
+  assert.ok(!reviewer.tools.some(tool => tool === 'edit' || tool.startsWith('edit/') || tool === 'execute'));
 });
 
 test('standalone generator detects missing, stale, and edited projections without repairing them in check mode', t => {

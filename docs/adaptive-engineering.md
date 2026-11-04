@@ -169,6 +169,19 @@ current primary grant when the recorded worktree belongs to the same repository
 and contains exactly the approved policy. Direct revocation remains decisive.
 Read-only status and recovery inspection belong to the Engineer.
 
+VS Code Default/Manual Permissions is a supported setup. AE trust accepts the
+repository's execution policy; it does not approve editor tools or terminal
+commands. Installation and upgrade preserve host approval settings. Selecting
+a worktree with `--workspace` changes the CLI target, not the editor's active
+workspace. A nested `.worktrees` directory can already be inside the open
+folder. When a target is outside the host's permitted scope, resume the same
+plan after opening that checkout through the host's supported workspace flow.
+Managed plans remain in the external AE store and can require host approval
+for CLI writes. Repeated Allow dialogs need the actual tool, target path or
+command, active workspace and approval scope to diagnose. Full Permissions is
+not a prerequisite, and passing AE trust checks does not prove this editor
+workflow.
+
 Engineer owns recovery rather than asking the person to write YAML. It inspects the existing test setup and relevant assertions, reads the selected path and `sourceDigest` from `ae checks list --json`, and submits concrete upserts through `ae checks configure --file - --json`. The schema 1 decision contains `expectedDigest`, `checks`, and `rationale`. The writer preserves unrelated checks and refuses concurrent changes. A no-op preserves existing approval. Changed commands are presented for a necessary person approval before execution. The accepted task plan may include the exact prepared shared check source alongside its product files, reviewing both together without a separate setup plan or unguarded commit. Private configuration stays outside product scope. The [named-check procedure](../packages/ae/corpus/skills/create-primitive/references/named-checks.md) supplies the decision shape and recovery details.
 
 Use the same workspace and AE home throughout the task. A subfolder that would hide an enclosing repository's shared configuration is reported with a concrete root retry; AE does not silently adopt a different execution root. Resolve that selection before creating new checks.

@@ -16,8 +16,9 @@ When a subagent returns no output or errors out:
 When a required tool is not available in the current environment:
 
 1. Read `<copilot-home>/copilot-instructions.md` with the host read tool for the cross-environment compatibility table. Outside the enforce hook, `ae get --reference copilot-instructions.md --json` prints the same file.
-2. Use the fallback tool transparently — do not ask the user to switch environments.
-3. If no fallback exists, report what capability is missing and what the user can do (e.g., switch to VS Code, install an extension, use CLI).
+2. Inspect advertised tools and the actual result. If a capability is absent, use an advertised equivalent only when the host permits the same scoped action.
+3. If host approval is pending, let the native dialog carry the request without a second prose approval question. If the host denies the action, stop it. Do not switch to terminal or another tool to evade the denial.
+4. If no permitted equivalent exists, report the missing capability and the affected operation. Do not require Full Permissions. Read `<copilot-home>/skills/references/tool-native-loop.md` for workspace scope and plan-write boundaries.
 
 ## File Not Found
 

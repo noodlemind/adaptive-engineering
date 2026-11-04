@@ -11,7 +11,7 @@
           "search/codebase",
           "search",
           "read",
-          "edit/editFiles",
+          "edit",
           "search/changes",
           "execute",
           "read/terminalLastCommand",
