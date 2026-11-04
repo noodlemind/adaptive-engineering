@@ -697,5 +697,18 @@
     ],
     "aggregate": "failed as required",
     "source": "GitHub Actions completed shard logs and same-revision inventory"
+  },
+  "windowsFixtureCorrection": {
+    "file": "packages/ae/test/trust-recovery.test.mjs",
+    "observed": "Three expected-path assertions used Windows 8.3 alias while product returned native canonical path",
+    "fix": "Use fs.realpathSync.native for fixture root, matching existing project identity canonicalization",
+    "linuxOwningSuite": {
+      "tests": 25,
+      "pass": 25,
+      "fail": 0
+    },
+    "independentReview": "No issue, no weakened assertions",
+    "runtimeChanged": false,
+    "nativeWindows": "final CI pending"
   }
 }

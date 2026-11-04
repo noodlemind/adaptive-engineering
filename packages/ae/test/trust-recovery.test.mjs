@@ -14,7 +14,7 @@ import { harnessGlobalHome } from '../lib/paths.mjs';
 
 const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/ae.mjs');
 function fixture(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-trust-recovery-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-trust-recovery-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const workspace = path.join(root, 'product space'), home = path.join(root, 'authority home'), copilotHome = path.join(root, 'copilot home');
   for (const dir of [workspace, home, copilotHome]) fs.mkdirSync(dir);
