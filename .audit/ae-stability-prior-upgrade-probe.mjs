@@ -28,7 +28,7 @@ const evidence = {
   schema: 1, verdict: 'INCONCLUSIVE', runRoot, transcript,
   limits: ['Simulated disposable approvals only', 'Installed native bridge qualification only; no live editor/model acceptance', 'Linux only'],
   oldSource: { commit: 'e1d1cdff2743d16b1d2522374e18267df5e205af', version: '0.14.1' },
-  candidateSource: { commit: 'e8ab86203c4c46f7927a5591da23239dc0007fee', version: '0.14.2' },
+  candidateSource: { commit: 'a9ac4f859877efa281f7c5cab55083611f73e6c8', version: '0.14.2' },
   sourceIdentityBasis: 'Exact recorded archive digests; verify source-byte identity with the companion provenance script.',
   archives: {}, hosts: [], missingChecks: null,
 };
@@ -105,7 +105,7 @@ function fallback(f, runtime, label) {
 try {
   for (const [role, archive, expected] of [['old', oldArchive, '0.14.1'], ['candidate', candidateArchive, '0.14.2']]) {
     const bytes = fs.readFileSync(archive), prefix = path.join(runRoot, `${role} installation`);
-    const recordedDigest = role === 'old' ? '253273e04c7464c6eb1cfee0f9ad5d43e2197f8e6c04e82c0f531a976d573a5b' : 'fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28';
+    const recordedDigest = role === 'old' ? '253273e04c7464c6eb1cfee0f9ad5d43e2197f8e6c04e82c0f531a976d573a5b' : 'abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520';
     assert.equal(digest(bytes), recordedDigest, `${role} archive differs from the qualified artifact`);
     const packed = JSON.parse(ok(`${role}:archive-package-metadata`, 'tar', ['-xOf', archive, 'package/package.json']).stdout);
     assert.equal(packed.version, expected);

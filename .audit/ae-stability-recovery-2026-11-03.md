@@ -2,7 +2,7 @@
 
 Chai needs existing repositories to continue delivery after an AE upgrade without repeated manual trust diagnostics or duplicate approval requests. This run covers the reported `--files` mistake, upgrade readiness, trust inheritance, and the transitions between those operations.
 
-Current package source is `e8ab86203c4c46f7927a5591da23239dc0007fee`; archive SHA-256 is `fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28`. Local required checks and clean installed migration pass. Final Linux/Windows/package CI results are recorded in PR #109. Earlier candidates below are retained as qualification history.
+Current package source is `a9ac4f859877efa281f7c5cab55083611f73e6c8`; archive SHA-256 is `abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520`. Local required checks and clean installed migration pass. Final Linux/Windows/package CI results are recorded in PR #109. Earlier candidates below are retained as qualification history.
 
 ## Workflow
 
@@ -141,3 +141,23 @@ One earlier final-archive attempt stopped on leftover empty setup-lock directori
 Windows exposed a second fixture assumption: global `core.autocrlf=true` transformed child policy to CRLF while the primary fixture retained LF. The product correctly rejected exact byte mismatch. The fixture now disables conversion locally and asserts approved digest parity. It passes 29/29 cases both normally and with forced global conversion. No product newline normalization was added.
 
 A pre-existing native launcher test used a 15-second outer cap although the configured host allows 60 seconds. The unchanged Windows quoted command previously passed in 2.177 seconds; its later null-status failure did not capture an error code, so its cause is unproven. The test now uses the declared hook deadline, and direct bridge fixture calls allow 60 seconds while production deadlines stay unchanged. Failures report measured elapsed time, status, signal, error and output. Root's complete repository check supplies final local qualification; mixed logs and an unavailable empty-log verification session are excluded. Final native Windows execution remains a PR CI gate.
+
+## Windows physical-identity correction
+
+The 8cbc6f9 Linux run passes 4,230 cases (4,185 passes, 45 skips), but Windows rejects nine worktree reuse/bootstrap cases because the new same-repository guard compares generic Windows realpath spellings that can retain an 8.3 alias against the physical common Git directory. The same path representation can hide a valid legacy AE registration. A third regression proves that unavailable common-directory queries could pass through `null === null`. These are accepted runtime findings, not fixture-only failures.
+
+The correction uses one native canonical identity strategy for existing common Git directories, worktree destinations, listed paths and registration comparison. Identity must be fully qualified and resolvable. Legacy absolute entries are normalized read-only without rewriting the ledger; relative and drive-dependent rooted Windows records remain ineligible. A non-null primary identity is required before reuse and plan carry. Foreign-repository rejection remains in force. The focused regressions fail before and pass after the correction; full owning suites and independent review gate the source freeze.
+
+The tenth Windows failure is a test-only comparison of intentional projected `C:/...` paths with native `C:\...` strings. Its assertion now normalizes path separators, requires absolute paths, retains exact selected roots/flags/order and executes the literal fallback. The 14-case upgrade suite passes locally. All 17 native-hook and all 29 trust-recovery cases pass in the 8cbc Windows run, including actual quoted-command execution and SessionStart; no additional failure category was observed. Its failed suite and inventory gates correctly reject the ten failures. The next archive and complete CI supersede 8cbc qualification.
+
+## Physical-identity candidate qualification
+
+Published product commit `a9ac4f859877efa281f7c5cab55083611f73e6c8` and local `688ff876976697c0dd3b45be1b3194cff9ac0f1d` have the same complete tree, `c72a2b86ebd721d516d30e134e6de3823ebd5115`. The worktree module SHA-256 `9ad0a05198b3ec843131a475659111baeabd8458ebfaa7dd825801c43d58f896` matches the independent review and packaged bytes.
+
+The three-file owning group passes 58/58. After the final Windows-only record negative, the helper file passes 12 cases with one Windows skip. Trust compatibility passes 88/88, the upgrade-to-worktree full journey passes 5/5, and the projected-path upgrade group passes 14/14. Two independent reviews find no outstanding issue, including the fully-qualified Windows record guard and the four key positive/denial cases. Actual Windows execution remains in the next CI run.
+
+The rebuilt archive is packaged from an immutable Git archive. All 450 shipped nondependency source files match the exact published commit; 673 bundled dependency files ship. Its SHA-256 is `abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520`. Installed behavioral delivery passes, source and installed release checks pass, repository contracts pass 152 cases with two skips and no failures, and a fresh independent 53-step genuine old-release migration passes all three hosts. The active prior receipt preserves every superseded candidate and inconclusive attempt.
+
+During qualification, the original checkout's shared Git administration path became unavailable. The reviewed files were checkpointed by exact hashes and restored into a self-contained clone of the published PR. An initial post-recovery build matched the preceding candidate instead of the intended new source and was excluded by the byte comparison. Packaging directly from the committed tree and comparing every shipped source byte establishes the accepted archive's identity. No unproven cause is assigned to the temporary filesystem observations.
+
+The final same-revision Linux, Windows and package checks are recorded in PR #109. Earlier green Linux/package results and the Windows ten-failure result belong to 8cbc6f9 and do not qualify this updated runtime.

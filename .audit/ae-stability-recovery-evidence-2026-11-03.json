@@ -1,7 +1,7 @@
 {
   "sourceBaseline": "e1d1cdff2743d16b1d2522374e18267df5e205af",
   "candidateVersion": "0.14.2",
-  "archiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+  "archiveSha256": "abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520",
   "runs": [
     {
       "log": "baseline-tests.log",
@@ -655,6 +655,160 @@
         ]
       },
       "failureTitles": []
+    },
+    {
+      "log": "worktree-physical-identity-owning-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          58
+        ],
+        "pass": [
+          58
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-physical-identity-final-helpers.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          13
+        ],
+        "pass": [
+          12
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          1
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-identity-trust-compat.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          88
+        ],
+        "pass": [
+          88
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-identity-upgrade-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          5
+        ],
+        "pass": [
+          5
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "upgrade-native-path-assertions-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          14
+        ],
+        "pass": [
+          14
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "physical-repo-contracts.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "physical-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
     }
   ],
   "baselineTrustCliObservations": [
@@ -795,7 +949,7 @@
     "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven.",
     "Final genuine prior-version receipt supersedes the first candidate; full PR CI is the authoritative changing final inventory record."
   ],
-  "candidateCodeCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+  "candidateCodeCommit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
   "runCountNote": "Counts are top-level reporter summaries where present. Arrays represent multiple commands appended to one log, not additive unique coverage. Logs were observed in the work session; durable regression tests are committed under packages/ae/test.",
   "priorVersionReceipt": "ae-stability-prior-upgrade-2026-11-03.json",
   "finalChecks": {
@@ -805,22 +959,22 @@
       "fail": 0,
       "skip": 2
     },
-    "sourceRelease": "passed at final archive prepack",
-    "installedArchiveRelease": "passed",
+    "sourceRelease": "passed from immutable source tree",
+    "installedArchiveRelease": "passed: ae-harness0.14.2, lockfile not-shipped,22agents",
     "offlineInstallVersion": "0.14.2",
     "installedArchiveDelivery": {
       "tests": 1,
       "pass": 1,
       "fail": 0
     },
-    "fullInventory": "final same-revision PR Linux/Windows/package CI pending; PR checks and verification section are the changing Phase E record",
+    "fullInventory": "final physical-identity runtime PR CI pending; PR verification/checks are the changing Phase E record",
     "contextBudgetSuite": {
       "tests": 55,
       "pass": 55,
       "fail": 0
     },
-    "genuinePriorVersionMigration": "Final fab archive VERIFIED in independent clean 53-step run across all three hosts; see active prior receipt. Inconclusive leftover-lock attempt and positive controls retained.",
-    "finalArchiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+    "genuinePriorVersionMigration": "Active abd/a9 independent clean53step3host run VERIFIED; prior receipt contains exact source provenance and preserved history",
+    "finalArchiveSha256": "abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520",
     "trustSnapshotSuite": {
       "tests": 88,
       "pass": 88,
@@ -857,10 +1011,10 @@
     }
   },
   "publishedSource": {
-    "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
-    "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
-    "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
-    "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+    "commit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
+    "tree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
+    "localQualifiedCommit": "688ff876976697c0dd3b45be1b3194cff9ac0f1d",
+    "localQualifiedTree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
     "allSourceTreeBytesIdentical": true
   },
   "qualificationHistory": [
@@ -887,6 +1041,18 @@
         "allSourceTreeBytesIdentical": true
       },
       "status": "superseded after validated mixed-snapshot inherited-trust race and conditional handoff projection correction"
+    },
+    {
+      "candidateCodeCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+      "archiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+      "publishedSource": {
+        "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+        "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
+        "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after Windows full inventory found nine worktree physical identity errors; one projected separator fixture assertion also corrected"
     }
   ],
   "contextBudgetCorrection": {
@@ -1020,5 +1186,88 @@
     "discardedVerification": "Overlapping redirected output and unavailable session14133 with empty log are not passing evidence",
     "authoritativeLocalQualification": "Final check:repo154 cases,152pass,2skip,0fail includes native-hook suite",
     "nativeWindows": "final PR CI pending"
+  },
+  "physicalIdentityCorrection": {
+    "runtime": "packages/ae/lib/worktree.mjs",
+    "worktreeSourceSha256": "9ad0a05198b3ec843131a475659111baeabd8458ebfaa7dd825801c43d58f896",
+    "reproducedBefore": [
+      "alias spelling rejects same-repository reuse",
+      "absolute legacy alias registration ignored",
+      "unavailable common-dir identity passes null equality"
+    ],
+    "fix": "Use native physical identities for common dirs, destinations, listing and registrations; require non-null verified common identity; read absolute legacy aliases without rewriting records; reject unresolved/relative/drive-dependent registrations",
+    "owningGroup": {
+      "tests": 58,
+      "pass": 58,
+      "fail": 0,
+      "scope": "before final Windows-only negative; Linux guard paths unchanged"
+    },
+    "finalHelperFile": {
+      "tests": 13,
+      "pass": 12,
+      "skip": 1,
+      "fail": 0
+    },
+    "trustCompatibility": {
+      "tests": 88,
+      "pass": 88,
+      "fail": 0
+    },
+    "upgradeDeliveryJourney": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0
+    },
+    "projectedPathUpgrade": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0
+    },
+    "independentReview": "Two reviewers found no remaining issue; four CLI cases and final Windows path guard reviewed",
+    "nativeWindows": "final PR revision CI pending"
+  },
+  "superseded8cbcQualification": {
+    "head": "8cbc6f9e663f694293a3c945ebf8a3fb9762126c",
+    "linux": {
+      "runId": 41765269095,
+      "files": 310,
+      "tests": 4230,
+      "pass": 4185,
+      "fail": 0,
+      "skip": 45
+    },
+    "windows": {
+      "runId": 41765269105,
+      "tests": 4230,
+      "pass": 4134,
+      "fail": 10,
+      "skip": 86,
+      "categories": {
+        "worktreeIdentity": 9,
+        "projectedPathAssertion": 1
+      },
+      "nativeHookCases": 17,
+      "nativeHookFailed": 0,
+      "trustRecoveryCases": 29,
+      "trustRecoveryFailed": 0,
+      "redaction": "passed",
+      "ownedProcessCancellation": "passed",
+      "aggregate": "failed as required"
+    },
+    "packageMatrix": {
+      "runId": 41765269103,
+      "allFourNode20And24Configurations": "passed",
+      "scope": "superseded source only"
+    }
+  },
+  "checkoutRecovery": {
+    "reviewedSourcePreservedBySha256": true,
+    "originalSharedGitAdministrationBecameUnavailable": true,
+    "recoveredFromPublishedPr": "8cbc6f9e663f694293a3c945ebf8a3fb9762126c",
+    "recoveryUsesSelfContainedClone": true,
+    "acceptedArchiveBuiltFrom": "immutable committed Git tree",
+    "all450ShippedSourceFilesCompared": true,
+    "excludedBuild": "Initial post-recovery build still matched previous fab/e8 candidate; mismatch caught before new-source qualification or delivery",
+    "cause": "unproven; no product behavior change attributed to filesystem observation"
   }
 }
