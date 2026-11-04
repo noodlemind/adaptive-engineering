@@ -29,13 +29,13 @@
       "name": "ae-harness",
       "version": "0.14.2",
       "installedExecutableVersion": "0.14.2",
-      "bytes": 35750242,
-      "sha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
-      "sha512": "dc627465ce71d6a2677f9201041e8a19463dea22cba27a172ea761077c3ab2813d8584347dd7d9843301c0915fc651be3f342ac321436cd2dceea63b561bf75b",
-      "sourceCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+      "bytes": 35750445,
+      "sha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+      "sha512": "a223550e75b144540b09f89c9c948d89bb2198cd403b1d2596ee488b595423b577c9731efc7f8906b677dbadaffdafe3e5e438aab9d8feeb7fac784377cea649",
+      "sourceCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
       "shippedSourceFilesCompared": 450,
       "allShippedSourceBytesMatchCommit": true,
-      "sourceFilesSha256": "293215d5897180e5d97ea760eece79f1014be7648f4ce6946fa0192d0c3b7318",
+      "sourceFilesSha256": "97a318a6a023676122f6fe8395ef6b4aa909f4f221b2772027ad7513d86231c7",
       "bundledDependencyFiles": 673,
       "bundledDependenciesComparedToGitSource": false
     }
@@ -46,8 +46,8 @@
     "expectedNegativeControls": 3,
     "completeOldInstallationPrefixAbsentAtQualification": true,
     "oldInstallationRuntimeRemainsAbsent": true,
-    "rawTranscriptSha256": "9cc69557ccaea0de330ab20503aa626991dc154198da03d243e6dc878b997270",
-    "rawEvidenceSha256": "ac18747247aa590f3e08036b69e0404ae9ebe93de92dcfa3b2c32e3cbf8e7cac",
+    "rawTranscriptSha256": "f93c09db58a8de00d02128751339a4d08e07fe54534dd614373e55b92a0e6faa",
+    "rawEvidenceSha256": "2e2c2f0c6328dc45da258cb375d62afdf3a94cf4cfa73d430ab5611c5ba4ff43",
     "observedStepResults": [
       {
         "step": "old:archive-package-metadata",
@@ -261,7 +261,8 @@
         "step": "missing-checks:after-preparation",
         "exit": 0
       }
-    ]
+    ],
+    "producer": "Independent root-agent fresh qualifier; exit 0, all 53 step outcomes inspected."
   },
   "hosts": [
     {
@@ -278,10 +279,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:27:22.801Z",
+      "approvedAt": "2026-11-04T03:00:18.690Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "63cf186f21a0830654f891f10730edfe9d0e9e1e00d58fbf1a292bf76fa6c2d4",
-      "repositorySnapshotSha256": "5acfdd52ad9d7d969a444558c6933a060bafe71fab4765cf8deda6ed027e6431",
+      "trustSha256": "950f4f85f620acb3341b7bb26ca8219024714c62976da2ea5af8bb557880ba0c",
+      "repositorySnapshotSha256": "0debbb61c9307a5689841b23ee6a76629b7c744b95b5a9079de6c15dbc887415",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -327,10 +328,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:27:26.297Z",
+      "approvedAt": "2026-11-04T03:00:21.305Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "bdc12cd71bef86a830dd4726e866b1eb98714baff40eaf188aabc8d775eee25d",
-      "repositorySnapshotSha256": "5a8f9a2823994db7fdefbe79e001933eb1cc486a6b00f74632bcd1e75fda7ba1",
+      "trustSha256": "d44b58542d9758ce9b4fb1ef72b28bd83aea12a114dc31edb73b26220b88c6a2",
+      "repositorySnapshotSha256": "87bfabaa878ad43ba08c42740c97c9d90ad934288ad8ca275d151bc45dd64423",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -376,10 +377,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:27:28.864Z",
+      "approvedAt": "2026-11-04T03:00:23.969Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "21c7283f64ab72b3b9f451be3f4c4a3be3351b156689679d8195b38b23e5beec",
-      "repositorySnapshotSha256": "2e7f28cac958905ae23a6f253a86ca3b473c35ed52df2c500128b1c248b7ba53",
+      "trustSha256": "badd53e2d4dd384b832d49c0c6b4c2077330364717fadcfc78bfb32c8c95ce45",
+      "repositorySnapshotSha256": "ab200bf85b46e1d1f1d423370c82dd336c3416285f0b8eea8e26deaac73ed70e",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -487,18 +488,19 @@
     ],
     "inputs": "Archives must match recorded SHA-256 values. The repository must contain the exact old and final published candidate commits. Output arguments select disposable receipt/work locations.",
     "scriptPortability": "Core assertions passed in the final clean 53-step run. Portable copies retain those assertions, explicit input/output paths, and exact archive guards. Portable provenance executed against the final published commit; syntax and usage preflight pass.",
-    "ae-stability-prior-upgrade-probe.mjsSha256": "854c3461434cfa579c8393b2213482277382498f54accd62c5e4a7534535346f",
-    "ae-stability-prior-upgrade-provenance.pySha256": "4c26c204dfc3f42ea4af96934367c54b1f6b7591fe1252d19ca12cb39aaf4924"
+    "ae-stability-prior-upgrade-probe.mjsSha256": "6bcc9f44450380b25cb9815cc4be27967bccb8857450285bf15269a9f149172a",
+    "ae-stability-prior-upgrade-provenance.pySha256": "e9f27c4e458c73ff7f12c8a3d86ff24709d2a04114950a0c895444ecc4c73e12",
+    "validation": "Portable Node/Python syntax checked; exact archive provenance ran successfully; core migration assertions passed in the independent clean run."
   },
   "productSourceEdits": false,
   "qualificationCommitsPushesOrPRs": false,
   "publishedSource": {
-    "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
-    "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
-    "localQualifiedCommit": "54d49dceea52e6671f1bfe5d8e6dbc0a11a39c66",
-    "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+    "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+    "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+    "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
+    "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
     "allSourceTreeBytesIdentical": true,
-    "publication": "Connected GitHub Git Data API. Final archive source-byte provenance was executed directly against this exact published commit; local and published source trees match."
+    "publication": "Connected GitHub Git Data API. Archive source-byte provenance executed against the exact published commit; local and published source trees match."
   },
   "supersededQualifications": [
     {
@@ -596,6 +598,114 @@
           "Repository and trust bytes unchanged"
         ]
       }
+    },
+    {
+      "verdict": "VERIFIED",
+      "reason": "Superseded by the next corrected candidate; these observations apply only to the earlier recorded archive.",
+      "candidateArchive": {
+        "name": "ae-harness",
+        "version": "0.14.2",
+        "installedExecutableVersion": "0.14.2",
+        "bytes": 35750242,
+        "sha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+        "sha512": "dc627465ce71d6a2677f9201041e8a19463dea22cba27a172ea761077c3ab2813d8584347dd7d9843301c0915fc651be3f342ac321436cd2dceea63b561bf75b",
+        "sourceCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "shippedSourceFilesCompared": 450,
+        "allShippedSourceBytesMatchCommit": true,
+        "sourceFilesSha256": "293215d5897180e5d97ea760eece79f1014be7648f4ce6946fa0192d0c3b7318",
+        "bundledDependencyFiles": 673,
+        "bundledDependenciesComparedToGitSource": false
+      },
+      "publishedSource": {
+        "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "localQualifiedCommit": "54d49dceea52e6671f1bfe5d8e6dbc0a11a39c66",
+        "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "allSourceTreeBytesIdentical": true,
+        "publication": "Connected GitHub Git Data API. Final archive source-byte provenance was executed directly against this exact published commit; local and published source trees match."
+      },
+      "cleanRun": {
+        "steps": 53,
+        "unexpectedNonzeroExitStatuses": 0,
+        "expectedNegativeControls": 3,
+        "completeOldInstallationPrefixAbsentAtQualification": true,
+        "oldInstallationRuntimeRemainsAbsent": true,
+        "rawTranscriptSha256": "9cc69557ccaea0de330ab20503aa626991dc154198da03d243e6dc878b997270",
+        "rawEvidenceSha256": "ac18747247aa590f3e08036b69e0404ae9ebe93de92dcfa3b2c32e3cbf8e7cac"
+      },
+      "hosts": [
+        {
+          "host": "codex",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "claude-code",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "cursor",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "inconclusiveQualificationAttempts": [
+    {
+      "candidateSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+      "sourceCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+      "verdict": "INCONCLUSIVE",
+      "steps": 39,
+      "rawTranscriptSha256": "7d062ac30524ff1402dc77f1ae794c86954fe00cc7e147c8d2c0b32bcc33f66e",
+      "completedBeforeInterruption": [
+        "All three genuine prior-version migrations and trust/repository byte-preservation assertions",
+        "Old runtime removal",
+        "Codex regenerated Read hook and projected fallback"
+      ],
+      "failedStep": "codex:candidate-repeat-upgrade",
+      "exitCode": 2,
+      "reason": "Host setup is already locked: ${RUN_ROOT}/codex/native config/.ae-host.lock",
+      "observedLocks": "Two empty Codex lock directories; original fixture preserved without deleting its locks.",
+      "cause": "Unproven. No product fix was made or claimed for this unreproduced attempt.",
+      "laterCleanRun": "Independent fresh full 53-step qualification passed for the exact same source and archive."
+    }
+  ],
+  "freshHostLockLifecycleControls": {
+    "cases": 8,
+    "allPassed": true,
+    "rootKinds": [
+      "temporary directory",
+      "workspace scratch"
+    ],
+    "operationsPerRoot": [
+      "host setup",
+      "upgrade",
+      "upgrade",
+      "upgrade"
+    ],
+    "lockDirectoriesAbsentImmediatelyAfterEachCommand": true,
+    "productSourceEdits": false,
+    "rawControlsSha256": "a6741a68a17b8e971749252e1bdf81660738a9b83db225393a496466ff80ace1",
+    "interpretation": "Eight fresh controls did not reproduce the lock refusal. They do not establish the cause of the preserved inconclusive attempt."
+  }
 }

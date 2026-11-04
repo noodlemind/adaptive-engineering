@@ -2,6 +2,8 @@
 
 Chai needs existing repositories to continue delivery after an AE upgrade without repeated manual trust diagnostics or duplicate approval requests. This run covers the reported `--files` mistake, upgrade readiness, trust inheritance, and the transitions between those operations.
 
+Current package source is `e8ab86203c4c46f7927a5591da23239dc0007fee`; archive SHA-256 is `fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28`. Local required checks and clean installed migration pass. Final Linux/Windows/package CI results are recorded in PR #109. Earlier candidates below are retained as qualification history.
+
 ## Workflow
 
 - [x] Read the Principles section of the poteto-mode skill.
@@ -15,7 +17,7 @@ Chai needs existing repositories to continue delivery after an AE upgrade withou
 - [x] Report upgrade installation and workspace readiness accurately and exercise the complete worktree recovery journey.
 - [x] Verify each unit, review the combined diff independently, and resolve accepted findings.
 - [x] Phase D: Keep the audit trail
-- [ ] Phase E: Verify and hand back
+- Phase E: Verify and hand back; the final same-revision CI assessment is recorded in PR #109.
 
 ## Done predicate
 
@@ -92,7 +94,7 @@ Native editor/model acceptance and the original Mac state remain unverified. Ava
 - **Separate Before Serializing Shared State:** implementation units used separate worktrees, then landed as reviewable commits with targeted integration gates.
 - **Attack the Premise / Encode Lessons in Structure:** reject the file-only equals fix after authored scope loss was reproduced; make preflight and execution share canonical argument consumption.
 
-Phase E remains open until exact-head CI is assessed and the PR is handed back with its actual qualification limits. The candidate is not merged, published, or installed on the user's machine by this work.
+The PR verification section records Phase E after same-revision CI is assessed, with actual qualification limits. This audit snapshot is written before that changing CI result. The candidate is not merged, published, or installed on the user's machine by this work.
 
 ## GitHub source identity
 
@@ -117,3 +119,25 @@ Final pre-CI qualification passed: the rebuilt archive's installed behavioral li
 The hosted Linux run on the superseded head independently completed all 4,224 cases: 4,176 passed, the three known context-budget regressions failed, and 45 skipped. No process-identity or completion-timeout failure occurred there. Its failed aggregate correctly rejected the inventory. This supports the environment classification of the additional local failures while leaving the corrected revision to its own CI qualification.
 
 The superseded Windows run also exposed three new trust test expectations using an 8.3 temporary-parent spelling while AE correctly returns the native canonical workspace path. The fixture now uses `fs.realpathSync.native`, matching the existing identity owner. Exact binding and approval-command assertions remain intact. The 25-case Linux owning suite passes and independent review found no issue; native confirmation remains in final Windows CI. This changes test setup only and does not change the qualified archive.
+
+## PR review correction
+
+Repository review identified a P1 mixed-snapshot authorization flaw in the candidate inheritance path: `primaryDigest` observed policy A, while `approvalState` reread primary B and could approve B before comparing child A with the earlier A digest. This is an accepted finding. Deterministic regressions reproduce both current and pre-routing approval races and direct status inconsistency. The correction computes current and eligible legacy approval digests from one bounded pin read and passes that checked snapshot to the approval decision and inheritance comparison. The orientation conditional `afterInspection` handoff is also withheld centrally until checks are ready, including normal and read output. The rebuilt archive and complete qualification must supersede the prior candidate. These findings are fixed and verified before any release handoff.
+
+## Snapshot-consistent candidate
+
+The accepted PR findings are corrected in published product commit `e8ab86203c4c46f7927a5591da23239dc0007fee`, tree `60114e22d859ffd63f2b49c563afe2bd78f1f7c0`, byte-identical to local `001b479997286aeca3f9debba2e39ecc1a4f93c3`. The rebuilt archive SHA-256 is `fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28`. Earlier candidates and CI are superseded qualification history.
+
+Trust owning/boundary/recovery tests pass **88/88**. Independent review passes all 64 modern/legacy digest compatibility comparisons, 64 corresponding approval outcomes and four reported deterministic race cases. No hash format, API schema or revocation behavior changes. The central orientation facts owner withholds conditional person handoffs until checks are ready across normal, embedded v2 and explicit read output; its final seven-file context group passes **55/55**. Independent review finds no remaining issue. Native canonical fixtures retain exact path assertions.
+
+The source is frozen while installed delivery and genuine prior-release qualification are repeated against this archive. The final PR revision then runs the complete Linux/Windows inventory and Node 20/24 package matrix. Repository bot findings are included in the audit; collaboration reviewers remain within one known model family, and no bot model-family identity is assumed.
+
+## Final pre-CI receipts
+
+The final archive's installed behavioral lifecycle passes. Source release checks pass. Repository contracts pass **152/154**, with two platform skips and no failures. A root-run independent clean qualification passes all 53 recorded steps for the genuine 0.14.1-to-final-0.14.2 migration across all three native hosts. Its three intentional old-runtime negative controls fail as designed; every required positive command exits successfully. The active prior-upgrade receipt records this result and exact published-source provenance.
+
+One earlier final-archive attempt stopped on leftover empty setup-lock directories at its repeat-upgrade step. The original fixture remains preserved. Eight fresh lifecycle controls across temporary and workspace storage release their locks, and the complete independent run passes. The cause remains unproven; no product lock change was made. This inconclusive attempt is retained alongside superseded archive evidence.
+
+Windows exposed a second fixture assumption: global `core.autocrlf=true` transformed child policy to CRLF while the primary fixture retained LF. The product correctly rejected exact byte mismatch. The fixture now disables conversion locally and asserts approved digest parity. It passes 29/29 cases both normally and with forced global conversion. No product newline normalization was added.
+
+A pre-existing native launcher test used a 15-second outer cap although the configured host allows 60 seconds. The unchanged Windows quoted command previously passed in 2.177 seconds; its later null-status failure did not capture an error code, so its cause is unproven. The test now uses the declared hook deadline, and direct bridge fixture calls allow 60 seconds while production deadlines stay unchanged. Failures report measured elapsed time, status, signal, error and output. Root's complete repository check supplies final local qualification; mixed logs and an unavailable empty-log verification session are excluded. Final native Windows execution remains a PR CI gate.

@@ -31,11 +31,14 @@ function git(workspace, args) {
 function linkedFixture(t) {
   const s = fixture(t);
   write(s.workspace, 'policy.yaml', 'enforcement: enforce\n');
-  git(s.workspace, ['init', '-q']); git(s.workspace, ['add', '.']);
+  git(s.workspace, ['init', '-q']);
+  git(s.workspace, ['config', '--local', 'core.autocrlf', 'false']);
+  git(s.workspace, ['add', '.']);
   git(s.workspace, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'baseline']);
-  approveProject(s);
+  const approved = approveProject(s);
   const linked = addIsolatedWorktree({ workspace: s.workspace, slug: 'recovery', from: 'HEAD' });
   t.after(() => fs.rmSync(linked.path, { recursive: true, force: true }));
+  assert.equal(policyDigest(linked.path, undefined, { home: s.home }), approved.digest, 'linked fixture preserves the exact approved policy bytes');
   return { s, child: { ...s, workspace: linked.path } };
 }
 function run(args, s, cwd = s.root, env = process.env) {

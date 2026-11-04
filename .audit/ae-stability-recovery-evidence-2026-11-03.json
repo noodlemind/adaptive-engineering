@@ -1,7 +1,7 @@
 {
   "sourceBaseline": "e1d1cdff2743d16b1d2522374e18267df5e205af",
   "candidateVersion": "0.14.2",
-  "archiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+  "archiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
   "runs": [
     {
       "log": "baseline-tests.log",
@@ -449,6 +449,212 @@
         ]
       },
       "failureTitles": []
+    },
+    {
+      "log": "trust-snapshot-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          4
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          4
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "inherited approval uses the same primary policy snapshot as the child comparison (538.36904ms)",
+        "direct approval is checked against the digest returned by the same observation (161.505519ms)",
+        "current approval (289.226504ms)",
+        "pre-routing approval (245.991801ms)"
+      ]
+    },
+    {
+      "log": "trust-snapshot-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          88
+        ],
+        "pass": [
+          88
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-snapshot-independent.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          4
+        ],
+        "pass": [
+          4
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "orient-conditional-handoff-final-context-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          55
+        ],
+        "pass": [
+          55
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "snapshot-repo-checks.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          151
+        ],
+        "fail": [
+          1
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": [
+        "cursor denies unplanned native edits and binds workspace from payload, not hook cwd (16676.571803ms)"
+      ],
+      "status": "One existing 15s native-bridge test deadline failed under shared workload; actual host contract is 60s; test-only alignment pending verification"
+    },
+    {
+      "log": "snapshot-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "snapshot-repo-checks-after-fixtures.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-autocrlf-default-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          29
+        ],
+        "pass": [
+          29
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-autocrlf-forced-true-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          29
+        ],
+        "pass": [
+          29
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
     }
   ],
   "baselineTrustCliObservations": [
@@ -579,7 +785,8 @@
     "comments": "No deletion or suppression flags.",
     "modelDiversity": "Independent agents from one model family; no cross-family claim.",
     "transcript": "No conversation-wide agent transcript supplied; installed qualification command transcripts were observed, summarized and hashed.",
-    "finalContextDelta": "54 owning tests passed, independent flow recheck passed, no actionable review findings"
+    "finalContextDelta": "54 owning tests passed, independent flow recheck passed, no actionable review findings",
+    "finalSnapshotDelta": "No actionable findings after88trust tests,55context tests,64digest+64approval compatibility checks and4independent race cases; repository bot findings addressed."
   },
   "limits": [
     "Native editor/model acceptance and the original user machine state are unverified.",
@@ -588,7 +795,7 @@
     "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven.",
     "Final genuine prior-version receipt supersedes the first candidate; full PR CI is the authoritative changing final inventory record."
   ],
-  "candidateCodeCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+  "candidateCodeCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
   "runCountNote": "Counts are top-level reporter summaries where present. Arrays represent multiple commands appended to one log, not additive unique coverage. Logs were observed in the work session; durable regression tests are committed under packages/ae/test.",
   "priorVersionReceipt": "ae-stability-prior-upgrade-2026-11-03.json",
   "finalChecks": {
@@ -598,7 +805,7 @@
       "fail": 0,
       "skip": 2
     },
-    "sourceRelease": "passed",
+    "sourceRelease": "passed at final archive prepack",
     "installedArchiveRelease": "passed",
     "offlineInstallVersion": "0.14.2",
     "installedArchiveDelivery": {
@@ -606,14 +813,19 @@
       "pass": 1,
       "fail": 0
     },
-    "fullInventory": "final exact-revision PR CI pending; superseded local run is retained above",
+    "fullInventory": "final same-revision PR Linux/Windows/package CI pending; PR checks and verification section are the changing Phase E record",
     "contextBudgetSuite": {
-      "tests": 54,
-      "pass": 54,
+      "tests": 55,
+      "pass": 55,
       "fail": 0
     },
-    "genuinePriorVersionMigration": "final archive passed all three native hosts; see prior receipt",
-    "finalArchiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17"
+    "genuinePriorVersionMigration": "Final fab archive VERIFIED in independent clean 53-step run across all three hosts; see active prior receipt. Inconclusive leftover-lock attempt and positive controls retained.",
+    "finalArchiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+    "trustSnapshotSuite": {
+      "tests": 88,
+      "pass": 88,
+      "fail": 0
+    }
   },
   "environmentComparisons": {
     "experiment": {
@@ -645,10 +857,10 @@
     }
   },
   "publishedSource": {
-    "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
-    "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
-    "localQualifiedCommit": "54d49dc",
-    "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+    "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+    "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+    "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
+    "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
     "allSourceTreeBytesIdentical": true
   },
   "qualificationHistory": [
@@ -663,6 +875,18 @@
         "allSourceTreeBytesIdentical": true
       },
       "status": "superseded after three introduced context-budget failures; retained as observed history"
+    },
+    {
+      "candidateCodeCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+      "archiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+      "publishedSource": {
+        "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "localQualifiedCommit": "54d49dc",
+        "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after validated mixed-snapshot inherited-trust race and conditional handoff projection correction"
     }
   ],
   "contextBudgetCorrection": {
@@ -709,6 +933,92 @@
     },
     "independentReview": "No issue, no weakened assertions",
     "runtimeChanged": false,
-    "nativeWindows": "final CI pending"
+    "nativeWindows": "final CI pending",
+    "lineEndings": {
+      "observed": "Global core.autocrlf=true checked out child CRLF while primary fixture bytes were LF; strict product digest denial was correct",
+      "fix": "Set core.autocrlf=false only in disposable linked fixture before staging and checkout; assert child equals captured approved digest",
+      "forcedGlobalTrueBefore": {
+        "tests": 1,
+        "fail": 1
+      },
+      "owningDefaultAfter": {
+        "tests": 29,
+        "pass": 29,
+        "fail": 0
+      },
+      "owningGlobalTrueAfter": {
+        "tests": 29,
+        "pass": 29,
+        "fail": 0
+      },
+      "runtimeChanged": false
+    }
+  },
+  "acceptedPrFindings": [
+    {
+      "url": "https://github.com/noodlemind/prompt-library/pull/109#discussion_r4462866029",
+      "severity": "P1",
+      "issue": "Approval reread and inheritance comparison used different policy snapshots",
+      "fix": "One bounded pin snapshot supplies modern/eligible legacy hashes to approval and comparison",
+      "owningSuite": {
+        "tests": 88,
+        "pass": 88,
+        "fail": 0
+      },
+      "independentCompatibility": {
+        "digestPairs": 64,
+        "approvalChecks": 64,
+        "fail": 0
+      },
+      "independentRaceCases": {
+        "reportedCases": 4,
+        "pass": 4,
+        "fail": 0
+      }
+    },
+    {
+      "url": "https://github.com/noodlemind/prompt-library/pull/109#discussion_r4462866035",
+      "severity": "P2",
+      "issue": "Conditional person handoff survives missing-check orientation paths",
+      "fix": "Central facts projection removes afterInspection until checks are ready in normal/read/v2",
+      "owningContextSuite": {
+        "tests": 55,
+        "pass": 55,
+        "fail": 0
+      }
+    }
+  ],
+  "intermediateHostedLinux": {
+    "runId": 41761411420,
+    "head": "6b8850499b8f8db693e3944694382d2cc695a8df",
+    "testFiles": 310,
+    "tests": 4225,
+    "pass": 4180,
+    "fail": 0,
+    "skip": 45,
+    "cancelled": 0,
+    "aggregate": "passed; superseded by snapshot-consistent candidate"
+  },
+  "nativeTestDeadlineCorrection": {
+    "source": "packages/ae/test/host-native-hooks.test.mjs",
+    "priorWindowsPositive": {
+      "runId": 41760102343,
+      "jobId": 126345507673,
+      "quotedCommandPassed": true,
+      "durationMs": 2177
+    },
+    "intermediateWindowsFailure": {
+      "runId": 41761411465,
+      "jobId": 126350250849,
+      "status": null,
+      "wholeTestDurationMs": 24330.8,
+      "errorCode": "not captured by old stderr-only assertion; timeout inferred, not proven"
+    },
+    "sourceComparison": "Quoted test and 20 reachable hook modules unchanged from e1d1cdf through 6b; Read returns before trust/policy authority calls",
+    "fix": "Test-only direct bridge budget 60s and generated-command budget uses declared PreToolUse60s; add measured status/signal/error/output diagnostics. Runtime deadlines and semantic assertions unchanged.",
+    "diagnosticSelfCheck": "Intentional exit7 and100ms timeout preserve original results and expose error/signal data",
+    "discardedVerification": "Overlapping redirected output and unavailable session14133 with empty log are not passing evidence",
+    "authoritativeLocalQualification": "Final check:repo154 cases,152pass,2skip,0fail includes native-hook suite",
+    "nativeWindows": "final PR CI pending"
   }
 }
