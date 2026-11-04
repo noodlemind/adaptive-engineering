@@ -111,11 +111,21 @@ test('implicit start preserves existing branch and checkout reuse', t => {
   assert.equal(f.git(['rev-parse', 'HEAD'], reused.path), f.base);
 });
 
+test('inline explicit start selects the requested commit and rejects stale reuse', t => {
+  const f = fixture(t);
+  const created = f.ok('inline', [`--from=${f.base}`]);
+  assert.equal(f.git(['rev-parse', 'HEAD'], created.path), f.base);
+  const result = f.cli('inline', [`--from=${f.tip}`]);
+  assert.notEqual(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stderr, /does not contain.*--from/);
+  assert.equal(f.git(['rev-parse', 'HEAD'], created.path), f.base);
+});
+
 for (const revision of ['missing-recovery-tip', '--detach']) {
   test(`unresolvable or option-shaped explicit start ${revision} fails without creating state`, t => {
     const f = fixture(t);
     for (const args of [[], ['--dry-run']]) {
-      const result = f.cli('invalid', ['--from', revision, ...args]);
+      const result = f.cli('invalid', [`--from=${revision}`, ...args]);
       assert.notEqual(result.status, 0, result.stderr + result.stdout);
       assert.match(result.stderr, /--from|unknown flag/);
       assert.equal(fs.existsSync(path.join(f.workspace, '.worktrees')), false);
