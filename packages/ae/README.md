@@ -214,6 +214,8 @@ linked checkout. Matching interrupted shared publication can be inspected with
 `ae init-repo --shared --dry-run` and recovered through the existing reconciler
 when shared publication is authorized. All supported policy sources matter;
 one matching check does not resolve a conflict.
+An unapplied shared-promotion preview reports readiness as `deferred`. Apply
+the reviewed promotion before inspecting delivery prerequisites.
 Engineer inspects the product's actual tests and prepares missing commands
 through `ae checks configure --file - --json`; users do not need to hand-author
 YAML. This bounded operation changes only the selected check declarations and

@@ -183,6 +183,17 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
     log('skip knowledge store arming (failed)');
   }
 
+  if (flags.shared && flags.dryRun && stats.promotion.files.length > 0) {
+    const message = 'Apply the reviewed shared-authority promotion, then inspect check readiness in this workspace. This dry run does not assess delivery readiness.';
+    stats.checkReadiness = {
+      status: 'deferred', ready: false, reason: 'authority-promotion-preview',
+      source: authority.files['checks.yaml'], sourceMode: 'shared', sourceDigest: null,
+      inspectionCommand: null, remediation: null, message,
+    };
+    log(message);
+    return stats;
+  }
+
   const configured = loadConfiguredChecks(workspace, { home: flags.home });
   if (!Object.entries(configured.checks || {}).some(([name, check]) => !validateCommand(name, check) && check.proof !== 'type-check')) {
     const message = `Engineer prepares real behavioral checks in ${authority.files['checks.yaml']} through ae checks configure --file -, then presents the exact commands for a person's trust approval before delivery.`;
