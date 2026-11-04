@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { makeScopes, initGit, runHarness, cliHarnessHome } from './helpers/index.mjs';
+import { makeScopes, initGit, runHarness, cliHarnessHome, writeChecks } from './helpers/index.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { collectOrientationFacts } from '../lib/orientation-facts.mjs';
 import { buildContextRecord } from '../lib/context-record.mjs';
 import { validateContextSnapshot } from '../lib/task-handoff.mjs';
-import { tokenizeShell } from '../corpus/hooks/lib/tool-payload.mjs';
 
 function fixture(t) {
   const f = makeScopes();
@@ -60,13 +59,31 @@ test('orientation exposes its trust diagnosis and bound recovery without another
   assert.deepEqual(result.trust.binding, { workspace: f.workspace, home, copilotHome: f.copilotHome, store: path.join(home, 'trust.yaml') });
   assert.equal(result.trust.recovery.owner, 'person');
   assert.equal(result.trust.recovery.kind, 'review-and-approve');
-  const recovery = result.nextTools.find(tool => tool.startsWith(`${result.trust.recovery.message} `));
-  assert.ok(recovery, JSON.stringify(result.nextTools));
-  if (process.platform === 'win32') assert.ok(recovery.startsWith(`${result.trust.recovery.message} & `));
-  else assert.deepEqual(tokenizeShell(recovery.slice(result.trust.recovery.message.length + 1)), result.trust.recovery.command);
   assert.deepEqual(result.trust.recovery.command.slice(2), ['trust', 'approve', '--workspace', f.workspace, '--ae-home', home, '--copilot-home', f.copilotHome, '--json']);
+  assert.equal(result.checkReadiness.ready, false);
+  assert.ok(!result.nextTools.some(tool => /trust\.recovery|trust approve/.test(tool)), JSON.stringify(result.nextTools));
   assert.ok(!result.nextTools.some(tool => /^ae trust status\b/.test(tool)), JSON.stringify(result.nextTools));
   assert.equal(fs.existsSync(result.trust.binding.store), false);
+
+  writeChecks(f.workspace, { behavior: { command: [process.execPath, '--test'] } });
+  const prepared = f.invoke(...args);
+  assert.equal(prepared.checkReadiness.ready, true);
+  assert.ok(prepared.nextTools.includes('Use trust.recovery'), JSON.stringify(prepared.nextTools));
+  assert.deepEqual(prepared.trust.recovery.command, result.trust.recovery.command);
+  assert.ok(!prepared.nextTools.some(tool => tool.includes(prepared.trust.recovery.command[1])), JSON.stringify(prepared.nextTools));
+  assert.equal(fs.existsSync(result.trust.binding.store), false);
+});
+
+test('orientation retains Engineer trust inspection while checks need preparation', t => {
+  const f = fixture(t), home = path.join(f.copilotHome, 'ae state');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, 'trust.yaml'), 'projects: [broken');
+  const result = f.invoke('--ae-home', home, '--dry-run');
+  assert.equal(result.checkReadiness.ready, false);
+  assert.equal(result.trust.recovery.owner, 'engineer');
+  assert.equal(result.trust.recovery.kind, 'inspect-store');
+  assert.ok(result.nextTools.includes('Inspect trust.recovery; prepare checks before approval'), JSON.stringify(result.nextTools));
+  assert.ok(!result.nextTools.some(tool => /trust approve/.test(tool)), JSON.stringify(result.nextTools));
 });
 
 test('unknown context versions fail explicitly', (t) => {

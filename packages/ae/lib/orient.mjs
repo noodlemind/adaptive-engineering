@@ -15,7 +15,6 @@ import { redactRecallEntry, redactSecrets } from './secret-scan.mjs';
 import { inertLine } from './knowledge/store.mjs';
 import { prepareNextTool } from './prepare.mjs';
 import { inspectIsolation, planSlugFromPath } from './worktree.mjs';
-import { formatTrustRecovery } from './trust.mjs';
 import { collectOrientationFacts } from './orientation-facts.mjs';
 import { buildContextRecord } from './context-record.mjs';
 import { accountContext } from './token-meter.mjs';
@@ -112,7 +111,8 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
   const nextTools = gatePreview.pass
     ? ['ae gate --phase implement', 'read plan ## Impacted Files', `ae review prepare --plan ${active?.path || '<path>'}`, 'ae verify', `ae compound --plan ${active?.path || '<path>'} --learning-decision -`, `ae plan-update --workspace "${workspace}" --plan "${active?.path || '<path>'}" --file - --json\n{"version":1,"id":"complete-decision","action":"complete","expect":"<observed revision>"}`]
     : [`ae gate --plan ${active?.path || '<path>'}`, 'read ensure-plan/SKILL.md'];
-  if (trust.recovery) nextTools.push(formatTrustRecovery(trust.recovery));
+  if (trust.recovery && checkReadiness.ready) nextTools.push('Use trust.recovery');
+  else if (trust.recovery?.owner === 'engineer') nextTools.push('Inspect trust.recovery; prepare checks before approval');
   if (!checkReadiness.ready) nextTools.unshift('Use checkReadiness.inspectionCommand');
 
   const intentSources = obligation.paths;
