@@ -9,7 +9,7 @@ user-invocable: false
 
 Use the verified work and its investigation notes to explain the problem, root cause, correction, prevention, and limits of applicability. Read `assets/solution-template.md` for content prompts when useful. Distinguish demonstrated lessons from hypotheses and recommendations.
 
-The plan can still be `in-progress` or `review`. Current verification and required review permit publication; the learning decision is a prerequisite of plan completion. Reuse that plan. For merged or backported changes, removed worktrees, missing proof, or outdated learning, read `references/post-merge-recovery.md` before proposing another plan or an insight.
+The plan can still be `in-progress` or `review`. Current verification and required review permit publication; the learning decision is a prerequisite of plan completion. Reuse that plan. For merged or backported changes, removed worktrees, missing proof, or outdated learning, read `<copilot-home>/skills/compound-learnings/references/post-merge-recovery.md` with the host read tool before proposing another plan or an insight.
 
 ## Publication decision
 
