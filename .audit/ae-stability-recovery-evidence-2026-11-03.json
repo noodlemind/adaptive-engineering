@@ -1,0 +1,553 @@
+{
+  "sourceBaseline": "e1d1cdff2743d16b1d2522374e18267df5e205af",
+  "candidateVersion": "0.14.2",
+  "archiveSha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+  "runs": [
+    {
+      "log": "baseline-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          66
+        ],
+        "pass": [
+          66
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "cli-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          9
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          9
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "CLI: plan-new rejects trailing operands without parsing them as flags (993.171018ms)",
+        "CLI: plan-new accepts an equals file path with spaces and equals characters (457.98942ms)",
+        "CLI: plan-new refuses repeated or bare file inputs without creating a plan (1052.7092ms)",
+        "CLI: plan-update refuses repeated file inputs before reading a decision or changing the plan (1676.639637ms)",
+        "CLI: plan-update rejects post-boundary operands without applying them as flags (1691.816759ms)",
+        "CLI: --files mistakes explain the canonical source and JSON input forms (433.51219ms)",
+        "CLI: review assemble refuses repeated JSON files before reading a file or plan (773.57295ms)",
+        "CLI: review reads the verb from positional arguments rather than file names (750.698893ms)",
+        "CLI: review rejects extra and post-boundary file operands (438.16824ms)"
+      ]
+    },
+    {
+      "log": "cli-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          12
+        ],
+        "pass": [
+          12
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          1
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "worktree reuse rejects a linked checkout belonging to another repository (573.22869ms)"
+      ]
+    },
+    {
+      "log": "worktree-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          9
+        ],
+        "pass": [
+          9
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "tree-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          2
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          2
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "tree CLI preserves boolean ordering and literal option-shaped targets (1567.1613ms)",
+        "tree CLI does not read depth options beyond the literal boundary (518.580102ms)"
+      ]
+    },
+    {
+      "log": "tree-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          17
+        ],
+        "pass": [
+          17
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "integration-review-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          2
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          2
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "legacy upgrade keeps installation success distinct from missing workspace prerequisites (1768.41308ms)",
+        "failed native root selection withholds recovery for an unresolved binding (137.843942ms)"
+      ]
+    },
+    {
+      "log": "integration-review-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          14
+        ],
+        "pass": [
+          14
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "plan-input-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          19,
+          2
+        ],
+        "pass": [
+          15,
+          0
+        ],
+        "fail": [
+          4,
+          2
+        ],
+        "cancelled": [
+          0,
+          0
+        ],
+        "skipped": [
+          0,
+          0
+        ]
+      },
+      "failureTitles": [
+        "CLI: plan-new preserves equals authoring flags in the written full plan (602.489683ms)",
+        "CLI: plan-new preserves inline short-plan goals and mixed scope flags (574.12004ms)",
+        "CLI: plan-new rejects JSON decisions mixed with inline authoring before reading the file (1262.274038ms)",
+        "CLI: plan-new keeps consumed option-shaped titles literal (2426.485677ms)",
+        "CLI: plan-new rejects missing values and inline booleans without writing a plan (1121.069791ms)",
+        "CLI: plan-new bare dry-run preserves authored input and does not create a plan (482.301937ms)"
+      ]
+    },
+    {
+      "log": "plan-input-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          20,
+          2,
+          109
+        ],
+        "pass": [
+          20,
+          2,
+          108
+        ],
+        "fail": [
+          0,
+          0,
+          0
+        ],
+        "cancelled": [
+          0,
+          0,
+          0
+        ],
+        "skipped": [
+          0,
+          0,
+          1
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "integrated-targeted.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          43
+        ],
+        "pass": [
+          43
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "final-full-tests.log",
+      "completed": false,
+      "counts": {},
+      "failureTitles": [
+        "exit sequence: short plan, no-learning, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (49838.563346ms)",
+        "exit sequence: short plan, publish, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (30653.465324ms)",
+        "bundled D2 provides all three layouts and releases its internal worker (13503.370352ms)",
+        "D2 TALA output is reproducible across independent renderer workers (10535.455873ms)",
+        "full authored experiment plans preserve schema-4 obligations through the real CLI (70997.668473ms)",
+        "baseline, improvement, guard discard and target use exactly eight durable slots (719.397522ms)",
+        "baseline binding cannot adopt edited bytes and an evaluated pair cannot launch twice (521.823874ms)",
+        "baseline authority binds exact newline bytes even when the JSON candidate is unchanged (602.307078ms)",
+        "odd remaining budgets refuse a pair and accepted increases retain origin and spend (478.845074ms)",
+        "prelaunch failures settle spent siblings and malformed metrics permit recognized rollback (469.460817ms)",
+        "old discard replay never restores over the current hypothesis (429.308206ms)",
+        "dead controllers with no started child recover as interrupted; unknown spawn windows block (817.684831ms)",
+        "unavailable process observation cannot turn a live controller into an interrupted attempt (468.24422ms)",
+        "recovery refuses a live child PID even when its recorded creation identity is stale (927.323874ms)",
+        "settlement records owned group absence even after launch authority expires (491.208678ms)",
+        "keep recovery publishes the journaled snapshot ref before reconstructing settled projection (496.392257ms)",
+        "artifact validation failure stops a discarded series without denying exact rollback (516.724888ms)",
+        "derived TSV corruption cannot change measurements and is regenerated from journals (569.837822ms)",
+        "HEAD movement blocks the accepted series without changing its records or candidate (440.364084ms)",
+        "authored decision digests and descriptions are immutable across operation replay (582.553724ms)",
+        "keep rejects a snapshot captured from candidate bytes changed after measurement validation (443.996035ms)",
+        "keep rechecks current candidate after publishing its resolution intent (410.790512ms)",
+        "keep recovery rechecks current candidate before publishing settlement (421.377219ms)",
+        "read-only status reports the original wall budget exhausted without reserving more work (516.861441ms)",
+        "flows CLI is read-only when cold, validates inputs, and loads only relevant context (16734.703053ms)",
+        "publication terminates when a missing lock cannot be created (8534.17048ms)",
+        "large valid multiline values compile within a bounded subprocess deadline (4149.303968ms)",
+        "readPrefixNoFollow does not block when a regular file becomes a fifo before open (3509.762402ms)",
+        "primitive activation without a host session id is accepted only while fresh (15774.632599ms)",
+        "orient explains a new bound learning with a missing source as visible applicability review (2426.207017ms)",
+        "orient records only the learning ids that SURVIVED into the 2KB pack, never every ranked id (1403.401025ms)"
+      ],
+      "status": "running; observed failures; not a passing qualification"
+    },
+    {
+      "log": "final-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    }
+  ],
+  "baselineTrustCliObservations": [
+    {
+      "scenario": "approve-primary-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:02.997Z"
+    },
+    {
+      "scenario": "fresh-child-inherits-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": true,
+      "reason": "inherited from trusted primary /tmp/ae-trust-design-jYAsm6/repo"
+    },
+    {
+      "scenario": "directly-approve-child-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:05.086Z"
+    },
+    {
+      "scenario": "approve-primary-B",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:05.812Z"
+    },
+    {
+      "scenario": "stale-direct-child-A-blocks-primary-B",
+      "exit": 0,
+      "state": "stale",
+      "trusted": false,
+      "inherited": false,
+      "reason": "the policy files have changed since this project was approved"
+    },
+    {
+      "scenario": "child-revoke",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "revoked-child-stays-revoked",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "child-approve-B",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:09.539Z"
+    },
+    {
+      "scenario": "primary-revoke",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "independent-child-B-survives-primary-revoke",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:09.539Z"
+    },
+    {
+      "scenario": "approve-primary-B-again",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:11.299Z"
+    },
+    {
+      "scenario": "manual-child-untrusted",
+      "exit": 0,
+      "state": "untrusted",
+      "trusted": false,
+      "inherited": false,
+      "reason": "this project has never been approved"
+    },
+    {
+      "scenario": "reused-child-now-inherits",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": true,
+      "reason": "inherited from trusted primary /tmp/ae-trust-design-jYAsm6/repo"
+    },
+    {
+      "scenario": "child-old-policy-refuses-inheritance",
+      "exit": 0,
+      "state": "stale",
+      "trusted": false,
+      "inherited": false,
+      "reason": "ae worktree of /tmp/ae-trust-design-jYAsm6/repo, but the primary or worktree policy files differ from that approval"
+    },
+    {
+      "scenario": "same-workspace-different-selected-home",
+      "exit": 0,
+      "state": "untrusted",
+      "trusted": false,
+      "inherited": false,
+      "reason": "this project has never been approved"
+    }
+  ],
+  "review": {
+    "initial": "Three P2 issues found and fixed.",
+    "finalDelta": "34 tests passed; no introduced defect found.",
+    "comments": "No deletion or suppression flags.",
+    "modelDiversity": "Independent agents from one model family; no cross-family claim.",
+    "transcript": "No persisted run transcript supplied; source, commits and tool-produced logs were reviewed."
+  },
+  "limits": [
+    "Native editor/model acceptance and the original user machine state are unverified.",
+    "Native Windows execution requires CI.",
+    "The interrupted first broad run is excluded from passing qualification.",
+    "A/B relocation proof alone is not prior-version proof; genuine old-release archive qualification is separate.",
+    "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven."
+  ],
+  "candidateCodeCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+  "runCountNote": "Counts are top-level reporter summaries where present. Arrays represent multiple commands appended to one log, not additive unique coverage. Logs were observed in the work session; durable regression tests are committed under packages/ae/test.",
+  "priorVersionReceipt": "ae-stability-prior-upgrade-2026-11-03.json",
+  "finalChecks": {
+    "repositoryContracts": {
+      "tests": 154,
+      "pass": 152,
+      "fail": 0,
+      "skip": 2
+    },
+    "sourceRelease": "passed",
+    "installedArchiveRelease": "passed",
+    "offlineInstallVersion": "0.14.2",
+    "installedArchiveDelivery": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0
+    },
+    "fullInventory": "not qualified locally; exact-head CI required"
+  },
+  "environmentComparisons": {
+    "experiment": {
+      "baseline": "fail: process identity unavailable",
+      "candidate": "fail: process identity unavailable",
+      "effect": "retain fail-closed behavior; full inventory requires CI"
+    },
+    "renderer": {
+      "baselineIsolated": "pass",
+      "candidateIsolated": "pass",
+      "broadCandidate": "two failures under shared load"
+    },
+    "shortNoLearningDelivery": {
+      "baselineRecheck": "pass",
+      "candidateRecheck": "pass",
+      "priorCandidateRecheck": "10-second proof-authority timeout",
+      "cause": "unproven; completion authority implementation unchanged"
+    }
+  },
+  "publishedSource": {
+    "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
+    "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+    "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+    "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+    "allSourceTreeBytesIdentical": true
+  }
+}
