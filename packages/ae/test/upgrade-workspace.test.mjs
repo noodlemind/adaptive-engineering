@@ -83,8 +83,14 @@ test('native upgrade replaces installed A bindings with B and preserves selected
   const instructions = fs.readFileSync(path.join(f.skillsHome, 'engineer/references/ae-instructions.md'), 'utf8');
   const fallback = JSON.parse(instructions.match(/invoke the installed package directly with literal argv: `([^`]+)`/)[1]);
   const binding = JSON.parse(instructions.match(/append these literal argv elements before any `--` argument boundary: `([^`]+)`/)[1]);
-  assert.equal(fallback[1], path.join(newRuntime, 'bin/ae.mjs'));
-  assert.deepEqual(binding, ['--copilot-home', f.configHome, '--skills-home', f.skillsHome, '--ae-home', f.home]);
+  assert.equal(path.isAbsolute(fallback[1]), true);
+  assert.equal(path.normalize(fallback[1]), path.join(newRuntime, 'bin/ae.mjs'));
+  const nativeBinding = binding.map((argument, index) => {
+    if (index % 2 === 0) return argument;
+    assert.equal(path.isAbsolute(argument), true);
+    return path.normalize(argument);
+  });
+  assert.deepEqual(nativeBinding, ['--copilot-home', f.configHome, '--skills-home', f.skillsHome, '--ae-home', f.home]);
   const fallbackResult = spawnSync(fallback[0], [...fallback.slice(1), 'orient', '--read', ...binding, '--workspace', f.workspace, '--json', '--no-events'], { cwd: f.configHome, env: f.env, encoding: 'utf8', timeout: 15000 });
   assert.equal(fallbackResult.status, 0, fallbackResult.stderr);
   assert.equal(JSON.parse(fallbackResult.stdout).checkReadiness.remediation.command[1], path.join(newRuntime, 'bin/ae.mjs'));

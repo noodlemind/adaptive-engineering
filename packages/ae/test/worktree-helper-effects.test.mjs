@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { runHarness } from './helpers/cli.mjs';
 import { git } from './helpers/store.mjs';
 import { tempDir } from './helpers/temp.mjs';
+import { aeWorktreePrimary } from '../lib/worktree.mjs';
 
 const RAW_BYTES = 'original tracked bytes\n';
 
@@ -52,8 +55,8 @@ function fixture(t, mechanism) {
   const helper = path.join(root, 'helper.sh');
   fs.writeFileSync(helper, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(helperSource)}\n`);
   fs.chmodSync(helper, 0o755);
-  const cli = (slug, cwd = workspace) => runHarness(['worktree', '--slug', slug, '--workspace', cwd, '--json', '--no-events'], {
-    cwd, env, trust: false, injectHome: false,
+  const cli = (slug, cwd = workspace, overrides = {}) => runHarness(['worktree', '--slug', slug, '--workspace', cwd, '--json', '--no-events'], {
+    cwd, env: { ...env, ...overrides }, trust: false, injectHome: false,
   });
   const clearEffects = () => {
     fs.rmSync(marker, { force: true });
@@ -137,6 +140,83 @@ test('worktree reuse rejects a linked checkout belonging to another repository',
   assert.match(result.stderr, /not a worktree of this repository/);
   assert.equal(fs.readFileSync(path.join(dest, 'foreign.txt'), 'utf8'), 'belongs to the other repository\n');
   assert.equal(fs.existsSync(path.join(f.workspace, '.git', 'ae-worktrees')), false);
+});
+
+test('worktree reuse compares physical repository paths when generic realpath retains an alias', t => {
+  const f = fixture(t, 'metadata'), alias = path.join(f.root, 'project alias');
+  fs.symlinkSync(f.workspace, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(fs.realpathSync.native(alias), fs.realpathSync.native(f.workspace));
+  const preload = path.join(f.root, 'alias-realpath.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';
+import path from 'node:path';
+const alias = ${JSON.stringify(alias)};
+const original = fs.realpathSync;
+const keepAlias = (target, ...args) => {
+  const result = original(target, ...args), requested = path.resolve(String(target));
+  return requested === alias || requested.startsWith(alias + path.sep) ? requested : result;
+};
+keepAlias.native = original.native;
+fs.realpathSync = keepAlias;
+`);
+  const env = { NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${pathToFileURL(preload).href}`.trim() };
+  const created = f.assertRawCheckout(f.cli('alias-reuse', alias, env), 'alias-reuse');
+  const reused = f.cli('alias-reuse', alias, env);
+  assert.equal(reused.status, 0, reused.stderr + reused.stdout);
+  assert.equal(JSON.parse(reused.stdout).created, false);
+  assert.equal(fs.realpathSync.native(JSON.parse(reused.stdout).path), fs.realpathSync.native(created.path));
+  f.assertNoEffects();
+});
+
+test('registered worktrees retain absolute legacy aliases without accepting relative records', t => {
+  const f = fixture(t, 'metadata'), created = f.assertRawCheckout(f.cli('legacy-alias'), 'legacy-alias');
+  const alias = path.join(f.root, 'legacy project alias');
+  fs.symlinkSync(f.workspace, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const record = path.join(f.workspace, '.git', 'ae-worktrees');
+  fs.writeFileSync(record, `${path.relative(f.workspace, created.path)}\n`);
+  assert.equal(aeWorktreePrimary(created.path), null);
+  const legacy = `${path.join(alias, '.worktrees', 'legacy-alias')}\n`;
+  fs.writeFileSync(record, legacy);
+  assert.equal(aeWorktreePrimary(created.path), fs.realpathSync.native(f.workspace));
+  assert.equal(aeWorktreePrimary(path.join(alias, '.worktrees', 'legacy-alias')), fs.realpathSync.native(f.workspace));
+  const reused = f.cli('legacy-alias', alias);
+  assert.equal(reused.status, 0, reused.stderr + reused.stdout);
+  assert.equal(JSON.parse(reused.stdout).created, false);
+  assert.equal(fs.readFileSync(record, 'utf8'), legacy);
+});
+
+test('Windows root-relative registration cannot select the caller drive', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t, 'metadata'), created = f.assertRawCheckout(f.cli('root-relative'), 'root-relative');
+  const real = fs.realpathSync.native(created.path), root = path.parse(real).root;
+  fs.writeFileSync(path.join(f.workspace, '.git', 'ae-worktrees'), `${real.slice(root.length - 1)}\n`);
+  const module = new URL('../lib/worktree.mjs', import.meta.url).href;
+  const script = `import { aeWorktreePrimary } from ${JSON.stringify(module)}; console.log(JSON.stringify(aeWorktreePrimary(${JSON.stringify(real)})));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: f.workspace, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout), null);
+});
+
+test('worktree reuse refuses unavailable repository identity', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t, 'metadata');
+  f.assertRawCheckout(f.cli('unavailable-identity'), 'unavailable-identity');
+  const lookup = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' });
+  assert.equal(lookup.status, 0, lookup.stderr);
+  const gitPath = lookup.stdout.trim(), bin = path.join(f.root, 'git transport');
+  fs.mkdirSync(bin);
+  const marker = path.join(f.root, 'unavailable-observations');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+if [ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]; then
+  printf 'unavailable\\n' >> ${shellQuote(marker)}
+  exit 1
+fi
+exec ${shellQuote(gitPath)} "$@"
+`);
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  const record = path.join(f.workspace, '.git', 'ae-worktrees'), before = fs.readFileSync(record);
+  const result = f.cli('unavailable-identity', f.workspace, { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  assert.notEqual(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stderr, /not a worktree of this repository/);
+  assert.match(fs.readFileSync(marker, 'utf8'), /unavailable/);
+  assert.deepEqual(fs.readFileSync(record), before);
 });
 
 for (const invalid of ['malformed', 'oversized']) {

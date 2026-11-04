@@ -136,18 +136,19 @@ export function isolatedWorktreeDestination(workspace, slug) {
   return path.join(primaryRoot(workspace), '.worktrees', slug);
 }
 
-function resolvedGitPath(workspace, raw) {
-  const abs = path.resolve(workspace, raw);
+function physicalPath(value) {
+  // A Windows drive-less rooted path still depends on the caller's current drive.
+  if (!path.isAbsolute(value) || process.platform === 'win32' && path.parse(value).root.length === 1) return null;
   try {
-    return fs.realpathSync(abs);
+    return fs.realpathSync.native(value);
   } catch {
-    return abs;
+    return null;
   }
 }
 
 function gitCommonDir(workspace) {
   const raw = gitOut(workspace, ['rev-parse', '--git-common-dir']);
-  return raw ? resolvedGitPath(workspace, raw) : null;
+  return raw ? physicalPath(path.resolve(workspace, raw)) : null;
 }
 
 function worktreeRecordFile(workspace) {
@@ -157,15 +158,10 @@ function worktreeRecordFile(workspace) {
 
 export function recordAeWorktree(primary, dest) {
   const file = worktreeRecordFile(primary);
-  if (!file) return;
-  let real = path.resolve(dest);
-  try {
-    real = fs.realpathSync(dest);
-  } catch {
-    real = path.resolve(dest);
-  }
+  const real = physicalPath(path.resolve(dest));
+  if (!file || !real) return;
   const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];
-  if (!current.includes(real)) fs.appendFileSync(file, `${real}\n`);
+  if (!current.some(entry => physicalPath(entry) === real)) fs.appendFileSync(file, `${real}\n`);
 }
 
 /** Primary checkout when this path is a linked worktree recorded by `ae worktree`. */
@@ -174,14 +170,10 @@ export function aeWorktreePrimary(workspace) {
   if (!primary) return null;
   const file = worktreeRecordFile(workspace);
   if (!file || !fs.existsSync(file)) return null;
-  let real = path.resolve(workspace);
-  try {
-    real = fs.realpathSync(workspace);
-  } catch {
-    real = path.resolve(workspace);
-  }
+  const real = physicalPath(path.resolve(workspace));
+  if (!real) return null;
   const listed = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-  if (!listed.includes(real)) return null;
+  if (!listed.some(entry => physicalPath(entry) === real)) return null;
   const primaryCommon = gitCommonDir(primary);
   const here = gitCommonDir(workspace);
   if (!primaryCommon || primaryCommon !== here) return null;
@@ -242,23 +234,15 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
   if (!prefix) throw usage('worktree: Git helper configuration could not be resolved safely');
   ensureWorktreeIgnore(root);
   if (fs.existsSync(dest)) {
-    let destReal = dest;
-    try {
-      destReal = fs.realpathSync(dest);
-    } catch {
-      destReal = path.resolve(dest);
-    }
+    const destReal = physicalPath(path.resolve(dest));
     const listed = gitOut(root, ['worktree', 'list', '--porcelain']) || '';
-    const listedHit = listed.split('\n').some((line) => {
+    const listedHit = destReal && listed.split('\n').some((line) => {
       if (!line.startsWith('worktree ')) return false;
       const entry = line.slice('worktree '.length);
-      try {
-        return fs.realpathSync(entry) === destReal;
-      } catch {
-        return path.resolve(entry) === destReal;
-      }
+      return physicalPath(entry) === destReal;
     });
-    if ((listedHit || isLinkedWorktree(dest)) && gitCommonDir(dest) === gitCommonDir(root)) {
+    const primaryCommon = gitCommonDir(root);
+    if (destReal && primaryCommon && (listedHit || isLinkedWorktree(dest)) && gitCommonDir(dest) === primaryCommon) {
       carryCheckoutPlans(root, dest);
       if (record) recordAeWorktree(root, dest);
       return { path: dest, branch: currentBranch(dest) || branch, created: false, isolated: true };
