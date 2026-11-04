@@ -74,3 +74,7 @@ The initial PR revision failed the existing corpus-reference test because the ne
 ### Promotion preview review correction
 
 Greptile P2 identified conflicting recovery advice after a successful dry-run promotion. The CLI now reports readiness as deferred with no invented check counts, inspection or remediation; it asks to apply the reviewed promotion before inspection. Full/partial matching sets with valid, empty or invalid checks defer, while actual apply and ordinary dry runs retain real inspection. The failing regression was committed before the fix. The four-file authority/promotion/setup suite passed 63 cases with no skips or failures; corpus-reference checks and release validation passed. Independent review found no remaining concrete defect. The 67-assertion, 106-step probe was rerun against this final frozen source.
+
+### Trust diagnostic contract alignment
+
+Full CI found one old assertion expecting missing uncommitted primary policy to fall through to a local authority/policy-mismatch comparison. The central guard now rejects that implicit local selection first. The updated regression requires authority-unavailable, explicit primary authority context, Engineer-owned inspection, no approval suggestion, no invented child policy and unchanged primary trust. The test failed before this expectation update and the full trust-recovery file then passed 29 cases. This changes tests/evidence only; frozen runtime/package owners and the 67-assertion recovery receipt remain unchanged.
