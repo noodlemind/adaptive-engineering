@@ -121,6 +121,19 @@ test('inline explicit start selects the requested commit and rejects stale reuse
   assert.equal(f.git(['rev-parse', 'HEAD'], created.path), f.base);
 });
 
+test('an explicit workspace-relative HEAD resolves in the calling worktree', t => {
+  const f = fixture(t);
+  const caller = f.ok('caller', ['--from', f.base]);
+  const home = path.join(f.root, 'state');
+  const result = runHarness(['worktree', '--slug', 'caller-head', '--from', 'HEAD', '--workspace', caller.path, '--ae-home', home, '--json', '--no-events'], {
+    cwd: caller.path, trust: false, injectHome: false, env: { HARNESS_HOME: home },
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const created = JSON.parse(result.stdout);
+  assert.equal(f.git(['rev-parse', 'HEAD'], created.path), f.base);
+  assert.equal(f.git(['rev-parse', 'HEAD']), f.tip);
+});
+
 for (const revision of ['missing-recovery-tip', '--detach']) {
   test(`unresolvable or option-shaped explicit start ${revision} fails without creating state`, t => {
     const f = fixture(t);
