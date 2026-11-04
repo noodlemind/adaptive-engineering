@@ -47,7 +47,7 @@ The user also asked why `harness` remains visible. The migration deliberately na
 
 ## Final source and verification
 
-Frozen 0.14.3 product source is local commit `0f6c74e7391d5a3b030e65dd50872c27704a5e51`. Connected GitHub publication produced commit `077de19d3ad87bf43f357e1440f5984d8b50ebfe`. Both have the identical complete Git tree `58dbf8f7ede8586950db15e773b5b9deab2bb097`. Subsequent evidence-only changes do not alter package bytes.
+Frozen 0.14.3 product source is local commit `f8bdb18789fec257f7de4c01555eed548d1b723d`. Connected GitHub publication produced commit `7498d1eacab32daef64d15093bc4345a51c9e117`. Both have the identical complete Git tree `0b1f8be6608b9585e689f8c789ddc11688ebd17d`. Subsequent evidence-only changes do not alter package bytes.
 
 - Failing CLI regressions were committed before source fixes. They demonstrate implicit authority shadowing, invalid promotion preview, discarded inline start, stale/divergent worktree reuse and incorrect caller-relative HEAD. Final review added and reproduced both subfolder and bounded-check-writer bypasses before the central correction.
 - Final authority/check/layout suite: 71 cases, 67 passed, four platform skips, zero failures.
@@ -59,10 +59,14 @@ Frozen 0.14.3 product source is local commit `0f6c74e7391d5a3b030e65dd50872c2770
 
 ### Two different-parent branches
 
-The [rerunnable probe](ae-post-merge-recovery-probe.mjs) and [receipt](ae-post-merge-recovery-evidence.json) passed **67 assertions across 106 actual Git/AE CLI steps** against an immutable archive of the frozen product commit. All 17 recorded runtime owners matched that commit and stayed unchanged. The receipt SHA-256 is `60a5529bb37514c407dc5e83beb3de8ff54af4bb39cac7db3ce20de402968da4`.
+The [rerunnable probe](ae-post-merge-recovery-probe.mjs) and [receipt](ae-post-merge-recovery-evidence.json) passed **67 assertions across 106 actual Git/AE CLI steps** against an immutable archive of the frozen product commit. All 17 recorded runtime owners matched that commit and stayed unchanged. The receipt SHA-256 is `1da48f678257ea11176613add8c25f39b4fc92f0a4ed9a5169584163fc071ad1`.
 
 Alpha was completed before cleanup; beta remained in-progress with a published lesson. Both used current full schema-2 plans, content-bound intent and revision-bound lifecycle decisions. After merging and removing both original worktrees, recovery kept each original path and UUID, selected its exact fetched release target, obtained fresh review records and proof, published a new proof-specific lesson and completed the same plan. No third plan or renewed trust approval was needed. Local main remained stale and unchanged. All prior episode hashes were preserved.
 
 Negative controls rejected the original hardcoded behavior, missing review coverage, proof recorded before a new commit and missing checkout records despite a still-trusted primary.
 
 The probe uses source CLI assets from a Git archive with linked dependencies, not an installed npm archive. Review declarations are synthetic and explicitly retain unverified independence. Native editor behavior, extended domain/experiment plans, active-claim `SUPERSEDE` in this journey and automatic episode replacement are unqualified. The actual user's artifact type, authority differences and branch commits were not supplied, so this receipt does not claim to repair their private repository.
+
+### CI corpus pointer correction
+
+The initial PR revision failed the existing corpus-reference test because the new skill named a bare relative read pointer. The same test failed locally before the installed-corpus/host-read correction and passed afterward, three cases with zero skips or failures. Release validation passed again. The two-branch probe was rerun against the corrected frozen source identified above; it again passed 67 assertions and 106 CLI/Git steps. Superseded CI is not a passing result.
