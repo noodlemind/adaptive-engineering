@@ -19,7 +19,6 @@
       "sha256": "253273e04c7464c6eb1cfee0f9ad5d43e2197f8e6c04e82c0f531a976d573a5b",
       "sha512": "ad282f0217f694fc593362f560725be47341430a508d8acabbc8db9b5059c14240d2b48ea405ff120e766296fa2eec24ad08a0313a1d2ea60cbdb7bf7ef9d7be",
       "sourceCommit": "e1d1cdff2743d16b1d2522374e18267df5e205af",
-      "trackedPackageDiffWasClean": true,
       "shippedSourceFilesCompared": 449,
       "allShippedSourceBytesMatchCommit": true,
       "sourceFilesSha256": "ceb046e6308880359e23d99e7adeda11039acc40ef747f347415c187d5799f5e",
@@ -30,14 +29,13 @@
       "name": "ae-harness",
       "version": "0.14.2",
       "installedExecutableVersion": "0.14.2",
-      "bytes": 35750283,
-      "sha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
-      "sha512": "0fbcf332be04ed5148ff6ade3b43dd70f2445088cbd5876e159efac793ce534cb4132ce13ceac6189e109dee3b4837e88d5eea183fb9378de584d02348d171be",
-      "sourceCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
-      "trackedPackageDiffWasClean": true,
+      "bytes": 35750242,
+      "sha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+      "sha512": "dc627465ce71d6a2677f9201041e8a19463dea22cba27a172ea761077c3ab2813d8584347dd7d9843301c0915fc651be3f342ac321436cd2dceea63b561bf75b",
+      "sourceCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
       "shippedSourceFilesCompared": 450,
       "allShippedSourceBytesMatchCommit": true,
-      "sourceFilesSha256": "c9504d99b43b6aeee0d9fcd31a7783b5a9ea64d9870fada76fb60a95ce895740",
+      "sourceFilesSha256": "293215d5897180e5d97ea760eece79f1014be7648f4ce6946fa0192d0c3b7318",
       "bundledDependencyFiles": 673,
       "bundledDependenciesComparedToGitSource": false
     }
@@ -46,9 +44,10 @@
     "steps": 53,
     "unexpectedNonzeroExitStatuses": 0,
     "expectedNegativeControls": 3,
-    "completeOldInstallationPrefixAbsent": true,
-    "rawTranscriptSha256": "41a12108d78d0f895eafd3afad3b3997a58b3fc6507e51716340263db8efdad7",
-    "rawEvidenceSha256": "5a8338eb532d2d33a510a63a45114c61a8664dc32ca99ebeeae32e1d9eeddb4f",
+    "completeOldInstallationPrefixAbsentAtQualification": true,
+    "oldInstallationRuntimeRemainsAbsent": true,
+    "rawTranscriptSha256": "9cc69557ccaea0de330ab20503aa626991dc154198da03d243e6dc878b997270",
+    "rawEvidenceSha256": "ac18747247aa590f3e08036b69e0404ae9ebe93de92dcfa3b2c32e3cbf8e7cac",
     "observedStepResults": [
       {
         "step": "old:archive-package-metadata",
@@ -279,10 +278,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:09:13.189Z",
+      "approvedAt": "2026-11-04T02:27:22.801Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "4be3e6e6d1ee923d2405164c9aca92159df0b35d8afd04280e29b09c327de341",
-      "repositorySnapshotSha256": "2ff8ebc55ffa08b4828f023a81c0e35c77ef75d29cae266175d72eb8d8243097",
+      "trustSha256": "63cf186f21a0830654f891f10730edfe9d0e9e1e00d58fbf1a292bf76fa6c2d4",
+      "repositorySnapshotSha256": "5acfdd52ad9d7d969a444558c6933a060bafe71fab4765cf8deda6ed027e6431",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -328,10 +327,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:09:16.318Z",
+      "approvedAt": "2026-11-04T02:27:26.297Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "5126367d069cc9e8cdd5da8f7420d3f1da103511f42da90077711319a3af6116",
-      "repositorySnapshotSha256": "9fa501f3f479b3f01f0bedb73a999f5fdebcc88f5e3b9588ce490ce1826082bd",
+      "trustSha256": "bdc12cd71bef86a830dd4726e866b1eb98714baff40eaf188aabc8d775eee25d",
+      "repositorySnapshotSha256": "5a8f9a2823994db7fdefbe79e001933eb1cc486a6b00f74632bcd1e75fda7ba1",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -377,10 +376,10 @@
         "status": 1,
         "errorMentionsOldRuntime": true
       },
-      "approvedAt": "2026-11-04T02:09:19.202Z",
+      "approvedAt": "2026-11-04T02:27:28.864Z",
       "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
-      "trustSha256": "9c49a3f27bd5878c60a06d4def1db98ed73de38c8ed2819ede4ef73cd08228ce",
-      "repositorySnapshotSha256": "6991a46583dfb7d09004f36104134a2c1e9fd3a295b07fef555becc04fd05d41",
+      "trustSha256": "21c7283f64ab72b3b9f451be3f4c4a3be3351b156689679d8195b38b23e5beec",
+      "repositorySnapshotSha256": "2e7f28cac958905ae23a6f253a86ca3b473c35ed52df2c500128b1c248b7ba53",
       "preservedTrustBytes": true,
       "preservedRepositoryBytes": true,
       "integration": {
@@ -465,29 +464,6 @@
     ],
     "trustFileCreated": false
   },
-  "independentTail": {
-    "verdict": "VERIFIED",
-    "oldRuntimeAbsent": true,
-    "hosts": [
-      {
-        "host": "codex",
-        "verdict": "VERIFIED"
-      },
-      {
-        "host": "claude-code",
-        "verdict": "VERIFIED"
-      },
-      {
-        "host": "cursor",
-        "verdict": "VERIFIED"
-      }
-    ],
-    "invariants": [
-      "Regenerated Read hooks and projected orient --read fallbacks succeed after old runtime removal",
-      "Literal candidate config/skills/state roots retained",
-      "Repository and trust bytes unchanged"
-    ]
-  },
   "earlierHarnessAttempts": [
     {
       "outcome": "Extra denied-Write probe emitted expected audit telemetry; unrequested mutation scenario removed from byte-preservation check.",
@@ -509,19 +485,117 @@
       "node .audit/ae-stability-prior-upgrade-probe.mjs OLD_ARCHIVE CANDIDATE_ARCHIVE OUTPUT_DIRECTORY",
       "python .audit/ae-stability-prior-upgrade-provenance.py REPOSITORY OLD_ARCHIVE CANDIDATE_ARCHIVE OUTPUT_JSON"
     ],
-    "inputs": "Archives must match recorded SHA-256 values. The repository must contain the old source commit and the byte-identical published candidate commit. Output arguments select disposable receipt/work locations.",
-    "scriptPortability": "Core migration assertions copied from clean 53-step run; input/output paths made explicit and exact archive guards added. No full migration rerun for this copy operation.",
-    "ae-stability-prior-upgrade-probe.mjsSha256": "5aa3d376fae9cb3c0d49f47dd1fa0d44984a8334d8142a59fa999b209aad947f",
-    "ae-stability-prior-upgrade-provenance.pySha256": "11439de224ac408620e6630edbd1d8429c45179272013e059fe27304b3f1ac80"
+    "inputs": "Archives must match recorded SHA-256 values. The repository must contain the exact old and final published candidate commits. Output arguments select disposable receipt/work locations.",
+    "scriptPortability": "Core assertions passed in the final clean 53-step run. Portable copies retain those assertions, explicit input/output paths, and exact archive guards. Portable provenance executed against the final published commit; syntax and usage preflight pass.",
+    "ae-stability-prior-upgrade-probe.mjsSha256": "854c3461434cfa579c8393b2213482277382498f54accd62c5e4a7534535346f",
+    "ae-stability-prior-upgrade-provenance.pySha256": "4c26c204dfc3f42ea4af96934367c54b1f6b7591fe1252d19ca12cb39aaf4924"
   },
   "productSourceEdits": false,
   "qualificationCommitsPushesOrPRs": false,
   "publishedSource": {
-    "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
-    "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
-    "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
-    "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+    "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+    "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+    "localQualifiedCommit": "54d49dceea52e6671f1bfe5d8e6dbc0a11a39c66",
+    "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
     "allSourceTreeBytesIdentical": true,
-    "publication": "Connected GitHub Git Data API; direct Git push had no credentials. Original qualification observations retain their local commit identity. Portable probes use the byte-identical published source commit."
-  }
+    "publication": "Connected GitHub Git Data API. Final archive source-byte provenance was executed directly against this exact published commit; local and published source trees match."
+  },
+  "supersededQualifications": [
+    {
+      "verdict": "VERIFIED",
+      "reason": "Initial archive superseded by final orient recovery-display correction; earlier results apply only to that recorded earlier archive.",
+      "candidateArchive": {
+        "name": "ae-harness",
+        "version": "0.14.2",
+        "installedExecutableVersion": "0.14.2",
+        "bytes": 35750283,
+        "sha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+        "sha512": "0fbcf332be04ed5148ff6ade3b43dd70f2445088cbd5876e159efac793ce534cb4132ce13ceac6189e109dee3b4837e88d5eea183fb9378de584d02348d171be",
+        "sourceCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "trackedPackageDiffWasClean": true,
+        "shippedSourceFilesCompared": 450,
+        "allShippedSourceBytesMatchCommit": true,
+        "sourceFilesSha256": "c9504d99b43b6aeee0d9fcd31a7783b5a9ea64d9870fada76fb60a95ce895740",
+        "bundledDependencyFiles": 673,
+        "bundledDependenciesComparedToGitSource": false
+      },
+      "publishedSource": {
+        "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
+        "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "allSourceTreeBytesIdentical": true,
+        "publication": "Connected GitHub Git Data API; direct Git push had no credentials. Original qualification observations retain their local commit identity. Portable probes use the byte-identical published source commit."
+      },
+      "cleanRun": {
+        "steps": 53,
+        "unexpectedNonzeroExitStatuses": 0,
+        "expectedNegativeControls": 3,
+        "completeOldInstallationPrefixAbsent": true,
+        "rawTranscriptSha256": "41a12108d78d0f895eafd3afad3b3997a58b3fc6507e51716340263db8efdad7",
+        "rawEvidenceSha256": "5a8338eb532d2d33a510a63a45114c61a8664dc32ca99ebeeae32e1d9eeddb4f"
+      },
+      "hosts": [
+        {
+          "host": "codex",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        },
+        {
+          "host": "claude-code",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        },
+        {
+          "host": "cursor",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        }
+      ],
+      "independentTail": {
+        "verdict": "VERIFIED",
+        "oldRuntimeAbsent": true,
+        "hosts": [
+          {
+            "host": "codex",
+            "verdict": "VERIFIED"
+          },
+          {
+            "host": "claude-code",
+            "verdict": "VERIFIED"
+          },
+          {
+            "host": "cursor",
+            "verdict": "VERIFIED"
+          }
+        ],
+        "invariants": [
+          "Regenerated Read hooks and projected orient --read fallbacks succeed after old runtime removal",
+          "Literal candidate config/skills/state roots retained",
+          "Repository and trust bytes unchanged"
+        ]
+      }
+    }
+  ]
 }

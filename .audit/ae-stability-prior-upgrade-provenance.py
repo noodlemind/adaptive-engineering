@@ -14,7 +14,7 @@ parser.add_argument('output_json', type=Path)
 args = parser.parse_args()
 cases = [
     ('old', args.old_archive, '0.14.1', 'e1d1cdff2743d16b1d2522374e18267df5e205af', '253273e04c7464c6eb1cfee0f9ad5d43e2197f8e6c04e82c0f531a976d573a5b'),
-    ('candidate', args.candidate_archive, '0.14.2', 'eb319b4c1d442644926a0db3caee7f3fa295bab5', '751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3'),
+    ('candidate', args.candidate_archive, '0.14.2', '4bbd786a71e19a793128f35e9854cbb7b689024a', '5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17'),
 ]
 receipts = {'schema': 1, 'verdict': 'VERIFIED', 'archives': {}}
 for role, archive, version, commit, expected_digest in cases:

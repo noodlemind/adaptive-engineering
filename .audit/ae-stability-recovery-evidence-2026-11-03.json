@@ -1,7 +1,7 @@
 {
   "sourceBaseline": "e1d1cdff2743d16b1d2522374e18267df5e205af",
   "candidateVersion": "0.14.2",
-  "archiveSha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+  "archiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
   "runs": [
     {
       "log": "baseline-tests.log",
@@ -309,8 +309,24 @@
     },
     {
       "log": "final-full-tests.log",
-      "completed": false,
-      "counts": {},
+      "completed": true,
+      "counts": {
+        "tests": [
+          4224
+        ],
+        "pass": [
+          4146
+        ],
+        "fail": [
+          32
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          46
+        ]
+      },
       "failureTitles": [
         "exit sequence: short plan, no-learning, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (49838.563346ms)",
         "exit sequence: short plan, publish, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (30653.465324ms)",
@@ -344,7 +360,7 @@
         "orient explains a new bound learning with a missing source as visible applicability review (2426.207017ms)",
         "orient records only the learning ids that SURVIVED into the 2KB pack, never every ranked id (1403.401025ms)"
       ],
-      "status": "running; observed failures; not a passing qualification"
+      "status": "failed; 3 introduced context-budget cases accepted for correction; environment/load failures separately triaged"
     },
     {
       "log": "final-packed-delivery.log",
@@ -355,6 +371,72 @@
         ],
         "pass": [
           1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "corrected-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "corrected-repo-checks.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "orient-budget-fixed.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          54
+        ],
+        "pass": [
+          54
         ],
         "fail": [
           0
@@ -496,16 +578,17 @@
     "finalDelta": "34 tests passed; no introduced defect found.",
     "comments": "No deletion or suppression flags.",
     "modelDiversity": "Independent agents from one model family; no cross-family claim.",
-    "transcript": "No persisted run transcript supplied; source, commits and tool-produced logs were reviewed."
+    "transcript": "No conversation-wide agent transcript supplied; installed qualification command transcripts were observed, summarized and hashed.",
+    "finalContextDelta": "54 owning tests passed, independent flow recheck passed, no actionable review findings"
   },
   "limits": [
     "Native editor/model acceptance and the original user machine state are unverified.",
     "Native Windows execution requires CI.",
     "The interrupted first broad run is excluded from passing qualification.",
-    "A/B relocation proof alone is not prior-version proof; genuine old-release archive qualification is separate.",
-    "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven."
+    "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven.",
+    "Final genuine prior-version receipt supersedes the first candidate; full PR CI is the authoritative changing final inventory record."
   ],
-  "candidateCodeCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+  "candidateCodeCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
   "runCountNote": "Counts are top-level reporter summaries where present. Arrays represent multiple commands appended to one log, not additive unique coverage. Logs were observed in the work session; durable regression tests are committed under packages/ae/test.",
   "priorVersionReceipt": "ae-stability-prior-upgrade-2026-11-03.json",
   "finalChecks": {
@@ -523,7 +606,14 @@
       "pass": 1,
       "fail": 0
     },
-    "fullInventory": "not qualified locally; exact-head CI required"
+    "fullInventory": "final exact-revision PR CI pending; superseded local run is retained above",
+    "contextBudgetSuite": {
+      "tests": 54,
+      "pass": 54,
+      "fail": 0
+    },
+    "genuinePriorVersionMigration": "final archive passed all three native hosts; see prior receipt",
+    "finalArchiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17"
   },
   "environmentComparisons": {
     "experiment": {
@@ -541,13 +631,71 @@
       "candidateRecheck": "pass",
       "priorCandidateRecheck": "10-second proof-authority timeout",
       "cause": "unproven; completion authority implementation unchanged"
+    },
+    "otherTimeouts": {
+      "isolatedCandidate": "4/4 pass",
+      "sourceComparison": "test files and directly exercised modules unchanged from exact baseline",
+      "cases": [
+        "publication lock",
+        "multiline compiler",
+        "FIFO no-follow race",
+        "fresh primitive activation"
+      ],
+      "cause": "unproven"
     }
   },
   "publishedSource": {
-    "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
-    "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
-    "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
-    "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+    "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+    "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+    "localQualifiedCommit": "54d49dc",
+    "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
     "allSourceTreeBytesIdentical": true
+  },
+  "qualificationHistory": [
+    {
+      "candidateCodeCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+      "archiveSha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+      "publishedSource": {
+        "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
+        "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after three introduced context-budget failures; retained as observed history"
+    }
+  ],
+  "contextBudgetCorrection": {
+    "failBefore": 3,
+    "passAfter": 3,
+    "owningSuite": {
+      "tests": 54,
+      "pass": 54,
+      "fail": 0
+    },
+    "independentDelta": "No actionable findings; structured binding preserved, compact display and approval sequencing verified",
+    "regressions": [
+      "test/orient-explain.test.mjs",
+      "test/orient-learnings.test.mjs",
+      "test/flow-model-context.test.mjs",
+      "test/orientation-context.test.mjs"
+    ]
+  },
+  "supersededHostedLinux": {
+    "runId": 41760102220,
+    "head": "ac6f4750a69c9a25d7c0d1ec1b0ebaf73b0ce4c7",
+    "testFiles": 310,
+    "tests": 4224,
+    "pass": 4176,
+    "fail": 3,
+    "skip": 45,
+    "cancelled": 0,
+    "failures": [
+      "orient-explain bound stale learning visibility",
+      "orient-learnings surviving learning ids",
+      "flow-model-context Application flows visibility"
+    ],
+    "aggregate": "failed as required",
+    "source": "GitHub Actions completed shard logs and same-revision inventory"
   }
 }
