@@ -208,6 +208,12 @@ approval request includes the current policy files and a bound command for a
 person to review. Matching AE-created worktrees can inherit current primary
 approval even when an older direct worktree grant is stale. Revocation and
 different policy still prevent that inheritance.
+Ignored shared policy is not carried into a worktree. Initialization refuses to
+create competing private authority when that primary policy is absent from the
+linked checkout. Matching interrupted shared publication can be inspected with
+`ae init-repo --shared --dry-run` and recovered through the existing reconciler
+when shared publication is authorized. All supported policy sources matter;
+one matching check does not resolve a conflict.
 Engineer inspects the product's actual tests and prepares missing commands
 through `ae checks configure --file - --json`; users do not need to hand-author
 YAML. This bounded operation changes only the selected check declarations and

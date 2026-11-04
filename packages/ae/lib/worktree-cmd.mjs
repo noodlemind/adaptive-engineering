@@ -17,7 +17,7 @@ export async function cmdWorktree(argv) {
     const token = scan[i];
     const next = () => scan[++i];
     if (token === '--slug') slug = next();
-    else if (token === '--from') from = next();
+    else if (token === '--from' || token.startsWith('--from=')) from = token === '--from' ? next() : token.slice('--from='.length);
     else if (token === '--workspace' || token.startsWith('--workspace=')) {
       const value = token === '--workspace' ? next() : token.slice('--workspace='.length);
       if (!value || value.startsWith('--')) throw Object.assign(new Error('worktree: --workspace requires a path'), { code: 'E_USAGE', exit: 2 });

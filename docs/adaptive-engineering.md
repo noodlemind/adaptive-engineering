@@ -542,6 +542,30 @@ Formal diagrams use AE-owned bounded protocol and graph parsing, informed by Lau
 
 ## Recovery ownership
 
+Compounding accepts an `in-progress` or `review` plan after current verification
+and required review pass. Learning precedes completion. Merging a branch,
+deleting its worktree or losing its local evidence does not require another
+implementation plan. Engineer inspects the explicit pushed target and accepted
+base, recreates a suitable isolated checkout, recovers current review/proof and
+completes the original plan. Different-parent backports keep separate plan and
+evidence contexts. A stale local main can remain in place. Finish learning and
+completion before removing worktrees; after a commit or merge, validate the
+final HEAD binding again.
+
+Ignored shared authority is absent from a new worktree. Initialization must not
+turn that absence into competing repository-wide private policy. Inspect the
+primary source first. Exact matching or interrupted shared publication can use
+`init-repo --shared --dry-run` followed by the existing reconciler when shared
+publication is authorized. It retains a backup and grants no trust. Conflicting
+bytes or ambiguous destination intent require a specific decision, not moving
+files because one check matches.
+
+Corrected verified episodes use a new publication operation. Existing sealed
+episodes retain their historical hashes; active consolidated claims use
+`SUPERSEDE`. Episode history remains separately indexed. The
+[post-merge procedure](../packages/ae/corpus/skills/compound-learnings/references/post-merge-recovery.md)
+distinguishes these outcomes and preserves release-branch applicability.
+
 The host's Engineer owns model choice, inference, context compaction, agent interruption, and optional agent subprocesses. A subprocess can read an accepted work contract and propose decisions through the CLI. Its reasoning and execution remain outside ae-harness. No subprocess result grants trust, accepts changed intent, or replaces named verification.
 
 Harness owns deterministic state recovery. A structured plan operation records its accepted input and before/after state before publication. Retrying that same operation after an interrupted CLI process recovers the recorded result. Reusing its ID with a different payload fails. Dead update locks must meet the existing stale-lock conditions before recovery. A completed replay does not renew expired gates or evidence. These guarantees do not restart a host agent or reconstruct its private conversation.
