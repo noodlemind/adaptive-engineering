@@ -199,6 +199,7 @@ export function runHostSetup(options = {}) {
     };
     const { full: manifestFile, raw: manifestRaw, manifest } = readManifest(roots, result.host, read);
     const { full: ownerFile, raw: ownerRaw, owner } = readOwner(roots, read);
+    if (options.requireExisting && (!manifest || !owner)) throw new Error('No existing selected host ownership. Run ae host setup for a new integration.');
     const ownerMatches = !owner || owner.host === result.host && owner.configHome === roots.configHome && owner.skillsHome === roots.skillsHome;
     if (!ownerMatches) {
       result.conflicts.push(filename(roots, 'skills', SKILLS_OWNER));

@@ -75,6 +75,46 @@ test('plan-update refuses a path outside the plan store and does not write it', 
   fs.rmSync(ws, { recursive: true, force: true });
 });
 
+test('CLI: plan-update refuses repeated file inputs before reading a decision or changing the plan', () => {
+  const ws = workspace();
+  const plan = newPlan(ws);
+  const original = fs.readFileSync(plan, 'utf8');
+  for (const args of [
+    ['--file', 'missing.json', '--file', 'other.json'],
+    ['--file=missing.json', '--file=other.json'],
+    ['--file', 'missing.json', '--file=missing.json'],
+    ['--file', '-', '--file', 'missing.json'],
+  ]) {
+    const result = harness(ws, ['plan-update', '--plan', plan, ...args, '--json']);
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(JSON.parse(result.stderr).error.code, 'E_USAGE');
+    assert.match(result.stderr, /one JSON document/);
+    assert.equal(fs.readFileSync(plan, 'utf8'), original);
+  }
+});
+
+test('CLI: plan-update preserves an equals file path with spaces and equals characters', () => {
+  const ws = workspace();
+  const created = harness(ws, ['plan-new', '--type', 'fix', '--slug', 'equals-update', '--intent', 'Keep the authored decision', '--json']);
+  assert.equal(created.status, 0, created.stderr);
+  const plan = JSON.parse(created.stdout);
+  const file = 'update decision=ready.json';
+  fs.writeFileSync(path.join(ws, file), JSON.stringify({ version: 1, id: 'equals-update', action: 'finding', expect: plan.revision, finding: { id: 'exact-input', text: 'The authored input path is preserved.' } }));
+  const result = harness(ws, ['plan-update', '--plan', plan.path, `--file=${file}`, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(fs.readFileSync(plan.path, 'utf8'), /exact-input: The authored input path is preserved/);
+});
+
+test('CLI: plan-update rejects post-boundary operands without applying them as flags', () => {
+  const ws = workspace();
+  const plan = newPlan(ws);
+  const original = fs.readFileSync(plan, 'utf8');
+  const result = harness(ws, ['plan-update', '--plan', plan, '--status', 'review', '--', '--file=missing.json']);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /unexpected argument --file=missing.json/);
+  assert.equal(fs.readFileSync(plan, 'utf8'), original);
+});
+
 test('plan-update refuses a symlink inside the plan store', () => {
   const ws = workspace();
   const plan = newPlan(ws);

@@ -2,6 +2,8 @@ import path from 'node:path';
 import { createStyle, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
 import { addIsolatedWorktree } from './worktree.mjs';
+import { parseFlags } from './flags.mjs';
+import { readWorkspaceOutcome, formatWorkspaceOutcome } from './workspace-outcome.mjs';
 
 export async function cmdWorktree(argv) {
   let workspace = process.cwd();
@@ -25,6 +27,8 @@ export async function cmdWorktree(argv) {
     else if (token === '--dry-run') dryRun = true;
   }
   const result = addIsolatedWorktree({ workspace, slug, from, dryRun });
+  const flags = parseFlags(scan);
+  result.workspace = readWorkspaceOutcome({ workspace: result.path, home: flags.harnessHome, copilotHome: flags.copilotHome, skillsHome: flags.skillsHome });
   if (json) console.log(redactedJson(result));
   else {
     const ui = createStyle();
@@ -36,6 +40,7 @@ export async function cmdWorktree(argv) {
         note: `${result.branch}${result.created ? '' : ' (existing)'}`,
       })
     );
+    console.log(formatWorkspaceOutcome(result.workspace));
   }
   return EXIT.ok;
 }

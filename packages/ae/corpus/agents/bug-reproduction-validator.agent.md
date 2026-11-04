@@ -1,6 +1,6 @@
 ---
 description: Systematically reproduce and validate bug reports to confirm reported behavior.
-tools: ["search/codebase", "search", "read", "edit/editFiles", "execute", "read/terminalLastCommand", "execute/getTerminalOutput", "search/changes", "read/problems", "search/usages"]
+tools: ["search/codebase", "search", "read", "edit", "execute", "read/terminalLastCommand", "execute/getTerminalOutput", "search/changes", "read/problems", "search/usages"]
 user-invocable: false
 agents: []
 ---

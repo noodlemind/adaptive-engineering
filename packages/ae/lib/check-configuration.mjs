@@ -6,7 +6,7 @@ import { validateCommand } from './checks.mjs';
 import { projectAuthorityFile } from './project-authority.mjs';
 import { assertNoSymlinkAncestors, readFileNoFollow, writeFileContained } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
-import { trustStatus } from './trust.mjs';
+import { trustStatus, formatTrustRecovery } from './trust.mjs';
 
 const MAX_BYTES = 1024 * 1024;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -133,13 +133,13 @@ export function configureCheckConfiguration({ workspace, home, copilotHome, inpu
   const perform = () => {
     unchanged(workspace, home, original);
     if (!dryRun && changed) publish(workspace, home, original, bytes);
-    const trust = trustStatus({ workspace, copilotHome, home });
+    const trust = trustStatus({ workspace, copilotHome, home, readOnly: dryRun });
     return {
       schema: 1, verb: 'configure', status: 'ok', config: original.source.path, sourceMode: original.source.mode,
       previousDigest: original.sourceDigest, sourceDigest: dryRun ? original.sourceDigest : bytes === null ? null : digest(bytes),
       proposedDigest: bytes === null ? null : digest(bytes), changed, dryRun: Boolean(dryRun), changes,
-      approvalRequired: dryRun && changed || !trust.trusted, trust: { state: trust.state, trusted: trust.trusted },
-      nextActions: changed || !trust.trusted ? ['Review the prepared check commands and selected policy files; a person runs ae trust approve before named checks execute.'] : [],
+      approvalRequired: dryRun && changed || !trust.trusted, trust,
+      nextActions: trust.recovery ? [formatTrustRecovery(trust.recovery)] : dryRun && changed ? ['Review the proposed check commands; applying changes requires a fresh trust diagnosis before execution.'] : [],
     };
   };
   if (dryRun || !changed) return perform();

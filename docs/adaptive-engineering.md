@@ -33,6 +33,12 @@ The old `ae install`/`upgrade` commands retain their Copilot behavior for existi
 users. A fresh TUI does not select VS Code automatically; upkeep for an already
 selected legacy installation remains available.
 
+After updating the package, use `ae upgrade --host <host>` to refresh that
+existing native integration. Pass the same configuration, skills, state-home,
+and workspace selections used for setup. Upgrade reuses the owned-asset
+reconciler, refreshes generated runtime paths, and preserves modified files as
+conflicts. A missing integration requires `ae host setup`.
+
 ### Host setup and guarantees
 
 `ae host setup`, `status` and `remove` take `--host`, optional `--config-home`,
@@ -146,6 +152,35 @@ New `init-repo` policy stubs use `enforce`; existing authored policies remain un
 ### Existing workspaces and verification readiness
 
 Upgrade preserves authored project checks and policy. A CLI upgrade alone does not require renewed project approval. Its `checkReadiness` result and orientation distinguish usable checks from missing, empty, invalid, or unusable configuration, independently of the trust result. `trusted: true` with no checks means the current configuration is approved, while delivery still needs a meaningful proof command.
+
+Upgrade reports installation separately from the selected `workspace`
+observation. Worktree creation and reuse return the same observation for the
+destination checkout. It includes the current authority, check readiness,
+trust diagnosis, runner status, and next actions. `prerequisites-ready` describes
+configured checks and current approval. It does not certify task-specific check
+adequacy or product behavior. A blocked workspace can accompany a completed
+package installation.
+
+The trust diagnosis carries its workspace, selected authority home, and exact
+approval store. Recovery names the Engineer or the person who owns the next
+action. Invalid stores and unavailable or mismatched policy require inspection
+before approval. A stale direct worktree grant can yield to an independently
+current primary grant when the recorded worktree belongs to the same repository
+and contains exactly the approved policy. Direct revocation remains decisive.
+Read-only status and recovery inspection belong to the Engineer.
+
+VS Code Default/Manual Permissions is a supported setup. AE trust accepts the
+repository's execution policy; it does not approve editor tools or terminal
+commands. Installation and upgrade preserve host approval settings. Selecting
+a worktree with `--workspace` changes the CLI target, not the editor's active
+workspace. A nested `.worktrees` directory can already be inside the open
+folder. When a target is outside the host's permitted scope, resume the same
+plan after opening that checkout through the host's supported workspace flow.
+Managed plans remain in the external AE store and can require host approval
+for CLI writes. Repeated Allow dialogs need the actual tool, target path or
+command, active workspace and approval scope to diagnose. Full Permissions is
+not a prerequisite, and passing AE trust checks does not prove this editor
+workflow.
 
 Engineer owns recovery rather than asking the person to write YAML. It inspects the existing test setup and relevant assertions, reads the selected path and `sourceDigest` from `ae checks list --json`, and submits concrete upserts through `ae checks configure --file - --json`. The schema 1 decision contains `expectedDigest`, `checks`, and `rationale`. The writer preserves unrelated checks and refuses concurrent changes. A no-op preserves existing approval. Changed commands are presented for a necessary person approval before execution. The accepted task plan may include the exact prepared shared check source alongside its product files, reviewing both together without a separate setup plan or unguarded commit. Private configuration stays outside product scope. The [named-check procedure](../packages/ae/corpus/skills/create-primitive/references/named-checks.md) supplies the decision shape and recovery details.
 

@@ -32,15 +32,17 @@ test('structured resources validate before one writer and dry-run leaves no prim
 });
 
 test('permission expansion requires caller authorization and expected bytes; payload approval cannot grant it', t => {
-  const f = fixture(t);
   const agent = tools => `---\nname: bounded-expert\ndescription: Judge a bounded question.\nuser-invocable: false\ntools: [${tools}]\nagents: []\n---\n\n# Expert\n\n## Guardrails\nHonor scope.\n\n## Output\nEvidence.\n`;
-  const first = f.cli('create', 'agent', 'bounded-expert', '--file', f.input({ schema: 1, text: agent('read') }), '--yes');
-  assert.equal(first.status, 0, first.stderr + first.stdout);
-  const expanded = { schema: 1, text: agent('read, execute'), expectedDigest: JSON.parse(first.stdout).primitive.digest };
-  assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input({ ...expanded, approved: true })).status, 0);
-  assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded)).status, 0);
-  assert.equal(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded), '--yes').status, 0);
-  assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded), '--yes').status, 0);
+  for (const tool of ['execute', 'edit']) {
+    const f = fixture(t);
+    const first = f.cli('create', 'agent', 'bounded-expert', '--file', f.input({ schema: 1, text: agent('read') }), '--yes');
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+    const expanded = { schema: 1, text: agent(`read, ${tool}`), expectedDigest: JSON.parse(first.stdout).primitive.digest };
+    assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input({ ...expanded, approved: true })).status, 0);
+    assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded)).status, 0);
+    assert.equal(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded), '--yes').status, 0);
+    assert.notEqual(f.cli('create', 'agent', 'bounded-expert', '--file', f.input(expanded), '--yes').status, 0);
+  }
 });
 
 test('scaffolding and proposals stay dormant; exact recurring claims deduplicate replay', t => {
@@ -213,4 +215,12 @@ test('shared validation rejects unsupported host tools independently of creation
   const result = validatePrimitiveContent({ type: 'agent', name: 'bounded-expert', text });
   assert.equal(result.valid, false);
   assert.ok(result.errors.some(e => /Unsupported host tool/.test(e)));
+});
+
+test('shared validation accepts the supported native edit group and legacy editFiles', () => {
+  for (const tool of ['edit', 'edit/editFiles']) {
+    const text = `---\nname: bounded-expert\ndescription: Implement a bounded engineering task.\nuser-invocable: false\ntools: [read, ${tool}]\nagents: []\n---\n\n## Guardrails\nHonor the authorized scope.\n\n## Output\nReport the changed files and verification.\n`;
+    const result = validatePrimitiveContent({ type: 'agent', name: 'bounded-expert', text });
+    assert.equal(result.valid, true, result.errors.join('; '));
+  }
 });

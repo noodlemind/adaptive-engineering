@@ -42,6 +42,13 @@ The old `ae install`/`upgrade` paths retain backward compatibility. A fresh
 `ae tui` does not install VS Code automatically; it can maintain a previously
 selected legacy installation.
 
+After installing a newer package, refresh an existing native integration with
+`ae upgrade --host codex --workspace /path/to/product --json`, substituting the
+host you configured. Reuse its `--config-home`, `--skills-home`, and `--ae-home`
+overrides. Upgrade refreshes owned assets and hook commands from the current
+package. A modified asset remains a reported conflict. First-time integration
+setup remains `ae host setup`.
+
 The npm package includes `corpus/`. Runtime setup projects its skills, specialist
 roles and applicable instructions for the selected host and merges AE-owned
 native hook groups while preserving unrelated user configuration. No setup
@@ -190,6 +197,17 @@ runtime and reviews the commands with their own local approval.
 Upgrade preserves those authored checks and approvals when their authority is
 unchanged. Upgrade and orientation report `checkReadiness` separately from
 trust: an approved empty check configuration is not ready to verify delivery.
+Upgrade and worktree creation return a `workspace` observation with the selected
+authority, `checkReadiness`, trust, and `nextActions`. Installation success is
+separate from these configuration prerequisites. `prerequisites-ready` does not
+establish check adequacy, a passed verification, or completed delivery.
+
+Trust diagnosis includes the exact workspace, authority home, approval store,
+and a recovery action. The Engineer performs read-only diagnosis. A genuine
+approval request includes the current policy files and a bound command for a
+person to review. Matching AE-created worktrees can inherit current primary
+approval even when an older direct worktree grant is stale. Revocation and
+different policy still prevent that inheritance.
 Engineer inspects the product's actual tests and prepares missing commands
 through `ae checks configure --file - --json`; users do not need to hand-author
 YAML. This bounded operation changes only the selected check declarations and

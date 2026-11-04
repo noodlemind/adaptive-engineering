@@ -47,6 +47,23 @@ test('Claude native roles preserve read-only tool boundaries and bounded main-th
   assert.ok(result.limitations.some(line => /subagent.*allowlist/i.test(line)));
 });
 
+test('native edit group preserves writer authority and legacy editFiles remains compatible', t => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-projection-writer-'));
+  t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  fs.cpSync(path.join(packageRoot, 'corpus'), path.join(fixture, 'corpus'), { recursive: true });
+  const role = path.join(fixture, 'corpus/agents/code-implementer.agent.md');
+  for (const tool of ['edit', 'edit/editFiles']) {
+    fs.writeFileSync(role, `---\n${YAML.stringify({ description: 'Implement the supplied task.', tools: ['read', tool], agents: [] })}---\n\nImplement the authorized task.\n`);
+    const claude = projectHostCorpus({ packageRoot: fixture, host: 'claude-code', configHome, skillsHome });
+    const actor = metadata(find(claude, 'config', 'agents/code-implementer.md'));
+    assert.deepEqual(actor.tools, ['Read', 'Edit', 'Write'], tool);
+    assert.equal(actor.permissionMode, undefined);
+    const cursor = projectHostCorpus({ packageRoot: fixture, host: 'cursor', configHome, skillsHome });
+    assert.equal(metadata(find(cursor, 'config', 'agents/code-implementer.md')).readonly, false, tool);
+    assert.equal(metadata(find(cursor, 'config', 'agents/security-sentinel.md')).readonly, true);
+  }
+});
+
 test('Codex agents use standalone TOML and report inherited permission limitations', () => {
   const result = project('codex');
   const text = find(result, 'config', 'agents/engineer.toml');

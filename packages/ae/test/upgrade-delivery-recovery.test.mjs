@@ -17,7 +17,8 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 function fixture(t, { shared = true, populated = false } = {}) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-delivery-recovery-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const workspace = path.join(root, 'product'), home = path.join(root, 'state'), copilotHome = path.join(root, 'copilot');
+  let workspace = path.join(root, 'product');
+  const home = path.join(root, 'state'), copilotHome = path.join(root, 'copilot');
   fs.mkdirSync(workspace);
   const globalGitConfig = path.join(root, 'gitconfig');
   fs.writeFileSync(globalGitConfig, '');
@@ -83,7 +84,63 @@ function fixture(t, { shared = true, populated = false } = {}) {
     assert.equal(result.status, 0, result.stderr + result.stdout);
     return JSON.parse(result.stdout);
   };
-  return { root, workspace, home, copilotHome, env, config, checks, git, raw, cli, hook, toolHook, control, configure, personApprovesFixturePolicy, approvals: () => approvals };
+  return { root, get workspace() { return workspace; }, useWorkspace(value) { workspace = value; }, home, copilotHome, env, config, checks, git, raw, cli, hook, toolHook, control, configure, personApprovesFixturePolicy, approvals: () => approvals };
+}
+
+for (const shared of [true, false]) {
+  test(`upgraded ${shared ? 'shared' : 'private'} authority completes worktree delivery without renewed approval`, { timeout: 180_000 }, t => {
+    const f = fixture(t, { shared, populated: true });
+    if (!shared) f.configure();
+    f.personApprovesFixturePolicy();
+    const primary = f.workspace;
+    const approved = f.cli(['trust', 'status']);
+    const policy = fs.readFileSync(f.config);
+    const upgraded = f.cli(['upgrade', '--target', 'cli']);
+    assert.equal(upgraded.workspace.status, 'prerequisites-ready');
+    assert.equal(upgraded.workspace.trust.approvedDigest, approved.approvedDigest);
+    const createdWorktree = f.cli(['worktree', '--slug', 'upgraded-delivery']);
+    assert.equal(createdWorktree.workspace.trust.inherited, true);
+    assert.equal(createdWorktree.workspace.status, 'prerequisites-ready');
+    f.useWorkspace(createdWorktree.path);
+    const reused = f.cli(['worktree', '--slug', 'upgraded-delivery']);
+    assert.equal(reused.created, false);
+    assert.equal(reused.workspace.trust.inherited, true);
+    assert.equal(f.raw(['checks', 'run', 'value-behavior']).status, 1);
+    const created = f.control(['plan-new', '--file', '-'], {
+      version: 1, format: 'full', slug: 'upgraded-worktree', status: 'planned', goal: 'Make the observable value equal two.',
+      acceptance: ['The value assertion passes in the worktree and the primary remains unchanged.'],
+      constraints: ['Change only the exported value in the worktree.'], scope: ['src/value.mjs'], check: 'value-behavior', skillsUsed: ['engineer'],
+    });
+    f.cli(['orient', '--read', '--context-version', '2', '--plan', created.path, '--query', 'Make the observable value equal two.', '--file', 'src/value.mjs']);
+    const decide = (id, action, extra = {}) => f.control(['plan-update', '--plan', created.path, '--file', '-'], {
+      version: 1, id, action, expect: digest(fs.readFileSync(created.path)), ...extra,
+    });
+    assert.equal(decide('worktree-start', 'start').status, 'ok');
+    const edit = { tool_name: 'replace_string_in_file', tool_input: { filePath: 'src/value.mjs', oldString: 'export const value = 1;', newString: 'export const value = 2;' } };
+    for (const name of ['block-destructive-commands.mjs', 'guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+      assert.equal(f.toolHook(name, edit).continue, true, name);
+    }
+    fs.writeFileSync(path.join(f.workspace, 'src/value.mjs'), 'export const value = 2;\n');
+    assert.equal(f.toolHook('record-successful-edit.mjs', { ...edit, hook_event_name: 'PostToolUse', success: true }).continue, true);
+    decide('worktree-progress', 'progress', { progress: { criteria: ['AC1'], tasks: ['P1T1'] } });
+    const packet = f.cli(['review', 'prepare', '--plan', created.path, '--base', 'HEAD']);
+    assert.deepEqual(packet.scope.changedFiles, ['src/value.mjs']);
+    f.cli(['review', 'assemble', '--plan', created.path, '--packet', packet.id, '--file', '-'], {
+      packet: packet.id,
+      results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [],
+        residual_risks: ['Synthetic review protocol fixture; no claim of native reviewer identity.'], testing_gaps: [] })),
+    });
+    const proof = f.cli(['verify', '--plan', created.path, '--base', 'HEAD']);
+    assert.equal(proof.checks.find(check => check.id === 'value-behavior').status, 'passed');
+    f.cli(['compound', '--plan', created.path, '--learning-decision', '-'], {
+      operation: 'worktree-no-learning', decision: 'no-learning', rationale: 'Disposable protocol fixture has no durable product learning.',
+    });
+    assert.equal(decide('worktree-complete', 'complete').status, 'ok');
+    assert.equal(f.approvals(), 1);
+    assert.deepEqual(fs.readFileSync(f.config), policy);
+    assert.equal(fs.readFileSync(path.join(primary, 'src/value.mjs'), 'utf8'), 'export const value = 1;\n');
+    assert.equal(f.cli(['trust', 'status']).approvedDigest, approved.approvedDigest);
+  });
 }
 
 test('trusted empty shared setup recovers through upgrade, hooks and the complete delivery lifecycle', { timeout: 180_000 }, t => {

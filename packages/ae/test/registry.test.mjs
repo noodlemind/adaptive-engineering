@@ -300,6 +300,38 @@ test('validateArgs rejects an unknown flag with a structured E_USAGE error namin
   );
 });
 
+test('CLI: --files mistakes explain each command\'s canonical input form', () => {
+  for (const [args, hint] of [
+    [['orient', '--files', 'one.md'], 'Repeat --file <path> for each source. See ae help orient.'],
+    [['agent', 'Inspect inputs', '--files', 'one.md'], 'Repeat --file <path> for each source. See ae help agent.'],
+    [['review', 'prepare', '--files', 'one.md', 'two.md'], 'For review prepare, repeat --file <path> for each source. Review assemble accepts exactly one JSON document via --file <path>. See ae help review.'],
+    [['domain', 'review', 'prepare', '--files', 'one.md'], 'For domain review prepare, repeat --file <path> for each source. Domain decisions and review assemble accept exactly one JSON document via --file <path>. See ae help domain.'],
+    [['plan-new', '--files=one.json'], 'Use --file <path> with one input document. See ae help plan-new.'],
+    [['plan-update', '--files', 'one.json'], 'Use --file <path> with one input document. See ae help plan-update.'],
+  ]) {
+    const result = runHarness([...args, '--json']);
+    assert.equal(result.status, 2, result.stderr);
+    const error = JSON.parse(result.stderr).error;
+    assert.equal(error.code, 'E_USAGE');
+    assert.match(error.message, /unknown flag: --files|domain: unsupported option --files/);
+    assert.equal(error.hint, hint);
+  }
+  assert.doesNotThrow(() => validateArgs(getCommand('tree'), ['--files']));
+  assert.doesNotThrow(() => validateArgs(getCommand('agent'), ['Inspect', '--', '--files', 'one.json']));
+});
+
+test('CLI: tree keeps its boolean --files option', t => {
+  const workspace = tempDir('registry-tree-files-');
+  const copilotHome = tempDir('registry-tree-home-');
+  t.after(() => { fs.rmSync(workspace, { recursive: true, force: true }); fs.rmSync(copilotHome, { recursive: true, force: true }); });
+  const git = spawnSync('git', ['init', '-q'], { cwd: workspace, encoding: 'utf8' });
+  assert.equal(git.status, 0, git.stderr);
+  fs.writeFileSync(path.join(workspace, 'source one=two.md'), '# Source\n');
+  const result = runHarness(['tree', 'workspace', '--files', '--workspace', workspace, '--copilot-home', copilotHome, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).files, ['source one=two.md']);
+});
+
 test('validateArgs treats a flag-shaped next token as a missing value, not a swallowed one', () => {
     assert.throws(
     () => validateArgs(getCommand('learnings'), ['--why', '--bogus']),

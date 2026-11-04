@@ -618,6 +618,7 @@ export function convertFullPlan({ workspace, home = harnessGlobalHome(), domainC
 export async function cmdPlanUpdate(argv) {
   const boundary = argv.indexOf('--');
   const scan = boundary === -1 ? argv : argv.slice(0, boundary);
+  if (boundary !== -1 && boundary + 1 < argv.length) throw usage(`plan-update: unexpected argument ${argv[boundary + 1]}`);
   let workspace = process.cwd();
   let json = false;
   let dryRun = false;
@@ -636,6 +637,7 @@ export async function cmdPlanUpdate(argv) {
   for (let i = 0; i < scan.length; i++) {
     const token = scan[i];
     if (token === '--file' || token.startsWith('--file=')) {
+      if (fileArg !== undefined) throw usage('plan-update: --file accepts one JSON document; combine the decision into one file');
       if (token === '--file') ({ value: fileArg, index: i } = take(scan, i));
       else fileArg = token.slice('--file='.length);
       if (!fileArg) throw usage('plan-update: --file requires a path or - for stdin');

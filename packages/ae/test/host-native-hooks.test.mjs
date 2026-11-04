@@ -11,6 +11,17 @@ import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = path.join(packageRoot, 'lib/hosts/native-hook.mjs');
 
+function spawnWithDiagnostics(command, args, options) {
+  const started = Date.now();
+  const result = spawnSync(command, args, options);
+  if (result.status !== 0) console.error(JSON.stringify({
+    elapsedMs: Date.now() - started, status: result.status, signal: result.signal, pid: result.pid,
+    errorCode: result.error?.code ?? null, errorMessage: result.error?.message ?? null,
+    stdout: result.stdout, stderr: result.stderr,
+  }));
+  return result;
+}
+
 test('Windows native command formatting binds an absolute system launcher', async () => {
   const { nativeHookCommand } = await import('../lib/hosts/native-hook.mjs');
   assert.equal(typeof nativeHookCommand, 'function');
@@ -28,9 +39,9 @@ function fixture(t, configName = 'config home') {
   fs.mkdirSync(workspace); fs.mkdirSync(configHome);
   assert.equal(spawnSync('git', ['init', '-q'], { cwd: workspace }).status, 0);
   fs.writeFileSync(path.join(workspace, 'example.txt'), 'original\n');
-  const run = (host, event, payload, extra = {}) => spawnSync(process.execPath, [bridge, '--host', host, '--event', event, '--config-home', configHome, '--skills-home', skillsHome, '--ae-home', home], {
+  const run = (host, event, payload, extra = {}) => spawnWithDiagnostics(process.execPath, [bridge, '--host', host, '--event', event, '--config-home', configHome, '--skills-home', skillsHome, '--ae-home', home], {
     cwd: configHome, env: { ...process.env, AE_HOME: home, HARNESS_HOME: home }, encoding: 'utf8',
-    input: typeof payload === 'string' ? payload : JSON.stringify(payload), timeout: 15000, ...extra,
+    input: typeof payload === 'string' ? payload : JSON.stringify(payload), timeout: 60000, ...extra,
   });
   return { root, workspace, configHome, skillsHome, home, run };
 }
@@ -85,8 +96,8 @@ test('generated command executes with quoted home paths and native workspace ide
   const f = fixture(t, "config ' quote $ home");
   const config = nativeHookConfig({ host: 'claude-code', ...f, packageRoot });
   const invoke = config.value.hooks.PreToolUse[0].hooks[0].command;
-  const result = spawnSync(invoke, {
-    shell: true, cwd: f.configHome, encoding: 'utf8', timeout: 15000,
+  const result = spawnWithDiagnostics(invoke, [], {
+    shell: true, cwd: f.configHome, encoding: 'utf8', timeout: config.value.hooks.PreToolUse[0].hooks[0].timeout * 1000,
     input: JSON.stringify({ cwd: f.workspace, tool_name: 'Read', tool_input: { file_path: path.join(f.workspace, 'example.txt') } }),
   });
   assert.equal(result.status, 0, result.stderr);

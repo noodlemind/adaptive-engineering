@@ -37,7 +37,7 @@ For an accepted Deliver plan with a current playbook binding, follow orient's pr
 
 ## Cross-Environment Tool Compatibility
 
-This library primarily targets GitHub Copilot in VS Code and IntelliJ IDEA. Agent frontmatter declares VS Code tool names. When a tool is unavailable in another host, use the closest host-native equivalent:
+This library primarily targets GitHub Copilot in VS Code and IntelliJ IDEA. Agent frontmatter declares VS Code tool names. When a capability is absent, use an advertised host-native equivalent only if the host permits the same scoped action:
 
 | VS Code Tool | Fallback |
 |-------------|----------|
@@ -50,17 +50,20 @@ This library primarily targets GitHub Copilot in VS Code and IntelliJ IDEA. Agen
 | `terminalLastCommand` | Read output from the last terminal command (does not run new commands) |
 | `githubRepo` | GitHub UI, GitHub integration, or `gh` CLI |
 | `fetch` | Host-approved web/documentation lookup |
+| `edit` | Host-native file creation and edit tools |
 | `editFiles` | Host-native file edit tool |
 
 Skills that reference `changes`, `terminalLastCommand`, or `githubRepo` include inline fallback instructions for non-VS Code environments.
 
 ## Tool Access Constraints
 
-**Subagent tool restrictions:** When an agent runs as a subagent (dispatched by a coordinator), VS Code restricts tool access to the set declared in the subagent's `tools:` frontmatter. Some tools (terminal execution, file editing) may be unavailable in the subagent context even if declared. If a tool is unavailable:
-1. Check if the tool is in the agent's `tools:` array — if not, it won't be available
-2. If it is declared but still unavailable, the agent is likely running in a restricted subagent context
-3. Use the fallback from the compatibility table above
-4. Report the limitation rather than failing silently
+Inspect the session's advertised tools and actual tool results. A declaration does not prove availability. Do not infer a restricted subagent context from a missing tool alone.
+
+- If a capability is missing, use an advertised equivalent only when the host permits the same scoped action. Prefer native creation and edit tools for product files.
+- If host approval is pending, let the native dialog carry the request. Existing task authorization needs no second prose request to continue.
+- If the host denies an action, stop that action. Do not switch to terminal or another tool to evade the denial.
+
+Default/Manual Permissions is a supported setup. Do not require Full Permissions, change approval settings, or widen writable roots to continue. For worktree scope and external plan writes, read `<copilot-home>/skills/references/tool-native-loop.md` with the host read tool.
 
 **Extension-contributed tools:** VS Code extensions (SonarQube, ESLint, Checkstyle, etc.) contribute diagnostics that appear via the `problems` tool (workspace diagnostics panel). They do NOT register as individually-named tools in agent frontmatter. To leverage extension diagnostics:
 - Use the `problems` tool to read workspace diagnostics (includes all extension findings)

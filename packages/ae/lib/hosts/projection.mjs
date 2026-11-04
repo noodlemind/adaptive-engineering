@@ -7,7 +7,7 @@ const TOOL_MAP = {
   read: ['Read'], search: ['Glob', 'Grep'], 'search/codebase': ['Glob', 'Grep'],
   'search/usages': ['Grep'], 'search/changes': ['Read'], 'read/problems': ['Read'],
   'read/terminalLastCommand': [], 'execute/getTerminalOutput': [],
-  'edit/editFiles': ['Edit', 'Write'], execute: ['Bash'], 'web/fetch': ['WebFetch'], githubRepo: [],
+  edit: ['Edit', 'Write'], 'edit/editFiles': ['Edit', 'Write'], execute: ['Bash'], 'web/fetch': ['WebFetch'], githubRepo: [],
 };
 
 function sourceFiles(directory) {
@@ -97,7 +97,7 @@ export function projectHostCorpus({ packageRoot, host, configHome, skillsHome, h
     const name = path.basename(file, '.agent.md');
     const doc = splitDocument(fs.readFileSync(file, 'utf8'));
     const declared = Array.isArray(doc.metadata.tools) ? doc.metadata.tools : [];
-    const actor = declared.includes('edit/editFiles');
+    const actor = declared.includes('edit') || declared.includes('edit/editFiles');
     const canRead = name === 'engineer' || declared.includes('read');
     const canExecute = name === 'engineer' || declared.includes('execute');
     let body = name === 'engineer'

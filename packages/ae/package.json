@@ -1,6 +1,6 @@
 {
   "name": "ae-harness",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Host-neutral Adaptive Engineering CLI and native agent integrations",
   "homepage": "https://github.com/noodlemind/prompt-library",
   "license": "UNLICENSED",

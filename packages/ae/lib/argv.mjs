@@ -37,6 +37,16 @@ const FLAGS_WITH_VALUES = new Set([
   '--adapter',
 ]);
 
+export function fileInputHint(command) {
+  const hints = {
+    orient: 'Repeat --file <path> for each source.',
+    agent: 'Repeat --file <path> for each source.',
+    review: 'For review prepare, repeat --file <path> for each source. Review assemble accepts exactly one JSON document via --file <path>.',
+    domain: 'For domain review prepare, repeat --file <path> for each source. Domain decisions and review assemble accept exactly one JSON document via --file <path>.',
+  };
+  return `${hints[command] || 'Use --file <path> with one input document.'} See ae help ${command}.`;
+}
+
 export function parseQueryFromArgv(argv, flags) {
   if (flags.query) return flags.query;
   const parts = [];

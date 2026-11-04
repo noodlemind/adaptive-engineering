@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { EXIT } from './style.mjs';
 import { writeFileContained, readFileNoFollow, canonicalPath, assertNoSymlinkAncestors } from './fs-safe.mjs';
@@ -57,44 +58,49 @@ export function projectIdentity(workspace) {
   return { root, id: crypto.createHash('sha256').update(root).digest('hex').slice(0, 16) };
 }
 
-export function policyDigest(workspace, files = PINNED_FILES, options) {
-  const hash = crypto.createHash('sha256');
+function policySnapshot(workspace, files, options) {
+  const hash = crypto.createHash('sha256'), legacyHash = crypto.createHash('sha256');
+  let routingPresent = false;
   let root, authority;
   try {
     root = canonicalPath(path.resolve(workspace));
     authority = resolveProjectAuthority(root, options);
   } catch { return null; }
   // Preserve existing shared approvals; local authority has a distinct identity.
-  if (authority.mode === 'local') hash.update(`local-authority-v1\0${authority.directory}\0`);
+  if (authority.mode === 'local') {
+    hash.update(`local-authority-v1\0${authority.directory}\0`);
+    legacyHash.update(`local-authority-v1\0${authority.directory}\0`);
+  }
   for (const rel of files) {
     const full = path.join(authority.directory, path.basename(rel));
-    hash.update(rel);
     try {
       if (!assertNoSymlinkAncestors(authority.root, path.relative(authority.root, full))) return null;
-      hash.update('\0present\0');
       const stat = fs.lstatSync(full, { throwIfNoEntry: false });
-      if (!stat) { hash.update('\0absent\0'); continue; }
-      const content = readFileNoFollow(full, { root: authority.root, maxBytes: 1024 * 1024, encoding: null });
+      const content = stat ? readFileNoFollow(full, { root: authority.root, maxBytes: 1024 * 1024, encoding: null }) : undefined;
       if (content === null) return null;
-      hash.update(content);
+      if (rel.endsWith(`${path.sep}routing.yaml`)) routingPresent = Boolean(stat);
+      for (const target of LEGACY_PINNED_FILES.includes(rel) ? [hash, legacyHash] : [hash]) {
+        target.update(rel);
+        target.update('\0present\0');
+        target.update(stat ? content : '\0absent\0');
+      }
     } catch { return null; }
   }
-  return hash.digest('hex');
+  return { digest: hash.digest('hex'), legacyDigest: routingPresent ? null : legacyHash.digest('hex') };
 }
 
-function routingFilePresent(workspace, options) {
-  try { return Boolean(fs.lstatSync(resolveProjectAuthority(workspace, options).files['routing.yaml'], { throwIfNoEntry: false })); }
-  catch { return true; }
+export function policyDigest(workspace, files = PINNED_FILES, options) {
+  return policySnapshot(workspace, files, options)?.digest ?? null;
+}
+
+function snapshotMatchesApproval(recordDigest, snapshot) {
+  return Boolean(recordDigest && snapshot && (recordDigest === snapshot.digest || recordDigest === snapshot.legacyDigest));
 }
 
 /** Current digest, or the pre-routing digest when that file is still absent. */
 export function digestMatchesApproval(recordDigest, workspace, options) {
   if (!recordDigest) return false;
-  const current = policyDigest(workspace, PINNED_FILES, options);
-  if (!current) return false;
-  if (recordDigest === current) return true;
-  if (!routingFilePresent(workspace, options) && recordDigest === policyDigest(workspace, LEGACY_PINNED_FILES, options)) return true;
-  return false;
+  return snapshotMatchesApproval(recordDigest, policySnapshot(workspace, PINNED_FILES, options));
 }
 
 function parseStoreFile(file, root) {
@@ -106,6 +112,10 @@ function parseStoreFile(file, root) {
     }
     const projects = doc.projects;
     if (projects === undefined || projects === null || typeof projects !== 'object' || Array.isArray(projects)) {
+      return { version: TRUST_SCHEMA_VERSION, projects: {}, unreadable: true };
+    }
+    if ((doc.version !== undefined && doc.version !== TRUST_SCHEMA_VERSION) || Object.values(projects).some(record => !record || typeof record !== 'object' || Array.isArray(record)
+      || !['trusted', 'revoked', 'conflict'].includes(record.status) || record.status === 'trusted' && typeof record.digest !== 'string')) {
       return { version: TRUST_SCHEMA_VERSION, projects: {}, unreadable: true };
     }
     return { version: doc.version || TRUST_SCHEMA_VERSION, projects };
@@ -155,16 +165,84 @@ function writeStore({ copilotHome, home } = {}, store) {
   return written;
 }
 
-function approvalState(record, workspace, store, options) {
-  if (store.unreadable) return { state: 'untrusted', reason: 'the trust store could not be read, so nothing is trusted' };
-  if (record?.status === 'conflict') return { state: 'untrusted', reason: 'conflicting approvals for this project require a new approval' };
-  if (record?.status === 'revoked') return { state: 'revoked', reason: 'trust was explicitly revoked' };
-  if (policyDigest(workspace, PINNED_FILES, options) === null) return { state: 'untrusted', reason: 'a pinned policy source is unreadable, unsafe, nonregular or larger than 1 MiB' };
+function approvalState(record, snapshot, store) {
+  if (store.unreadable) return { state: 'untrusted', cause: 'store-unreadable', reason: 'the trust store could not be read, so nothing is trusted' };
+  if (record?.status === 'conflict') return { state: 'untrusted', cause: 'own-conflict', reason: 'conflicting approvals for this project require inspection' };
+  if (snapshot === null) return { state: 'untrusted', cause: 'authority-unavailable', reason: 'a pinned policy source is unreadable, unsafe, nonregular or larger than 1 MiB' };
+  if (record?.status === 'revoked') return { state: 'revoked', cause: 'own-revoked', reason: 'trust was explicitly revoked' };
   if (record?.status === 'trusted') {
-    if (digestMatchesApproval(record.digest, workspace, options)) return { state: 'trusted', reason: `approved ${record.approvedAt}` };
-    return { state: 'stale', reason: 'the policy files have changed since this project was approved' };
+    if (snapshotMatchesApproval(record.digest, snapshot)) return { state: 'trusted', cause: 'approved', reason: `approved ${record.approvedAt}` };
+    return { state: 'stale', cause: 'stale-approval', reason: 'the policy files have changed since this project was approved' };
   }
-  return { state: 'untrusted', reason: 'this project has never been approved' };
+  return { state: 'untrusted', cause: 'never-approved', reason: 'this project has never been approved' };
+}
+
+function authorityFor(workspace, options) {
+  try {
+    const selected = resolveProjectAuthority(workspace, options);
+    return { mode: selected.mode, directory: selected.directory };
+  } catch (error) { return { mode: 'unavailable', error: error.message }; }
+}
+
+function comparePolicyFiles(workspace, primary, options) {
+  const childAuthority = resolveProjectAuthority(workspace, options);
+  const primaryAuthority = resolveProjectAuthority(primary, options);
+  const bytes = (authority, name) => {
+    const full = authority.files[name];
+    if (!assertNoSymlinkAncestors(authority.root, path.relative(authority.root, full))) return null;
+    if (!fs.lstatSync(full, { throwIfNoEntry: false })) return undefined;
+    return readFileNoFollow(full, { root: authority.root, maxBytes: 1024 * 1024, encoding: null });
+  };
+  const differs = [], missingInChild = [];
+  for (const rel of PINNED_FILES) {
+    const name = path.basename(rel), childBytes = bytes(childAuthority, name), primaryBytes = bytes(primaryAuthority, name);
+    if (primaryBytes !== undefined && childBytes === undefined) missingInChild.push(name);
+    if (childBytes === null || primaryBytes === null || (childBytes === undefined || primaryBytes === undefined
+      ? childBytes !== primaryBytes : !childBytes.equals(primaryBytes))) differs.push(name);
+  }
+  return { differs, missingInChild };
+}
+
+function personRecovery(binding, inspect, skillsHome) {
+  const command = [fs.realpathSync(process.execPath), fileURLToPath(new URL('../bin/ae.mjs', import.meta.url)), 'trust', 'approve', '--workspace', binding.workspace, '--ae-home', binding.home, '--copilot-home', binding.copilotHome];
+  if (skillsHome || process.env.AE_SKILLS_HOME) command.push('--skills-home', path.resolve(skillsHome || process.env.AE_SKILLS_HOME));
+  command.push('--json');
+  return { owner: 'person', kind: 'review-and-approve', message: 'A person must review the selected policy files and approve this workspace before project-authored commands run.', inspect, command };
+}
+
+function recoveryFor({ trusted, cause, reason, authority, pinned, binding, primary, digest, skillsHome }) {
+  if (trusted) return null;
+  const inspect = [...pinned];
+  if (cause === 'store-unreadable' || cause === 'own-conflict') {
+    return { owner: 'engineer', kind: 'inspect-store', message: `Inspect the trust store at ${binding.store}. ${reason}. Preserve existing approvals and revocations.`, inspect: [binding.store], command: null };
+  }
+  if (cause === 'authority-unavailable') {
+    return { owner: 'engineer', kind: 'inspect-authority', message: `Inspect the selected project authority. ${authority.error || reason}.`, inspect, command: null };
+  }
+  if (binding.store !== path.join(binding.home, 'trust.yaml')) {
+    return { owner: 'engineer', kind: 'select-binding', message: `Reconcile the selected authority home ${binding.home} and trust store ${binding.store} before requesting approval. Selecting --ae-home would change this invocation's trust store.`, inspect: [...inspect, binding.store], command: null };
+  }
+  if (primary) {
+    const recovery = { owner: 'engineer', kind: cause === 'policy-mismatch' ? 'align-policy' : 'inspect-primary', message: `${reason}. Inspect the current primary and worktree policy sources before requesting a trust decision.`, inspect: [...inspect, ...primary.pinned], command: null };
+    if (primary.digest && primary.authority.mode === authority.mode && !primary.missingInChild.length) {
+      if (cause === 'policy-mismatch') {
+        recovery.afterInspection = { ...personRecovery(binding, inspect, skillsHome), message: 'If Engineer confirms the complete worktree policy changes are intentional, a person reviews and approves this worktree.' };
+      } else if (primary.digest === digest && primary.recovery?.owner === 'person') recovery.afterInspection = primary.recovery;
+    }
+    return recovery;
+  }
+  return personRecovery(binding, inspect, skillsHome);
+}
+
+/** Render recovery for POSIX shells or Windows PowerShell; argv remains authoritative. */
+export function formatTrustRecovery(recovery, { platform = process.platform } = {}) {
+  if (!recovery) return '';
+  const quote = platform === 'win32'
+    ? value => `'${value.replaceAll("'", "''")}'`
+    : value => /^[a-zA-Z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+  const command = recovery.command ? `${platform === 'win32' ? '& ' : ''}${recovery.command.map(quote).join(' ')}` : '';
+  const after = recovery.afterInspection ? ` ${formatTrustRecovery(recovery.afterInspection, { platform })}` : '';
+  return `${recovery.message}${command ? ` ${command}` : ''}${after}`;
 }
 
 function approvalMatches(root, identity) {
@@ -185,56 +263,79 @@ function setProjectApproval(store, identity, record) {
   store.projects[identity.root] = record;
 }
 
-export function trustStatus({ workspace, copilotHome, home }) {
+export function trustStatus({ workspace, copilotHome, home, skillsHome, readOnly = false }) {
   const identity = projectIdentity(workspace);
-  const store = readStore({ copilotHome, home });
+  const binding = { workspace: identity.root, home: path.resolve(home || harnessGlobalHome()), copilotHome: resolveCopilotHome(copilotHome), store: trustStorePath({ copilotHome, home }) };
+  const authorityOptions = { home: binding.home };
+  const store = readStore({ copilotHome, home }, { migrate: !readOnly });
   const record = projectApproval(store, identity);
-  const digest = policyDigest(workspace, PINNED_FILES, { home: home || harnessGlobalHome() });
-  const authorityOptions = { home: home || harnessGlobalHome() };
-  const own = approvalState(record, workspace, store, authorityOptions);
-  let state = own.state;
-  let reason = own.reason;
+  const snapshot = policySnapshot(workspace, PINNED_FILES, authorityOptions);
+  const digest = snapshot?.digest ?? null;
+  const authority = authorityFor(workspace, authorityOptions);
+  const own = approvalState(record, snapshot, store);
+  let { state, reason, cause } = own;
   let inherited = false;
   let inheritedFrom = null;
+  let primary = null;
   let approvedAt = record?.approvedAt ?? null;
   let approvedDigest = record?.digest ?? null;
-  const ownDecides = store.unreadable || digest === null || record?.status === 'revoked' || record?.status === 'trusted' || record?.status === 'conflict';
+  const ownDecides = store.unreadable || digest === null || record?.status === 'revoked' || record?.status === 'conflict' || own.state === 'trusted';
   if (!ownDecides) {
-    const primary = aeWorktreePrimary(workspace);
-    if (primary) {
-      const primaryIdentity = projectIdentity(primary);
+    const primaryWorkspace = aeWorktreePrimary(workspace);
+    if (primaryWorkspace) {
+      const primaryIdentity = projectIdentity(primaryWorkspace);
       const primaryRecord = projectApproval(store, primaryIdentity);
+      const primarySnapshot = policySnapshot(primaryWorkspace, PINNED_FILES, authorityOptions);
+      const primaryDigest = primarySnapshot?.digest ?? null;
+      const primaryState = approvalState(primaryRecord, primarySnapshot, store);
+      const primaryAuthority = authorityFor(primaryWorkspace, authorityOptions);
+      const primaryPinned = primaryAuthority.mode === 'unavailable' ? PINNED_FILES.map(rel => path.join(primaryIdentity.root, rel)) : PINNED_FILES.map(rel => path.join(primaryAuthority.directory, path.basename(rel)));
+      primary = {
+        project: primaryIdentity.root, state: primaryState.state, digest: primaryDigest, approvedDigest: primaryRecord?.digest ?? null,
+        authority: primaryAuthority, pinned: primaryPinned,
+        ...(primaryDigest === null ? { differs: [], missingInChild: [] } : comparePolicyFiles(workspace, primaryWorkspace, authorityOptions)),
+        recovery: recoveryFor({ trusted: primaryState.state === 'trusted', ...primaryState, authority: primaryAuthority, pinned: primaryPinned, binding: { ...binding, workspace: primaryIdentity.root }, primary: null, skillsHome }),
+      };
       inheritedFrom = primaryIdentity.root;
-      if (approvalState(primaryRecord, primary, store, authorityOptions).state === 'trusted' && digestMatchesApproval(primaryRecord.digest, workspace, authorityOptions)) {
+      if (primaryState.state === 'trusted' && digest === primaryDigest) {
         state = 'trusted';
+        cause = 'inherited';
         inherited = true;
         reason = `inherited from trusted primary ${primaryIdentity.root}`;
         approvedAt = primaryRecord.approvedAt ?? null;
         approvedDigest = primaryRecord.digest ?? null;
-      } else if (primaryRecord?.status === 'revoked') {
-        reason = `inherited trust removed because primary ${primaryIdentity.root} was revoked`;
-      } else if (primaryRecord?.status === 'trusted') {
+      } else if (primaryState.state === 'trusted') {
         state = 'stale';
-        reason = `ae worktree of ${primaryIdentity.root}, but the primary or worktree policy files differ from that approval`;
+        cause = 'policy-mismatch';
+        reason = `current worktree policy differs from trusted primary ${primaryIdentity.root}${primary.differs.length ? ` in ${primary.differs.join(', ')}` : ' in authority identity'}`;
+      } else {
+        state = primaryState.state === 'stale' || primaryRecord?.status === 'trusted' ? 'stale' : own.state;
+        cause = 'primary-not-current';
+        reason = `primary ${primaryIdentity.root} is ${primaryState.state}: ${primaryAuthority.error || primaryState.reason}`;
       }
     }
   }
-
+  const pinned = authority.mode === 'unavailable' ? PINNED_FILES.map(rel => path.join(identity.root, rel)) : PINNED_FILES.map(rel => path.join(authority.directory, path.basename(rel)));
+  const trusted = state === 'trusted';
   return {
     schema: 1,
     project: identity.root,
     id: identity.id,
     state,
-    trusted: state === 'trusted',
+    trusted,
     inherited,
     inheritedFrom,
     reason,
     digest,
     approvedAt,
     approvedDigest,
-    pinned: (() => { try { return Object.values(resolveProjectAuthority(workspace, authorityOptions).files); } catch { return [...PINNED_FILES]; } })(),
-    authority: (() => { try { const selected = resolveProjectAuthority(workspace, authorityOptions); return { mode: selected.mode, directory: selected.directory }; } catch (error) { return { mode: 'unavailable', error: error.message }; } })(),
-    store: trustStorePath({ copilotHome, home }),
+    pinned,
+    authority,
+    store: binding.store,
+    binding,
+    cause,
+    primary,
+    recovery: recoveryFor({ trusted, cause, reason, authority, pinned, binding, primary, digest, skillsHome }),
   };
 }
 

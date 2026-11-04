@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseFlags } from '../flags.mjs';
 import { parseQueryFromArgv } from '../argv.mjs';
+import { positionalsOf } from '../positionals.mjs';
 import { resolveCopilotHome } from '../paths.mjs';
 import { createStyle, keyWidthFor } from '../style.mjs';
 import { redactedJson } from '../redact.mjs';
@@ -213,18 +214,16 @@ export async function cmdSearch(argv, ctx = {}) {
 
 function treeContext(argv) {
   const flags = parseFlags(argv);
-  const positionals = argv.filter((a, i) => {
-    if (a.startsWith('--')) return false;
-    const prev = argv[i - 1];
-    return !(typeof prev === 'string' && prev.startsWith('--') && !prev.includes('='));
-  });
-  const depthRaw = readValueFlag(argv, '--depth');
+  const boundary = argv.indexOf('--');
+  const scan = boundary === -1 ? argv : argv.slice(0, boundary);
+  const positionals = [...positionalsOf(scan), ...(boundary === -1 ? [] : argv.slice(boundary + 1))];
+  const depthRaw = readValueFlag(scan, '--depth');
   return {
     flags,
     subject: positionals[0] ?? null,
     target: positionals[1] ?? null,
-    depth: depthRaw ? Number(depthRaw) : undefined,
-    files: argv.includes('--files'),
+    depth: depthRaw === null ? undefined : Number(depthRaw),
+    files: scan.includes('--files'),
     workspace: path.resolve(flags.workspace),
     copilotHome: resolveCopilotHome(flags.copilotHome),
   };

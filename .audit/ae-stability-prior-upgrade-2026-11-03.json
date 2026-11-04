@@ -1,0 +1,785 @@
+{
+  "schema": 1,
+  "verdict": "VERIFIED",
+  "purpose": "Qualify an actual 0.14.1 installed release archive upgrading to the exact 0.14.2 candidate archive, beyond same-source relocation.",
+  "scope": {
+    "platform": "Linux",
+    "surface": "Offline-installed native mechanical bridges for codex, claude-code and cursor",
+    "liveEditorModelAcceptance": "unverified",
+    "nativeWindows": "unverified",
+    "originalOperatorMachineState": "unverified",
+    "approvals": "Simulated grants in disposable state roots only; no real operator grants."
+  },
+  "archives": {
+    "old": {
+      "name": "ae-harness",
+      "version": "0.14.1",
+      "installedExecutableVersion": "0.14.1",
+      "bytes": 35749504,
+      "sha256": "253273e04c7464c6eb1cfee0f9ad5d43e2197f8e6c04e82c0f531a976d573a5b",
+      "sha512": "ad282f0217f694fc593362f560725be47341430a508d8acabbc8db9b5059c14240d2b48ea405ff120e766296fa2eec24ad08a0313a1d2ea60cbdb7bf7ef9d7be",
+      "sourceCommit": "e1d1cdff2743d16b1d2522374e18267df5e205af",
+      "shippedSourceFilesCompared": 449,
+      "allShippedSourceBytesMatchCommit": true,
+      "sourceFilesSha256": "ceb046e6308880359e23d99e7adeda11039acc40ef747f347415c187d5799f5e",
+      "bundledDependencyFiles": 673,
+      "bundledDependenciesComparedToGitSource": false
+    },
+    "candidate": {
+      "name": "ae-harness",
+      "version": "0.14.2",
+      "installedExecutableVersion": "0.14.2",
+      "bytes": 35750455,
+      "sha256": "abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520",
+      "sha512": "a1805c75587fda6e71c38c838d4d05e8f2057461e136db69604a77ffaf9be528b1ebe6b238cb26be6e374364796292f050512f5ad903ccc3b15ca907b0f67414",
+      "sourceCommit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
+      "shippedSourceFilesCompared": 450,
+      "allShippedSourceBytesMatchCommit": true,
+      "sourceFilesSha256": "e89b24d73a0e971f1e11b2de856367ebede5091b85f04edf1fa69ce3f4fdb5a0",
+      "bundledDependencyFiles": 673,
+      "bundledDependenciesComparedToGitSource": false
+    }
+  },
+  "cleanRun": {
+    "steps": 53,
+    "unexpectedNonzeroExitStatuses": 0,
+    "expectedNegativeControls": 3,
+    "completeOldInstallationPrefixAbsentAtQualification": true,
+    "oldInstallationRuntimeRemainsAbsent": true,
+    "rawTranscriptSha256": "f9be5bdcf3d7e6050916d3e2e6b7aa35dc0ef82b240d90e4bf8f44605368918d",
+    "rawEvidenceSha256": "50a6bad5b8df85f6da56b6dbea34841add31fe30bbebab4ca42f89fe623e0e27",
+    "observedStepResults": [
+      {
+        "step": "old:archive-package-metadata",
+        "exit": 0
+      },
+      {
+        "step": "old:offline-install",
+        "exit": 0
+      },
+      {
+        "step": "old:installed-version",
+        "exit": 0
+      },
+      {
+        "step": "candidate:archive-package-metadata",
+        "exit": 0
+      },
+      {
+        "step": "candidate:offline-install",
+        "exit": 0
+      },
+      {
+        "step": "candidate:installed-version",
+        "exit": 0
+      },
+      {
+        "step": "codex:git-init",
+        "exit": 0
+      },
+      {
+        "step": "codex:git-add",
+        "exit": 0
+      },
+      {
+        "step": "codex:git-commit",
+        "exit": 0
+      },
+      {
+        "step": "codex:behavior-test",
+        "exit": 0
+      },
+      {
+        "step": "codex:old-setup",
+        "exit": 0
+      },
+      {
+        "step": "codex:old-hook",
+        "exit": 0
+      },
+      {
+        "step": "codex:simulated-old-approval",
+        "exit": 0
+      },
+      {
+        "step": "codex:candidate-status-before-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:git-init",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:git-add",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:git-commit",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:behavior-test",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:old-setup",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:old-hook",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:simulated-old-approval",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:candidate-status-before-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "cursor:git-init",
+        "exit": 0
+      },
+      {
+        "step": "cursor:git-add",
+        "exit": 0
+      },
+      {
+        "step": "cursor:git-commit",
+        "exit": 0
+      },
+      {
+        "step": "cursor:behavior-test",
+        "exit": 0
+      },
+      {
+        "step": "cursor:old-setup",
+        "exit": 0
+      },
+      {
+        "step": "cursor:old-hook",
+        "exit": 0
+      },
+      {
+        "step": "cursor:simulated-old-approval",
+        "exit": 0
+      },
+      {
+        "step": "cursor:candidate-status-before-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "codex:old-hook-negative-control",
+        "exit": 1
+      },
+      {
+        "step": "claude-code:old-hook-negative-control",
+        "exit": 1
+      },
+      {
+        "step": "cursor:old-hook-negative-control",
+        "exit": 1
+      },
+      {
+        "step": "codex:candidate-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:candidate-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "cursor:candidate-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "codex:regenerated-hook-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "codex:projected-fallback-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "codex:candidate-repeat-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:regenerated-hook-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:projected-fallback-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "claude-code:candidate-repeat-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "cursor:regenerated-hook-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "cursor:projected-fallback-after-old-install-deletion",
+        "exit": 0
+      },
+      {
+        "step": "cursor:candidate-repeat-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:git-init",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:git-add",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:git-commit",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:behavior-test",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:candidate-setup",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:candidate-upgrade",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:execute-engineer-preparation",
+        "exit": 0
+      },
+      {
+        "step": "missing-checks:after-preparation",
+        "exit": 0
+      }
+    ],
+    "producer": "Independent root-agent fresh qualifier; exit 0, all 53 step outcomes inspected."
+  },
+  "hosts": [
+    {
+      "host": "codex",
+      "verdict": "VERIFIED",
+      "from": "0.14.1",
+      "to": "0.14.2",
+      "roots": {
+        "configHome": "${RUN_ROOT}/codex/native config",
+        "skillsHome": "${RUN_ROOT}/codex/native skills",
+        "home": "${RUN_ROOT}/codex/state"
+      },
+      "negativeControl": {
+        "status": 1,
+        "errorMentionsOldRuntime": true
+      },
+      "approvedAt": "2026-11-04T03:40:43.582Z",
+      "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
+      "trustSha256": "3f351b9c9327cb7dde784e439281a1cbb7202bdeee2be4884f13eff8ace6a43f",
+      "repositorySnapshotSha256": "a5c6abea7d26c8998104aab7c19eff67e2ed028a1a39cbf6c478e7c30d1d3133",
+      "preservedTrustBytes": true,
+      "preservedRepositoryBytes": true,
+      "integration": {
+        "assetState": "current",
+        "nativeQualification": "unverified"
+      },
+      "actions": 6,
+      "oldInstallationRemoved": true,
+      "regeneratedHook": {
+        "status": 0,
+        "output": {}
+      },
+      "fallback": {
+        "argv": [
+          "node",
+          "${RUN_ROOT}/candidate installation/node_modules/ae-harness/bin/ae.mjs"
+        ],
+        "binding": [
+          "--copilot-home",
+          "${RUN_ROOT}/codex/native config",
+          "--skills-home",
+          "${RUN_ROOT}/codex/native skills",
+          "--ae-home",
+          "${RUN_ROOT}/codex/state"
+        ],
+        "status": 0,
+        "trust": "trusted",
+        "checks": "ready"
+      },
+      "repeatUpgrade": "no actions or byte changes"
+    },
+    {
+      "host": "claude-code",
+      "verdict": "VERIFIED",
+      "from": "0.14.1",
+      "to": "0.14.2",
+      "roots": {
+        "configHome": "${RUN_ROOT}/claude-code/native config",
+        "skillsHome": "${RUN_ROOT}/claude-code/native skills",
+        "home": "${RUN_ROOT}/claude-code/state"
+      },
+      "negativeControl": {
+        "status": 1,
+        "errorMentionsOldRuntime": true
+      },
+      "approvedAt": "2026-11-04T03:40:45.966Z",
+      "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
+      "trustSha256": "be15b3fd4c97b68315878dba554f99ab26501bdde9c16921e2911bfca61a1b18",
+      "repositorySnapshotSha256": "4fb967b110974ff10366b96736b2323ff3f3f0455d59b32dd023e3507d2fff22",
+      "preservedTrustBytes": true,
+      "preservedRepositoryBytes": true,
+      "integration": {
+        "assetState": "current",
+        "nativeQualification": "unverified"
+      },
+      "actions": 7,
+      "oldInstallationRemoved": true,
+      "regeneratedHook": {
+        "status": 0,
+        "output": {}
+      },
+      "fallback": {
+        "argv": [
+          "node",
+          "${RUN_ROOT}/candidate installation/node_modules/ae-harness/bin/ae.mjs"
+        ],
+        "binding": [
+          "--copilot-home",
+          "${RUN_ROOT}/claude-code/native config",
+          "--skills-home",
+          "${RUN_ROOT}/claude-code/native skills",
+          "--ae-home",
+          "${RUN_ROOT}/claude-code/state"
+        ],
+        "status": 0,
+        "trust": "trusted",
+        "checks": "ready"
+      },
+      "repeatUpgrade": "no actions or byte changes"
+    },
+    {
+      "host": "cursor",
+      "verdict": "VERIFIED",
+      "from": "0.14.1",
+      "to": "0.14.2",
+      "roots": {
+        "configHome": "${RUN_ROOT}/cursor/native config",
+        "skillsHome": "${RUN_ROOT}/cursor/native skills",
+        "home": "${RUN_ROOT}/cursor/state"
+      },
+      "negativeControl": {
+        "status": 1,
+        "errorMentionsOldRuntime": true
+      },
+      "approvedAt": "2026-11-04T03:40:48.283Z",
+      "policyDigest": "7cd13f0f21e8b829ed3e5678fac5adf9e2cf9b88051e356747a24e8b47a208e4",
+      "trustSha256": "f21061962a6decf371113e36f70dc42ab4d642a238e9f857b9b9d6e3e2f89541",
+      "repositorySnapshotSha256": "6616b29fda0314af46cba1485a04151b2973f7bbb1969fd31a364b904e509587",
+      "preservedTrustBytes": true,
+      "preservedRepositoryBytes": true,
+      "integration": {
+        "assetState": "current",
+        "nativeQualification": "unverified"
+      },
+      "actions": 7,
+      "oldInstallationRemoved": true,
+      "regeneratedHook": {
+        "status": 0,
+        "output": {}
+      },
+      "fallback": {
+        "argv": [
+          "node",
+          "${RUN_ROOT}/candidate installation/node_modules/ae-harness/bin/ae.mjs"
+        ],
+        "binding": [
+          "--copilot-home",
+          "${RUN_ROOT}/cursor/native config",
+          "--skills-home",
+          "${RUN_ROOT}/cursor/native skills",
+          "--ae-home",
+          "${RUN_ROOT}/cursor/state"
+        ],
+        "status": 0,
+        "trust": "trusted",
+        "checks": "ready"
+      },
+      "repeatUpgrade": "no actions or byte changes"
+    }
+  ],
+  "invariants": {
+    "exactInstalledExecutableVersions": [
+      "0.14.1",
+      "0.14.2"
+    ],
+    "separateOfflineInstallationPrefixes": true,
+    "realDisposableGitRepositoriesWithCommittedSharedAuthority": true,
+    "oldManifestVersionAndRuntimeVerified": true,
+    "candidateInitiallyReportsOldAssetsOutdated": true,
+    "sameSplitConfigSkillsStateRootsRetained": true,
+    "candidateOwnershipManifestVersionAndRuntimeVerified": true,
+    "generatedCommandsExcludeOldRuntime": true,
+    "oldRuntimeRemovalBreaksOldHook": true,
+    "completeOldPrefixRemovedBeforeNewHookAndFallback": true,
+    "newReadHookOutputsEmptyObject": true,
+    "projectedFallbackBindsCandidateAndSelectedRoots": true,
+    "approvedPolicyDigestAndTimeUnchanged": true,
+    "exactTrustStoreAndRepositoryBytesPreserved": true,
+    "repeatUpgradeNoActionsOrByteChanges": true,
+    "integrationNativeQualificationRemainsUnverified": true
+  },
+  "missingChecks": {
+    "verdict": "VERIFIED",
+    "setupOwners": [
+      "engineer"
+    ],
+    "upgradeOwners": [
+      "engineer"
+    ],
+    "preparation": [
+      "${NODE}",
+      "${RUN_ROOT}/candidate installation/node_modules/ae-harness/bin/ae.mjs",
+      "checks",
+      "configure",
+      "--file",
+      "-",
+      "--workspace",
+      "${RUN_ROOT}/missing-checks/repository",
+      "--ae-home",
+      "${RUN_ROOT}/missing-checks/state",
+      "--copilot-home",
+      "${RUN_ROOT}/missing-checks/native config",
+      "--skills-home",
+      "${RUN_ROOT}/missing-checks/native skills",
+      "--json"
+    ],
+    "preparedChecks": "ready",
+    "afterPreparationOwners": [
+      "person"
+    ],
+    "trustFileCreated": false
+  },
+  "earlierHarnessAttempts": [
+    {
+      "outcome": "Extra denied-Write probe emitted expected audit telemetry; unrequested mutation scenario removed from byte-preservation check.",
+      "productFailure": false
+    },
+    {
+      "outcome": "Offline install exceeded initial 60-second harness timeout; later offline installs succeeded with 180-second bound.",
+      "productFailure": false
+    },
+    {
+      "outcome": "Owned-prefix deletion returned ENOTEMPTY after all migrations passed; bounded removal retries succeeded in final clean run.",
+      "productFailure": false
+    }
+  ],
+  "reproduction": {
+    "probe": "ae-stability-prior-upgrade-probe.mjs",
+    "provenance": "ae-stability-prior-upgrade-provenance.py",
+    "commands": [
+      "node .audit/ae-stability-prior-upgrade-probe.mjs OLD_ARCHIVE CANDIDATE_ARCHIVE OUTPUT_DIRECTORY",
+      "python .audit/ae-stability-prior-upgrade-provenance.py REPOSITORY OLD_ARCHIVE CANDIDATE_ARCHIVE OUTPUT_JSON"
+    ],
+    "inputs": "Archives must match recorded SHA-256 values. The repository must contain the exact old and final published candidate commits. Output arguments select disposable receipt/work locations.",
+    "scriptPortability": "Core assertions passed in the final clean 53-step run. Portable copies retain those assertions, explicit input/output paths, and exact archive guards. Portable provenance executed against the final published commit; syntax and usage preflight pass.",
+    "ae-stability-prior-upgrade-probe.mjsSha256": "5b7a11457b73888abcaa4638095310b6cc8e6a861a198d813f214b1614eae95d",
+    "ae-stability-prior-upgrade-provenance.pySha256": "38625cf76179ffb56bbd9d430adadf71d380cd03c6bdcc28bd2babede19fb37b",
+    "validation": "Portable Node/Python syntax checked; all 450 shipped candidate sources matched the exact published commit; core migration assertions passed in the independent clean run."
+  },
+  "productSourceEdits": false,
+  "qualificationCommitsPushesOrPRs": false,
+  "publishedSource": {
+    "commit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
+    "tree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
+    "localQualifiedCommit": "688ff876976697c0dd3b45be1b3194cff9ac0f1d",
+    "localQualifiedTree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
+    "allSourceTreeBytesIdentical": true,
+    "publication": "Connected GitHub Git Data API. Archive source-byte provenance executed against the exact published commit; local and published source trees match."
+  },
+  "supersededQualifications": [
+    {
+      "verdict": "VERIFIED",
+      "reason": "Initial archive superseded by final orient recovery-display correction; earlier results apply only to that recorded earlier archive.",
+      "candidateArchive": {
+        "name": "ae-harness",
+        "version": "0.14.2",
+        "installedExecutableVersion": "0.14.2",
+        "bytes": 35750283,
+        "sha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+        "sha512": "0fbcf332be04ed5148ff6ade3b43dd70f2445088cbd5876e159efac793ce534cb4132ce13ceac6189e109dee3b4837e88d5eea183fb9378de584d02348d171be",
+        "sourceCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "trackedPackageDiffWasClean": true,
+        "shippedSourceFilesCompared": 450,
+        "allShippedSourceBytesMatchCommit": true,
+        "sourceFilesSha256": "c9504d99b43b6aeee0d9fcd31a7783b5a9ea64d9870fada76fb60a95ce895740",
+        "bundledDependencyFiles": 673,
+        "bundledDependenciesComparedToGitSource": false
+      },
+      "publishedSource": {
+        "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
+        "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "allSourceTreeBytesIdentical": true,
+        "publication": "Connected GitHub Git Data API; direct Git push had no credentials. Original qualification observations retain their local commit identity. Portable probes use the byte-identical published source commit."
+      },
+      "cleanRun": {
+        "steps": 53,
+        "unexpectedNonzeroExitStatuses": 0,
+        "expectedNegativeControls": 3,
+        "completeOldInstallationPrefixAbsent": true,
+        "rawTranscriptSha256": "41a12108d78d0f895eafd3afad3b3997a58b3fc6507e51716340263db8efdad7",
+        "rawEvidenceSha256": "5a8338eb532d2d33a510a63a45114c61a8664dc32ca99ebeeae32e1d9eeddb4f"
+      },
+      "hosts": [
+        {
+          "host": "codex",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        },
+        {
+          "host": "claude-code",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        },
+        {
+          "host": "cursor",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          },
+          "fallbackExit": 0
+        }
+      ],
+      "independentTail": {
+        "verdict": "VERIFIED",
+        "oldRuntimeAbsent": true,
+        "hosts": [
+          {
+            "host": "codex",
+            "verdict": "VERIFIED"
+          },
+          {
+            "host": "claude-code",
+            "verdict": "VERIFIED"
+          },
+          {
+            "host": "cursor",
+            "verdict": "VERIFIED"
+          }
+        ],
+        "invariants": [
+          "Regenerated Read hooks and projected orient --read fallbacks succeed after old runtime removal",
+          "Literal candidate config/skills/state roots retained",
+          "Repository and trust bytes unchanged"
+        ]
+      }
+    },
+    {
+      "verdict": "VERIFIED",
+      "reason": "Superseded by the next corrected candidate; these observations apply only to the earlier recorded archive.",
+      "candidateArchive": {
+        "name": "ae-harness",
+        "version": "0.14.2",
+        "installedExecutableVersion": "0.14.2",
+        "bytes": 35750242,
+        "sha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+        "sha512": "dc627465ce71d6a2677f9201041e8a19463dea22cba27a172ea761077c3ab2813d8584347dd7d9843301c0915fc651be3f342ac321436cd2dceea63b561bf75b",
+        "sourceCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "shippedSourceFilesCompared": 450,
+        "allShippedSourceBytesMatchCommit": true,
+        "sourceFilesSha256": "293215d5897180e5d97ea760eece79f1014be7648f4ce6946fa0192d0c3b7318",
+        "bundledDependencyFiles": 673,
+        "bundledDependenciesComparedToGitSource": false
+      },
+      "publishedSource": {
+        "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "localQualifiedCommit": "54d49dceea52e6671f1bfe5d8e6dbc0a11a39c66",
+        "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "allSourceTreeBytesIdentical": true,
+        "publication": "Connected GitHub Git Data API. Final archive source-byte provenance was executed directly against this exact published commit; local and published source trees match."
+      },
+      "cleanRun": {
+        "steps": 53,
+        "unexpectedNonzeroExitStatuses": 0,
+        "expectedNegativeControls": 3,
+        "completeOldInstallationPrefixAbsentAtQualification": true,
+        "oldInstallationRuntimeRemainsAbsent": true,
+        "rawTranscriptSha256": "9cc69557ccaea0de330ab20503aa626991dc154198da03d243e6dc878b997270",
+        "rawEvidenceSha256": "ac18747247aa590f3e08036b69e0404ae9ebe93de92dcfa3b2c32e3cbf8e7cac"
+      },
+      "hosts": [
+        {
+          "host": "codex",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "claude-code",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "cursor",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        }
+      ]
+    },
+    {
+      "verdict": "VERIFIED",
+      "reason": "Superseded by the next corrected candidate; these observations apply only to the earlier recorded archive.",
+      "candidateArchive": {
+        "name": "ae-harness",
+        "version": "0.14.2",
+        "installedExecutableVersion": "0.14.2",
+        "bytes": 35750445,
+        "sha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+        "sha512": "a223550e75b144540b09f89c9c948d89bb2198cd403b1d2596ee488b595423b577c9731efc7f8906b677dbadaffdafe3e5e438aab9d8feeb7fac784377cea649",
+        "sourceCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+        "shippedSourceFilesCompared": 450,
+        "allShippedSourceBytesMatchCommit": true,
+        "sourceFilesSha256": "97a318a6a023676122f6fe8395ef6b4aa909f4f221b2772027ad7513d86231c7",
+        "bundledDependencyFiles": 673,
+        "bundledDependenciesComparedToGitSource": false
+      },
+      "publishedSource": {
+        "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+        "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
+        "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "allSourceTreeBytesIdentical": true,
+        "publication": "Connected GitHub Git Data API. Archive source-byte provenance executed against the exact published commit; local and published source trees match."
+      },
+      "cleanRun": {
+        "steps": 53,
+        "unexpectedNonzeroExitStatuses": 0,
+        "expectedNegativeControls": 3,
+        "completeOldInstallationPrefixAbsentAtQualification": true,
+        "oldInstallationRuntimeRemainsAbsent": true,
+        "rawTranscriptSha256": "f93c09db58a8de00d02128751339a4d08e07fe54534dd614373e55b92a0e6faa",
+        "rawEvidenceSha256": "2e2c2f0c6328dc45da258cb375d62afdf3a94cf4cfa73d430ab5611c5ba4ff43",
+        "producer": "Independent root-agent fresh qualifier; exit 0, all 53 step outcomes inspected."
+      },
+      "hosts": [
+        {
+          "host": "codex",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "claude-code",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        },
+        {
+          "host": "cursor",
+          "verdict": "VERIFIED",
+          "preservedTrustBytes": true,
+          "preservedRepositoryBytes": true,
+          "oldInstallationRemoved": true,
+          "regeneratedHook": {
+            "status": 0,
+            "output": {}
+          }
+        }
+      ]
+    }
+  ],
+  "inconclusiveQualificationAttempts": [
+    {
+      "candidateSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+      "sourceCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+      "verdict": "INCONCLUSIVE",
+      "steps": 39,
+      "rawTranscriptSha256": "7d062ac30524ff1402dc77f1ae794c86954fe00cc7e147c8d2c0b32bcc33f66e",
+      "completedBeforeInterruption": [
+        "All three genuine prior-version migrations and trust/repository byte-preservation assertions",
+        "Old runtime removal",
+        "Codex regenerated Read hook and projected fallback"
+      ],
+      "failedStep": "codex:candidate-repeat-upgrade",
+      "exitCode": 2,
+      "reason": "Host setup is already locked: ${RUN_ROOT}/codex/native config/.ae-host.lock",
+      "observedLocks": "Two empty Codex lock directories; original fixture preserved without deleting its locks.",
+      "cause": "Unproven. No product fix was made or claimed for this unreproduced attempt.",
+      "laterCleanRun": "Independent fresh full 53-step qualification passed for the exact same source and archive."
+    }
+  ],
+  "freshHostLockLifecycleControls": {
+    "cases": 8,
+    "allPassed": true,
+    "rootKinds": [
+      "temporary directory",
+      "workspace scratch"
+    ],
+    "operationsPerRoot": [
+      "host setup",
+      "upgrade",
+      "upgrade",
+      "upgrade"
+    ],
+    "lockDirectoriesAbsentImmediatelyAfterEachCommand": true,
+    "productSourceEdits": false,
+    "rawControlsSha256": "a6741a68a17b8e971749252e1bdf81660738a9b83db225393a496466ff80ace1",
+    "interpretation": "Eight fresh controls did not reproduce the lock refusal. They do not establish the cause of the preserved inconclusive attempt.",
+    "candidateSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+    "sourceCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+    "scope": "Earlier preserved fab/e8 lock-attempt investigation; not a control rerun for the active archive."
+  }
+}

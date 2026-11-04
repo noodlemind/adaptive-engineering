@@ -19,6 +19,8 @@ import { approvedBundleNames, syncBundles } from './bundle-sync.mjs';
 import { runDoctor } from './doctor.mjs';
 import { runInitRepo } from './init-repo.mjs';
 import { inspectCheckReadiness } from './check-readiness.mjs';
+import { readWorkspaceOutcome, formatWorkspaceOutcome } from './workspace-outcome.mjs';
+import { upgradeHostResultOf } from './hosts/command.mjs';
 import { withGitIdentityCache } from './git-observation-cache.mjs';
 import { leftoverWorkspaceArtifacts, runMigrateLayout } from './migrate-layout.mjs';
 import { migrateHome } from './migrate-home.mjs';
@@ -144,6 +146,18 @@ function learningNote(l) {
 }
 
 export async function cmdInstallOrUpgrade(command, argv) {
+  const scan = argv.slice(0, argv.indexOf('--') === -1 ? argv.length : argv.indexOf('--'));
+  if (command === 'upgrade' && scan.some(token => token === '--host' || token.startsWith('--host='))) {
+    const result = upgradeHostResultOf(argv);
+    if (scan.includes('--json')) console.log(redactedJson(result, { pretty: true }));
+    else {
+      console.log(result.reason || `upgrade ${result.integration.status}: ${result.integration.host}`);
+      if (result.integration?.reason) console.log(result.integration.reason);
+      if (result.workspace) console.log(formatWorkspaceOutcome(result.workspace));
+    }
+    return result.exitCode;
+  }
+  if (scan.some(token => token === '--config-home' || token.startsWith('--config-home='))) throw Object.assign(new Error('--config-home requires upgrade --host'), { code: 'E_USAGE', exit: 2 });
   const flags = parseFlags(argv);
   const version = readPkgVersion();
   const assets = getCorpusRoot();
@@ -227,7 +241,11 @@ export async function cmdInstallOrUpgrade(command, argv) {
 
     const runnerWorkspace = path.resolve(flags.workspace);
   if (fs.existsSync(path.join(runnerWorkspace, '.harness', 'run.mjs'))) {
-    allStats.runner = writeHarnessRunner(runnerWorkspace, flags.dryRun);
+    try { allStats.runner = writeHarnessRunner(runnerWorkspace, flags.dryRun); }
+    catch (error) {
+      if (command !== 'upgrade') throw error;
+      allStats.runner = { path: path.join(runnerWorkspace, '.harness/run.mjs'), error: { code: error.code || null, message: error.message, hint: error.hint || null } };
+    }
   }
 
   const files = new Set([...(allStats.vscode?.files || []), ...(allStats.harnessBin?.files || [])]);
@@ -264,7 +282,9 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }, flags.dryRun);
   }
 
-  const checkReadiness = inspectCheckReadiness({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
+  const workspace = readWorkspaceOutcome({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
+  const checkReadiness = workspace.checkReadiness || inspectCheckReadiness({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
+  const installation = { status: flags.dryRun ? 'planned' : 'completed', runtime: path.join(copilotSelected ? path.join(copilotHome, '.ae-bin') : pkgRoot, 'bin/ae.mjs') };
   if (flags.json) {
         console.log(
       redactedJson(
@@ -278,6 +298,8 @@ export async function cmdInstallOrUpgrade(command, argv) {
           intellij: allStats.intellij,
           runner: allStats.runner ?? null,
           checkReadiness,
+          installation,
+          workspace,
           ...(ownershipWarnings.length ? { ownershipWarnings } : {}),
         },
         { pretty: true }
@@ -331,7 +353,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }
     if (flags.dryRun) console.log(ui.paint('muted', '  dry-run — no files written'));
     else {
-      if (!checkReadiness.ready) console.log(ui.line({ state: 'warn', key: 'workspace', value: `checks ${checkReadiness.status}`, note: `${checkReadiness.source || 'select the repository root'}; Engineer prepares the check configuration before delivery`, keyWidth }));
+      console.log(formatWorkspaceOutcome(workspace));
       printNext('ae doctor');
             if (command === 'upgrade') {
         const workspace = path.resolve(flags.workspace);

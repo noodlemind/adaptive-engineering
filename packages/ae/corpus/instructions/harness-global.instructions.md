@@ -28,6 +28,7 @@ Not on PATH? `node ~/.copilot/bin/ae …` or `ae install --configure-path`.
 
 ## Operating Rules
 
+- Use host-native creation and edit tools for product files under Default/Manual Permissions. Existing task authorization needs no extra prose approval; native host approval remains binding. For a missing tool, approval request, or worktree access issue, read `<copilot-home>/skills/references/tool-native-loop.md` with the host read tool.
 - Keep skills, agents, and instructions in the user profile. Do not copy the harness corpus into product repositories.
 - Product repositories may still receive work artifacts such as `docs/plans/`, `docs/solutions/`, and README changes when a skill intentionally creates them.
 - Skills are on-demand procedures. Load one when its trigger matches the work; do not bulk-read the catalog at session start.

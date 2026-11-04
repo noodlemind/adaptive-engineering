@@ -25,10 +25,40 @@ import { authorizeDomainPlan, authorizeProjectPlan, validateDomainContext, domai
 import { domainLinkCheck } from './domain-delivery.mjs';
 import { validatePlanSchema } from './plan-schema.mjs';
 import { parseExperimentJson, validateExperimentContract } from './experiment-contract.mjs';
+import { VALUE_FLAGS, positionalsOf } from './positionals.mjs';
 
 const TYPES = ['feat', 'fix', 'docs', 'refactor', 'chore'];
 const RISKS = ['green', 'amber', 'red'];
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function usage(message) {
+  return Object.assign(new Error(message), { code: 'E_USAGE', exit: 2, hint: 'ae help plan-new' });
+}
+
+export function normalizePlanNewArgs(argv) {
+  const boundary = argv.indexOf('--');
+  const unexpected = positionalsOf(argv)[0] ?? (boundary === -1 ? undefined : argv[boundary + 1]);
+  if (unexpected !== undefined) throw usage(`plan-new: unexpected argument ${unexpected}; use --file for one JSON document`);
+  const normalized = [];
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--') {
+      normalized.push(...argv.slice(i));
+      break;
+    }
+    const equals = token.indexOf('=');
+    const name = equals === -1 ? token : token.slice(0, equals);
+    if (!VALUE_FLAGS.has(name)) {
+      if (equals !== -1) throw usage(`plan-new: ${name} does not accept a value`);
+      normalized.push(token);
+      continue;
+    }
+    const value = equals === -1 ? argv[++i] : token.slice(equals + 1);
+    if (value === undefined || value === '' || value === '--') throw usage(`plan-new: ${name} requires a value`);
+    normalized.push(name, value);
+  }
+  return normalized;
+}
 
 function shortSlug(value) {
   const slug = String(value || '')
@@ -279,6 +309,7 @@ export function createFullPlan({ workspace, home = harnessGlobalHome(), domainCo
 
 /** CLI: parse the plan-new flags, write the skeleton, print the path. */
 export async function cmdPlanNew(argv) {
+  argv = normalizePlanNewArgs(argv);
   const opts = { impacted: [], criteria: [], acceptance: [], constraints: [], intentSources: [] };
   let workspace = process.cwd();
   let json = false;
@@ -286,21 +317,15 @@ export async function cmdPlanNew(argv) {
   let toStdout = false;
   let file;
 
-  // Fix-wave C1: honor the literal-argument boundary, matching
-  // lib/flags.mjs#parseFlags and lib/registry.mjs#validateArgs — nothing after
-  // a bare `--` is ever interpreted as a flag. Sliced BEFORE the loop, not
-  // broken out of inside it, for the exact reason parseFlags gives: a mid-loop
-  // `break` cannot stop a value flag from having already consumed the literal
-  // `--` via `next()`. Verified pre-fix: `--workspace -- --json` resolved the
-  // workspace to `--` AND then re-interpreted the post-boundary `--json`.
   const boundary = argv.indexOf('--');
   const scan = boundary === -1 ? argv : argv.slice(0, boundary);
   for (let i = 0; i < scan.length; i++) {
     const a = scan[i];
     const next = () => scan[++i];
     if (a === '--type') opts.type = next();
-    else if (a === '--file' || a.startsWith('--file=')) {
-      file = a === '--file' ? next() : a.slice('--file='.length);
+    else if (a === '--file') {
+      if (file !== undefined) throw usage('plan-new: --file accepts one JSON document; combine the decision into one file');
+      file = next();
       if (!file) throw new Error('plan-new: --file requires a path or - for stdin');
     }
     else if (a === '--slug') opts.slug = next();
@@ -324,8 +349,8 @@ export async function cmdPlanNew(argv) {
     } else if (a === '--from') opts.from = next();
     else if (a === '--classification') opts.classification = next();
     else if (a === '--copilot-home') opts.copilotHome = next();
-    else if (a === '--workspace' || a.startsWith('--workspace=')) {
-      const value = a === '--workspace' ? next() : a.slice('--workspace='.length);
+    else if (a === '--workspace') {
+      const value = next();
       if (!value || value.startsWith('--')) throw new Error('plan-new: --workspace requires a path');
       workspace = path.resolve(value);
     }

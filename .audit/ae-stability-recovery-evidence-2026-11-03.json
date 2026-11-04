@@ -1,0 +1,1273 @@
+{
+  "sourceBaseline": "e1d1cdff2743d16b1d2522374e18267df5e205af",
+  "candidateVersion": "0.14.2",
+  "archiveSha256": "abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520",
+  "runs": [
+    {
+      "log": "baseline-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          66
+        ],
+        "pass": [
+          66
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "cli-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          9
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          9
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "CLI: plan-new rejects trailing operands without parsing them as flags (993.171018ms)",
+        "CLI: plan-new accepts an equals file path with spaces and equals characters (457.98942ms)",
+        "CLI: plan-new refuses repeated or bare file inputs without creating a plan (1052.7092ms)",
+        "CLI: plan-update refuses repeated file inputs before reading a decision or changing the plan (1676.639637ms)",
+        "CLI: plan-update rejects post-boundary operands without applying them as flags (1691.816759ms)",
+        "CLI: --files mistakes explain the canonical source and JSON input forms (433.51219ms)",
+        "CLI: review assemble refuses repeated JSON files before reading a file or plan (773.57295ms)",
+        "CLI: review reads the verb from positional arguments rather than file names (750.698893ms)",
+        "CLI: review rejects extra and post-boundary file operands (438.16824ms)"
+      ]
+    },
+    {
+      "log": "cli-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          12
+        ],
+        "pass": [
+          12
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          1
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "worktree reuse rejects a linked checkout belonging to another repository (573.22869ms)"
+      ]
+    },
+    {
+      "log": "worktree-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          9
+        ],
+        "pass": [
+          9
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "tree-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          2
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          2
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "tree CLI preserves boolean ordering and literal option-shaped targets (1567.1613ms)",
+        "tree CLI does not read depth options beyond the literal boundary (518.580102ms)"
+      ]
+    },
+    {
+      "log": "tree-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          17
+        ],
+        "pass": [
+          17
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "integration-review-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          2
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          2
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "legacy upgrade keeps installation success distinct from missing workspace prerequisites (1768.41308ms)",
+        "failed native root selection withholds recovery for an unresolved binding (137.843942ms)"
+      ]
+    },
+    {
+      "log": "integration-review-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          14
+        ],
+        "pass": [
+          14
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "plan-input-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          19,
+          2
+        ],
+        "pass": [
+          15,
+          0
+        ],
+        "fail": [
+          4,
+          2
+        ],
+        "cancelled": [
+          0,
+          0
+        ],
+        "skipped": [
+          0,
+          0
+        ]
+      },
+      "failureTitles": [
+        "CLI: plan-new preserves equals authoring flags in the written full plan (602.489683ms)",
+        "CLI: plan-new preserves inline short-plan goals and mixed scope flags (574.12004ms)",
+        "CLI: plan-new rejects JSON decisions mixed with inline authoring before reading the file (1262.274038ms)",
+        "CLI: plan-new keeps consumed option-shaped titles literal (2426.485677ms)",
+        "CLI: plan-new rejects missing values and inline booleans without writing a plan (1121.069791ms)",
+        "CLI: plan-new bare dry-run preserves authored input and does not create a plan (482.301937ms)"
+      ]
+    },
+    {
+      "log": "plan-input-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          20,
+          2,
+          109
+        ],
+        "pass": [
+          20,
+          2,
+          108
+        ],
+        "fail": [
+          0,
+          0,
+          0
+        ],
+        "cancelled": [
+          0,
+          0,
+          0
+        ],
+        "skipped": [
+          0,
+          0,
+          1
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "integrated-targeted.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          43
+        ],
+        "pass": [
+          43
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "final-full-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          4224
+        ],
+        "pass": [
+          4146
+        ],
+        "fail": [
+          32
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          46
+        ]
+      },
+      "failureTitles": [
+        "exit sequence: short plan, no-learning, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (49838.563346ms)",
+        "exit sequence: short plan, publish, review \u2192 verify \u2192 compound \u2192 done \u2192 repeated Stop (30653.465324ms)",
+        "bundled D2 provides all three layouts and releases its internal worker (13503.370352ms)",
+        "D2 TALA output is reproducible across independent renderer workers (10535.455873ms)",
+        "full authored experiment plans preserve schema-4 obligations through the real CLI (70997.668473ms)",
+        "baseline, improvement, guard discard and target use exactly eight durable slots (719.397522ms)",
+        "baseline binding cannot adopt edited bytes and an evaluated pair cannot launch twice (521.823874ms)",
+        "baseline authority binds exact newline bytes even when the JSON candidate is unchanged (602.307078ms)",
+        "odd remaining budgets refuse a pair and accepted increases retain origin and spend (478.845074ms)",
+        "prelaunch failures settle spent siblings and malformed metrics permit recognized rollback (469.460817ms)",
+        "old discard replay never restores over the current hypothesis (429.308206ms)",
+        "dead controllers with no started child recover as interrupted; unknown spawn windows block (817.684831ms)",
+        "unavailable process observation cannot turn a live controller into an interrupted attempt (468.24422ms)",
+        "recovery refuses a live child PID even when its recorded creation identity is stale (927.323874ms)",
+        "settlement records owned group absence even after launch authority expires (491.208678ms)",
+        "keep recovery publishes the journaled snapshot ref before reconstructing settled projection (496.392257ms)",
+        "artifact validation failure stops a discarded series without denying exact rollback (516.724888ms)",
+        "derived TSV corruption cannot change measurements and is regenerated from journals (569.837822ms)",
+        "HEAD movement blocks the accepted series without changing its records or candidate (440.364084ms)",
+        "authored decision digests and descriptions are immutable across operation replay (582.553724ms)",
+        "keep rejects a snapshot captured from candidate bytes changed after measurement validation (443.996035ms)",
+        "keep rechecks current candidate after publishing its resolution intent (410.790512ms)",
+        "keep recovery rechecks current candidate before publishing settlement (421.377219ms)",
+        "read-only status reports the original wall budget exhausted without reserving more work (516.861441ms)",
+        "flows CLI is read-only when cold, validates inputs, and loads only relevant context (16734.703053ms)",
+        "publication terminates when a missing lock cannot be created (8534.17048ms)",
+        "large valid multiline values compile within a bounded subprocess deadline (4149.303968ms)",
+        "readPrefixNoFollow does not block when a regular file becomes a fifo before open (3509.762402ms)",
+        "primitive activation without a host session id is accepted only while fresh (15774.632599ms)",
+        "orient explains a new bound learning with a missing source as visible applicability review (2426.207017ms)",
+        "orient records only the learning ids that SURVIVED into the 2KB pack, never every ranked id (1403.401025ms)"
+      ],
+      "status": "failed; 3 introduced context-budget cases accepted for correction; environment/load failures separately triaged"
+    },
+    {
+      "log": "final-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "corrected-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "corrected-repo-checks.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "orient-budget-fixed.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          54
+        ],
+        "pass": [
+          54
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-snapshot-before.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          4
+        ],
+        "pass": [
+          0
+        ],
+        "fail": [
+          4
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": [
+        "inherited approval uses the same primary policy snapshot as the child comparison (538.36904ms)",
+        "direct approval is checked against the digest returned by the same observation (161.505519ms)",
+        "current approval (289.226504ms)",
+        "pre-routing approval (245.991801ms)"
+      ]
+    },
+    {
+      "log": "trust-snapshot-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          88
+        ],
+        "pass": [
+          88
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-snapshot-independent.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          4
+        ],
+        "pass": [
+          4
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "orient-conditional-handoff-final-context-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          55
+        ],
+        "pass": [
+          55
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "snapshot-repo-checks.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          151
+        ],
+        "fail": [
+          1
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": [
+        "cursor denies unplanned native edits and binds workspace from payload, not hook cwd (16676.571803ms)"
+      ],
+      "status": "One existing 15s native-bridge test deadline failed under shared workload; actual host contract is 60s; test-only alignment pending verification"
+    },
+    {
+      "log": "snapshot-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "snapshot-repo-checks-after-fixtures.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-autocrlf-default-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          29
+        ],
+        "pass": [
+          29
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "trust-autocrlf-forced-true-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          29
+        ],
+        "pass": [
+          29
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-physical-identity-owning-tests.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          58
+        ],
+        "pass": [
+          58
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-physical-identity-final-helpers.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          13
+        ],
+        "pass": [
+          12
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          1
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-identity-trust-compat.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          88
+        ],
+        "pass": [
+          88
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "worktree-identity-upgrade-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          5
+        ],
+        "pass": [
+          5
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "upgrade-native-path-assertions-after.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          14
+        ],
+        "pass": [
+          14
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "physical-repo-contracts.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          154
+        ],
+        "pass": [
+          152
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          2
+        ]
+      },
+      "failureTitles": []
+    },
+    {
+      "log": "physical-packed-delivery.log",
+      "completed": true,
+      "counts": {
+        "tests": [
+          1
+        ],
+        "pass": [
+          1
+        ],
+        "fail": [
+          0
+        ],
+        "cancelled": [
+          0
+        ],
+        "skipped": [
+          0
+        ]
+      },
+      "failureTitles": []
+    }
+  ],
+  "baselineTrustCliObservations": [
+    {
+      "scenario": "approve-primary-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:02.997Z"
+    },
+    {
+      "scenario": "fresh-child-inherits-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": true,
+      "reason": "inherited from trusted primary /tmp/ae-trust-design-jYAsm6/repo"
+    },
+    {
+      "scenario": "directly-approve-child-A",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:05.086Z"
+    },
+    {
+      "scenario": "approve-primary-B",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:05.812Z"
+    },
+    {
+      "scenario": "stale-direct-child-A-blocks-primary-B",
+      "exit": 0,
+      "state": "stale",
+      "trusted": false,
+      "inherited": false,
+      "reason": "the policy files have changed since this project was approved"
+    },
+    {
+      "scenario": "child-revoke",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "revoked-child-stays-revoked",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "child-approve-B",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:09.539Z"
+    },
+    {
+      "scenario": "primary-revoke",
+      "exit": 0,
+      "state": "revoked",
+      "trusted": false,
+      "inherited": false,
+      "reason": "trust was explicitly revoked"
+    },
+    {
+      "scenario": "independent-child-B-survives-primary-revoke",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:09.539Z"
+    },
+    {
+      "scenario": "approve-primary-B-again",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": false,
+      "reason": "approved 2026-11-04T01:38:11.299Z"
+    },
+    {
+      "scenario": "manual-child-untrusted",
+      "exit": 0,
+      "state": "untrusted",
+      "trusted": false,
+      "inherited": false,
+      "reason": "this project has never been approved"
+    },
+    {
+      "scenario": "reused-child-now-inherits",
+      "exit": 0,
+      "state": "trusted",
+      "trusted": true,
+      "inherited": true,
+      "reason": "inherited from trusted primary /tmp/ae-trust-design-jYAsm6/repo"
+    },
+    {
+      "scenario": "child-old-policy-refuses-inheritance",
+      "exit": 0,
+      "state": "stale",
+      "trusted": false,
+      "inherited": false,
+      "reason": "ae worktree of /tmp/ae-trust-design-jYAsm6/repo, but the primary or worktree policy files differ from that approval"
+    },
+    {
+      "scenario": "same-workspace-different-selected-home",
+      "exit": 0,
+      "state": "untrusted",
+      "trusted": false,
+      "inherited": false,
+      "reason": "this project has never been approved"
+    }
+  ],
+  "review": {
+    "initial": "Three P2 issues found and fixed.",
+    "finalDelta": "34 tests passed; no introduced defect found.",
+    "comments": "No deletion or suppression flags.",
+    "modelDiversity": "Independent agents from one model family; no cross-family claim.",
+    "transcript": "No conversation-wide agent transcript supplied; installed qualification command transcripts were observed, summarized and hashed.",
+    "finalContextDelta": "54 owning tests passed, independent flow recheck passed, no actionable review findings",
+    "finalSnapshotDelta": "No actionable findings after88trust tests,55context tests,64digest+64approval compatibility checks and4independent race cases; repository bot findings addressed."
+  },
+  "limits": [
+    "Native editor/model acceptance and the original user machine state are unverified.",
+    "Native Windows execution requires CI.",
+    "The interrupted first broad run is excluded from passing qualification.",
+    "Final local full run has process-identity failures reproduced on exact baseline. Renderer rechecks pass on both revisions. The short delivery case passes on both revisions when rechecked; exact timeout cause unproven.",
+    "Final genuine prior-version receipt supersedes the first candidate; full PR CI is the authoritative changing final inventory record."
+  ],
+  "candidateCodeCommit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
+  "runCountNote": "Counts are top-level reporter summaries where present. Arrays represent multiple commands appended to one log, not additive unique coverage. Logs were observed in the work session; durable regression tests are committed under packages/ae/test.",
+  "priorVersionReceipt": "ae-stability-prior-upgrade-2026-11-03.json",
+  "finalChecks": {
+    "repositoryContracts": {
+      "tests": 154,
+      "pass": 152,
+      "fail": 0,
+      "skip": 2
+    },
+    "sourceRelease": "passed from immutable source tree",
+    "installedArchiveRelease": "passed: ae-harness0.14.2, lockfile not-shipped,22agents",
+    "offlineInstallVersion": "0.14.2",
+    "installedArchiveDelivery": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0
+    },
+    "fullInventory": "final physical-identity runtime PR CI pending; PR verification/checks are the changing Phase E record",
+    "contextBudgetSuite": {
+      "tests": 55,
+      "pass": 55,
+      "fail": 0
+    },
+    "genuinePriorVersionMigration": "Active abd/a9 independent clean53step3host run VERIFIED; prior receipt contains exact source provenance and preserved history",
+    "finalArchiveSha256": "abd2d4cf8cdc16145ddf6a712d8ade6e28eb3ac79dbbaf3583e9b87c84dc2520",
+    "trustSnapshotSuite": {
+      "tests": 88,
+      "pass": 88,
+      "fail": 0
+    }
+  },
+  "environmentComparisons": {
+    "experiment": {
+      "baseline": "fail: process identity unavailable",
+      "candidate": "fail: process identity unavailable",
+      "effect": "retain fail-closed behavior; full inventory requires CI"
+    },
+    "renderer": {
+      "baselineIsolated": "pass",
+      "candidateIsolated": "pass",
+      "broadCandidate": "two failures under shared load"
+    },
+    "shortNoLearningDelivery": {
+      "baselineRecheck": "pass",
+      "candidateRecheck": "pass",
+      "priorCandidateRecheck": "10-second proof-authority timeout",
+      "cause": "unproven; completion authority implementation unchanged"
+    },
+    "otherTimeouts": {
+      "isolatedCandidate": "4/4 pass",
+      "sourceComparison": "test files and directly exercised modules unchanged from exact baseline",
+      "cases": [
+        "publication lock",
+        "multiline compiler",
+        "FIFO no-follow race",
+        "fresh primitive activation"
+      ],
+      "cause": "unproven"
+    }
+  },
+  "publishedSource": {
+    "commit": "a9ac4f859877efa281f7c5cab55083611f73e6c8",
+    "tree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
+    "localQualifiedCommit": "688ff876976697c0dd3b45be1b3194cff9ac0f1d",
+    "localQualifiedTree": "c72a2b86ebd721d516d30e134e6de3823ebd5115",
+    "allSourceTreeBytesIdentical": true
+  },
+  "qualificationHistory": [
+    {
+      "candidateCodeCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+      "archiveSha256": "751a94fd08cf4d1597bca40751010984a2ac0e0a8723b95e4fbf7913db2f69f3",
+      "publishedSource": {
+        "commit": "eb319b4c1d442644926a0db3caee7f3fa295bab5",
+        "tree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "localQualifiedCommit": "9b0c310c184ca7eaf9e58c8e4a7f0811e4b8a770",
+        "localQualifiedTree": "ae59640d0af4216b0300000df68da2685c34ee5d",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after three introduced context-budget failures; retained as observed history"
+    },
+    {
+      "candidateCodeCommit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+      "archiveSha256": "5dc67be1ee0645eba72eeb1341889fc53ea78a425fdee778f16ad1cf6ad1db17",
+      "publishedSource": {
+        "commit": "4bbd786a71e19a793128f35e9854cbb7b689024a",
+        "tree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "localQualifiedCommit": "54d49dc",
+        "localQualifiedTree": "cb1572ccf52e88be57c4d39ffb919ff1131b06ea",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after validated mixed-snapshot inherited-trust race and conditional handoff projection correction"
+    },
+    {
+      "candidateCodeCommit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+      "archiveSha256": "fab554a19d393d1f8f21390706c90bf7a6f65393795287e632118ce23929bb28",
+      "publishedSource": {
+        "commit": "e8ab86203c4c46f7927a5591da23239dc0007fee",
+        "tree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "localQualifiedCommit": "001b479997286aeca3f9debba2e39ecc1a4f93c3",
+        "localQualifiedTree": "60114e22d859ffd63f2b49c563afe2bd78f1f7c0",
+        "allSourceTreeBytesIdentical": true
+      },
+      "status": "superseded after Windows full inventory found nine worktree physical identity errors; one projected separator fixture assertion also corrected"
+    }
+  ],
+  "contextBudgetCorrection": {
+    "failBefore": 3,
+    "passAfter": 3,
+    "owningSuite": {
+      "tests": 54,
+      "pass": 54,
+      "fail": 0
+    },
+    "independentDelta": "No actionable findings; structured binding preserved, compact display and approval sequencing verified",
+    "regressions": [
+      "test/orient-explain.test.mjs",
+      "test/orient-learnings.test.mjs",
+      "test/flow-model-context.test.mjs",
+      "test/orientation-context.test.mjs"
+    ]
+  },
+  "supersededHostedLinux": {
+    "runId": 41760102220,
+    "head": "ac6f4750a69c9a25d7c0d1ec1b0ebaf73b0ce4c7",
+    "testFiles": 310,
+    "tests": 4224,
+    "pass": 4176,
+    "fail": 3,
+    "skip": 45,
+    "cancelled": 0,
+    "failures": [
+      "orient-explain bound stale learning visibility",
+      "orient-learnings surviving learning ids",
+      "flow-model-context Application flows visibility"
+    ],
+    "aggregate": "failed as required",
+    "source": "GitHub Actions completed shard logs and same-revision inventory"
+  },
+  "windowsFixtureCorrection": {
+    "file": "packages/ae/test/trust-recovery.test.mjs",
+    "observed": "Three expected-path assertions used Windows 8.3 alias while product returned native canonical path",
+    "fix": "Use fs.realpathSync.native for fixture root, matching existing project identity canonicalization",
+    "linuxOwningSuite": {
+      "tests": 25,
+      "pass": 25,
+      "fail": 0
+    },
+    "independentReview": "No issue, no weakened assertions",
+    "runtimeChanged": false,
+    "nativeWindows": "final CI pending",
+    "lineEndings": {
+      "observed": "Global core.autocrlf=true checked out child CRLF while primary fixture bytes were LF; strict product digest denial was correct",
+      "fix": "Set core.autocrlf=false only in disposable linked fixture before staging and checkout; assert child equals captured approved digest",
+      "forcedGlobalTrueBefore": {
+        "tests": 1,
+        "fail": 1
+      },
+      "owningDefaultAfter": {
+        "tests": 29,
+        "pass": 29,
+        "fail": 0
+      },
+      "owningGlobalTrueAfter": {
+        "tests": 29,
+        "pass": 29,
+        "fail": 0
+      },
+      "runtimeChanged": false
+    }
+  },
+  "acceptedPrFindings": [
+    {
+      "url": "https://github.com/noodlemind/prompt-library/pull/109#discussion_r4462866029",
+      "severity": "P1",
+      "issue": "Approval reread and inheritance comparison used different policy snapshots",
+      "fix": "One bounded pin snapshot supplies modern/eligible legacy hashes to approval and comparison",
+      "owningSuite": {
+        "tests": 88,
+        "pass": 88,
+        "fail": 0
+      },
+      "independentCompatibility": {
+        "digestPairs": 64,
+        "approvalChecks": 64,
+        "fail": 0
+      },
+      "independentRaceCases": {
+        "reportedCases": 4,
+        "pass": 4,
+        "fail": 0
+      }
+    },
+    {
+      "url": "https://github.com/noodlemind/prompt-library/pull/109#discussion_r4462866035",
+      "severity": "P2",
+      "issue": "Conditional person handoff survives missing-check orientation paths",
+      "fix": "Central facts projection removes afterInspection until checks are ready in normal/read/v2",
+      "owningContextSuite": {
+        "tests": 55,
+        "pass": 55,
+        "fail": 0
+      }
+    }
+  ],
+  "intermediateHostedLinux": {
+    "runId": 41761411420,
+    "head": "6b8850499b8f8db693e3944694382d2cc695a8df",
+    "testFiles": 310,
+    "tests": 4225,
+    "pass": 4180,
+    "fail": 0,
+    "skip": 45,
+    "cancelled": 0,
+    "aggregate": "passed; superseded by snapshot-consistent candidate"
+  },
+  "nativeTestDeadlineCorrection": {
+    "source": "packages/ae/test/host-native-hooks.test.mjs",
+    "priorWindowsPositive": {
+      "runId": 41760102343,
+      "jobId": 126345507673,
+      "quotedCommandPassed": true,
+      "durationMs": 2177
+    },
+    "intermediateWindowsFailure": {
+      "runId": 41761411465,
+      "jobId": 126350250849,
+      "status": null,
+      "wholeTestDurationMs": 24330.8,
+      "errorCode": "not captured by old stderr-only assertion; timeout inferred, not proven"
+    },
+    "sourceComparison": "Quoted test and 20 reachable hook modules unchanged from e1d1cdf through 6b; Read returns before trust/policy authority calls",
+    "fix": "Test-only direct bridge budget 60s and generated-command budget uses declared PreToolUse60s; add measured status/signal/error/output diagnostics. Runtime deadlines and semantic assertions unchanged.",
+    "diagnosticSelfCheck": "Intentional exit7 and100ms timeout preserve original results and expose error/signal data",
+    "discardedVerification": "Overlapping redirected output and unavailable session14133 with empty log are not passing evidence",
+    "authoritativeLocalQualification": "Final check:repo154 cases,152pass,2skip,0fail includes native-hook suite",
+    "nativeWindows": "final PR CI pending"
+  },
+  "physicalIdentityCorrection": {
+    "runtime": "packages/ae/lib/worktree.mjs",
+    "worktreeSourceSha256": "9ad0a05198b3ec843131a475659111baeabd8458ebfaa7dd825801c43d58f896",
+    "reproducedBefore": [
+      "alias spelling rejects same-repository reuse",
+      "absolute legacy alias registration ignored",
+      "unavailable common-dir identity passes null equality"
+    ],
+    "fix": "Use native physical identities for common dirs, destinations, listing and registrations; require non-null verified common identity; read absolute legacy aliases without rewriting records; reject unresolved/relative/drive-dependent registrations",
+    "owningGroup": {
+      "tests": 58,
+      "pass": 58,
+      "fail": 0,
+      "scope": "before final Windows-only negative; Linux guard paths unchanged"
+    },
+    "finalHelperFile": {
+      "tests": 13,
+      "pass": 12,
+      "skip": 1,
+      "fail": 0
+    },
+    "trustCompatibility": {
+      "tests": 88,
+      "pass": 88,
+      "fail": 0
+    },
+    "upgradeDeliveryJourney": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0
+    },
+    "projectedPathUpgrade": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0
+    },
+    "independentReview": "Two reviewers found no remaining issue; four CLI cases and final Windows path guard reviewed",
+    "nativeWindows": "final PR revision CI pending"
+  },
+  "superseded8cbcQualification": {
+    "head": "8cbc6f9e663f694293a3c945ebf8a3fb9762126c",
+    "linux": {
+      "runId": 41765269095,
+      "files": 310,
+      "tests": 4230,
+      "pass": 4185,
+      "fail": 0,
+      "skip": 45
+    },
+    "windows": {
+      "runId": 41765269105,
+      "tests": 4230,
+      "pass": 4134,
+      "fail": 10,
+      "skip": 86,
+      "categories": {
+        "worktreeIdentity": 9,
+        "projectedPathAssertion": 1
+      },
+      "nativeHookCases": 17,
+      "nativeHookFailed": 0,
+      "trustRecoveryCases": 29,
+      "trustRecoveryFailed": 0,
+      "redaction": "passed",
+      "ownedProcessCancellation": "passed",
+      "aggregate": "failed as required"
+    },
+    "packageMatrix": {
+      "runId": 41765269103,
+      "allFourNode20And24Configurations": "passed",
+      "scope": "superseded source only"
+    }
+  },
+  "checkoutRecovery": {
+    "reviewedSourcePreservedBySha256": true,
+    "originalSharedGitAdministrationBecameUnavailable": true,
+    "recoveredFromPublishedPr": "8cbc6f9e663f694293a3c945ebf8a3fb9762126c",
+    "recoveryUsesSelfContainedClone": true,
+    "acceptedArchiveBuiltFrom": "immutable committed Git tree",
+    "all450ShippedSourceFilesCompared": true,
+    "excludedBuild": "Initial post-recovery build still matched previous fab/e8 candidate; mismatch caught before new-source qualification or delivery",
+    "cause": "unproven; no product behavior change attributed to filesystem observation"
+  }
+}

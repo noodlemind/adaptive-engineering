@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { createPersonalPrimitive, readPrimitiveOnce, registeredPath } from './local-primitives.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
 const primitiveDigest = text => `sha256-${createHash('sha256').update(text).digest('hex')}`;
-const SUPPORTED_HOST_TOOLS = new Set(['agent', 'edit/editFiles', 'execute', 'execute/getTerminalOutput', 'githubRepo', 'read', 'read/problems', 'read/terminalLastCommand', 'search', 'search/changes', 'search/codebase', 'search/usages', 'web/fetch']);
+const SUPPORTED_HOST_TOOLS = new Set(['agent', 'edit', 'edit/editFiles', 'execute', 'execute/getTerminalOutput', 'githubRepo', 'read', 'read/problems', 'read/terminalLastCommand', 'search', 'search/changes', 'search/codebase', 'search/usages', 'web/fetch']);
 
 export const primitivePath = (type, name) => ({ skill: `skills/${name}/SKILL.md`, agent: `agents/${name}.agent.md`, instruction: `instructions/${name}.instructions.md` })[type];
 const namePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

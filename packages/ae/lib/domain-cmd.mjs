@@ -1,6 +1,7 @@
 import path from 'node:path';
 import YAML from 'yaml';
 import { parseFlags } from './flags.mjs';
+import { fileInputHint } from './argv.mjs';
 import { harnessGlobalHome, resolveCopilotHome } from './paths.mjs';
 import { redactedJson, createRedactor } from './redact.mjs';
 import { inertLine } from './knowledge/store.mjs';
@@ -27,8 +28,8 @@ const OPTIONS = {
   verify: ['--plan', '--base', '--enforcement'], compound: ['--plan', '--learning-decision', '--enforcement'],
 };
 
-function usage(message) {
-  return Object.assign(new Error(`domain: ${message}`), { code: 'E_USAGE', exit: 2, hint: 'ae help domain' });
+function usage(message, hint = 'ae help domain') {
+  return Object.assign(new Error(`domain: ${message}`), { code: 'E_USAGE', exit: 2, hint });
 }
 
 export function parseDomainArguments(argv) {
@@ -47,7 +48,7 @@ export function parseDomainArguments(argv) {
     if (seen.has(key) && !['--reviewer', '--file'].includes(key)) throw usage(`duplicate option ${key}`);
     seen.add(key);
     if (boolean.has(name) && split < 0) continue;
-    if (!allValued.has(name)) throw usage(`unsupported option ${name}`);
+    if (!allValued.has(name)) throw usage(`unsupported option ${name}`, name === '--files' ? fileInputHint('domain') : undefined);
     const value = split < 0 ? argv[++index] : token.slice(split + 1);
     if (!value || (value.startsWith('-') && !(name === '--file' && value === '-')) || /[\x00-\x1f\x7f]/.test(value)) throw usage(`${name} requires a bounded value`);
     const entries = values.get(name) || [];
