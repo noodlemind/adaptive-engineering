@@ -47,7 +47,7 @@ The user also asked why `harness` remains visible. The migration deliberately na
 
 ## Final source and verification
 
-Frozen 0.14.3 product source is local commit `f8bdb18789fec257f7de4c01555eed548d1b723d`. Connected GitHub publication produced commit `7498d1eacab32daef64d15093bc4345a51c9e117`. Both have the identical complete Git tree `0b1f8be6608b9585e689f8c789ddc11688ebd17d`. Subsequent evidence-only changes do not alter package bytes.
+Frozen 0.14.3 product source is local commit `71cac64769c687ff342b24c4902949c90e6e0d53`. Connected GitHub publication produced commit `dae6bf4d51878b98cacf6c1da4993aaefc00ec67`. Both have the identical complete Git tree `2d264e5c4573688200584804928d2cc8ea5e7f26`. Subsequent evidence-only changes do not alter package bytes.
 
 - Failing CLI regressions were committed before source fixes. They demonstrate implicit authority shadowing, invalid promotion preview, discarded inline start, stale/divergent worktree reuse and incorrect caller-relative HEAD. Final review added and reproduced both subfolder and bounded-check-writer bypasses before the central correction.
 - Final authority/check/layout suite: 71 cases, 67 passed, four platform skips, zero failures.
@@ -59,7 +59,7 @@ Frozen 0.14.3 product source is local commit `f8bdb18789fec257f7de4c01555eed548d
 
 ### Two different-parent branches
 
-The [rerunnable probe](ae-post-merge-recovery-probe.mjs) and [receipt](ae-post-merge-recovery-evidence.json) passed **67 assertions across 106 actual Git/AE CLI steps** against an immutable archive of the frozen product commit. All 17 recorded runtime owners matched that commit and stayed unchanged. The receipt SHA-256 is `1da48f678257ea11176613add8c25f39b4fc92f0a4ed9a5169584163fc071ad1`.
+The [rerunnable probe](ae-post-merge-recovery-probe.mjs) and [receipt](ae-post-merge-recovery-evidence.json) passed **67 assertions across 106 actual Git/AE CLI steps** against an immutable archive of the frozen product commit. All 17 recorded runtime owners matched that commit and stayed unchanged. The receipt SHA-256 is `2a41400c0fd5c4c9775bafb2a5ef38646ff30262612583b934bb15f3dd63ac8a`.
 
 Alpha was completed before cleanup; beta remained in-progress with a published lesson. Both used current full schema-2 plans, content-bound intent and revision-bound lifecycle decisions. After merging and removing both original worktrees, recovery kept each original path and UUID, selected its exact fetched release target, obtained fresh review records and proof, published a new proof-specific lesson and completed the same plan. No third plan or renewed trust approval was needed. Local main remained stale and unchanged. All prior episode hashes were preserved.
 
@@ -70,3 +70,7 @@ The probe uses source CLI assets from a Git archive with linked dependencies, no
 ### CI corpus pointer correction
 
 The initial PR revision failed the existing corpus-reference test because the new skill named a bare relative read pointer. The same test failed locally before the installed-corpus/host-read correction and passed afterward, three cases with zero skips or failures. Release validation passed again. The two-branch probe was rerun against the corrected frozen source identified above; it again passed 67 assertions and 106 CLI/Git steps. Superseded CI is not a passing result.
+
+### Promotion preview review correction
+
+Greptile P2 identified conflicting recovery advice after a successful dry-run promotion. The CLI now reports readiness as deferred with no invented check counts, inspection or remediation; it asks to apply the reviewed promotion before inspection. Full/partial matching sets with valid, empty or invalid checks defer, while actual apply and ordinary dry runs retain real inspection. The failing regression was committed before the fix. The four-file authority/promotion/setup suite passed 63 cases with no skips or failures; corpus-reference checks and release validation passed. Independent review found no remaining concrete defect. The 67-assertion, 106-step probe was rerun against this final frozen source.
