@@ -1,0 +1,2687 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-04T23:08:51.402Z",
+  "outcome": "passed",
+  "source": {
+    "runtimeRoot": "/tmp/ae-recovery-final-aq26kpk1/packages/ae",
+    "revision": "0f6c74e7391d5a3b030e65dd50872c27704a5e51",
+    "tree": "58dbf8f7ede8586950db15e773b5b9deab2bb097",
+    "declaredOwnerBytesMatch": true,
+    "packageVersion": "0.14.3",
+    "probeSha256": "620744722d3f9a760c273c2d6a2010230dde7b66ea93f36150c54844d817d63e",
+    "files": {
+      "package.json": "efc6f9dc8c6e41197b1e4be0bb200540d20d92093980fce410f3d65267021a3f",
+      "bin/ae.mjs": "c5919b7c0377ec4b6e8caa4922e0d5003cfbb2444d4e088371372e8545d48c1d",
+      "lib/compound.mjs": "2339fd3300488cd815ed43087c199f42604e4097c9fe345e6c33643f1d675a14",
+      "lib/completion.mjs": "5ff50651f9e0a9df15ab674e7e949cfad2dd543096315219eefbb76e37ca99c0",
+      "lib/evidence.mjs": "603f0c05ad58c819902898a76b0077d795889c289497586aff0974b6c2fadc6c",
+      "lib/verify.mjs": "bef425839b384fd82b24ce3f4a93d18570415a21025452bfa4a54c79ad6a5027",
+      "lib/review.mjs": "f7ba14d1bf6683131173c7f28d7a999ddefcb239c4675f0052778b1418f20c3f",
+      "lib/review-synthesis.mjs": "0ffe33a31b2bddf4ba98d5ae58cfa5cda774acb84faccae92463ff0f66756f6b",
+      "lib/plan-new.mjs": "6b31c42ca90ffc332a8a6811fb0335522570b9b8eb3aa8a084657d35cf30a15d",
+      "lib/plan-update.mjs": "c8d50cc765d9f00db11ec926a5dfb73003c4f2008ae7b04ec045203870f48c08",
+      "lib/plan-parse.mjs": "40a021d4191deec778aa075705abc8a5a73c251446f7df805e7119dfbf71f23e",
+      "lib/init-repo.mjs": "36d90dacd3086471006eb645a0901dd8232d55e0cbd2b0b063021126eab0332c",
+      "lib/project-authority.mjs": "16a13a83942ab52d69c35e857a9227ecfca40aa74eb78fae9e278cbc82440f62",
+      "corpus/hooks/lib/project-authority.mjs": "dbfafc2383527044d54560bb8eda3c5bb831c57bb2964fa9ac0e8d91bf4d9a96",
+      "lib/worktree.mjs": "a225026a7bd6dd5d1939f8291388c0646a9802b12958a79f87ba0e4a58ee2ca0",
+      "lib/trust.mjs": "870a5ed2d395aeaa5303e77f1e6f9f23fca83defd03c374001f623d8e267963a",
+      "lib/project-layout.mjs": "9938adb844f7030f158d2c22b6972dc5bedebebc07bde96e7fd4c6144ab615c9"
+    }
+  },
+  "runtime": {
+    "node": "v24.22.1",
+    "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "platform": "linux"
+  },
+  "fixture": {
+    "root": "/tmp/ae-post-merge-recovery-A8jiWG",
+    "primary": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+    "remote": "/tmp/ae-post-merge-recovery-A8jiWG/remote.git",
+    "home": "/tmp/ae-post-merge-recovery-A8jiWG/state",
+    "copilot": "/tmp/ae-post-merge-recovery-A8jiWG/copilot",
+    "localMain": "8247f0e866e2d13141d705557d01a01029f225c2",
+    "observedOriginMain": "0b622358a405868b4d30d52cadeb8f49eca673c2"
+  },
+  "qualification": {
+    "surface": "actual CLI in disposable Git repositories",
+    "planCreation": "plan-new full schema2 with content-bound intent and revision-bound lifecycle decisions; extended domain/experiment hplan formats are outside this probe",
+    "liveEditor": "unverified",
+    "reviewJudgment": "synthetic packet-bound declarations; independence remains unverified",
+    "activeClaimSupersession": "not exercised",
+    "episodeReplacement": "not implemented or claimed"
+  },
+  "branches": [
+    {
+      "name": "alpha",
+      "acceptedBase": "8247f0e866e2d13141d705557d01a01029f225c2",
+      "originalWorktree": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "plan": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+      "planId": "fed0dbc6-cb52-44a2-bfda-f54c805ab859",
+      "target": "0b622358a405868b4d30d52cadeb8f49eca673c2",
+      "originalReview": "e61cd726bad5d9719cc8beaac02886193970e07d35cdef638370dfb51e0fac24",
+      "initialPlanStatus": "done",
+      "completedDeliveryLearning": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-committed-retry-correction-40e5bd275ebb3d29.md",
+        "sha256": "f10926850df30ab0c1d4ad155a3334c06aa8beb48fbbf0b46def9288d93488f1"
+      },
+      "originalLearning": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-retry-settings-99034a8df12a6014.md",
+        "sha256": "9bf339dce269d3b80b7de766a019cf30a685807c41c9ef18fde537accc6b4f9a"
+      },
+      "recoveryWorktree": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "recoveryReview": "e7bc80c8f37f9ca48f2854a568cde461ff82d1c249d5c26887195bfc6c3a3036",
+      "correctedLearning": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-retry-recovery-1424c2132108ee00.md",
+      "completion": "4f70825957de99f09662c337a0a4cbba5eec5f7d83413fa5dbbb652bab06c4ec",
+      "status": "done"
+    },
+    {
+      "name": "beta",
+      "acceptedBase": "78ddbf15d0be66e1ff664e71b63f395afafde6cb",
+      "originalWorktree": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "plan": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+      "planId": "faca9e54-cfe8-494b-846a-502d4d77a896",
+      "target": "7020da0317ae53a590d8d60ee877f121c4c9ab69",
+      "originalReview": "db97eb250ec1807599c7a0f964c25f9e225db200089ff44755e191f10d546cc3",
+      "initialPlanStatus": "in-progress",
+      "completedDeliveryLearning": null,
+      "originalLearning": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-beta-retry-settings-6387d7678fb0b221.md",
+        "sha256": "b211ebcca3c3403f04d82c95f5e2d45345384480c3a3245e0c958adde2217871"
+      },
+      "recoveryWorktree": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "recoveryReview": "6c45092b28d283adbead43bfc2438ceed3d1e7ef827006b69e9f84a72cdc0593",
+      "correctedLearning": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-beta-retry-recovery-5f2e94b0f61097f1.md",
+      "completion": "f86adefdb0e062404896381320a7cb4920f5ea6290f15afe1d35bfba3ad9fb94",
+      "status": "done"
+    }
+  ],
+  "assertions": [
+    "The two release branches have different accepted parent commits",
+    "alpha original worktree inherits current primary trust",
+    "alpha current plan has a persistent authored work identity",
+    "alpha current full-plan creation binds the selected intent bytes",
+    "alpha original external plan remains in-progress",
+    "alpha behavioral proof rejects the original hardcoded implementation",
+    "alpha verification requires collected review coverage",
+    "alpha-delivery has current packet-bound required review coverage",
+    "alpha-delivery review provenance does not invent model invocation",
+    "alpha in-progress plan verifies before completion",
+    "alpha verified learning publication does not require done status",
+    "alpha committing the implementation invalidates precommit proof",
+    "alpha-delivery has current packet-bound required review coverage",
+    "alpha-delivery review provenance does not invent model invocation",
+    "Alpha first fix obtains fresh committed-head proof before completion",
+    "Alpha first fix is completed before original worktree cleanup",
+    "alpha original plan has the intended completed recovery state",
+    "beta original worktree inherits current primary trust",
+    "beta current plan has a persistent authored work identity",
+    "beta current full-plan creation binds the selected intent bytes",
+    "beta original external plan remains in-progress",
+    "beta behavioral proof rejects the original hardcoded implementation",
+    "beta verification requires collected review coverage",
+    "beta-delivery has current packet-bound required review coverage",
+    "beta-delivery review provenance does not invent model invocation",
+    "beta in-progress plan verifies before completion",
+    "beta verified learning publication does not require done status",
+    "beta committing the implementation invalidates precommit proof",
+    "beta original plan has the intended in-progress recovery state",
+    "Exactly the two original external plans exist before merge recovery",
+    "alpha original checkout records are removed while its external plan survives",
+    "alpha loss of checkout proof does not mean no trusted workspace exists",
+    "alpha missing workspace evidence is reported independently of trust",
+    "beta original checkout records are removed while its external plan survives",
+    "beta loss of checkout proof does not mean no trusted workspace exists",
+    "beta missing workspace evidence is reported independently of trust",
+    "Local main remains behind observed origin/main during recovery",
+    "alpha recovery uses the exact fetched release target",
+    "alpha recovery retains the exact original plan identity",
+    "alpha recovery preserves the original plan state without reopening it",
+    "alpha recovery inherits trust without another approval",
+    "alpha recovery cannot transplant the deleted checkout's proof",
+    "alpha recovery needs a fresh required review record",
+    "alpha-recovery has current packet-bound required review coverage",
+    "alpha-recovery review provenance does not invent model invocation",
+    "alpha recovery review is bound to the committed target",
+    "alpha original plan re-verifies the accepted branch diff",
+    "alpha corrected publication preserves the prior episode's sealed bytes",
+    "Alpha recovery preserves the completed first fix publication bytes",
+    "alpha the same original plan completes with current learning and proof",
+    "alpha recovery does not reset or advance stale local main",
+    "beta recovery uses the exact fetched release target",
+    "beta recovery retains the exact original plan identity",
+    "beta recovery preserves the original plan state without reopening it",
+    "beta recovery inherits trust without another approval",
+    "beta recovery cannot transplant the deleted checkout's proof",
+    "beta recovery needs a fresh required review record",
+    "beta-recovery has current packet-bound required review coverage",
+    "beta-recovery review provenance does not invent model invocation",
+    "beta recovery review is bound to the committed target",
+    "beta original plan re-verifies the accepted branch diff",
+    "beta corrected publication preserves the prior episode's sealed bytes",
+    "beta the same original plan completes with current learning and proof",
+    "beta recovery does not reset or advance stale local main",
+    "Recovery creates no duplicate implementation plan or Plan 3",
+    "Only the initial disposable primary policy approval was issued",
+    "Runtime owner bytes stayed unchanged throughout the probe"
+  ],
+  "steps": [
+    {
+      "kind": "git",
+      "label": "init",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG",
+      "args": [
+        "init",
+        "--bare",
+        "/tmp/ae-post-merge-recovery-A8jiWG/remote.git"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "Initialized empty Git repository in /tmp/ae-post-merge-recovery-A8jiWG/remote.git/",
+      "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: is subject to change. To configure the initial branch name to use in all\nhint: of your new repositories, which will suppress this warning, call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\""
+    },
+    {
+      "kind": "git",
+      "label": "init",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "init",
+        "-b",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "Initialized empty Git repository in /tmp/ae-post-merge-recovery-A8jiWG/product/.git/"
+    },
+    {
+      "kind": "git",
+      "label": "remote",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "remote",
+        "add",
+        "origin",
+        "/tmp/ae-post-merge-recovery-A8jiWG/remote.git"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "ae",
+      "label": "install",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "install",
+        "--target",
+        "cli"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {}
+    },
+    {
+      "kind": "ae",
+      "label": "init-repo",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "init-repo"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {}
+    },
+    {
+      "kind": "git",
+      "label": "add",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "add",
+        "."
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "commit",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "commit",
+        "-m",
+        "Common release parent"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "[main (root-commit) 8247f0e] Common release parent\n 7 files changed, 49 insertions(+)\n create mode 100644 .github/harness/checks.yaml\n create mode 100644 .github/harness/policy.yaml\n create mode 100644 .github/harness/routing.yaml\n create mode 100644 .gitignore\n create mode 100644 behavior.mjs\n create mode 100644 docs/specs/retry.md\n create mode 100644 src/retry.mjs"
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "8247f0e866e2d13141d705557d01a01029f225c2"
+    },
+    {
+      "kind": "git",
+      "label": "branch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "branch",
+        "release/alpha"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "switch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "switch",
+        "-c",
+        "release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "Switched to a new branch 'release/beta'"
+    },
+    {
+      "kind": "git",
+      "label": "add",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "add",
+        "release.txt"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "commit",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "commit",
+        "-m",
+        "Beta release parent"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "[release/beta 78ddbf1] Beta release parent\n 1 file changed, 1 insertion(+)\n create mode 100644 release.txt"
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+    },
+    {
+      "kind": "git",
+      "label": "switch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "switch",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "Switched to branch 'main'"
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "push",
+        "origin",
+        "main",
+        "release/alpha",
+        "release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n * [new branch]      main -> main\n * [new branch]      release/alpha -> release/alpha\n * [new branch]      release/beta -> release/beta"
+    },
+    {
+      "kind": "git",
+      "label": "fetch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "fetch",
+        "origin"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "trust",
+        "approve"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": false,
+        "inheritedFrom": null,
+        "id": "55add07433b03477",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "--slug",
+        "alpha-delivery",
+        "--from",
+        "origin/release/alpha"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": true,
+        "inheritedFrom": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+        "id": "080de763197e51cd",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-new",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "plan-new",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "revision": "ff1434d5aa35f96b742d7f2118f620a4f9b411ba30dfe1f6a4b21bdd30562ae4",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 0
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "ff1434d5aa35f96b742d7f2118f620a4f9b411ba30dfe1f6a4b21bdd30562ae4"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update start",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "revision": "902aab38ce42fb2fd9f8e8e1cc2e6bb3d37ede2e11a9daad19dc6ada322b7a54",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 0
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "failed"
+          },
+          {
+            "id": "behavior",
+            "status": "failed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "failed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "gate",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "gate",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--phase",
+        "implement"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "blockedReason": null,
+        "checks": [
+          {
+            "id": "C1"
+          },
+          {
+            "id": "C-plan-schema"
+          },
+          {
+            "id": "C-gap-evidence"
+          },
+          {
+            "id": "C-plan-identity"
+          },
+          {
+            "id": "C-proof-obligation"
+          },
+          {
+            "id": "C-criterion-mappings"
+          },
+          {
+            "id": "C-configured-checks"
+          },
+          {
+            "id": "C-check-output-relevance"
+          },
+          {
+            "id": "C4"
+          },
+          {
+            "id": "C-goal"
+          },
+          {
+            "id": "I1"
+          },
+          {
+            "id": "I2"
+          },
+          {
+            "id": "I3"
+          },
+          {
+            "id": "C2"
+          },
+          {
+            "id": "C3"
+          },
+          {
+            "id": "R1"
+          },
+          {
+            "id": "C-worktree"
+          },
+          {
+            "id": "C-intent-sources"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "902aab38ce42fb2fd9f8e8e1cc2e6bb3d37ede2e11a9daad19dc6ada322b7a54"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update progress",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "revision": "155139c8c2801591a46a028de9ed2ff126d7f5822f9b7174a84f89313d8b48f3",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 1
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "review",
+        "prepare",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "e61cd726bad5d9719cc8beaac02886193970e07d35cdef638370dfb51e0fac24"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review assemble",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "review",
+        "assemble",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--packet",
+        "e61cd726bad5d9719cc8beaac02886193970e07d35cdef638370dfb51e0fac24",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "f9c12180ad1cd7767c4b379b9fa52c2333f217b549c75ca5a5742813443acad9",
+        "coverage": {
+          "complete": true,
+          "missing": [],
+          "collected": 1,
+          "expected": 1
+        },
+        "reviewProvenance": [
+          {
+            "reviewer": "code-simplicity-reviewer",
+            "provenance": {
+              "kind": "unverified-declaration",
+              "independence": "unverified",
+              "declared": {
+                "kind": "fixture-assertions"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "outcome": "passed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "passed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound decision",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--learning-decision",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "path": "docs/solutions/reliability/2026-11-04-alpha-retry-settings-99034a8df12a6014.md",
+        "publishedPath": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-retry-settings-99034a8df12a6014.md",
+        "blockedReason": null
+      }
+    },
+    {
+      "kind": "git",
+      "label": "add",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "add",
+        "src/retry.mjs"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "commit",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "commit",
+        "-m",
+        "alpha configurable retry"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "[harness/alpha-delivery 0b62235] alpha configurable retry\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "0b622358a405868b4d30d52cadeb8f49eca673c2"
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "Verification evidence was recorded at a different head"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "review",
+        "prepare",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "9533ca358edb9cec063f95788ab2dfafb8da3ed5e4c0dd98ae40626440e537a2"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review assemble",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "review",
+        "assemble",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--packet",
+        "9533ca358edb9cec063f95788ab2dfafb8da3ed5e4c0dd98ae40626440e537a2",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "e6f9f4e512aa4068fe52a88e7f8ea4379afd8ec98320673b3baaafccf56b5dc3",
+        "coverage": {
+          "complete": true,
+          "missing": [],
+          "collected": 1,
+          "expected": 1
+        },
+        "reviewProvenance": [
+          {
+            "reviewer": "code-simplicity-reviewer",
+            "provenance": {
+              "kind": "unverified-declaration",
+              "independence": "unverified",
+              "declared": {
+                "kind": "fixture-assertions"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "outcome": "passed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "passed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound decision",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--learning-decision",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "path": "docs/solutions/reliability/2026-11-04-alpha-committed-retry-correction-40e5bd275ebb3d29.md",
+        "publishedPath": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-committed-retry-correction-40e5bd275ebb3d29.md",
+        "blockedReason": null
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "155139c8c2801591a46a028de9ed2ff126d7f5822f9b7174a84f89313d8b48f3"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update complete",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "revision": "f593675fe5d3f0b53f4b544acacdcbb4112ae69d4a971aafe607e7dfadda8cad",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 1
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "status",
+        "--validate-completion",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "message": "Current bound completion record validated"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery",
+      "args": [
+        "push",
+        "origin",
+        "harness/alpha-delivery:feature/alpha-retry"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n * [new branch]      harness/alpha-delivery -> feature/alpha-retry"
+    },
+    {
+      "kind": "ae",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "--slug",
+        "beta-delivery",
+        "--from",
+        "origin/release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": true,
+        "inheritedFrom": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+        "id": "f5b3a408b57ac181",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-new",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "plan-new",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "revision": "4701f4e23cfef97c9b616e77459359a263418424472ac0f941813e01cfb2369a",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 0
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "4701f4e23cfef97c9b616e77459359a263418424472ac0f941813e01cfb2369a"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update start",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "revision": "1d6f413cb4c5ddae4a75fa3e8879338a0a3e9aeb0511cfd13243a958c12b9633",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 0
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "failed"
+          },
+          {
+            "id": "behavior",
+            "status": "failed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "failed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "gate",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "gate",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--phase",
+        "implement"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "blockedReason": null,
+        "checks": [
+          {
+            "id": "C1"
+          },
+          {
+            "id": "C-plan-schema"
+          },
+          {
+            "id": "C-gap-evidence"
+          },
+          {
+            "id": "C-plan-identity"
+          },
+          {
+            "id": "C-proof-obligation"
+          },
+          {
+            "id": "C-criterion-mappings"
+          },
+          {
+            "id": "C-configured-checks"
+          },
+          {
+            "id": "C-check-output-relevance"
+          },
+          {
+            "id": "C4"
+          },
+          {
+            "id": "C-goal"
+          },
+          {
+            "id": "I1"
+          },
+          {
+            "id": "I2"
+          },
+          {
+            "id": "I3"
+          },
+          {
+            "id": "C2"
+          },
+          {
+            "id": "C3"
+          },
+          {
+            "id": "R1"
+          },
+          {
+            "id": "C-worktree"
+          },
+          {
+            "id": "C-intent-sources"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "1d6f413cb4c5ddae4a75fa3e8879338a0a3e9aeb0511cfd13243a958c12b9633"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update progress",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "revision": "ac5ee5918ae6a8861346c02d0fb3aa53811aaee2bb3a04f5c0d9f62db1a78d5e",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 1
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "review",
+        "prepare",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "db97eb250ec1807599c7a0f964c25f9e225db200089ff44755e191f10d546cc3"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review assemble",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "review",
+        "assemble",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--packet",
+        "db97eb250ec1807599c7a0f964c25f9e225db200089ff44755e191f10d546cc3",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "3b47e8dcbf02b194f2f9ac573cfbe13cd901bee3529291e7f4b321f926e43369",
+        "coverage": {
+          "complete": true,
+          "missing": [],
+          "collected": 1,
+          "expected": 1
+        },
+        "reviewProvenance": [
+          {
+            "reviewer": "code-simplicity-reviewer",
+            "provenance": {
+              "kind": "unverified-declaration",
+              "independence": "unverified",
+              "declared": {
+                "kind": "fixture-assertions"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "outcome": "passed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "passed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound decision",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--learning-decision",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "path": "docs/solutions/reliability/2026-11-04-beta-retry-settings-6387d7678fb0b221.md",
+        "publishedPath": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-beta-retry-settings-6387d7678fb0b221.md",
+        "blockedReason": null
+      }
+    },
+    {
+      "kind": "git",
+      "label": "add",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "add",
+        "src/retry.mjs"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "commit",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "commit",
+        "-m",
+        "beta configurable retry"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "[harness/beta-delivery 7020da0] beta configurable retry\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "7020da0317ae53a590d8d60ee877f121c4c9ab69"
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "Verification evidence was recorded at a different head"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery",
+      "args": [
+        "push",
+        "origin",
+        "harness/beta-delivery:feature/beta-retry"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n * [new branch]      harness/beta-delivery -> feature/beta-retry"
+    },
+    {
+      "kind": "git",
+      "label": "switch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "switch",
+        "release/alpha"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "Switched to branch 'release/alpha'"
+    },
+    {
+      "kind": "git",
+      "label": "merge",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "merge",
+        "--ff-only",
+        "harness/alpha-delivery"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "Updating 8247f0e..0b62235\nFast-forward\n src/retry.mjs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "push",
+        "origin",
+        "release/alpha"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n   8247f0e..0b62235  release/alpha -> release/alpha"
+    },
+    {
+      "kind": "git",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "remove",
+        "--force",
+        "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-delivery"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": false,
+        "inheritedFrom": null,
+        "id": "55add07433b03477",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "No ae verify evidence artifact for this plan"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "switch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "switch",
+        "release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "Switched to branch 'release/beta'"
+    },
+    {
+      "kind": "git",
+      "label": "merge",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "merge",
+        "--ff-only",
+        "harness/beta-delivery"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "Updating 78ddbf1..7020da0\nFast-forward\n src/retry.mjs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "push",
+        "origin",
+        "release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n   78ddbf1..7020da0  release/beta -> release/beta"
+    },
+    {
+      "kind": "git",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "remove",
+        "--force",
+        "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-delivery"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": false,
+        "inheritedFrom": null,
+        "id": "55add07433b03477",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "No ae verify evidence artifact for this plan"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "switch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "switch",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "Switched to branch 'main'"
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "8247f0e866e2d13141d705557d01a01029f225c2"
+    },
+    {
+      "kind": "git",
+      "label": "push",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "push",
+        "origin",
+        "release/alpha:main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "To /tmp/ae-post-merge-recovery-A8jiWG/remote.git\n   8247f0e..0b62235  release/alpha -> main"
+    },
+    {
+      "kind": "git",
+      "label": "fetch",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "fetch",
+        "origin"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "origin/main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "0b622358a405868b4d30d52cadeb8f49eca673c2"
+    },
+    {
+      "kind": "git",
+      "label": "merge-base",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "merge-base",
+        "--is-ancestor",
+        "8247f0e866e2d13141d705557d01a01029f225c2",
+        "0b622358a405868b4d30d52cadeb8f49eca673c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": ""
+    },
+    {
+      "kind": "ae",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "--slug",
+        "alpha-recovery",
+        "--from",
+        "origin/release/alpha"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "0b622358a405868b4d30d52cadeb8f49eca673c2"
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": true,
+        "inheritedFrom": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+        "id": "60c50ab14451bcf2",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "No ae verify evidence artifact for this plan"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "review",
+        "prepare",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "e7bc80c8f37f9ca48f2854a568cde461ff82d1c249d5c26887195bfc6c3a3036"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review assemble",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "review",
+        "assemble",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--packet",
+        "e7bc80c8f37f9ca48f2854a568cde461ff82d1c249d5c26887195bfc6c3a3036",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "c8f747a67183da6c2fc1d301ddf89eb9b73b12ea5580ab449962122d6fe562e7",
+        "coverage": {
+          "complete": true,
+          "missing": [],
+          "collected": 1,
+          "expected": 1
+        },
+        "reviewProvenance": [
+          {
+            "reviewer": "code-simplicity-reviewer",
+            "provenance": {
+              "kind": "unverified-declaration",
+              "independence": "unverified",
+              "declared": {
+                "kind": "fixture-assertions"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--base",
+        "8247f0e866e2d13141d705557d01a01029f225c2"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "outcome": "passed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "passed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound decision",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--learning-decision",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "path": "docs/solutions/reliability/2026-11-04-alpha-retry-recovery-1424c2132108ee00.md",
+        "publishedPath": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-alpha-retry-recovery-1424c2132108ee00.md",
+        "blockedReason": null
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "f593675fe5d3f0b53f4b544acacdcbb4112ae69d4a971aafe607e7dfadda8cad"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update complete",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md",
+        "revision": "49cfa07825df7dbd4118c1ffa58bda9cd49d415f2cbb0c93064d2cb705c414c3",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 1
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/alpha-recovery",
+      "args": [
+        "status",
+        "--validate-completion",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-alpha-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "message": "Current bound completion record validated"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "8247f0e866e2d13141d705557d01a01029f225c2"
+    },
+    {
+      "kind": "ae",
+      "label": "worktree",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "worktree",
+        "--slug",
+        "beta-recovery",
+        "--from",
+        "origin/release/beta"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "rev-parse",
+        "HEAD"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "7020da0317ae53a590d8d60ee877f121c4c9ab69"
+    },
+    {
+      "kind": "ae",
+      "label": "trust",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "trust",
+        "status"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "trusted": true,
+        "inherited": true,
+        "inheritedFrom": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+        "id": "57046ce35d66e8ee",
+        "state": "trusted"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 2,
+      "signal": null,
+      "result": {
+        "pass": false,
+        "blockedReason": "No ae verify evidence artifact for this plan"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 1,
+      "signal": null,
+      "result": {
+        "outcome": "failed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "failed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "review",
+        "prepare",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "6c45092b28d283adbead43bfc2438ceed3d1e7ef827006b69e9f84a72cdc0593"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "review assemble",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "review",
+        "assemble",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--packet",
+        "6c45092b28d283adbead43bfc2438ceed3d1e7ef827006b69e9f84a72cdc0593",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "id": "370af1a59f13f04bc2216384627873377ab68a906f7ef37aee48c4152826167f",
+        "coverage": {
+          "complete": true,
+          "missing": [],
+          "collected": 1,
+          "expected": 1
+        },
+        "reviewProvenance": [
+          {
+            "reviewer": "code-simplicity-reviewer",
+            "provenance": {
+              "kind": "unverified-declaration",
+              "independence": "unverified",
+              "declared": {
+                "kind": "fixture-assertions"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "verify",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "verify",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--base",
+        "78ddbf15d0be66e1ff664e71b63f395afafde6cb"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "outcome": "passed",
+        "checks": [
+          {
+            "id": "plan-schema",
+            "status": "passed"
+          },
+          {
+            "id": "intent-sources",
+            "status": "passed"
+          },
+          {
+            "id": "plan-readiness",
+            "status": "passed"
+          },
+          {
+            "id": "plan-state",
+            "status": "passed"
+          },
+          {
+            "id": "phase-tasks",
+            "status": "passed"
+          },
+          {
+            "id": "behavior",
+            "status": "passed",
+            "proof": "behavior"
+          },
+          {
+            "id": "criteria-evidence",
+            "status": "passed"
+          },
+          {
+            "id": "scope",
+            "status": "passed"
+          },
+          {
+            "id": "structural-expectations",
+            "status": "skipped"
+          },
+          {
+            "id": "required-reviews",
+            "status": "passed"
+          },
+          {
+            "id": "hard-gaps",
+            "status": "passed"
+          },
+          {
+            "id": "critical-findings",
+            "status": "passed"
+          },
+          {
+            "id": "workspace-stability",
+            "status": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "compound decision",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "compound",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--learning-decision",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "path": "docs/solutions/reliability/2026-11-04-beta-retry-recovery-5f2e94b0f61097f1.md",
+        "publishedPath": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/docs/solutions/reliability/2026-11-04-beta-retry-recovery-5f2e94b0f61097f1.md",
+        "blockedReason": null
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "status",
+        "--contract-digest",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "revision": "ac5ee5918ae6a8861346c02d0fb3aa53811aaee2bb3a04f5c0d9f62db1a78d5e"
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "plan-update complete",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "plan-update",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "--file",
+        "-"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "path": "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md",
+        "revision": "a8293bedb8e1849b69a52eda1adbec2197c2ce7d9cac785645a02f1f02537b44",
+        "planState": {
+          "phases": 1,
+          "tasks": 1,
+          "completedTasks": 1
+        }
+      }
+    },
+    {
+      "kind": "ae",
+      "label": "status",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product/.worktrees/beta-recovery",
+      "args": [
+        "status",
+        "--validate-completion",
+        "--plan",
+        "/tmp/ae-post-merge-recovery-A8jiWG/state/projects/tmp-ae-post-merge-recovery-a8jiwg-remote-45e47e3a/plans/2026-11-04-fix-beta-retry-plan.md"
+      ],
+      "status": 0,
+      "signal": null,
+      "result": {
+        "pass": true,
+        "message": "Current bound completion record validated"
+      }
+    },
+    {
+      "kind": "git",
+      "label": "rev-parse",
+      "cwd": "/tmp/ae-post-merge-recovery-A8jiWG/product",
+      "args": [
+        "rev-parse",
+        "main"
+      ],
+      "status": 0,
+      "signal": null,
+      "stdout": "8247f0e866e2d13141d705557d01a01029f225c2"
+    }
+  ]
+}
