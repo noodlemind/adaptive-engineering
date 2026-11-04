@@ -58,44 +58,49 @@ export function projectIdentity(workspace) {
   return { root, id: crypto.createHash('sha256').update(root).digest('hex').slice(0, 16) };
 }
 
-export function policyDigest(workspace, files = PINNED_FILES, options) {
-  const hash = crypto.createHash('sha256');
+function policySnapshot(workspace, files, options) {
+  const hash = crypto.createHash('sha256'), legacyHash = crypto.createHash('sha256');
+  let routingPresent = false;
   let root, authority;
   try {
     root = canonicalPath(path.resolve(workspace));
     authority = resolveProjectAuthority(root, options);
   } catch { return null; }
   // Preserve existing shared approvals; local authority has a distinct identity.
-  if (authority.mode === 'local') hash.update(`local-authority-v1\0${authority.directory}\0`);
+  if (authority.mode === 'local') {
+    hash.update(`local-authority-v1\0${authority.directory}\0`);
+    legacyHash.update(`local-authority-v1\0${authority.directory}\0`);
+  }
   for (const rel of files) {
     const full = path.join(authority.directory, path.basename(rel));
-    hash.update(rel);
     try {
       if (!assertNoSymlinkAncestors(authority.root, path.relative(authority.root, full))) return null;
-      hash.update('\0present\0');
       const stat = fs.lstatSync(full, { throwIfNoEntry: false });
-      if (!stat) { hash.update('\0absent\0'); continue; }
-      const content = readFileNoFollow(full, { root: authority.root, maxBytes: 1024 * 1024, encoding: null });
+      const content = stat ? readFileNoFollow(full, { root: authority.root, maxBytes: 1024 * 1024, encoding: null }) : undefined;
       if (content === null) return null;
-      hash.update(content);
+      if (rel.endsWith(`${path.sep}routing.yaml`)) routingPresent = Boolean(stat);
+      for (const target of LEGACY_PINNED_FILES.includes(rel) ? [hash, legacyHash] : [hash]) {
+        target.update(rel);
+        target.update('\0present\0');
+        target.update(stat ? content : '\0absent\0');
+      }
     } catch { return null; }
   }
-  return hash.digest('hex');
+  return { digest: hash.digest('hex'), legacyDigest: routingPresent ? null : legacyHash.digest('hex') };
 }
 
-function routingFilePresent(workspace, options) {
-  try { return Boolean(fs.lstatSync(resolveProjectAuthority(workspace, options).files['routing.yaml'], { throwIfNoEntry: false })); }
-  catch { return true; }
+export function policyDigest(workspace, files = PINNED_FILES, options) {
+  return policySnapshot(workspace, files, options)?.digest ?? null;
+}
+
+function snapshotMatchesApproval(recordDigest, snapshot) {
+  return Boolean(recordDigest && snapshot && (recordDigest === snapshot.digest || recordDigest === snapshot.legacyDigest));
 }
 
 /** Current digest, or the pre-routing digest when that file is still absent. */
 export function digestMatchesApproval(recordDigest, workspace, options) {
   if (!recordDigest) return false;
-  const current = policyDigest(workspace, PINNED_FILES, options);
-  if (!current) return false;
-  if (recordDigest === current) return true;
-  if (!routingFilePresent(workspace, options) && recordDigest === policyDigest(workspace, LEGACY_PINNED_FILES, options)) return true;
-  return false;
+  return snapshotMatchesApproval(recordDigest, policySnapshot(workspace, PINNED_FILES, options));
 }
 
 function parseStoreFile(file, root) {
@@ -160,13 +165,13 @@ function writeStore({ copilotHome, home } = {}, store) {
   return written;
 }
 
-function approvalState(record, digest, workspace, store, options) {
+function approvalState(record, snapshot, store) {
   if (store.unreadable) return { state: 'untrusted', cause: 'store-unreadable', reason: 'the trust store could not be read, so nothing is trusted' };
   if (record?.status === 'conflict') return { state: 'untrusted', cause: 'own-conflict', reason: 'conflicting approvals for this project require inspection' };
-  if (digest === null) return { state: 'untrusted', cause: 'authority-unavailable', reason: 'a pinned policy source is unreadable, unsafe, nonregular or larger than 1 MiB' };
+  if (snapshot === null) return { state: 'untrusted', cause: 'authority-unavailable', reason: 'a pinned policy source is unreadable, unsafe, nonregular or larger than 1 MiB' };
   if (record?.status === 'revoked') return { state: 'revoked', cause: 'own-revoked', reason: 'trust was explicitly revoked' };
   if (record?.status === 'trusted') {
-    if (digestMatchesApproval(record.digest, workspace, options)) return { state: 'trusted', cause: 'approved', reason: `approved ${record.approvedAt}` };
+    if (snapshotMatchesApproval(record.digest, snapshot)) return { state: 'trusted', cause: 'approved', reason: `approved ${record.approvedAt}` };
     return { state: 'stale', cause: 'stale-approval', reason: 'the policy files have changed since this project was approved' };
   }
   return { state: 'untrusted', cause: 'never-approved', reason: 'this project has never been approved' };
@@ -264,9 +269,10 @@ export function trustStatus({ workspace, copilotHome, home, skillsHome, readOnly
   const authorityOptions = { home: binding.home };
   const store = readStore({ copilotHome, home }, { migrate: !readOnly });
   const record = projectApproval(store, identity);
-  const digest = policyDigest(workspace, PINNED_FILES, authorityOptions);
+  const snapshot = policySnapshot(workspace, PINNED_FILES, authorityOptions);
+  const digest = snapshot?.digest ?? null;
   const authority = authorityFor(workspace, authorityOptions);
-  const own = approvalState(record, digest, workspace, store, authorityOptions);
+  const own = approvalState(record, snapshot, store);
   let { state, reason, cause } = own;
   let inherited = false;
   let inheritedFrom = null;
@@ -279,8 +285,9 @@ export function trustStatus({ workspace, copilotHome, home, skillsHome, readOnly
     if (primaryWorkspace) {
       const primaryIdentity = projectIdentity(primaryWorkspace);
       const primaryRecord = projectApproval(store, primaryIdentity);
-      const primaryDigest = policyDigest(primaryWorkspace, PINNED_FILES, authorityOptions);
-      const primaryState = approvalState(primaryRecord, primaryDigest, primaryWorkspace, store, authorityOptions);
+      const primarySnapshot = policySnapshot(primaryWorkspace, PINNED_FILES, authorityOptions);
+      const primaryDigest = primarySnapshot?.digest ?? null;
+      const primaryState = approvalState(primaryRecord, primarySnapshot, store);
       const primaryAuthority = authorityFor(primaryWorkspace, authorityOptions);
       const primaryPinned = primaryAuthority.mode === 'unavailable' ? PINNED_FILES.map(rel => path.join(primaryIdentity.root, rel)) : PINNED_FILES.map(rel => path.join(primaryAuthority.directory, path.basename(rel)));
       primary = {

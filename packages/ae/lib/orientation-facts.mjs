@@ -77,6 +77,10 @@ function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', 
   const obligation = resolveObligation(workspace, active, q);
   const performance = performanceContext({ workspace, home, files: namedFiles || [] });
   const flowModel = advisory('flow-model', null, () => flowModelContext({ workspace, home, files: namedFiles || [], query: q }));
+  let trust = trustStatus({ workspace, copilotHome, home });
+  const checkReadiness = inspectCheckReadiness({ workspace, copilotHome, home });
+  // Check preparation can change policy bytes, so defer the approval handoff until checks are ready.
+  if (!checkReadiness.ready && trust.recovery?.afterInspection) trust = { ...trust, recovery: { ...trust.recovery, afterInspection: null } };
   const slice = {
     ...(flowModel ? { flowModel } : {}),
     ...(performance ? { performance } : {}),
@@ -87,8 +91,8 @@ function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', 
     intentDetail: flags.intentPage ? intentPage(workspace, active?.fm?.intent || q, { page: flags.intentPage, pageSize: flags.intentPageSize || 8 }) : null,
     verification: locateVerification(workspace, active?.fm?.verification?.recipe),
     planGoal: active ? extractGoalFromPlan(active) : null,
-    trust: trustStatus({ workspace, copilotHome, home }),
-    checkReadiness: inspectCheckReadiness({ workspace, copilotHome, home }),
+    trust,
+    checkReadiness,
     reviewCoverage: reviewCoverageFacts({ workspace, plan: active, copilotHome }),
     learnings, skills: procedure && !skills.some(skill => skill.id === procedure.id) ? [...skills, procedure] : skills, procedure: procedureFact, instructions, contacts,
     index: { knowledge: indexPlane(status?.knowledge), structural: indexPlane(status?.structural) },

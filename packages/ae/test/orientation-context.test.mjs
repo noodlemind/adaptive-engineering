@@ -2,15 +2,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { makeScopes, initGit, runHarness, cliHarnessHome, writeChecks } from './helpers/index.mjs';
+import { makeScopes, initGit, runHarness, cliHarnessHome, writeChecks, git, approveProject } from './helpers/index.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { collectOrientationFacts } from '../lib/orientation-facts.mjs';
 import { buildContextRecord } from '../lib/context-record.mjs';
 import { validateContextSnapshot } from '../lib/task-handoff.mjs';
+import { addIsolatedWorktree } from '../lib/worktree.mjs';
+import { trustStatus } from '../lib/trust.mjs';
 
 function fixture(t) {
   const f = makeScopes();
+  f.workspace = fs.realpathSync.native(f.workspace);
+  f.copilotHome = fs.realpathSync.native(f.copilotHome);
   t.after(() => fs.rmSync(f.workspace, { recursive: true, force: true }));
   t.after(() => fs.rmSync(f.copilotHome, { recursive: true, force: true }));
   fs.writeFileSync(path.join(f.workspace, 'a.mjs'), 'export const alpha = 1;\n');
@@ -84,6 +88,44 @@ test('orientation retains Engineer trust inspection while checks need preparatio
   assert.equal(result.trust.recovery.kind, 'inspect-store');
   assert.ok(result.nextTools.includes('Inspect trust.recovery; prepare checks before approval'), JSON.stringify(result.nextTools));
   assert.ok(!result.nextTools.some(tool => /trust approve/.test(tool)), JSON.stringify(result.nextTools));
+});
+
+test('orientation withholds conditional child approval until named checks are ready', t => {
+  const f = fixture(t), home = path.join(f.copilotHome, 'ae state');
+  fs.mkdirSync(path.join(f.workspace, '.github/harness'), { recursive: true });
+  fs.writeFileSync(path.join(f.workspace, '.github/harness/checks.yaml'), 'version: 1\nchecks: {}\n');
+  fs.writeFileSync(path.join(f.workspace, '.github/harness/policy.yaml'), 'enforcement: enforce\n');
+  assert.equal(git(f.workspace, ['add', '.github/harness']).status, 0);
+  assert.equal(git(f.workspace, ['commit', '-qm', 'policy with empty checks']).status, 0);
+  approveProject({ workspace: f.workspace, copilotHome: f.copilotHome, home });
+  const child = addIsolatedWorktree({ workspace: f.workspace, slug: 'orientation-recovery', from: 'HEAD' });
+  t.after(() => fs.rmSync(child.path, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(child.path, '.github/harness/policy.yaml'), 'enforcement: warn\n');
+  const scopes = { workspace: child.path, copilotHome: f.copilotHome, home };
+  const invoke = (...args) => {
+    const result = runHarness(['orient', '--workspace', child.path, '--copilot-home', f.copilotHome, '--ae-home', home, '--context-version', '2', '--file', 'a.mjs', '--dry-run', '--json', ...args], { trust: false, env: { CI: '1' } });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  assert.equal(trustStatus(scopes).recovery.afterInspection.owner, 'person');
+  const result = invoke();
+  assert.equal(result.checkReadiness.status, 'empty');
+  assert.equal(result.trust.cause, 'policy-mismatch');
+  assert.equal(result.trust.recovery.owner, 'engineer');
+  assert.equal(result.trust.recovery.afterInspection, null);
+  assert.deepEqual(result.context.slice.trust, result.trust);
+  assert.deepEqual(invoke('--read').slice.trust, result.trust);
+  assert.ok(result.nextTools.includes('Inspect trust.recovery; prepare checks before approval'));
+
+  writeChecks(child.path, { behavior: { command: [process.execPath, '--test'] } });
+  const prepared = invoke();
+  assert.equal(prepared.checkReadiness.ready, true);
+  assert.deepEqual(prepared.trust.recovery.afterInspection, trustStatus(scopes).recovery.afterInspection);
+  assert.equal(prepared.trust.recovery.afterInspection.owner, 'person');
+  assert.ok(prepared.trust.recovery.afterInspection.command.includes(fs.realpathSync.native(child.path)));
+  assert.ok(prepared.nextTools.includes('Use trust.recovery'));
+  assert.deepEqual(prepared.context.slice.trust, prepared.trust);
+  assert.deepEqual(invoke('--read').slice.trust, prepared.trust);
 });
 
 test('unknown context versions fail explicitly', (t) => {

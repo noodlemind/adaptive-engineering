@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import YAML from 'yaml';
-import { approveProject, revokeProject, trustStatus, trustStorePath, formatTrustRecovery } from '../lib/trust.mjs';
+import { approveProject, revokeProject, trustStatus, trustStorePath, formatTrustRecovery, policyDigest, LEGACY_PINNED_FILES } from '../lib/trust.mjs';
 import { addIsolatedWorktree } from '../lib/worktree.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { configureCheckConfiguration } from '../lib/check-configuration.mjs';
@@ -41,6 +41,60 @@ function linkedFixture(t) {
 function run(args, s, cwd = s.root, env = process.env) {
   return spawnSync(process.execPath, [bin, ...args, '--workspace', s.workspace, '--harness-home', s.home, '--copilot-home', s.copilotHome, '--no-events'], { cwd, env, encoding: 'utf8' });
 }
+
+function restorePolicyAfterFirstRead(t, file, approvedBytes) {
+  const expected = fs.statSync(file), closeSync = fs.closeSync;
+  let restored = false;
+  t.mock.method(fs, 'closeSync', fd => {
+    const stat = fs.fstatSync(fd);
+    closeSync(fd);
+    if (!restored && stat.dev === expected.dev && stat.ino === expected.ino) {
+      restored = true;
+      fs.writeFileSync(file, approvedBytes);
+    }
+  });
+  return () => restored;
+}
+
+test('inherited approval uses the same primary policy snapshot as the child comparison', async t => {
+  for (const legacy of [false, true]) await t.test(legacy ? 'pre-routing approval' : 'current approval', sub => {
+    const { s, child } = linkedFixture(sub), approvedBytes = 'enforcement: enforce\n';
+    if (legacy) {
+      const file = trustStorePath(s), store = YAML.parse(fs.readFileSync(file, 'utf8'));
+      store.projects[s.workspace].digest = policyDigest(s.workspace, LEGACY_PINNED_FILES);
+      fs.writeFileSync(file, YAML.stringify(store));
+    }
+    for (const target of [s, child]) write(target.workspace, 'policy.yaml', 'enforcement: observe\n');
+    const unapprovedDigest = policyDigest(child.workspace);
+    const restored = restorePolicyAfterFirstRead(sub, path.join(s.workspace, '.github/harness/policy.yaml'), approvedBytes);
+
+    const result = trustStatus(child);
+    assert.equal(restored(), true);
+    assert.equal(result.primary.digest, unapprovedDigest);
+    assert.equal(result.primary.state, 'stale');
+    assert.equal(result.trusted, false);
+    assert.equal(result.inherited, false);
+    assert.equal(fs.readFileSync(path.join(s.workspace, '.github/harness/policy.yaml'), 'utf8'), approvedBytes);
+
+    write(child.workspace, 'policy.yaml', approvedBytes);
+    assert.equal(trustStatus(child).inherited, true, 'the approved snapshot still permits normal inheritance');
+  });
+});
+
+test('direct approval is checked against the digest returned by the same observation', t => {
+  const s = fixture(t), approvedBytes = 'enforcement: enforce\n';
+  write(s.workspace, 'policy.yaml', approvedBytes); approveProject(s);
+  write(s.workspace, 'policy.yaml', 'enforcement: observe\n');
+  const unapprovedDigest = policyDigest(s.workspace);
+  const restored = restorePolicyAfterFirstRead(t, path.join(s.workspace, '.github/harness/policy.yaml'), approvedBytes);
+
+  const result = trustStatus(s);
+  assert.equal(restored(), true);
+  assert.equal(result.digest, unapprovedDigest);
+  assert.equal(result.state, 'stale');
+  assert.equal(result.trusted, false);
+  assert.equal(trustStatus(s).trusted, true, 'a later observation sees the restored approved snapshot');
+});
 
 test('a stale child approval can inherit an exactly matching current primary approval', t => {
   const { s, child } = linkedFixture(t);
