@@ -7,7 +7,7 @@ import { inertLine } from './knowledge/store.mjs';
 import { CHECKS_REL, loadNamedChecks, validateCommand, runNamedCheck, CHECK_TIMEOUT_DEFAULT_SECONDS } from './checks.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { projectAuthorityFile } from './project-authority.mjs';
-import { isProjectTrusted } from './trust.mjs';
+import { trustStatus, formatTrustRecovery } from './trust.mjs';
 import { configureCheckConfiguration, inspectCheckConfiguration } from './check-configuration.mjs';
 import { readBoundedInput, readFileNoFollow } from './fs-safe.mjs';
 
@@ -71,6 +71,16 @@ export async function checksResultOf(argv, ctx = {}) {
     return configureCheckConfiguration({ workspace, home: flags.harnessHome, copilotHome, input, dryRun: flags.dryRun });
   }
   if (flags.files?.length) throw usageError('--file is only supported for checks configure', 'ae checks configure --file - --json');
+  if (verb === 'run' && !name) throw usageError('checks run requires a check name', 'ae checks run <name>');
+  const trust = verb === 'run' ? trustStatus({ workspace, copilotHome, home: flags.harnessHome }) : null;
+  if (trust && !trust.trusted) {
+    throw Object.assign(new Error(`refusing to run ${JSON.stringify(name)}: this project is not trusted`), {
+      code: 'E_DENIED',
+      exit: EXIT.needsApproval,
+      hint: formatTrustRecovery(trust.recovery),
+      trust,
+    });
+  }
   const listed = verb === 'list' ? inspectCheckConfiguration({ workspace, home: flags.harnessHome }) : null;
   const checks = listed ? listed.checks : readChecks(workspace, { home: flags.harnessHome });
   const source = projectAuthorityFile(workspace, 'checks.yaml', { home: flags.harnessHome });
@@ -98,13 +108,6 @@ export async function checksResultOf(argv, ctx = {}) {
     return { schema: 1, verb, config: configPath, check: describeCheck(name, checks[name]) };
   }
 
-    if (!isProjectTrusted({ workspace, copilotHome, home: flags.harnessHome })) {
-    throw Object.assign(new Error(`refusing to run ${JSON.stringify(name)}: this project is not trusted`), {
-      code: 'E_DENIED',
-      exit: EXIT.needsApproval,
-      hint: `a named check runs commands this repository authored — read them with \`ae checks show ${name}\`, then \`ae trust approve\``,
-    });
-  }
     const outcome = await runNamedCheck(workspace, name, checks[name], { signal: ctx.signal, copilotHome, home: flags.harnessHome, events: ctx.events });
     return { schema: 1, verb, config: configPath, status: statusForOutcome(outcome), check: describeCheck(name, checks[name]), outcome };
 }

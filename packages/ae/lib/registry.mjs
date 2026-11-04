@@ -30,7 +30,8 @@ import {
   cmdUninstall,
   cmdResolve,
 } from './commands.mjs';
-import { cmdPlanNew } from './plan-new.mjs';
+import { cmdPlanNew, normalizePlanNewArgs } from './plan-new.mjs';
+import { VALUE_FLAGS } from './positionals.mjs';
 import { cmdPlanUpdate } from './plan-update.mjs';
 import { cmdWorktree } from './worktree-cmd.mjs';
 import { cmdPrepare } from './prepare.mjs';
@@ -67,7 +68,7 @@ import {
 } from './retrieval/search-cmd.mjs';
 import { LOOKUP_KINDS, LOOKUP_KIND_SUMMARIES } from './retrieval/lookup.mjs';
 import { parseFlags, hasFlag } from './flags.mjs';
-import { parseQueryFromArgv } from './argv.mjs';
+import { fileInputHint, parseQueryFromArgv } from './argv.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { createEnvelope, createErrorEnvelope, STATUS } from './envelope.mjs';
 import { renderAgentLane, recordAgentLaneBytes } from './agent-lane.mjs';
@@ -319,7 +320,10 @@ export function validateArgs(entry, argv) {
     const flagName = eq === -1 ? token : token.slice(0, eq);
     const def = known.get(flagName);
     if (!def) {
-      throw usageError(`unknown flag: ${flagName}`, `ae help ${entry.name}`);
+      const hint = flagName === '--files' && known.has('--file')
+        ? fileInputHint(entry.name)
+        : `ae help ${entry.name}`;
+      throw usageError(`unknown flag: ${flagName}`, hint);
     }
         if (def.type !== 'boolean' || eq === -1) present.add(def.name);
     if (def.type !== 'boolean' && eq === -1) {
@@ -557,15 +561,6 @@ function planNewFlagValue(rest, name) {
   return value;
 }
 
-function planNewFlagValues(rest, name) {
-  const values = [];
-  for (let i = 0; i < rest.length; i++) {
-    if (rest[i] === '--') break;
-    if (rest[i] === name) values.push(rest[++i]);
-  }
-  return values;
-}
-
 function worktreeRequireArgs(rest) {
   const slug = planNewFlagValue(rest, '--slug');
   if (!slug || !PLAN_NEW_SLUG_RE.test(slug)) {
@@ -574,23 +569,33 @@ function worktreeRequireArgs(rest) {
 }
 
 function planNewRequireArgs(rest) {
-  if (planNewFlagValue(rest, '--file')) return undefined;
-  if (planNewFlagValue(rest, '--from')) return undefined;
-  const goalValues = planNewFlagValues(rest, '--goal');
+  const argv = normalizePlanNewArgs(rest);
+  const values = new Map();
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') break;
+    if (!VALUE_FLAGS.has(argv[i])) continue;
+    const name = argv[i];
+    const value = argv[++i];
+    if (!values.has(name)) values.set(name, []);
+    values.get(name).push(value);
+  }
+  if (values.has('--file')) return undefined;
+  if (values.get('--from')?.at(-1)) return undefined;
+  const goalValues = values.get('--goal') || [];
   if (goalValues.length) {
     const goal = goalValues.at(-1);
-    const acceptance = planNewFlagValues(rest, '--acceptance').filter((value) => typeof value === 'string' && value.trim());
-    const constraints = planNewFlagValues(rest, '--constraint').filter((value) => typeof value === 'string' && value.trim());
+    const acceptance = (values.get('--acceptance') || []).filter((value) => value.trim());
+    const constraints = (values.get('--constraint') || []).filter((value) => value.trim());
     if (!goal || !String(goal).trim() || acceptance.length === 0 || constraints.length === 0) {
       return 'plan-new: --goal requires at least one --acceptance and one --constraint';
     }
     return undefined;
   }
-  const slug = planNewFlagValue(rest, '--slug');
+  const slug = values.get('--slug')?.at(-1);
   if (!slug || !PLAN_NEW_SLUG_RE.test(slug)) {
     return 'plan-new: --slug is required and must be lowercase-hyphen (a-z0-9-)';
   }
-  const intent = planNewFlagValue(rest, '--intent');
+  const intent = values.get('--intent')?.at(-1);
   if (!intent || !intent.trim()) {
     return 'plan-new: --intent is required';
   }
@@ -818,11 +823,15 @@ registerCommand({
 
 registerCommand({
   name: 'upgrade',
-  summary: 're-hydrate and purge retired primitives',
+  summary: 'refresh an existing integration and report workspace prerequisites',
   group: 'setup',
   sideEffect: 'mutate',
     surfaces: ['cli'],
-  args: { positionals: [], flags: INSTALL_FLAGS },
+  args: { positionals: [], flags: [
+    ...INSTALL_FLAGS,
+    { name: '--host', type: 'string', valueName: 'id', description: 'existing native integration: claude-code, codex, cursor or terminal' },
+    { name: '--config-home', type: 'string', valueName: 'path', description: 'selected native host configuration directory; requires --host' },
+  ] },
   handler: (argv) => cmdInstallOrUpgrade('upgrade', argv),
 });
 

@@ -122,6 +122,23 @@ test('unresolved primary helper metadata fails before checkout or ignore-file mu
   f.assertNoEffects();
 });
 
+test('worktree reuse rejects a linked checkout belonging to another repository', t => {
+  const f = fixture(t, 'metadata');
+  const foreign = path.join(f.root, 'foreign');
+  fs.mkdirSync(foreign);
+  f.mustGit(['init', '-b', 'main'], foreign);
+  fs.writeFileSync(path.join(foreign, 'foreign.txt'), 'belongs to the other repository\n');
+  f.mustGit(['add', '.'], foreign);
+  f.mustGit(['commit', '-qm', 'foreign repository'], foreign);
+  const dest = path.join(f.workspace, '.worktrees', 'foreign');
+  f.mustGit(['worktree', 'add', '-b', 'foreign-work', dest, 'HEAD'], foreign);
+  const result = f.cli('foreign');
+  assert.notEqual(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stderr, /not a worktree of this repository/);
+  assert.equal(fs.readFileSync(path.join(dest, 'foreign.txt'), 'utf8'), 'belongs to the other repository\n');
+  assert.equal(fs.existsSync(path.join(f.workspace, '.git', 'ae-worktrees')), false);
+});
+
 for (const invalid of ['malformed', 'oversized']) {
   test(`unresolved ${invalid} target-branch metadata removes only the new checkout and supports a populated retry`, (t) => {
     const f = fixture(t, 'smudge');

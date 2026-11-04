@@ -81,6 +81,56 @@ for (const operation of ['openSync', 'readFileSync', 'readdirSync']) {
   return () => assert.equal(fs.existsSync(log), false, fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : undefined);
 }
 
+test('CLI: review assemble refuses repeated JSON files before reading a file or plan', t => {
+  const f = fixture(t);
+  const noReads = forbidReads(f, path.join(f.ws, 'inputs'));
+  for (const args of [
+    ['--file', 'inputs/one.json', '--file', 'inputs/two.json'],
+    ['--file=inputs/one.json', '--file=inputs/two.json'],
+    ['--file', 'inputs/one.json', '--file=inputs/one.json'],
+    ['--file', '-', '--file', 'inputs/one.json'],
+  ]) {
+    const result = f.cli('assemble', '--plan', 'missing-plan.md', ...args);
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(JSON.parse(result.stderr).error.code, 'E_USAGE');
+    assert.match(result.stderr, /one JSON document/);
+  }
+  noReads();
+});
+
+test('CLI: review reads the verb from positional arguments rather than file names', t => {
+  const f = fixture(t);
+  for (const fileArgs of [['--file', 'prepare'], ['--file=prepare']]) {
+    const result = f.cli(...fileArgs, 'assemble', '--dry-run');
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /Review input is absent/);
+    assert.equal(result.stdout, '');
+  }
+});
+
+test('CLI: review prepare keeps repeated sources with spaces, equals characters and verb names', t => {
+  const f = fixture(t);
+  const selected = ['assemble', 'guide one=two.md'];
+  for (const file of selected) fs.writeFileSync(path.join(f.ws, file), `# ${file}\n\nReview this source.\n`);
+  const result = f.cli('--file', selected[0], 'prepare', '--domain', 'document', '--base', 'HEAD', `--file=${selected[1]}`);
+  assert.equal(result.status, 0, result.stderr);
+  const packet = JSON.parse(result.stdout);
+  assert.deepEqual(packet.scope.files.map(ref => ref.path), selected);
+  assert.deepEqual(packet.preparation.files.map(ref => ref.path), selected);
+});
+
+test('CLI: review rejects extra and post-boundary file operands', t => {
+  const f = fixture(t);
+  for (const args of [
+    ['assemble', '--file', 'missing.json', 'extra.json'],
+    ['assemble', '--', '--file=missing.json'],
+    ['--', 'prepare'],
+  ]) {
+    const result = f.cli(...args);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /unexpected argument|requires prepare or assemble/);
+  }
+});
 test('prepare owns mandatory coverage and brace/comma/glob discovery', t => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.ws, '.github/checks'), { recursive: true });

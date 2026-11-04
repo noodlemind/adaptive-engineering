@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { runTree, MAX_DEPTH, MAX_NODES, DEFAULT_DEPTH, TREE_SUBJECTS } from '../lib/retrieval/tree.mjs';
 import { listRepoFiles, MAX_FILES_SCANNED } from '../lib/repo-map/scan.mjs';
 import { storeDir, serializeLearning, repoId } from '../lib/knowledge/store.mjs';
+import { runHarness } from './helpers/cli.mjs';
 
 // Neutralize host git config, same as every other suite.
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -43,6 +44,38 @@ function fixture(t, prefix = 'harness-tree-') {
 
 const names = (node) => node.children.map((c) => c.name);
 const child = (node, name) => node.children.find((c) => c.name === name);
+
+test('tree CLI preserves boolean ordering and literal option-shaped targets', t => {
+  const { ws, home, copilotHome } = fixture(t);
+  write(ws, '--files/literal.mjs', 'export const literal = true;\n');
+  execFileSync('git', ['add', '--', '--files/literal.mjs'], { cwd: ws, env: GIT_ENV });
+  const cli = argv => runHarness(['tree', '--workspace', ws, '--ae-home', home, '--copilot-home', copilotHome, '--json', '--no-events', ...argv], {
+    cwd: ws, env: GIT_ENV, trust: false, injectHome: false,
+  });
+  const canonical = cli(['workspace', '--files']);
+  const reordered = cli(['--files', 'workspace']);
+  assert.equal(reordered.status, 0, reordered.stderr);
+  assert.deepEqual(JSON.parse(reordered.stdout).files, JSON.parse(canonical.stdout).files);
+  const literal = cli(['workspace', '--', '--files']);
+  assert.equal(literal.status, 0, literal.stderr);
+  const result = JSON.parse(literal.stdout);
+  assert.equal(result.files, undefined);
+  assert.equal(result.target, '--files');
+  assert.deepEqual(names(result.root), ['literal.mjs']);
+  const missingDepth = cli(['workspace', '--depth']);
+  assert.equal(missingDepth.status, 2, missingDepth.stdout + missingDepth.stderr);
+});
+
+test('tree CLI does not read depth options beyond the literal boundary', t => {
+  const { ws, home, copilotHome } = fixture(t);
+  write(ws, '--depth=1/visible.mjs', 'export const visible = true;\n');
+  execFileSync('git', ['add', '--', '--depth=1/visible.mjs'], { cwd: ws, env: GIT_ENV });
+  const result = runHarness(['tree', 'workspace', '--workspace', ws, '--ae-home', home, '--copilot-home', copilotHome,
+    '--json', '--no-events', '--', '--depth=1'], { cwd: ws, env: GIT_ENV, trust: false, injectHome: false });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).depth, DEFAULT_DEPTH);
+  assert.equal(JSON.parse(result.stdout).target, '--depth=1');
+});
 
 test('tree workspace renders tracked source only, directories first, name-ordered', (t) => {
   const { ws, home, copilotHome } = fixture(t);

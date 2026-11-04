@@ -8,6 +8,7 @@ import { parseFlags } from '../lib/flags.mjs';
 import { collectOrientationFacts } from '../lib/orientation-facts.mjs';
 import { buildContextRecord } from '../lib/context-record.mjs';
 import { validateContextSnapshot } from '../lib/task-handoff.mjs';
+import { tokenizeShell } from '../corpus/hooks/lib/tool-payload.mjs';
 
 function fixture(t) {
   const f = makeScopes();
@@ -48,6 +49,24 @@ test('both orientation paths assemble the same facts and stable context identity
   assert.equal(f.invoke('--read', '--context-version', '2', '--file', 'a.mjs', '--dry-run').contextId, read.contextId);
   fs.writeFileSync(path.join(f.workspace, 'a.mjs'), 'export const alpha = 2;\n');
   assert.notEqual(f.invoke('--read', '--context-version', '2', '--file', 'a.mjs', '--dry-run').contextId, read.contextId);
+});
+
+test('orientation exposes its trust diagnosis and bound recovery without another status request', t => {
+  const f = fixture(t), home = path.join(f.copilotHome, 'ae state');
+  const args = ['--ae-home', home, '--context-version', '2', '--file', 'a.mjs', '--dry-run'];
+  const result = f.invoke(...args), read = f.invoke('--read', ...args);
+  assert.deepEqual(result.trust, read.slice.trust);
+  assert.equal(result.trust.cause, 'never-approved');
+  assert.deepEqual(result.trust.binding, { workspace: f.workspace, home, copilotHome: f.copilotHome, store: path.join(home, 'trust.yaml') });
+  assert.equal(result.trust.recovery.owner, 'person');
+  assert.equal(result.trust.recovery.kind, 'review-and-approve');
+  const recovery = result.nextTools.find(tool => tool.startsWith(`${result.trust.recovery.message} `));
+  assert.ok(recovery, JSON.stringify(result.nextTools));
+  if (process.platform === 'win32') assert.ok(recovery.startsWith(`${result.trust.recovery.message} & `));
+  else assert.deepEqual(tokenizeShell(recovery.slice(result.trust.recovery.message.length + 1)), result.trust.recovery.command);
+  assert.deepEqual(result.trust.recovery.command.slice(2), ['trust', 'approve', '--workspace', f.workspace, '--ae-home', home, '--copilot-home', f.copilotHome, '--json']);
+  assert.ok(!result.nextTools.some(tool => /^ae trust status\b/.test(tool)), JSON.stringify(result.nextTools));
+  assert.equal(fs.existsSync(result.trust.binding.store), false);
 });
 
 test('unknown context versions fail explicitly', (t) => {

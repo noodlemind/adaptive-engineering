@@ -16,7 +16,7 @@ import { validatePlanScope } from './plan-scope.mjs';
 import { createEvidenceBinding, writeEvidence, planDigest } from './evidence.mjs';
 import { checkSeverityFor, enforcementExitCode, loadPolicy } from './policy.mjs';
 import { resolveCopilotHome } from './paths.mjs';
-import { isProjectTrusted } from './trust.mjs';
+import { trustStatus, formatTrustRecovery } from './trust.mjs';
 import { verifyPrimitiveGovernance } from './primitive-governance.mjs';
 import { validatePlanReadiness } from './plan-readiness.mjs';
 import { STRUCTURAL_CHECK_ID, runStructuralExpectations } from './structural/expectations.mjs';
@@ -434,18 +434,19 @@ export async function runVerify({ workspace, flags, signal, onEvent, events = nu
   const named = loadNamedChecks(workspace, { home: planTrustHome(workspace, plan) });
   const required = Array.isArray(plan.fm.verification?.required) ? plan.fm.verification.required : [];
     const streamRedactor = onEvent ? createRedactor() : null;
-    const namedChecksTrusted = isProjectTrusted({ workspace, copilotHome: resolveCopilotHome(flags.copilotHome), home: planTrustHome(workspace, plan) });
+  const namedTrust = trustStatus({ workspace, copilotHome: resolveCopilotHome(flags.copilotHome), home: planTrustHome(workspace, plan) });
   const namedResults = [];
   for (const name of required) {
     if (!readiness.pass) {
       namedResults.push(resultCheck(name, 'inconclusive', 'Not run because plan readiness failed'));
       continue;
     }
-    if (!namedChecksTrusted) {
+    if (!namedTrust.trusted) {
       namedResults.push(resultCheck(
         name,
         'unavailable',
-        `Not run: this project is not trusted, and a named check executes repo-authored commands. A person must read ${named.source || 'the selected project checks.yaml'} and approve the current policy with \`ae trust approve\`; the agent must not grant approval.`,
+        `Not run: this project is not trusted. ${formatTrustRecovery(namedTrust.recovery)}`,
+        { trust: namedTrust },
       ));
       continue;
     }

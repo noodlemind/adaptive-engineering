@@ -258,12 +258,12 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
         return path.resolve(entry) === destReal;
       }
     });
-    if (listedHit || isLinkedWorktree(dest)) {
+    if ((listedHit || isLinkedWorktree(dest)) && gitCommonDir(dest) === gitCommonDir(root)) {
       carryCheckoutPlans(root, dest);
       if (record) recordAeWorktree(root, dest);
       return { path: dest, branch: currentBranch(dest) || branch, created: false, isolated: true };
     }
-    throw usage(`worktree: ${dest} exists and is not a worktree`);
+    throw usage(`worktree: ${dest} exists and is not a worktree of this repository`);
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const branchExists = Boolean(gitOut(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]));

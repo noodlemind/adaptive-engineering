@@ -10,6 +10,7 @@ import { readLock } from '../lock.mjs';
 import { resolveCopilotHome, resolveIntelliJHome, harnessGlobalHome } from '../paths.mjs';
 import { assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { redactedJson } from '../redact.mjs';
+import { readWorkspaceOutcome, formatWorkspaceOutcome } from '../workspace-outcome.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const HOST_VERBS = ['list', 'setup', 'status', 'remove', 'export'];
@@ -91,6 +92,7 @@ export function hostResultOf(argv) {
     if (options.verb === 'export') return exportPlugin(options);
     if (Object.hasOwn(legacy, options.host)) return runLegacy(options);
     const result = runHostSetup(options);
+    if (options.verb === 'setup' && result.roots) result.workspace = readWorkspaceOutcome({ workspace: options.workspace, ...result.roots, copilotHome: result.roots.configHome });
     if (options.verb === 'list') {
       result.hosts = result.hosts.map(item => ({ ...item, id: item.id || item.host }));
       result.hosts.push(...Object.keys(legacy).map(id => ({ id, legacy: true, nativeQualification: 'unverified' })));
@@ -99,10 +101,27 @@ export function hostResultOf(argv) {
   } catch (error) { return { schema: 1, status: 'failed', exitCode: 2, reason: error.message }; }
 }
 
+export function upgradeHostResultOf(argv) {
+  try {
+    const options = parse(['setup', ...argv]);
+    options.skillsHome ||= process.env.AE_SKILLS_HOME;
+    const integration = runHostSetup({ ...options, requireExisting: true });
+    const workspace = integration.roots ? readWorkspaceOutcome({ workspace: options.workspace, ...integration.roots, copilotHome: integration.roots.configHome }) : null;
+    return {
+      command: 'upgrade', version: JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version,
+      dryRun: Boolean(options.dryRun), installation: { status: 'current', runtime: path.join(packageRoot, 'bin/ae.mjs') },
+      integration, workspace, checkReadiness: workspace?.checkReadiness ?? null, exitCode: integration.exitCode,
+    };
+  } catch (error) { return { command: 'upgrade', status: 'failed', exitCode: 2, reason: error.message }; }
+}
+
 export function cmdHost(argv) {
   const result = hostResultOf(argv);
   if (argv.includes('--json')) console.log(redactedJson(result));
   else if (result.hosts) for (const host of result.hosts) console.log(`${host.id}${host.legacy ? ' (legacy Copilot setup)' : ''}`);
-  else console.log(result.reason || `${result.status}: ${result.host || result.output || 'host export'}`);
+  else {
+    console.log(result.reason || `${result.status}: ${result.host || result.output || 'host export'}`);
+    if (result.workspace) console.log(formatWorkspaceOutcome(result.workspace));
+  }
   return result.exitCode;
 }

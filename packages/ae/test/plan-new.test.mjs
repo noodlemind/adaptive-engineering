@@ -145,7 +145,7 @@ test('scaffolded capability-gap plan is blocked-capability and the gate denies i
   fs.rmSync(ws, { recursive: true, force: true });
 });
 
-test('CLI: plan-new slices at the `--` boundary — no value flag swallows it, nothing after it is a flag', () => {
+test('CLI: plan-new rejects trailing operands without parsing them as flags', () => {
   const ws = workspace();
   const r = spawnSync(
     process.execPath,
@@ -155,15 +155,135 @@ test('CLI: plan-new slices at the `--` boundary — no value flag swallows it, n
     ],
     { cwd: ws, encoding: 'utf8', env: runtimeEnv(ws) }
   );
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /plan-new/, 'the human ledger renders');
-  assert.throws(() => JSON.parse(r.stdout), 'the post-boundary --json must be inert content, not the output selector');
-  const written = fs.readdirSync(aeHome(ws), { recursive: true }).find((name) => String(name).endsWith('boundary-demo-plan.md'));
-  assert.ok(written, 'plan file is outside the repo');
-  const content = fs.readFileSync(path.join(aeHome(ws), String(written)), 'utf8');
-  const frontmatter = YAML.parse(content.match(/^---\n([\s\S]*?)\n---/)[1]);
-  assert.equal(frontmatter.title, 'Boundary Demo', 'the boundary token must never become the --title value');
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /unexpected argument --json/);
+  assert.throws(() => JSON.parse(r.stderr), 'the post-boundary --json must not select JSON output');
+  assert.equal(fs.existsSync(aeHome(ws)) && fs.readdirSync(aeHome(ws), { recursive: true }).some(name => String(name).endsWith('boundary-demo-plan.md')), false);
   fs.rmSync(ws, { recursive: true, force: true });
+});
+
+test('CLI: plan-new accepts an equals file path with spaces and equals characters', () => {
+  const ws = workspace();
+  const file = 'creation decision=ready.json';
+  fs.writeFileSync(path.join(ws, file), JSON.stringify({ version: 1, format: 'full', slug: 'equals-input', goal: 'Preserve the exact input path', acceptance: ['The plan is authored'], check: 'unit-tests' }));
+  const result = harness(ws, ['plan-new', `--file=${file}`, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(fs.readFileSync(JSON.parse(result.stdout).path, 'utf8'), /Preserve the exact input path/);
+});
+
+test('CLI: plan-new preserves equals authoring flags in the written full plan', () => {
+  const ws = workspace();
+  const result = harness(ws, [
+    'plan-new', '--type=fix', '--slug=inline-authoring', '--title=Keep title = exact',
+    '--intent=Keep every authored input = exact', '--date=2026-07-21',
+    '--impacted=src/critical=a.js,src/with spaces.js', '--criteria=Preserve the declared scope',
+    '--risk=amber', '--status=planned', '--verification-check=unit-tests', '--json',
+  ]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const content = fs.readFileSync(JSON.parse(result.stdout).path, 'utf8');
+  const fm = YAML.parse(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+  assert.equal(fm.title, 'Keep title = exact');
+  assert.equal(fm.intent, 'Keep every authored input = exact');
+  assert.equal(fm.type, 'fix');
+  assert.equal(fm.risk, 'amber');
+  assert.equal(fm.status, 'planned');
+  assert.deepEqual(fm.verification.required, ['unit-tests']);
+  assert.match(content, /\*\*AC1\*\* Preserve the declared scope/);
+  assert.match(content, /- `src\/critical=a\.js`\n- `src\/with spaces\.js`/);
+});
+
+test('CLI: plan-new preserves inline short-plan goals and mixed scope flags', () => {
+  for (const goalArgs of [['--goal=Preserve every input = exact'], ['--goal', 'Preserve every input = exact']]) {
+    const ws = workspace();
+    const result = harness(ws, [
+      'plan-new', ...goalArgs, '--acceptance=The scope is recorded',
+      '--constraint', 'Keep the implementation bounded', '--impacted=critical=a.js',
+      '--impacted', 'with spaces.js', '--verification-check=unit-tests', '--json',
+    ]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const content = fs.readFileSync(JSON.parse(result.stdout).path, 'utf8');
+    assert.match(content, /Preserve every input = exact/);
+    assert.match(content, /The scope is recorded/);
+    assert.match(content, /Keep the implementation bounded/);
+    assert.match(content, /- `critical=a\.js`\n- `with spaces\.js`/);
+  }
+});
+
+test('CLI: plan-new rejects JSON decisions mixed with inline authoring before reading the file', () => {
+  for (const fileArgs of [['--file', 'decision.json'], ['--file=decision.json']]) {
+    const ws = workspace();
+    for (const authored of ['--title=ShouldReject', '--impacted=critical.js']) {
+      const decision = { version: 1, format: 'full', slug: 'conflicting-input', goal: 'Keep every input', acceptance: ['No inputs are lost'], check: 'unit-tests' };
+      fs.writeFileSync(path.join(ws, 'decision.json'), JSON.stringify(decision));
+      const result = harness(ws, ['plan-new', ...fileArgs, authored, '--json']);
+      assert.notEqual(result.status, 0, result.stdout + result.stderr);
+      assert.match(result.stderr, /--file cannot be combined with authoring flags/);
+      assert.equal(fs.existsSync(aeHome(ws)) && fs.readdirSync(aeHome(ws), { recursive: true }).some(name => String(name).includes('conflicting-input-plan')), false);
+      fs.unlinkSync(path.join(ws, 'decision.json'));
+      const missing = harness(ws, ['plan-new', ...fileArgs, authored, '--json']);
+      assert.match(missing.stderr, /--file cannot be combined with authoring flags/);
+    }
+  }
+});
+
+test('CLI: plan-new keeps consumed option-shaped titles literal', () => {
+  for (const title of ['--impacted=x', '--goal', '--from']) {
+    const ws = workspace();
+    const result = harness(ws, [
+      'plan-new', '--slug', 'literal-title', '--intent', 'Keep the literal title',
+      '--title', title, '--json',
+    ]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const content = fs.readFileSync(JSON.parse(result.stdout).path, 'utf8');
+    assert.equal(YAML.parse(content.match(/^---\n([\s\S]*?)\n---/)[1]).title, title);
+    assert.doesNotMatch(content, /- `x`/);
+  }
+});
+
+test('CLI: plan-new rejects missing values and inline booleans without writing a plan', () => {
+  for (const suffix of [['--title'], ['--title='], ['--title', '--'], ['--impacted'], ['--impacted='], ['--dry-run=false'], ['--dry-run=true'], ['--stdout=false'], ['--json=false']]) {
+    const ws = workspace();
+    const result = spawnSync(process.execPath, [
+      binPath, 'plan-new', '--workspace', ws, '--copilot-home', copilotHome(ws),
+      '--slug', 'invalid-input', '--intent', 'Keep every input', '--json', ...suffix,
+    ], { cwd: ws, encoding: 'utf8', env: runtimeEnv(ws) });
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stderr).error.code, 'E_USAGE');
+    assert.equal(fs.existsSync(aeHome(ws)) && fs.readdirSync(aeHome(ws), { recursive: true }).some(name => String(name).includes('invalid-input-plan')), false);
+  }
+  const ws = workspace();
+  const unread = harness(ws, ['plan-new', '--file', 'missing.json', '--dry-run=true', '--json']);
+  assert.equal(unread.status, 2, unread.stdout + unread.stderr);
+  assert.match(unread.stderr, /--dry-run does not accept a value/);
+});
+
+test('CLI: plan-new bare dry-run accepts inline authoring and does not create a plan', () => {
+  const ws = workspace();
+  const result = harness(ws, [
+    'plan-new', '--slug=preview-input', '--intent=Preview every input', '--title=Review this title', '--dry-run', '--json',
+  ]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const preview = JSON.parse(result.stdout);
+  assert.equal(preview.created, false);
+  assert.equal(fs.existsSync(preview.path), false);
+});
+
+test('CLI: plan-new refuses repeated or bare file inputs without creating a plan', () => {
+  const ws = workspace();
+  fs.writeFileSync(path.join(ws, 'decision.json'), JSON.stringify({ version: 1, format: 'full', slug: 'no-lost-input', goal: 'Keep every input', acceptance: ['No inputs are lost'], check: 'unit-tests' }));
+  for (const args of [
+    ['--file', 'missing.json', '--file', 'decision.json'],
+    ['--file=missing.json', '--file=decision.json'],
+    ['--file', 'decision.json', '--file=decision.json'],
+    ['--file', '-', '--file', 'decision.json'],
+    ['--file', 'decision.json', 'extra.json'],
+  ]) {
+    const result = harness(ws, ['plan-new', ...args, '--json']);
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(JSON.parse(result.stderr).error.code, 'E_USAGE');
+    assert.match(result.stderr, /one JSON document|unexpected argument extra.json/);
+  }
+  assert.equal(fs.existsSync(aeHome(ws)) && fs.readdirSync(aeHome(ws), { recursive: true }).some(name => String(name).endsWith('no-lost-input-plan.md')), false);
 });
 
 test('CLI: plan-new --status is declared and writes the requested status frontmatter', () => {

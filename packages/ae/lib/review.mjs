@@ -4,6 +4,7 @@ import { planRecordRoot, planHome } from './domain-context.mjs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseFlags } from './flags.mjs';
+import { positionalsOf } from './positionals.mjs';
 import { loadPlan } from './plan-parse.mjs';
 import { createEvidenceBinding, proofPolicyDigest } from './evidence.mjs';
 import { collectChangedFiles } from './plan-scope.mjs';
@@ -145,7 +146,13 @@ export function validateReview({ workspace, plan, copilotHome }) {
 
 export async function reviewResultOf(argv) {
   const flags = parseFlags(argv);
-  const verb = argv.find(arg => REVIEW_VERBS.includes(arg));
+  const positionals = positionalsOf(argv);
+  const verb = positionals[0];
+  if (!REVIEW_VERBS.includes(verb)) throw usage('review requires prepare or assemble');
+  const boundary = argv.indexOf('--');
+  const unexpected = positionals[1] ?? (boundary === -1 ? undefined : argv[boundary + 1]);
+  if (unexpected !== undefined) throw usage(`review: unexpected argument ${unexpected}; use --file for input paths`);
+  if (verb === 'assemble' && flags.files?.length > 1) throw usage('review assemble: --file accepts one JSON document containing all reviewer results');
   const workspace = path.resolve(flags.workspace);
   const plan = flags.plan ? loadPlan(workspace, flags.plan) : null;
   if (flags.plan && !plan) throw usage('Review plan is missing or invalid');
@@ -154,7 +161,6 @@ export async function reviewResultOf(argv) {
     const packet = prepareReview({ workspace, plan, home: flags.harnessHome, base: flags.base, copilotHome, kind: flags.domain || 'code', reviewers: flags.reviewers || [], files: flags.files, maxBytes: argv.some(a => a.startsWith('--max-bytes')) ? flags.maxBytes : 16384, dryRun: flags.dryRun });
     return { ...packet, packetPath: `.harness/reviews/packets/${packet.id}.json`, persisted: !flags.dryRun };
   }
-  if (verb !== 'assemble') throw usage('review requires prepare or assemble');
   const text = flags.files?.length && flags.files[0] !== '-' ? readFileNoFollow(path.resolve(workspace, flags.files[0]), { maxBytes: 1024 * 1024 }) : readBoundedInput();
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw usage('Review input is absent, unreadable, or too large');
   let input;

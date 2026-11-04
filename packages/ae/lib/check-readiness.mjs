@@ -6,20 +6,20 @@ import { projectAuthorityFile } from './project-authority.mjs';
 import { harnessGlobalHome, resolveCopilotHome } from './paths.mjs';
 
 /** A concrete invocation of this runtime, never a PATH alias or product binary. */
-export function checkConfigurationCommand({ workspace, home, copilotHome, verb = 'configure' }) {
+export function checkConfigurationCommand({ workspace, home, copilotHome, skillsHome, verb = 'configure' }) {
   const command = [fs.realpathSync(process.execPath), fileURLToPath(new URL('../bin/ae.mjs', import.meta.url)), 'checks', verb];
   if (verb === 'configure') command.push('--file', '-');
   command.push('--workspace', path.resolve(workspace), '--ae-home', path.resolve(home || harnessGlobalHome()), '--copilot-home', resolveCopilotHome(copilotHome));
-  if (process.env.AE_SKILLS_HOME) command.push('--skills-home', path.resolve(process.env.AE_SKILLS_HOME));
+  if (skillsHome || process.env.AE_SKILLS_HOME) command.push('--skills-home', path.resolve(skillsHome || process.env.AE_SKILLS_HOME));
   command.push('--json');
   return command;
 }
 
 /** Readiness means configured behavioral commands, never executed or adequate proof. */
-export function inspectCheckReadiness({ workspace, home, copilotHome }) {
+export function inspectCheckReadiness({ workspace, home, copilotHome, skillsHome }) {
   let source;
   const bounded = value => String(value).slice(0, 512);
-  const repair = (message, verb = 'configure') => ({ owner: 'engineer', message, command: checkConfigurationCommand({ workspace, home, copilotHome, verb }) });
+  const repair = (message, verb = 'configure') => ({ owner: 'engineer', message, command: checkConfigurationCommand({ workspace, home, copilotHome, skillsHome, verb }) });
   try {
     source = projectAuthorityFile(workspace, 'checks.yaml', { home });
     const loaded = loadNamedChecks(workspace, { home });
@@ -36,7 +36,7 @@ export function inspectCheckReadiness({ workspace, home, copilotHome }) {
       : 'Engineer must inspect the project tests and prepare concrete named checks before starting delivery.'));
     return {
       status, ready: status === 'ready', source: source.path, sourceMode: source.mode,
-      sourceDigest: loaded.sourceDigest || null, inspectionCommand: checkConfigurationCommand({ workspace, home, copilotHome, verb: 'list' }),
+      sourceDigest: loaded.sourceDigest || null, inspectionCommand: checkConfigurationCommand({ workspace, home, copilotHome, skillsHome, verb: 'list' }),
       checks: checks.slice(0, 20).map(name => name.slice(0, 160)), behavioralChecks: behavioralChecks.slice(0, 20).map(name => name.slice(0, 160)),
       invalid: invalid.slice(0, 8).map(entry => ({ name: entry.name.slice(0, 160), reason: bounded(entry.reason) })),
       totals: { checks: checks.length, behavioralChecks: behavioralChecks.length, invalid: invalid.length },

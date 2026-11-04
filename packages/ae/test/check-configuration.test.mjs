@@ -10,6 +10,7 @@ import YAML from 'yaml';
 import { configureCheckConfiguration, inspectCheckConfiguration } from '../lib/check-configuration.mjs';
 import { approveProject, trustStatus } from '../lib/trust.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
+import { tokenizeShell } from '../corpus/hooks/lib/tool-payload.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const behavior = { command: [process.execPath, '--test', 'test/behavior.mjs'], proof: 'behavior' };
@@ -38,6 +39,16 @@ test('configuration prepares concrete checks, preserves unrelated YAML and inval
   assert.equal(result.config, f.source);
   assert.equal(result.approvalRequired, true);
   assert.equal(result.trust.state, 'stale');
+  assert.deepEqual(result.trust, trustStatus(f));
+  assert.equal(result.trust.cause, 'stale-approval');
+  assert.deepEqual(result.trust.binding, { workspace: f.workspace, home: f.home, copilotHome: f.copilotHome, store: path.join(f.home, 'trust.yaml') });
+  assert.equal(result.trust.recovery.owner, 'person');
+  assert.equal(result.trust.recovery.kind, 'review-and-approve');
+  assert.deepEqual(result.trust.recovery.command.slice(2), ['trust', 'approve', '--workspace', f.workspace, '--ae-home', f.home, '--copilot-home', f.copilotHome, '--json']);
+  assert.equal(result.nextActions.length, 1);
+  assert.ok(result.nextActions[0].startsWith(`${result.trust.recovery.message} `));
+  if (process.platform === 'win32') assert.ok(result.nextActions[0].startsWith(`${result.trust.recovery.message} & `));
+  else assert.deepEqual(tokenizeShell(result.nextActions[0].slice(result.trust.recovery.message.length + 1)), result.trust.recovery.command);
   assert.deepEqual(result.changes, [{ name: 'behavior', previous: null, current: f.input.checks.behavior }]);
   assert.equal(parsed.owner, 'app-team');
   assert.deepEqual(parsed.checks.existing, { command: ['node', 'existing.mjs'], timeout_seconds: 45 });

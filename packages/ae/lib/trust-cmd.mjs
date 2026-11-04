@@ -4,7 +4,7 @@ import { verbOf } from './positionals.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { createStyle, keyWidthFor, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
-import { approveProject, revokeProject, trustStatus } from './trust.mjs';
+import { approveProject, revokeProject, trustStatus, formatTrustRecovery } from './trust.mjs';
 import { inspectCheckReadiness } from './check-readiness.mjs';
 
 const ui = createStyle({ argv: process.argv.slice(2) });
@@ -73,11 +73,7 @@ export async function cmdTrust(argv, ctx = {}) {
     console.log(ui.line({ key: 'pinned', value: result.pinned.join(', '), keyWidth }));
     console.log(ui.line({ key: 'store', value: result.store, keyWidth }));
     if (result.checkReadiness && !result.checkReadiness.ready) console.log(ui.line({ state: 'warn', key: 'checks', value: result.checkReadiness.status, note: 'Engineer prepares concrete verification commands before delivery; trust is a separate decision', keyWidth }));
-    if (result.state === 'stale') {
-      console.log(ui.paint('muted', '  the pinned files changed — a person must read them and re-approve: ae trust approve'));
-    } else if (result.state !== 'trusted' && result.verb === 'status') {
-      console.log(ui.paint('muted', '  project config and policy are ignored until a person reviews and approves: ae trust approve'));
-    }
+    if (result.recovery) console.log(ui.paint('muted', `  ${formatTrustRecovery(result.recovery)}`));
   }
 
     return 0;
