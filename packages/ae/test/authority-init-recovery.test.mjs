@@ -25,13 +25,15 @@ function fixture(t) {
   fs.writeFileSync(path.join(workspace, '.gitignore'), '.github/harness/\n');
   fs.writeFileSync(path.join(workspace, 'app.mjs'), 'export const value = 1;\n');
   git('add', '.'); git('commit', '-qm', 'baseline');
-  const cli = (cwd, ...args) => spawnSync(process.execPath, [bin, ...args, '--workspace', cwd, '--ae-home', home, '--copilot-home', copilotHome, '--json', '--no-events'], { cwd, env, encoding: 'utf8', timeout: 30000 });
+  const run = (cwd, args, input) => spawnSync(process.execPath, [bin, ...args, '--workspace', cwd, '--ae-home', home, '--copilot-home', copilotHome, '--json', '--no-events'], { cwd, env, input, encoding: 'utf8', timeout: 30000 });
+  const cli = (cwd, ...args) => run(cwd, args);
+  const input = (cwd, decision, ...args) => run(cwd, args, JSON.stringify(decision));
   const ok = (cwd, ...args) => {
     const result = cli(cwd, ...args);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return JSON.parse(result.stdout);
   };
-  return { workspace, home, copilotHome, cli, ok, git };
+  return { workspace, home, copilotHome, cli, input, ok, git };
 }
 
 function files(root) {
@@ -58,14 +60,54 @@ test('linked initialization cannot hide primary shared authority behind new priv
     const legacy = path.join(child, 'docs/plans/pending.md');
     fs.mkdirSync(path.dirname(legacy), { recursive: true });
     fs.writeFileSync(legacy, '# Preserve pending legacy plan\n');
-    const before = { home: files(f.home), child: files(child) };
+    const metadata = () => ({ head: f.git('rev-parse', 'HEAD'), refs: f.git('for-each-ref', '--format=%(refname) %(objectname)'), exclude: fs.readFileSync(path.join(f.workspace, '.git/info/exclude'), 'utf8') });
+    const before = { home: files(f.home), child: files(child), metadata: metadata() };
     const result = f.cli(child, 'init-repo', ...(dryRun ? ['--dry-run'] : []));
     assert.notEqual(result.status, 0, 'missing shared policy must not become implicit private authority');
+    assert.match(result.stdout + result.stderr, /primary|shared authority|shared configuration/i);
+    assert.ok((result.stdout + result.stderr).includes(f.workspace));
+    assert.deepEqual({ home: files(f.home), child: files(child), metadata: metadata() }, before);
+    assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
+  });
+});
+
+test('linked subfolder initialization preserves primary shared authority before migration', async t => {
+  for (const dryRun of [false, true]) await t.test(dryRun ? 'dry-run' : 'initialize', t => {
+    const f = fixture(t);
+    f.ok(f.workspace, 'init-repo', '--shared');
+    const child = f.ok(f.workspace, 'worktree', '--slug', 'nested').path;
+    const nested = path.join(child, 'src');
+    fs.mkdirSync(path.join(nested, 'docs/plans'), { recursive: true });
+    fs.writeFileSync(path.join(nested, 'docs/plans/pending.md'), '# Preserve this legacy plan\n');
+    const before = { home: files(f.home), child: files(child) };
+    const result = f.cli(nested, 'init-repo', ...(dryRun ? ['--dry-run'] : []));
+    assert.notEqual(result.status, 0, 'a subfolder must not bypass linked-primary authority selection');
     assert.match(result.stdout + result.stderr, /primary|shared authority|shared configuration/i);
     assert.ok((result.stdout + result.stderr).includes(f.workspace));
     assert.deepEqual({ home: files(f.home), child: files(child) }, before);
     assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
   });
+});
+
+test('bounded check preparation cannot shadow missing linked-primary shared authority', async t => {
+  for (const nested of [false, true]) for (const dryRun of [false, true]) {
+    await t.test(`${nested ? 'subfolder' : 'checkout'} ${dryRun ? 'dry-run' : 'configure'}`, t => {
+      const f = fixture(t);
+      f.ok(f.workspace, 'init-repo', '--shared');
+      const child = f.ok(f.workspace, 'worktree', '--slug', 'checks').path;
+      const selected = nested ? path.join(child, 'src') : child;
+      fs.mkdirSync(selected, { recursive: true });
+      const before = { home: files(f.home), child: files(child) };
+      const listed = f.cli(selected, 'checks', 'list');
+      const decision = { schema: 1, expectedDigest: null, rationale: 'Prepare a behavioral command.', checks: { 'unit-tests': { command: [process.execPath, '--test', 'app.mjs'] } } };
+      const configured = f.input(selected, decision, 'checks', 'configure', '--file', '-', ...(dryRun ? ['--dry-run'] : []));
+      assert.notEqual(configured.status, 0, 'check preparation must not create competing local authority');
+      assert.notEqual(listed.status, 0, 'inspection must diagnose missing primary policy instead of selecting a new local source');
+      assert.match(configured.stdout + configured.stderr, /primary|shared authority|shared configuration/i);
+      assert.deepEqual({ home: files(f.home), child: files(child) }, before);
+      assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
+    });
+  }
 });
 
 test('matching interrupted shared publication previews and recovers through the CLI without approving trust', t => {
@@ -91,17 +133,21 @@ test('matching interrupted shared publication previews and recovers through the 
 });
 
 test('conflicting shared publication still refuses preview and recovery without moving source bytes', t => {
-  const f = fixture(t);
-  f.ok(f.workspace, 'init-repo');
-  const shared = path.join(f.workspace, '.github/harness');
-  fs.mkdirSync(shared, { recursive: true });
-  fs.writeFileSync(path.join(shared, 'checks.yaml'), 'version: 1\nchecks: {}\n# conflicting source\n');
-  const before = { home: files(f.home), workspace: files(f.workspace) };
-  for (const args of [['--shared', '--dry-run'], ['--shared']]) {
-    const result = f.cli(f.workspace, 'init-repo', ...args);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stdout + result.stderr, /conflict|differs/i);
-    assert.deepEqual({ home: files(f.home), workspace: files(f.workspace) }, before);
+  for (const name of ['checks.yaml', 'policy.yaml']) {
+    const f = fixture(t);
+    f.ok(f.workspace, 'init-repo');
+    const local = resolveProjectAuthority(f.workspace, { home: f.home });
+    const shared = path.join(f.workspace, '.github/harness');
+    fs.mkdirSync(shared, { recursive: true });
+    fs.copyFileSync(local.files['checks.yaml'], path.join(shared, 'checks.yaml'));
+    fs.writeFileSync(path.join(shared, name), name === 'checks.yaml' ? 'version: 1\nchecks: {}\n# conflicting source\n' : 'version: 1\nenforcement: warn\n');
+    const before = { home: files(f.home), workspace: files(f.workspace) };
+    for (const args of [['--shared', '--dry-run'], ['--shared']]) {
+      const result = f.cli(f.workspace, 'init-repo', ...args);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stdout + result.stderr, /conflict|differs/i);
+      assert.deepEqual({ home: files(f.home), workspace: files(f.workspace) }, before);
+    }
   }
 });
 
@@ -114,4 +160,47 @@ test('ordinary linked private setup still shares its existing primary authority'
   assert.equal(result.authority.mode, 'local');
   assert.equal(result.authority.directory, local.directory);
   assert.equal(fs.existsSync(path.join(child, '.github/harness')), false);
+});
+
+test('an independent nested repository keeps its own authority boundary', t => {
+  const f = fixture(t);
+  f.ok(f.workspace, 'init-repo', '--shared');
+  const child = f.ok(f.workspace, 'worktree', '--slug', 'outer').path;
+  const nested = path.join(child, 'independent');
+  fs.mkdirSync(nested);
+  const initialized = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: nested, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  assert.equal(initialized.status, 0, initialized.stderr);
+  const result = f.ok(nested, 'init-repo');
+  assert.equal(result.authority.mode, 'local');
+  assert.equal(resolveProjectAuthority(nested, { home: f.home }).mode, 'local');
+  assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
+});
+
+test('a linked branch keeps its own explicit shared policy instead of copying the primary policy', t => {
+  const f = fixture(t);
+  f.ok(f.workspace, 'init-repo', '--shared');
+  f.git('add', '-f', '.github/harness'); f.git('commit', '-qm', 'shared authority');
+  const child = f.ok(f.workspace, 'worktree', '--slug', 'release-policy').path;
+  const primaryPolicy = fs.readFileSync(path.join(f.workspace, '.github/harness/policy.yaml'), 'utf8');
+  const policy = path.join(child, '.github/harness/policy.yaml'), branchPolicy = 'version: 1\nenforcement: warn\n';
+  fs.writeFileSync(policy, branchPolicy);
+  const result = f.ok(child, 'init-repo');
+  assert.equal(result.authority.mode, 'shared');
+  assert.equal(fs.readFileSync(policy, 'utf8'), branchPolicy);
+  assert.equal(fs.readFileSync(path.join(f.workspace, '.github/harness/policy.yaml'), 'utf8'), primaryPolicy);
+  assert.equal(fs.existsSync(path.join(f.home, 'trust.yaml')), false);
+});
+
+test('shared preview refuses a redirected empty directory without a private source', t => {
+  const f = fixture(t), outside = path.join(path.dirname(f.workspace), 'outside');
+  fs.mkdirSync(outside);
+  fs.mkdirSync(path.join(f.workspace, '.github'));
+  const shared = path.join(f.workspace, '.github/harness');
+  fs.symlinkSync(outside, shared, process.platform === 'win32' ? 'junction' : 'dir');
+  const result = f.cli(f.workspace, 'init-repo', '--shared', '--dry-run');
+  assert.notEqual(result.status, 0, 'preview must preserve shared-directory validation without private authority');
+  assert.match(result.stdout + result.stderr, /unsafe|symlink|nonregular/i);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.equal(fs.existsSync(f.home), false);
+  assert.equal(fs.lstatSync(shared).isSymbolicLink(), true);
 });
