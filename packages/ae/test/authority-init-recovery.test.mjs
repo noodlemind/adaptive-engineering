@@ -132,6 +132,56 @@ test('matching interrupted shared publication previews and recovers through the 
   assert.equal(fs.existsSync(path.join(f.home, 'trust.yaml')), false);
 });
 
+test('shared promotion previews defer check readiness until publication without inventing check repairs', async t => {
+  for (const publication of ['partial', 'complete']) for (const state of ['ready', 'empty', 'invalid']) {
+    await t.test(`${publication} publication with ${state} checks`, t => {
+      const f = fixture(t);
+      f.ok(f.workspace, 'init-repo');
+      const local = resolveProjectAuthority(f.workspace, { home: f.home });
+      const marker = path.join(f.workspace, 'check-ran.txt');
+      const checks = state === 'empty' ? {} : { 'unit-tests': { command: state === 'invalid' ? [] : [process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected execution')`] } };
+      fs.writeFileSync(local.files['checks.yaml'], JSON.stringify({ version: 1, checks }));
+      const shared = path.join(f.workspace, '.github/harness');
+      fs.mkdirSync(shared, { recursive: true });
+      for (const name of publication === 'partial' ? ['checks.yaml'] : ['checks.yaml', 'policy.yaml', 'routing.yaml']) {
+        fs.copyFileSync(local.files[name], path.join(shared, name));
+      }
+      const before = { home: files(f.home), workspace: files(f.workspace) };
+      const preview = f.ok(f.workspace, 'init-repo', '--shared', '--dry-run');
+      assert.equal(preview.promotion.dryRun, true);
+      assert.equal(preview.checkReadiness.status, 'deferred');
+      assert.equal(preview.checkReadiness.ready, false);
+      assert.equal(preview.checkReadiness.reason, 'authority-promotion-preview');
+      assert.equal(preview.checkReadiness.sourceMode, 'shared');
+      assert.match(preview.checkReadiness.message, /apply.*promotion.*inspect/i);
+      assert.equal(preview.checkReadiness.remediation, null);
+      assert.ok(!preview.prerequisites?.some(entry => entry.id === 'named-checks'));
+      assert.doesNotMatch(JSON.stringify(preview), /checks configure|person.s trust approval/i);
+      assert.deepEqual({ home: files(f.home), workspace: files(f.workspace) }, before);
+      const applied = f.ok(f.workspace, 'init-repo', '--shared');
+      assert.equal(applied.promotion.promoted, true);
+      assert.equal(applied.checkReadiness.status, state);
+      assert.equal(applied.checkReadiness.ready, state === 'ready');
+      assert.equal(Boolean(applied.prerequisites?.some(entry => entry.id === 'named-checks')), state !== 'ready');
+      assert.equal(fs.existsSync(marker), false);
+      assert.equal(fs.existsSync(path.join(f.home, 'trust.yaml')), false);
+    });
+  }
+});
+
+test('shared dry-run without a pending promotion retains ordinary check inspection', t => {
+  const f = fixture(t);
+  f.ok(f.workspace, 'init-repo', '--shared');
+  const shared = resolveProjectAuthority(f.workspace, { home: f.home });
+  fs.writeFileSync(shared.files['checks.yaml'], JSON.stringify({ version: 1, checks: { 'unit-tests': { command: [process.execPath, '--test', 'app.mjs'] } } }));
+  const before = { home: files(f.home), workspace: files(f.workspace) };
+  const preview = f.ok(f.workspace, 'init-repo', '--shared', '--dry-run');
+  assert.deepEqual(preview.promotion.files, []);
+  assert.equal(preview.checkReadiness.status, 'ready');
+  assert.equal(preview.checkReadiness.ready, true);
+  assert.deepEqual({ home: files(f.home), workspace: files(f.workspace) }, before);
+});
+
 test('conflicting shared publication still refuses preview and recovery without moving source bytes', t => {
   for (const name of ['checks.yaml', 'policy.yaml']) {
     const f = fixture(t);
