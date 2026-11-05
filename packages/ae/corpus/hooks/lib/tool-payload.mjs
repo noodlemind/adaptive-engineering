@@ -468,7 +468,7 @@ export function analyzeShellMutation(command) {
 }
 
 const QUERY_COMMANDS = new Set(['cat', 'ls', 'pwd', 'rg', 'grep', 'head', 'tail', 'wc', 'echo', 'printf', 'which', 'where', 'type', 'true', 'false']);
-const POWERSHELL_QUERIES = new Set(['get-content', 'get-childitem', 'get-location', 'select-string', 'test-path', 'write-output']);
+const POWERSHELL_QUERIES = new Set(['get-content', 'get-item', 'get-childitem', 'get-location', 'select-string', 'test-path', 'write-output']);
 const EXPLICIT_WRITERS = new Set(['touch', 'rm', 'rmdir', 'unlink', 'truncate', 'del', 'erase', 'rd', 'mkdir', 'md', 'dd', 'cp', 'install', 'mv', 'ln', 'tee', ...POWERSHELL_WRITERS]);
 const GIT_QUERIES = new Set(['status', 'diff', 'log', 'show', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'describe', 'blame', 'grep', 'check-ignore', 'version']);
 const GIT_DIFF_QUERIES = new Set(['status', 'diff', 'log', 'show', 'blame', 'grep']);
@@ -993,7 +993,8 @@ export function analyzeTerminalEffects(command, workspace = process.cwd()) {
     const explicit = inner.length > 0 && inner.every(argv => {
       const executable = path.basename(argv[0] || '').toLowerCase();
       const invocation = argv.join(' ');
-      return isSystemCommand(argv[0], executable) && (EXPLICIT_WRITERS.has(executable) && analyzeShellMutation(invocation).mutation
+      return (isSystemCommand(argv[0], executable) || POWERSHELL_WRITERS.has(executable) && argv[0].toLowerCase() === executable)
+        && (EXPLICIT_WRITERS.has(executable) && analyzeShellMutation(invocation).mutation
         || executable === 'git' && ['apply', 'checkout', 'restore', 'rm', 'mv', 'clean', 'reset', 'stash', 'switch', 'merge', 'rebase', 'cherry-pick', 'revert', 'am', 'pull'].includes(parseGitInvocation(argv.slice(1)).subcommand));
     });
     if (!parsed.ambiguous && knownWrite && explicit) continue;

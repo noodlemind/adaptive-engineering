@@ -151,6 +151,22 @@ not a claim of 2026 MCP support. Existing trust and proof requirements still
 apply, and required native skill activation cannot be replaced by a reference
 retrieval. Unrelated host tools remain outside MCP mediation.
 
+`install --configure-vscode` also configures this server in the VS Code user
+profile. Each startup resolves `${workspaceFolder}` and keeps that checkout
+bound for the server's lifetime. Reconnect in the opened worktree instead of
+reusing a server bound to the primary checkout. Setup preserves other servers
+and approval settings; native MCP trust remains a host decision. Authored
+configuration conflicts are reported before installation writes.
+`ae upgrade` refreshes profiles already configured for the selected AE home;
+use `--configure-vscode` to configure previously unconfigured profiles.
+
+Plan tools advertise action-specific decision schemas. Orient, status and plan
+operations return a shared `workflow` containing the current plan revision and
+candidate decisions. These facts grant no mutation authority. Where a supported
+host supplies user-prompt events, new intent stays pending until a successful
+plan decision records its disposition. Direct managed-plan edits are refused;
+missing host observations remain explicitly unobserved.
+
 Portable export writes an Agent Plugins 1.0 package into a new directory. It
 contains skills, specialist judgment criteria and explicit-workspace MCP
 configuration. A compatible installed `ae` CLI and Node.js >=20 remain required.
@@ -208,6 +224,14 @@ approval request includes the current policy files and a bound command for a
 person to review. Matching AE-created worktrees can inherit current primary
 approval even when an older direct worktree grant is stale. Revocation and
 different policy still prevent that inheritance.
+Ignored shared policy is not carried into a worktree. Initialization refuses to
+create competing private authority when that primary policy is absent from the
+linked checkout. Matching interrupted shared publication can be inspected with
+`ae init-repo --shared --dry-run` and recovered through the existing reconciler
+when shared publication is authorized. All supported policy sources matter;
+one matching check does not resolve a conflict.
+An unapplied shared-promotion preview reports readiness as `deferred`. Apply
+the reviewed promotion before inspecting delivery prerequisites.
 Engineer inspects the product's actual tests and prepares missing commands
 through `ae checks configure --file - --json`; users do not need to hand-author
 YAML. This bounded operation changes only the selected check declarations and

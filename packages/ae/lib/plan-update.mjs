@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { randomUUID } from 'node:crypto';
+import { acquireFileLock, releaseFileLock as releasePlanLock } from './file-lock.mjs';
 import { createStyle, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
 import { externalPlansDir, planReadDirs, projectStoreDir, conversionPointerRel, canonicalPlanFilePath, readPlanConversionGuard } from './project-layout.mjs';
@@ -14,7 +15,7 @@ import { loadPlan, parsePlanFrontmatter, planFromText } from './plan-parse.mjs';
 import { completeWork, completionPrerequisites, validateCompletion } from './completion.mjs';
 import { bindLockedIntentSources, lockIntentSources, sourcePath, hashIntentFile, intentSourcesCheck } from './intent-sources.mjs';
 import { readBoundedInput, readFileNoFollow, assertNoSymlinkAncestors, writeFileContainedExclusive, canonicalPath } from './fs-safe.mjs';
-import { applyPlanDecision, validatePlanDecision, planRevision, planState } from './plan-decisions.mjs';
+import { applyPlanDecision, validatePlanDecision, planRevision, planState, planWorkflow } from './plan-decisions.mjs';
 import { runGate, publishGateSession } from './gate.mjs';
 import { loadPolicy } from './policy.mjs';
 import { validatePlanSchema } from './plan-schema.mjs';
@@ -27,13 +28,12 @@ import { readEvidence, planDigest } from './evidence.mjs';
 import { readPlanRecord } from './plan-record.mjs';
 import { authorizeProjectPlan } from './domain-context.mjs';
 import { domainLinkCheck, domainCoordinatorCheck, snapshotDomainCoordinator, validateCoordinatorBinding } from './domain-delivery.mjs';
+import { inspectHostIntent, validateObservedIntent, publishObservedIntent } from './host-intent.mjs';
 
 const PLAN_STATUSES = ['open', 'planned', 'in-progress', 'review', 'done', 'blocked-capability', 'needs-info'];
 const REVIEW_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const GAP_FULFILLMENTS = ['done', 'bridge', 'waived'];
 const LEGACY_PLAN_RELS = ['docs/plans', '.harness/plans'];
-const LOCK_WAIT_MS = 5000;
-const LOCK_STALE_MS = 30000;
 
 function usage(message) {
   return Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint: 'ae help plan-update' });
@@ -67,127 +67,8 @@ export function planUpdateLockDir(full) {
   return path.join(path.dirname(full), `.${path.basename(full)}.lock`);
 }
 
-function sleepMs(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function singleLockEntry(dir) {
-  const entries = fs.opendirSync(dir, { bufferSize: 2 });
-  try {
-    const first = entries.readSync();
-    return first && !entries.readSync() ? first : null;
-  } finally { entries.closeSync(); }
-}
-
-function planLockOwner(dir) {
-  try {
-    const stat = fs.lstatSync(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
-    const entry = singleLockEntry(dir);
-    const match = entry?.name.match(/^owner-v1-([1-9][0-9]{0,15})-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/);
-    if (!match || !Number.isSafeInteger(Number(match[1]))) return null;
-    const stamp = path.join(dir, entry.name), stampStat = fs.lstatSync(stamp);
-    if (!stampStat.isDirectory() || stampStat.isSymbolicLink()) return null;
-    const contents = fs.opendirSync(stamp, { bufferSize: 1 });
-    try { if (contents.readSync()) return null; }
-    finally { contents.closeSync(); }
-    return { version: 1, pid: Number(match[1]), token: match[2], stamp: entry.name };
-  } catch { return null; }
-}
-
-function removePlanLock(dir, token) {
-  const owner = planLockOwner(dir);
-  if (owner?.token !== token) throw usage('plan-update: lock ownership lost; inspect the retained lock');
-  fs.rmdirSync(path.join(dir, owner.stamp));
-  fs.rmdirSync(dir);
-}
-
-function retirePlanLock(dir, token, parent = path.dirname(dir)) {
-  if (planLockOwner(dir)?.token !== token) throw usage('plan-update: lock ownership lost; inspect the retained lock');
-  const retirement = fs.mkdtempSync(path.join(parent, '.retired-'));
-  try {
-    const retired = path.join(retirement, 'lock');
-    fs.renameSync(dir, retired);
-    removePlanLock(retired, token);
-  } finally {
-    try { fs.rmdirSync(retirement); } catch { /* preserve mismatched or unexpected retired contents */ }
-  }
-}
-
 function acquirePlanLock(full) {
-  const lockDir = planUpdateLockDir(full);
-  const recovery = `${lockDir}.recovery`;
-  const owner = { version: 1, token: randomUUID(), pid: process.pid };
-  const start = Date.now();
-  while (true) {
-    const recovering = fs.lstatSync(recovery, { throwIfNoEntry: false });
-    if (recovering) {
-      if (!recovering.isDirectory() || recovering.isSymbolicLink()) throw usage('plan-update: unsafe lock recovery path; inspect before retrying');
-      if (Date.now() - start > LOCK_WAIT_MS) throw usage('plan-update: lock recovery is busy; inspect the retained recovery directory before retrying');
-      sleepMs(25);
-      continue;
-    }
-    try {
-      fs.mkdirSync(lockDir, { mode: 0o700 });
-      // Empty owner directories keep legacy in-repo plan locks out of Git-observed proof scope.
-      try { fs.mkdirSync(path.join(lockDir, `owner-v1-${owner.pid}-${owner.token}`), { mode: 0o700 }); }
-      catch {
-        try { fs.rmdirSync(lockDir); } catch { /* retain a nonempty or changed lock for inspection */ }
-        throw usage('plan-update: lock owner could not be recorded');
-      }
-      if (fs.lstatSync(recovery, { throwIfNoEntry: false })) {
-        retirePlanLock(lockDir, owner.token);
-        continue;
-      }
-      return { dir: lockDir, token: owner.token };
-    } catch (error) {
-      if (!['EEXIST', 'EPERM', 'EACCES'].includes(error.code)) throw error;
-      if (Date.now() - start > LOCK_WAIT_MS) {
-        if (error.code !== 'EEXIST') throw error;
-        throw usage('plan-update: plan is locked by another update');
-      }
-      if (error.code === 'EEXIST') {
-        const stat = fs.lstatSync(lockDir, { throwIfNoEntry: false });
-        if (!stat) continue;
-        if (!stat.isDirectory() || stat.isSymbolicLink()) throw usage('plan-update: unsafe lock path; inspect before removing it');
-        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          const previous = planLockOwner(lockDir);
-          if (!previous) throw usage('plan-update: lock owner is unreadable; inspect before removing it');
-          let absent = false;
-          try { process.kill(previous.pid, 0); }
-          catch (error) {
-            if (error.code === 'ESRCH') absent = true;
-            else throw usage('plan-update: lock owner liveness is unavailable; absence is not proven');
-          }
-          if (absent) {
-            try { fs.mkdirSync(recovery, { mode: 0o700 }); }
-            catch (error) { if (error.code === 'EEXIST') continue; throw error; }
-            try {
-              if (planLockOwner(lockDir)?.token !== previous.token) continue;
-              const retired = path.join(recovery, 'retired');
-              fs.renameSync(lockDir, retired);
-              removePlanLock(retired, previous.token);
-            } finally {
-              try { fs.rmdirSync(recovery); } catch { /* retain unexpected recovery contents for inspection */ }
-            }
-            continue;
-          }
-        }
-      }
-      sleepMs(25);
-    }
-  }
-}
-
-function releasePlanLock(lock) {
-  const recovery = `${lock.dir}.recovery`;
-  try { fs.mkdirSync(recovery, { mode: 0o700 }); }
-  catch { throw usage('plan-update: lock recovery is busy; inspect before releasing the retained lock'); }
-  try {
-    retirePlanLock(lock.dir, lock.token, recovery);
-  } finally {
-    try { fs.rmdirSync(recovery); } catch { /* preserve a mismatched retired owner for inspection */ }
-  }
+  return acquireFileLock(planUpdateLockDir(full));
 }
 
 export function withPlanUpdateLock(full, fn) {
@@ -471,10 +352,12 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
     if (!existing && fs.lstatSync(path.join(recordRoot, rel), { throwIfNoEntry: false })) throw usage('operation identity has a corrupt journal');
     const operation = reviewHash({ plan: plan.path, inputDigest });
     if (existing && (existing.version !== 1 || existing.operation !== operation || existing.inputDigest !== inputDigest || existing.plan !== plan.path || existing.value?.plan !== plan.path || existing.value?.before !== input.expect || existing.value?.action !== input.action || typeof existing.value?.text !== 'string' || planRevision(existing.value.text) !== existing.value.after || reviewHash(existing.value) !== existing.integrity)) throw usage('operation identity has different or corrupt payload');
-    if (existing?.state === 'completed') return { ...existing.result, replayed: true, currentRevision: planRevision(plan.text), current: planRevision(plan.text) === existing.value.after && intentSourcesCheck(plan, workspace).pass && gapEvidenceCheck(workspace, plan).pass && validatePlanSchema(plan).pass && shared().pass && domainLinkCheck({ workspace, plan, copilotHome, home: planHome(workspace, plan) }).pass && (input.action !== 'complete' || validateCompletion({ workspace, plan, copilotHome }).pass), allowedNextActions: ['Inspect current state; a replay does not renew an expired gate'] };
+    if (existing?.state === 'completed') return { ...existing.result, workflow: planWorkflow(plan, { workspace }), replayed: true, currentRevision: planRevision(plan.text), current: planRevision(plan.text) === existing.value.after && inspectHostIntent({ workspace, planPath: plan.path, revision: planRevision(plan.text) }).state !== 'pending' && intentSourcesCheck(plan, workspace).pass && gapEvidenceCheck(workspace, plan).pass && validatePlanSchema(plan).pass && shared().pass && domainLinkCheck({ workspace, plan, copilotHome, home: planHome(workspace, plan) }).pass && (input.action !== 'complete' || validateCompletion({ workspace, plan, copilotHome }).pass), allowedNextActions: ['Inspect current state; a replay does not renew an expired gate'] };
     if (existing && existing.state !== 'pending') throw usage('operation state is invalid');
     const current = planRevision(plan.text);
     if (existing ? ![existing.value.before, existing.value.after].includes(current) : input.expect !== current) throw usage('stale plan revision; reread before accepting a new decision');
+    const capturedIntent = validateObservedIntent({ workspace, input });
+    if (input.action === 'complete' && inspectHostIntent({ workspace, planPath: plan.path, revision: current }).state === 'pending') throw usage('reconcile the current observed intent before completion');
     const recordedAt = existing?.value.recordedAt || new Date().toISOString();
     const decision = existing ? { text: existing.value.text, amendments: existing.value.amendments, authority: existing.value.authority } : applyPlanDecision(workspace, plan, input, { applyUpdate: applyPlanUpdate, recordedAt, copilotHome });
     const proposed = planWithText(plan, decision.text);
@@ -500,7 +383,7 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
     }
     if (missing.length || gate && (!gate.pass || gate.exitCode !== 0)) {
       const checkReadiness = inspectCheckReadiness({ workspace, copilotHome, home: planHome(workspace, proposed) });
-      return { status: 'blocked', path: full, missing: [...new Set(missing)], checkReadiness,
+      return { status: 'blocked', path: full, missing: [...new Set(missing)], workflow: planWorkflow(plan, { workspace, missing, evaluatedAction: input.action }), checkReadiness,
         allowedNextActions: checkReadiness.ready ? ['Repair the named prerequisites, then retry the same decision if the revision is unchanged'] : ['Engineer inspects the project tests and prepares the concrete check declarations; request person approval only after showing the changed commands, then resume this task'],
         ...(gate?.nextTools ? { nextTools: gate.nextTools } : {}), updated: false };
     }
@@ -514,7 +397,7 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
       completion: readReviewRecord(recordRoot, `.harness/completions/${recordHash(plan.path)}.json`)?.id || null,
     };
     const value = existing?.value || { plan: plan.path, action: input.action, recordedAt, before: current, after: planRevision(decision.text), text: decision.text, amendments: decision.amendments, authority: decision.authority, affectedEvidence };
-    const result = { version: 1, status: 'ok', path: full, operation, operationPath: rel, action: input.action, revision: value.after, planState: planState(proposed), amendments: value.amendments, authority: value.authority, affectedEvidence: value.affectedEvidence, completion: completion?.id || null, missing: [], allowedNextActions: input.action === 'start' ? ['Edit within the accepted scope', 'Run required review and verification'] : ['Inspect the updated contract', 'Start or refresh the implement gate before edits'], dryRun, updated: !dryRun && current !== value.after };
+    const result = { version: 1, status: 'ok', path: full, operation, operationPath: rel, action: input.action, revision: value.after, planState: planState(proposed), workflow: planWorkflow(dryRun ? plan : proposed, { workspace }), amendments: value.amendments, authority: value.authority, affectedEvidence: value.affectedEvidence, completion: completion?.id || null, missing: [], allowedNextActions: input.action === 'start' ? ['Edit within the accepted scope', 'Run required review and verification'] : ['Inspect the updated contract', 'Start or refresh the implement gate before edits'], dryRun, updated: !dryRun && current !== value.after };
     const record = { version: 1, state: 'pending', plan: plan.path, inputDigest, operation, integrity: reviewHash(value), value, result };
     if (!dryRun) {
       publishReviewRecord(recordRoot, rel, record);
@@ -527,6 +410,8 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
       if (readFileNoFollow(full) !== plan.text) throw usage('plan changed during the operation; reread before retry');
       if (current !== value.after) publishPlanFile(full, value.text);
       if (gate) publishGateSession({ workspace, plan: proposed, result: gate, policy: loadPolicy(workspace, flags.enforcement, { copilotHome, home: planHome(workspace, proposed) }) });
+      publishObservedIntent({ workspace, captured: capturedIntent, input, planPath: proposed.path, beforeRevision: value.before, afterRevision: value.after, operationId: operation });
+      result.workflow = planWorkflow(proposed, { workspace });
       publishReviewRecord(recordRoot, rel, { ...record, state: 'completed' });
     }
     return result;
@@ -759,6 +644,8 @@ export async function cmdPlanUpdate(argv) {
     }
     if (!dryRun && next !== original) {
       publishPlanFile(full, next);
+      publishObservedIntent({ workspace, input: { action: 'progress' }, planPath: currentPlan.path,
+        beforeRevision: planRevision(original), afterRevision: planRevision(next), operationId: `legacy-plan-update:${planRevision(next)}` });
     }
     written = dryRun ? next : fs.readFileSync(full, 'utf8');
   } finally {

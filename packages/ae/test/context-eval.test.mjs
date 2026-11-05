@@ -56,7 +56,8 @@ test('fixture subprocesses resolve the candidate CLI and keep private homes afte
   assert.ifError(orient.error);
   assert.equal(orient.status, 0, orient.stderr);
   const orientation = JSON.parse(orient.stdout);
-  assert.equal(Object.keys(orientation).length, 19);
+  assert.equal(Object.keys(orientation).length, 20);
+  assert.equal(orientation.workflow.mutationAuthority, 'none');
   assert.equal(orientation.checkReadiness.status, 'missing');
   assert.equal(orientation.checkReadiness.sourceMode, 'local');
   assert.ok(orientation.checkReadiness.source.startsWith(fixture.harnessHome + path.sep), 'check readiness must retain the fixture-private state home');

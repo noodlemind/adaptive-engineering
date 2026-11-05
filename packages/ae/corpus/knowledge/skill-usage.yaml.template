@@ -1,5 +1,5 @@
 # Hydrated to ~/.copilot/knowledge/skill-usage.yaml.
-# `harness compound` updates aggregate successful usage and verification outcomes.
+# `ae compound` updates aggregate successful usage and verification outcomes.
 version: 2
 updated: null
 skills: {}

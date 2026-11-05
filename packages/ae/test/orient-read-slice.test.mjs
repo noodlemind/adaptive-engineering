@@ -34,6 +34,7 @@ const SLICE_KEYS = [
   'index',
   'gateStatus',
   'activePlan',
+  'workflow',
   'layout',
 ];
 
@@ -119,7 +120,7 @@ function sliceFrom(additionalContext) {
 }
 
 function assertColdSlice(slice, { contextVersion = 1 } = {}) {
-  assert.deepEqual(Object.keys(slice), contextVersion === 2 ? [...SLICE_KEYS, 'contextEvidence'] : SLICE_KEYS);
+  assert.deepEqual(Object.keys(slice).sort(), (contextVersion === 2 ? [...SLICE_KEYS, 'contextEvidence'] : SLICE_KEYS).slice().sort());
   assert.equal(slice.neighborhood, null);
   assert.deepEqual(slice.learnings, []);
   assert.deepEqual(slice.skills, []);
@@ -192,7 +193,8 @@ test('a broken index read still returns JSON with both labels missing', () => {
     assert.equal(slice.neighborhood, null);
     assert.deepEqual(slice.index, { knowledge: 'missing', structural: 'missing' });
     assert.equal(slice.checkReadiness, null, 'unavailable orientation must not invent check readiness');
-    assert.deepEqual(Object.keys(slice), SLICE_KEYS);
+    assert.equal(slice.workflow, undefined, 'unavailable orientation must not invent workflow state');
+    assert.deepEqual(Object.keys(slice), SLICE_KEYS.filter(key => key !== 'workflow'));
   } finally {
     removeRepo(c);
   }

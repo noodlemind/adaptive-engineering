@@ -2,6 +2,18 @@
   "version": 1,
   "description": "GitHub Copilot lifecycle hooks for VS Code and CLI; install rewrites command cwd to the hydrated user hook directory.",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node observe-user-intent.mjs",
+            "cwd": "hooks",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup|resume",

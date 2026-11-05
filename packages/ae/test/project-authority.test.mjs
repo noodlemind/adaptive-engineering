@@ -7,6 +7,8 @@ import { snapshotExperimentCheckSource } from '../lib/experiment-measurement.mjs
 import { addIsolatedWorktree } from '../lib/worktree.mjs';
 import { buildFactualReport } from '../lib/report-facts.mjs';
 import { resolveProjectAuthority } from '../lib/project-authority.mjs';
+import { projectStoreDir } from '../lib/project-layout.mjs';
+import { selectProjectAuthority } from '../corpus/hooks/lib/project-authority.mjs';
 import { loadNamedChecks } from '../lib/checks.mjs';
 import { loadConfiguredChecks, configuredCheckSnapshot } from '../lib/plan-readiness.mjs';
 import { loadPolicy } from '../lib/policy.mjs';
@@ -140,7 +142,7 @@ test('an independent nested repository never consults its parent shared authorit
   assert.equal(loadConfiguredChecks(nested).present, false);
 });
 
-test('a registered nested worktree .git file stops the enclosing authority search', t => {
+test('a registered nested worktree keeps its hook boundary while CLI diagnoses missing primary policy', t => {
   const f = fixture(t), nested = path.join(f.workspace, 'linked');
   initRepository(f.workspace);
   for (const args of [
@@ -152,8 +154,9 @@ test('a registered nested worktree .git file stops the enclosing authority searc
   }
   write(path.join(f.workspace, '.github/harness'), 'checks.yaml', 'version: 1\nchecks: {}\n');
   assert.equal(fs.lstatSync(path.join(nested, '.git')).isFile(), true);
-  assert.equal(resolveProjectAuthority(nested).mode, 'local');
-  assert.equal(loadConfiguredChecks(nested).present, false);
+  assert.equal(selectProjectAuthority(nested, projectStoreDir(nested, { home: f.home }), { home: f.home }).mode, 'local');
+  assert.throws(() => resolveProjectAuthority(nested), { code: 'E_PROJECT_AUTHORITY' });
+  assert.match(loadConfiguredChecks(nested).error, /shared project authority.*primary/);
 });
 
 test('enclosing shared authority diagnosis refuses redirected configuration directories', t => {

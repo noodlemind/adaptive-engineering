@@ -28,7 +28,7 @@ import { selectIntent, intentSourcesCheck } from './intent-sources.mjs';
 import { runGate, publishGateSession } from './gate.mjs';
 import { prepareNextTool } from './prepare.mjs';
 import { runIndexKnowledge } from './index-knowledge.mjs';
-import { configureVSCodeSettings } from './vscode-settings.mjs';
+import { configuredVSCodeSettingsPaths, configureVSCodeSettings } from './vscode-settings.mjs';
 import { parseQueryFromArgv } from './argv.mjs';
 import { readEvents, summarizeEvents, writeEvent } from './events.mjs';
 import { usageFields } from './token-meter.mjs';
@@ -44,7 +44,7 @@ import { validateCompletion } from './completion.mjs';
 import { migrateStrandedStore, purgeAll, purgeEpisode, rebuildStore } from './knowledge/admin.mjs';
 import { createStyle, keyWidthFor, clampNote, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
-import { planRevision } from './plan-decisions.mjs';
+import { planRevision, planWorkflow } from './plan-decisions.mjs';
 import { sharedIntentCheck } from './domain-bindings.mjs';
 import { domainLinkCheck } from './domain-delivery.mjs';
 import { planHome } from './domain-context.mjs';
@@ -170,7 +170,10 @@ export async function cmdInstallOrUpgrade(command, argv) {
   const homeKey = home => process.platform === 'win32' ? installationRoot(home).toLowerCase() : installationRoot(home);
   const copilotSelected = flags.targets.has('vscode') || flags.targets.has('cli');
   const intellijHome = flags.targets.has('intellij') ? resolveIntelliJHome() : null;
-  if (copilotSelected && flags.configureVsCode) configureVSCodeSettings({ ...flags, dryRun: true }, () => {});
+  const configuredProfiles = copilotSelected && command === 'upgrade' && !flags.configureVsCode ? configuredVSCodeSettingsPaths({ copilotHome }) : [];
+  const refreshVSCode = copilotSelected && (flags.configureVsCode || configuredProfiles.length > 0);
+  const vscodeOptions = flags.configureVsCode ? {} : { settingsPaths: configuredProfiles };
+  if (refreshVSCode) configureVSCodeSettings({ ...flags, dryRun: true }, () => {}, vscodeOptions);
   // Validate every selected path before deduplicating physical home ownership.
   for (const target of flags.targets) {
     const home = target === 'intellij' ? intellijHome : copilotHome;
@@ -226,8 +229,8 @@ export async function cmdInstallOrUpgrade(command, argv) {
     if (flags.configurePath) {
       allStats.pathConfig = configureShellPath(copilotHome, flags, logger);
     }
-    if (flags.configureVsCode) {
-      configureVSCodeSettings(flags, logger);
+    if (refreshVSCode) {
+      configureVSCodeSettings(flags, logger, vscodeOptions);
     }
   }
 
@@ -450,7 +453,7 @@ function readStatusDomainResult(flags, copilotHome) {
     }
     const result = flags.validateCompletion ? validateCompletion({ workspace, plan, copilotHome }) : flags.contractDigest ? { version: Number(plan.fm.plan_schema) >= 4 ? 4 : Number(plan.fm.plan_schema) >= 3 ? 3 : plan.fm.intent_source_policy === 'content-v1' ? 2 : 1, digest: intent.pass && gaps.pass && schema.pass && shared.pass && domainLink.pass ? planDigest(plan.text) : null, revision: planRevision(plan.text), intent, gaps, shared, domainLink, schema, ...(experiment ? { experiment } : {}) }
       : { ...validateEvidence({ workspace, plan, evidence, maxAgeHours: loadPolicy(workspace, null, { copilotHome, home }).evidenceTtlHours, copilotHome }), evidenceIdentity: createHash('sha256').update(JSON.stringify(evidence)).digest('hex') };
-    return result;
+    return flags.contractDigest ? { ...result, workflow: planWorkflow(plan, { workspace }) } : result;
   }
 
   return null;

@@ -51,6 +51,13 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
   assertExternalStateHome(workspace, stateHome, projectStoreDir(workspace, { home: stateHome }));
   const stats = { created: [] };
   if (flags.shared) stats.promotion = promoteProjectAuthority(workspace, { home: flags.home || harnessGlobalHome(), dryRun: Boolean(flags.dryRun) });
+  let authority;
+  if (flags.shared && flags.dryRun) {
+    const directory = path.join(workspace, '.github', 'harness');
+    authority = { mode: 'shared', root: workspace, directory, files: Object.fromEntries(PROJECT_AUTHORITY_FILES.map(name => [name, path.join(directory, name)])) };
+  } else {
+    authority = resolveProjectAuthority(workspace, { home: stateHome, mode: flags.shared ? 'shared' : undefined });
+  }
   const migrated = runMigrateLayout({
     workspace,
     dryRun: flags.dryRun,
@@ -69,11 +76,6 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
   const plansRel = plansDir;
   const agentCtx = path.join(projectStoreDir(workspace, { home: flags?.home || harnessGlobalHome() }), 'agent-context.md');
   const agentRel = agentCtx;
-  let authority = resolveProjectAuthority(workspace, { home: flags.home, mode: flags.shared && !flags.dryRun ? 'shared' : undefined });
-  if (flags.shared && flags.dryRun) {
-    const directory = path.join(workspace, '.github', 'harness');
-    authority = { ...authority, mode: 'shared', root: workspace, directory, files: Object.fromEntries(Object.keys(authority.files).map(name => [name, path.join(directory, name)])) };
-  }
   const harnessConfigDir = authority.directory;
   for (const file of Object.values(authority.files)) {
     if (fs.lstatSync(file, { throwIfNoEntry: false }) && readFileNoFollow(file, { root: authority.root, maxBytes: 1024 * 1024 }) === null) {
@@ -179,6 +181,17 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
     }
   } catch {
     log('skip knowledge store arming (failed)');
+  }
+
+  if (flags.shared && flags.dryRun && stats.promotion.files.length > 0) {
+    const message = 'Apply the reviewed shared-authority promotion, then inspect check readiness in this workspace. This dry run does not assess delivery readiness.';
+    stats.checkReadiness = {
+      status: 'deferred', ready: false, reason: 'authority-promotion-preview',
+      source: authority.files['checks.yaml'], sourceMode: 'shared', sourceDigest: null,
+      inspectionCommand: null, remediation: null, message,
+    };
+    log(message);
+    return stats;
   }
 
   const configured = loadConfiguredChecks(workspace, { home: flags.home });

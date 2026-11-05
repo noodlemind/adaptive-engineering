@@ -9,7 +9,7 @@ export function unwrapOrientSlice(parsed, empty) {
     task: parsed.task, evidence: parsed.evidence, coverage: parsed.coverage, expansion: parsed.expansion,
   } : null;
   if (!value || typeof value !== 'object' || !REQUIRED.every(key => Object.hasOwn(value, key))) {
-    return contextEvidence ? { ...empty, contextEvidence } : empty;
+    return contextEvidence ? { ...empty, ...(parsed.workflow ? { workflow: parsed.workflow } : {}), contextEvidence } : empty;
   }
   return { ...empty, ...value, ...(contextEvidence ? { contextEvidence } : {}) };
 }
