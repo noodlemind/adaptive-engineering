@@ -53,7 +53,8 @@ test('clean installed package expands current context and rejects stale source r
   ok('install');
   assert.ok(fs.existsSync(path.join(copilotHome, 'skills/references/context-budget.md')));
   const binding = ok('orient', '--read');
-  assert.equal(Object.keys(binding).length, 19);
+  assert.equal(Object.keys(binding).length, 20);
+  assert.equal(binding.workflow.mutationAuthority, 'none');
   assert.equal(binding.checkReadiness.status, 'missing');
   assert.equal(binding.checkReadiness.ready, false);
   assert.equal(binding.checkReadiness.sourceMode, 'local');

@@ -44,4 +44,16 @@ Data crossing the boundary:
 
 Source and subprocess fixtures can establish kernel and hook behavior. They cannot establish live VS Code Default Permissions behavior, host-event coverage, or model-provider equivalence. Record those limits separately from passing source tests.
 
-Implementation and verification results will be appended after integrated review.
+## Implementation and review
+
+Implemented the existing-operation design in [PR #112](https://github.com/noodlemind/prompt-library/pull/112), stacked on the recovery fixes in #111. No CLI command family was added. Canonical Engineer exports remain within the existing 900-token estimate and 20-line limits.
+
+Independent review reproduced and closed double-dot-descendant and hardlink plan aliases, interrupted same-event observation publication, and corrupt nonobject state masquerading as absent evidence. The shared completion execution owner also covers legacy `--status done`; historical completion validation remains usable for a new read-only question.
+
+Failing-first regressions cover each changed boundary. The latest independent intent/lock check passed 21 tests. Earlier focused groups establish structured workflow, transport, completion and selected-home upgrade behavior; counts overlap and are not a full-suite total. The PR records final integrated and CI results.
+
+The initial broad run was stopped when it stalled. A later run exhausted this environment's 4.9 GiB temporary filesystem during repeated archive/runtime-copy fixtures. Integrated verification was restarted with an explicit timeout and a dedicated temporary directory on the larger workspace volume. Orientation consumers with exact field inventories were updated for the additive `workflow` field; opaque-command tests retain both missing-gate and managed-plan-decoy controls.
+
+## Native acceptance still required
+
+Use the same host version, repository, tools, permissions and initial revision with GPT and Anthropic. Under Default Permissions, observe initial delivery, added context, a new-chat resume, and one explicit worktree handoff. Attempt direct managed-plan edits and completion with pending intent. Confirm the actual prompt/pre/post/Stop events, workspace binding and denied operations in host diagnostics. Do not infer success from generated files or count source fixtures as provider equivalence. Preserve necessary native approvals; do not enable Full Permissions to make the test pass.
