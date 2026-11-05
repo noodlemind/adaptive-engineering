@@ -545,7 +545,8 @@ test('corpus hooks are the only hook tree and their cwd token is hooks', () => {
       for (const command of entry.hooks || []) cwds.push(command.cwd);
     }
   }
-  assert.deepEqual(cwds, ['hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks']);
+  assert.deepEqual(cwds, ['hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks']);
+  assert.ok(hooks.hooks.UserPromptSubmit[0].hooks.some(command => command.command === 'node observe-user-intent.mjs'));
 });
 
 test('prompt-library retains at most one non-terminal PR plan and documents cleanup', () => {
@@ -680,7 +681,7 @@ test('single-entry: retired primitives carry registry tombstones', () => {
 
 test('agent tool identifiers are pinned to the current VS Code taxonomy', () => {
   const canonical = new Set([
-    'agent', 'agent/runSubagent',
+    'agent', 'agent/runSubagent', 'ae/*',
     'edit', 'edit/createDirectory', 'edit/createFile', 'edit/editFiles', 'edit/editNotebook',
     'execute', 'execute/createAndRunTask', 'execute/getTerminalOutput', 'execute/runInTerminal',
     'execute/runNotebookCell', 'execute/testFailure',

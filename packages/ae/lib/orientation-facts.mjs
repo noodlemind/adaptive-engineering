@@ -22,6 +22,7 @@ import { buildChangeImpactContext } from './change-impact.mjs';
 import { flowModelContext } from './flow-model.mjs';
 import { detectWorkspace, emptyLayout } from './workspace-layout.mjs';
 import { withGitIdentityCache } from './git-observation-cache.mjs';
+import { planWorkflow } from './plan-decisions.mjs';
 
 function indexPlane(plane) {
   if (!plane?.indexed) return 'missing';
@@ -98,6 +99,7 @@ function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', 
     index: { knowledge: indexPlane(status?.knowledge), structural: indexPlane(status?.structural) },
     gateStatus: gate.pass ? 'pass' : 'blocked',
     activePlan: active ? { path: active.path, status: active.status, plan_lock: active.plan_lock } : null,
+    workflow: planWorkflow(active, { workspace, evaluatedAction: 'start', missing: gate.checks?.filter(check => !check.pass).map(check => check.message) || (gate.pass ? [] : [gate.blockedReason || 'Implement gate unavailable']) }),
     layout: advisory('layout', emptyLayout(), () => detectWorkspace(workspace, { home })),
   };
   if (flags.questionKind) slice.impactContext = buildChangeImpactContext({ workspace, copilotHome, home, query: q, files: flags.files || [], questionKind: flags.questionKind, graphPreparation });

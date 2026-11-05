@@ -219,6 +219,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     intentDetail,
     trust,
     checkReadiness,
+    workflow: facts.slice.workflow,
     learnings,
     deliveredLearnings,
     explain,

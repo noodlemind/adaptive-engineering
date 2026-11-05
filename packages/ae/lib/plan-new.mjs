@@ -18,7 +18,7 @@ import { parseImpactedFiles } from './plan-scope.mjs';
 import { emptySnapshot, routeWorkspace } from './route.mjs';
 import { shortPlanDocument } from './plan-record.mjs';
 import { bindLockedIntentSources, lockIntentSources } from './intent-sources.mjs';
-import { planRevision, scopePaths, applyPlanNotes, renderPlanPhases, planState } from './plan-decisions.mjs';
+import { planRevision, scopePaths, applyPlanNotes, renderPlanPhases, planState, planWorkflow } from './plan-decisions.mjs';
 import { readBoundedInput, readFileNoFollow, writeFileContainedExclusive } from './fs-safe.mjs';
 import { locateVerification } from './verification-location.mjs';
 import { authorizeDomainPlan, authorizeProjectPlan, validateDomainContext, domainPlanPath } from './domain-context.mjs';
@@ -518,7 +518,8 @@ export async function cmdPlanNew(argv) {
 function creationResult(workspace, rel, content, dryRun, copilotHome) {
   const plan = planFromText(content, { path: rel, fullPath: path.resolve(workspace, rel) });
   const readiness = validatePlanReadiness(workspace, plan, { copilotHome: resolveCopilotHome(copilotHome) });
-  return { path: rel, created: !dryRun, revision: planRevision(content), planState: planState(plan), missing: readiness.checks.filter(check => !check.pass).map(check => check.message), allowedNextActions: ['Read the generated plan and selected sources', 'Submit accepted amendments or a start decision'] };
+  const missing = readiness.checks.filter(check => !check.pass).map(check => check.message);
+  return { path: rel, created: !dryRun, revision: planRevision(content), planState: planState(plan), workflow: planWorkflow(plan, { workspace, missing, evaluatedAction: 'start' }), missing, allowedNextActions: ['Read the generated plan and selected sources', 'Submit accepted amendments or a start decision'] };
 }
 
 function prepareRouting({ workspace, impacted, risk, domains, classification, copilotHome }) {

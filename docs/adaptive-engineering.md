@@ -204,6 +204,33 @@ Deliver is host-first. The Engineer works in the editor. Kernel-always means ori
 
 The runtime has four postures. Standalone is the Engineer with the Harness and no acquired specialist. Degraded is a missing check or index, reported rather than invented. Governed is a learning that a person has confirmed. Bounded delegation means a specialist receives a narrow question and does not take over the delivery. A coherent implementation can remain with the Engineer; expertise, isolation or useful parallelism justifies a delegate. Required independent final review remains separate from implementation ownership.
 
+### Structured workflow
+
+The host-first path uses the same structured workflow snapshot in orientation,
+status, plan creation and plan updates. It supplies the current plan path and
+revision, partial decision arguments and evaluated or unknown prerequisites.
+Candidate decisions grant no authority; the existing transition validators and
+mutation hooks remain authoritative. The model still interprets intent and
+chooses implementation details. A short role prompt does not establish a
+separate deterministic controller.
+
+Managed plans, including readable legacy plan roots, are written through AE
+decisions. Native editor and shell writes to those roots, aliases and ambiguous
+hardlinked files are refused. Supported host prompt events record session-bound
+observations using prompt digests rather than storing prompt text. A successful
+start, amendment or bookkeeping decision explicitly reconciles the observed
+request with the resulting plan revision. A later request remains pending even
+when an older decision is replayed. Completion cannot accept pending intent.
+Absent host events are reported as unobserved; neither query text nor generated
+hook files establish native qualification.
+
+VS Code configuration registers the existing structured AE tools using a
+workspace variable at startup, preserving Default Permissions and other MCP
+servers. A running server stays bound to its original checkout. Opening or
+handing off to a worktree and authorizing a server remain host operations.
+Configured assets and source-level tests do not prove live editor or
+cross-model behavior.
+
 ## Optional headless delivery
 
 The optional headless Deliver loop uses the same mutation hooks and completion authority. It requires `orient --read --query` with touched files before product edits and checks bound completion when the model tries to finish. Its lifecycle tool accepts authored decisions for planning, review assembly and compounding. A failed or missing proof cannot become a successful final message. The separate autonomous profile keeps its task-verifier contract and does not acquire the Deliver lifecycle.

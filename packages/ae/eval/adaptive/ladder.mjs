@@ -42,6 +42,7 @@ const SLICE_KEYS = [
   'index',
   'gateStatus',
   'activePlan',
+  'workflow',
   'layout',
 ];
 
@@ -264,6 +265,7 @@ const RUNGS = [
       assert(body.neighborhood === null, 'cold neighborhood was filled', body);
       assert(body.gateStatus === 'blocked', 'cold gate was not blocked', body);
       assert(body.activePlan === null, 'cold read selected a plan', body);
+      assert(body.workflow?.plan === null && body.workflow.mutationAuthority === 'none', 'cold workflow invented plan or mutation authority', body.workflow);
       assert(body.checkReadiness?.status === 'missing' && body.checkReadiness.ready === false, 'cold read did not expose missing named checks', body.checkReadiness);
       assert(body.checkReadiness.remediation?.owner === 'engineer', 'cold read did not give Engineer the check setup action', body.checkReadiness);
       assert(Array.isArray(body.learnings) && body.learnings.length === 0, 'cold read served learnings', body);

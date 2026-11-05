@@ -1,8 +1,10 @@
 # Plan decisions
 
-The agent chooses intent, scope, tasks, acceptance criteria, check adequacy, research, risk, and whether observed work satisfies the goal. Harness writes their representation and applies state transitions. It does not infer authorization from a payload field.
+The agent chooses intent, scope, tasks, acceptance criteria, check adequacy, research, risk, and whether observed work satisfies the goal. AE writes their representation and applies state transitions. It does not infer authorization from a payload field. Use the current `workflow` returned by orient, status, creation or update for the plan path, exact revision and structured candidate decisions. Candidate actions are not permission grants; their prerequisites may still be unevaluated.
 
-Pipe the decision JSON on stdin with `--file -`. Do not write that JSON into the repo, a worktree, or the system temp folder. Pass the JSON as the standard input of the host execute tool. Do not use a shell heredoc.
+Prefer the advertised workspace-bound `ae_plan_new` and `ae_plan_update` tools. They accept a decision object and handle stdin without shell quoting or temporary files. When those tools are unavailable, use `--file -` only with an execute transport that supports stdin. Do not write decision JSON into the repo, a worktree, or the system temp folder, or improvise a direct managed-plan edit. Read this reference when a decision needs detail beyond its tool schema.
+
+When `workflow.observedIntent.state` is `pending`, include `observedIntent: {id, disposition, rationale}` in a current start, amend, progress, finding or gap decision. Copy the observed ID. Use `amend` disposition with an actual amendment when the contract changes; use `unchanged` with a rationale when the accepted contract still covers the request. A successful operation binds that disposition to the resulting plan revision. New host observations require another disposition; stale decisions, failed operations and old replays do not accept them. Completion cannot reconcile pending intent. `unobserved` means the host did not supply this evidence; a query is not a host event.
 
 ```text
 ae plan-new --file - --json
