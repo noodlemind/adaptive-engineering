@@ -65,7 +65,9 @@ test('linked initialization cannot hide primary shared authority behind new priv
     const result = f.cli(child, 'init-repo', ...(dryRun ? ['--dry-run'] : []));
     assert.notEqual(result.status, 0, 'missing shared policy must not become implicit private authority');
     assert.match(result.stdout + result.stderr, /primary|shared authority|shared configuration/i);
-    assert.ok((result.stdout + result.stderr).includes(f.workspace));
+    const refusal = JSON.parse(result.stderr || result.stdout).error;
+    assert.equal(refusal.code, 'E_PROJECT_AUTHORITY');
+    assert.ok(refusal.message.includes(fs.realpathSync.native(f.workspace)), refusal.message);
     assert.deepEqual({ home: files(f.home), child: files(child), metadata: metadata() }, before);
     assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
   });
@@ -83,7 +85,9 @@ test('linked subfolder initialization preserves primary shared authority before 
     const result = f.cli(nested, 'init-repo', ...(dryRun ? ['--dry-run'] : []));
     assert.notEqual(result.status, 0, 'a subfolder must not bypass linked-primary authority selection');
     assert.match(result.stdout + result.stderr, /primary|shared authority|shared configuration/i);
-    assert.ok((result.stdout + result.stderr).includes(f.workspace));
+    const refusal = JSON.parse(result.stderr || result.stdout).error;
+    assert.equal(refusal.code, 'E_PROJECT_AUTHORITY');
+    assert.ok(refusal.message.includes(fs.realpathSync.native(f.workspace)), refusal.message);
     assert.deepEqual({ home: files(f.home), child: files(child) }, before);
     assert.equal(resolveProjectAuthority(f.workspace, { home: f.home }).mode, 'shared');
   });
