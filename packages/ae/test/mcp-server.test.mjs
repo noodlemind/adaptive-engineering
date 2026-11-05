@@ -121,7 +121,7 @@ test('stdio lifecycle negotiates explicit legacy versions and lists bounded type
   assert.ok(!tools.some(tool => /exec|shell|trust|install/.test(tool.name)));
   assert.equal(tools.find(tool => tool.name === 'ae_verify').annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === 'ae_verify').annotations.openWorldHint, true, 'trusted named checks may have external effects');
-  assert.ok(initialized.result.instructions.includes(fs.realpathSync(f.workspace)), 'the client must see the actual workspace binding');
+  assert.ok(initialized.result.instructions.includes(JSON.stringify(fs.realpathSync(f.workspace))), 'the client must see the actual workspace binding');
 });
 
 test('plan tools advertise creation formats and action-specific decision shapes', () => {
