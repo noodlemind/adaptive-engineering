@@ -39,8 +39,16 @@ packages/ae/lib/, packages/ae/corpus/, packages/ae/test/, packages/ae/eval/, pac
 
 ## Status
 
-Implementation complete; final packaged evaluation and frozen-revision regression qualification are in progress. The original corpus remains present: 28 skills, 23 agents (including the new internal decision role), and 5 instructions.
+Implementation and frozen-source local bootstrap qualification complete; PR platform regression qualification is in progress. The original corpus remains present: 28 skills, 23 agents (including the new internal decision role), and 5 instructions.
 
 Independent adversarial integration review identified and verified fixes for permission expansion, scoped publication races, pending-role activation, authored reviewer provenance, custom-profile hook binding, nested delegation, network aliases, and retained state capacity. Focused current-source integration suites pass, including native/Copilot writer and activation checks, actual observed review output, memory publication, and retained task/resource recurrence. Adapter events in these suites are labeled fixtures; they do not establish live editor or loaded-definition qualification.
 
-The clean four-skill forward model trial repaired the payment retry defect (baseline 2/4 passed; treatment 4/4 passed), consulted supplied enterprise conventions, rendered a source-linked tour, and correctly retained failed verification/readiness because this environment has no named native reviewer/decision-role invocation. No invocation or completion record was invented. The installed matrix separately exercises full, reduced, and four-skill bootstrap packages, including required missing-provider acquisition. Final observed results are recorded with the PR; no release or merge is implied.
+The clean four-skill forward model trial repaired the payment retry defect (baseline 2/4 passed; treatment 4/4 passed), consulted supplied enterprise conventions, rendered a source-linked tour, and correctly retained failed verification/readiness because this environment has no named native reviewer/decision-role invocation. No invocation or completion record was invented. The installed matrix separately exercises full, reduced, and four-skill bootstrap packages, including required missing-provider acquisition. No release or merge is implied.
+
+## Frozen-source bootstrap results
+
+The fresh installed four-skill proof passed all 13 checks. Both authored and full installed corpus digests remained unchanged. It acquired and actually source-read missing `architect` and `code-review` skills, reported the absent reviewer, created a native specialist, rejected uncorrelated activation, consumed an exact first-invocation receipt, and retained observed activation and packet-bound reviewer results. Self-review and authored-only provenance were rejected. Behavioral verification detected the seeded defect before the fix. A current tour and passed proof supported the internal readiness result.
+
+Two distinct verified tasks produced exact approved memory publications, source-bound skill recurrence and independently retained native specialist recurrence. The following session received a bounded visible recommendation; rich evidence remains expandable without exceeding orientation's render budget. Exclusion and consent revocation tests passed. These are native adapter fixtures, not live model/editor or loaded-definition qualification.
+
+The exact local report is retained in [ae-adaptive-lifecycle-evaluation-2026-11-06.json](ae-adaptive-lifecycle-evaluation-2026-11-06.json), bound to implementation commit `27cc98446ce22b7a6bdaa0a9637c9068e196d806`. Default CI runs all three installed corpus cases. PR #114 carries current platform-check status and the ordered visual review tour.
