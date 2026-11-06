@@ -204,6 +204,8 @@ export function createPersonalPrimitive({
   shippedFiles = new Set(),
   lockFiles = new Set(),
   now = new Date().toISOString(),
+  validatePublication,
+  activation,
 }) {
   if (!Object.prototype.hasOwnProperty.call(CREATE_KINDS, kind)) {
     throw Object.assign(new Error(`unknown primitive kind: ${JSON.stringify(kind)}`), {
@@ -264,10 +266,11 @@ export function createPersonalPrimitive({
       if (!registry.unreadable && record?.digest === digest) {
         return { path: rel, state: 'unchanged', kind: validation.kind, name: validation.name };
       }
-      const registered = registerPrimitive({ copilotHome, rel, now, shippedFiles, lockFiles });
+      const registered = registerPrimitive({ copilotHome, rel, now, shippedFiles, lockFiles, validatePublication, activation });
       return { ...registered, state: 'registered' };
     }
   }
+  validatePublication?.('before-source');
   const written = writeFileContained(copilotHome, rel, bytes.toString('utf8'));
   if (!written) {
     throw Object.assign(new Error(`could not write ${rel}`), {
@@ -276,11 +279,12 @@ export function createPersonalPrimitive({
       hint: 'the path is not writable, or an ancestor is a symlink out of the home directory',
     });
   }
-  const registered = registerPrimitive({ copilotHome, rel, now, shippedFiles, lockFiles });
+  validatePublication?.('after-source');
+  const registered = registerPrimitive({ copilotHome, rel, now, shippedFiles, lockFiles, validatePublication, activation });
   return { ...registered, state: stat?.isFile() ? 'replaced' : 'created' };
 }
 
-export function registerPrimitive({ copilotHome, rel, now = new Date().toISOString(), shippedFiles = new Set(), lockFiles = new Set() }) {
+export function registerPrimitive({ copilotHome, rel, now = new Date().toISOString(), shippedFiles = new Set(), lockFiles = new Set(), validatePublication, activation }) {
   const { local } = classifyPrimitives({ copilotHome, shippedFiles, lockFiles });
   if (!local.includes(rel)) {
     throw Object.assign(new Error(`not a locally-added primitive: ${rel}`), {
@@ -307,6 +311,7 @@ export function registerPrimitive({ copilotHome, rel, now = new Date().toISOStri
       hint: `fix it, then: ae resources register ${rel}`,
     });
   }
+  validatePublication?.('before-registry');
   const registry = readRegistry(copilotHome);
   if (registry.unreadable) {
     throw Object.assign(new Error('refusing to write over an unreadable registration store'), {
@@ -316,13 +321,20 @@ export function registerPrimitive({ copilotHome, rel, now = new Date().toISOStri
     });
   }
   registry.version = REGISTRY_SCHEMA;
+  const previous = registry.primitives[rel];
+  const retainedActivation = previous?.activation
+    ? previous.digest === snapshot.digest ? previous.activation : { state: 'pending-reload', reason: 'Registered source changed; actual native invocation must be observed again.' }
+    : null;
   registry.primitives[rel] = {
     registeredAt: now,
     digest: snapshot.digest,
     kind: validation.kind,
     name: validation.name,
+    ...(activation || retainedActivation ? { activation: activation || retainedActivation } : {}),
   };
+  validatePublication?.('before-registry');
   writeRegistry(copilotHome, registry);
+  validatePublication?.('after-registry');
   return { path: rel, state: 'registered', kind: validation.kind, name: validation.name };
 }
 

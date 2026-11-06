@@ -22,6 +22,7 @@ import { buildChangeImpactContext } from './change-impact.mjs';
 import { flowModelContext } from './flow-model.mjs';
 import { detectWorkspace, emptyLayout } from './workspace-layout.mjs';
 import { withGitIdentityCache } from './git-observation-cache.mjs';
+import { capabilityContext, adaptationContext } from './adaptive-context.mjs';
 
 function indexPlane(plane) {
   if (!plane?.indexed) return 'missing';
@@ -53,13 +54,21 @@ function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', 
   });
   const gate = advisory('gate', { pass: false, blockedReason: 'gate unavailable' }, () => runGate({ workspace, flags: { ...flags, phase: 'implement' }, query: q }));
   const status = advisory('index', null, () => indexStatus({ workspace, copilotHome, home }));
+  const capabilities = advisory('capabilities', null, () => capabilityContext({ workspace, copilotHome, home, skillsHome: flags.skillsHome, query: q, limit: 8 }));
+  const adaptation = capabilities?.configured ? advisory('adaptation', { candidates: [], assessment: 'Candidate evidence unavailable; inspect resources candidates before promotion.' }, () => adaptationContext({ workspace, copilotHome, home, query: q })) : null;
   let skills = [], instructions = [], contacts = [], routingLines = null;
   if (active?.fm?.routing) {
     const routing = advisory('routing', null, () => {
-      const inventory = discoverInventory(primitiveReadRoots(copilotHome));
+      const inventory = discoverInventory(primitiveReadRoots(copilotHome), { workspace, copilotHome, home, skillsHome: flags.skillsHome });
       return { ...routingCards(active.fm.routing, inventory), lines: routingReadPointers(active.fm.routing, inventory) };
     });
     if (routing) ({ skills, instructions, contacts, lines: routingLines } = routing);
+  }
+  if (capabilities) {
+    const cards = kind => capabilities.resources.filter(item => item.kind === kind).map(item => ({ id: item.id, path: item.path, digest: item.digest, invocable: item.invocable }));
+    const merge = (prior, next) => [...new Map([...prior, ...next].map(item => [item.id, item])).values()];
+    skills = merge(skills, cards('skill')); instructions = merge(instructions, cards('instruction'));
+    contacts = merge(contacts, cards('agent').map(item => ({ ...item, when: 'Task-relevant included capability; confirm native invocation.' })));
   }
   const neighborhood = namedFiles.length ? advisory('neighborhood', null, () => buildNeighborhood({ workspace, files: namedFiles, home, includeEvidence: flags.contextVersion === 2 })) : null;
   const procedure = caffeinatedPointer(active, { copilotHome });
@@ -82,6 +91,7 @@ function readOrientationFacts({ workspace, copilotHome, flags = {}, query = '', 
   // Check preparation can change policy bytes, so defer the approval handoff until checks are ready.
   if (!checkReadiness.ready && trust.recovery?.afterInspection) trust = { ...trust, recovery: { ...trust.recovery, afterInspection: null } };
   const slice = {
+    ...(capabilities ? { capabilities, adaptation } : {}),
     ...(flowModel ? { flowModel } : {}),
     ...(performance ? { performance } : {}),
     neighborhood,

@@ -21,6 +21,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "node guard-decision.mjs",
+            "cwd": "hooks",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "node guard-critical-files.mjs",
             "cwd": "hooks",
             "timeout": 15
@@ -49,6 +55,19 @@
             "command": "node record-successful-edit.mjs",
             "cwd": "hooks",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node observe-decision.mjs",
+            "cwd": "hooks",
+            "timeout": 10
           }
         ]
       }

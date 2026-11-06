@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { nativeHookConfig } from '../lib/hosts/native-hook.mjs';
 import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { configureDiscovery, discoveryPolicy } from '../lib/capability-catalog.mjs';
+import { decisionPolicyFromDiscovery, prepareDecision, observeDecisionInvocation, recordDecision } from '../lib/decision-agent.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = path.join(packageRoot, 'lib/hosts/native-hook.mjs');
@@ -45,6 +47,43 @@ function fixture(t, configName = 'config home') {
   });
   return { root, workspace, configHome, skillsHome, home, run };
 }
+
+function approveNativeFixtureAction(f, action) {
+  const options = { workspace: f.workspace, home: f.home, copilotHome: f.configHome, skillsHome: f.skillsHome, host: f.host || 'claude-code' };
+  const policy = decisionPolicyFromDiscovery(discoveryPolicy(options));
+  const prepared = prepareDecision({ ...options, policy, input: { schema: 1, taskId: 'native-permission', sessionId: 'native-permission-session', type: 'action', intent: 'Execute this exact consented action after all Harness gates pass.', action } });
+  const judgment = { schema: 1, requestId: prepared.requestId, verdict: 'allow', reason: 'The exact fixture action is within standing scope.', evidence: [] };
+  assert.equal(observeDecisionInvocation({ ...options, policy, payload: { cwd: f.workspace, session_id: 'native-permission-session', hook_event_name: 'PostToolUse',
+    tool_name: 'Agent', tool_use_id: `judge-${prepared.requestId}`, tool_input: { subagent_type: 'decision-agent' }, tool_response: { content: JSON.stringify(judgment) }, success: true } }).observed, true);
+  assert.equal(recordDecision({ ...options, policy, input: { schema: 1, requestId: prepared.requestId } }).authorized, true);
+}
+
+for (const host of ['claude-code', 'codex', 'cursor']) test(`${host} emits an exact one-shot native permission approval after every remaining gate passes`, t => {
+  const f = fixture(t);
+  f.host = host;
+  fs.mkdirSync(f.skillsHome);
+  configureDiscovery({ workspace: f.workspace, home: f.home, copilotHome: f.configHome, skillsHome: f.skillsHome, host, input: { schema: 1,
+    roots: [{ path: f.configHome, included: true }], grants: { decision: true, tools: ['web/fetch'] } } });
+  const input = { url: 'https://example.test/guide' };
+  approveNativeFixtureAction(f, { tool: 'WebFetch', input, cwd: f.workspace });
+  const payload = { cwd: f.workspace, session_id: 'native-permission-session', tool_name: 'WebFetch', tool_input: input };
+  const first = JSON.parse(f.run(host, 'pre', payload).stdout);
+  assert.equal(host === 'cursor' ? first.permission : first.hookSpecificOutput?.permissionDecision, 'allow', JSON.stringify(first));
+  const second = JSON.parse(f.run(host, 'pre', payload).stdout);
+  assert.equal(host === 'cursor' ? second.permission : second.hookSpecificOutput?.permissionDecision, 'deny');
+});
+
+test('a native judgment approval cannot override a later lifecycle denial', t => {
+  const f = fixture(t);
+  fs.mkdirSync(f.skillsHome);
+  configureDiscovery({ workspace: f.workspace, home: f.home, copilotHome: f.configHome, skillsHome: f.skillsHome, host: 'claude-code', input: { schema: 1,
+    roots: [{ path: f.configHome, included: true }], grants: { decision: true, tools: ['edit'] } } });
+  const input = { file_path: path.join(f.workspace, '.git/config'), content: 'Changed Git configuration.' };
+  approveNativeFixtureAction(f, { tool: 'Write', input, cwd: f.workspace });
+  const result = JSON.parse(f.run('claude-code', 'pre', { cwd: f.workspace, session_id: 'native-permission-session', tool_name: 'Write', tool_input: input }).stdout);
+  assert.equal(result.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(result));
+  assert.match(result.hookSpecificOutput.permissionDecisionReason, /missing-implement-gate|critical|protected/i);
+});
 
 test('native hook configuration uses each host dialect and preserves selected roots', t => {
   const { configHome, skillsHome, home } = fixture(t);

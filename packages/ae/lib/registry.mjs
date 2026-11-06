@@ -733,7 +733,7 @@ registerCommand({
 registerCommand({
   name: 'review', summary: 'Capture review obligations and collect bound specialist results', group: 'engineer loop', sideEffect: 'mutate', capabilities: [], outputModes: ['ledger', 'json'],
   verbs: REVIEW_VERBS.map(verb => ({ verb, summary: verb === 'prepare' ? 'Capture current review scope' : 'Validate and record collected results' })),
-  usage: '<prepare|assemble> [--plan <plan>] [--packet <id> --file <path>]',
+  usage: '<prepare|assemble|tour> [--plan <plan>] [--packet <id> --file <path>]',
   args: { positionals: [{ name: 'verb', required: true, description: REVIEW_VERBS.join('|') }], flags: [
     { name: '--plan', type: 'string', valueName: 'plan', description: 'Plan whose work is reviewed (omit for standalone)' },
     { name: '--domain', type: 'string', valueName: 'code|document', description: 'Review criteria set (default: code)' },
@@ -741,7 +741,7 @@ registerCommand({
     { name: '--max-bytes', type: 'string', valueName: 'bytes', description: 'Per-section packet byte budget, 1024 to 131072 (default: 16384)' },
     { name: '--base', type: 'string', valueName: 'ref', description: 'Captured comparison revision' },
     { name: '--packet', type: 'string', valueName: 'id', description: 'Prepared packet identity' },
-    { name: '--file', type: 'string', valueName: 'path', description: 'Prepare: selected source (repeatable). Assemble: JSON results (default: stdin)' },
+    { name: '--file', type: 'string', valueName: 'path', description: 'Prepare: selected source (repeatable). Assemble: results. Tour: source-linked walkthrough JSON' },
   ] }, handler: cmdReview, resultOf: reviewResultOf, exitOf: result => result.status === 'blocked' ? 1 : 0,
 });
 
@@ -1556,8 +1556,10 @@ registerCommand({
     sideEffect: 'mutate',
   capabilities: [],
   outputModes: ['ledger', 'json'],
-  usage: '<list|show|register|unregister|discard|create|validate|scaffold|candidates|propose|bundles|add|update|remove> [path] [name]',
+  usage: '<list|show|register|unregister|discard|create|validate|scaffold|candidates|propose|discover|decision|bundles|add|update|remove> [path] [name]',
   verbs: [
+    { verb: 'discover', summary: 'inspect existing capabilities or record scoped inclusion and ongoing discovery consent' },
+    { verb: 'decision', summary: 'prepare, record or inspect bounded native decision-agent judgments' },
     { verb: 'validate', summary: 'check metadata, references, registry and delegation declarations', sideEffect: 'read' },
     { verb: 'scaffold', summary: 'emit a dormant template requiring authored judgment', sideEffect: 'read', positionals: ['path', 'name'] },
     { verb: 'candidates', summary: 'freeze recurring claim evidence; counters never activate a primitive' },
@@ -1581,7 +1583,10 @@ registerCommand({
       { name: 'name', description: 'primitive name for resources create', required: false, default: null },
     ],
     flags: [
-      { name: '--file', type: 'string', valueName: 'path', description: 'Versioned creation or dormant proposal JSON input', required: false, default: null, tui: 'cli-only' },
+      { name: '--file', type: 'string', valueName: 'path', description: 'Versioned creation, discovery, native decision or proposal JSON input', required: false, default: null, tui: 'cli-only' },
+      { name: '--query', type: 'string', valueName: 'text', description: 'Bounded task-specific discovery query', required: false, default: null, tui: 'cli-only' },
+      { name: '--refresh', type: 'boolean', description: 'Refresh consented sources and reconcile eligible selected-host agents; never changes consent', required: false, default: false, tui: 'cli-only', appliesToVerbs: ['discover'] },
+      { name: '--limit', type: 'number', valueName: 'n', description: 'Maximum relevant capability cards', required: false, default: null, tui: 'cli-only' },
       { name: '--path', type: 'string', valueName: 'directory', description: 'Root to inspect with validate', required: false, default: null, tui: 'cli-only' },
       { name: '--corpus', type: 'boolean', description: 'Validate shipped corpus and capability registry', required: false, default: false, tui: 'cli-only' },
       { name: '--yes', type: 'boolean', description: 'Caller confirmation of human-authorized tool or delegation expansion', required: false, default: false, tui: 'cli-only' },

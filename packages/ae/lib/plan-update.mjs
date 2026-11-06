@@ -476,7 +476,7 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
     const current = planRevision(plan.text);
     if (existing ? ![existing.value.before, existing.value.after].includes(current) : input.expect !== current) throw usage('stale plan revision; reread before accepting a new decision');
     const recordedAt = existing?.value.recordedAt || new Date().toISOString();
-    const decision = existing ? { text: existing.value.text, amendments: existing.value.amendments, authority: existing.value.authority } : applyPlanDecision(workspace, plan, input, { applyUpdate: applyPlanUpdate, recordedAt, copilotHome });
+    const decision = existing ? { text: existing.value.text, amendments: existing.value.amendments, authority: existing.value.authority } : applyPlanDecision(workspace, plan, input, { applyUpdate: applyPlanUpdate, recordedAt, copilotHome, home: planHome(workspace, plan) });
     const proposed = planWithText(plan, decision.text);
     const schema = validatePlanSchema(proposed);
     const missing = schema.checks.filter(check => !check.pass).map(check => check.message);

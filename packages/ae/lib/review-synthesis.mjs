@@ -46,7 +46,7 @@ function aggregate(group) {
 
 const SEPARATE_CALLERS = new Set(['engineer', 'code-review-coordinator']);
 
-function invocationEvidence(result) {
+function invocationEvidence(result, providerName = result?.reviewer) {
   const declared = result?.provenance;
   const record = declared && typeof declared === 'object' && !Array.isArray(declared) ? declared : null;
   const agent = typeof record?.agent === 'string' ? record.agent : '';
@@ -54,7 +54,7 @@ function invocationEvidence(result) {
   if (record?.kind === 'same-context' || agent === 'engineer' || result?.reviewer === 'engineer') {
     return { kind: 'rejected-self-review', independence: 'rejected', declared: declared ?? null };
   }
-  if (record?.kind === 'host-invocation' && agent && agent === result?.reviewer && SEPARATE_CALLERS.has(via)) {
+  if (record?.kind === 'host-invocation' && agent && agent === providerName && SEPARATE_CALLERS.has(via)) {
     return { kind: 'host-invocation', independence: 'separate-reviewer', agent, via, declared };
   }
   return { kind: 'unverified-declaration', independence: 'unverified', declared: declared ?? null };
@@ -69,7 +69,7 @@ function mergedPartitions(ids, decisions) {
   return { representative, groups: [...groups.values()].map(group => group.sort(compareText)) };
 }
 
-export function synthesizeReview(workspace, required, input, preparationFailures = [], sourceRefs = [], selectedOnly = false) {
+export function synthesizeReview(workspace, required, input, preparationFailures = [], sourceRefs = [], selectedOnly = false, { requireIndependent = false, providers = [], observationFor } = {}) {
   const results = [], failures = preparationFailures.map(message => ({ reviewer: null, errors: [message] })), suppressed = [], accepted = [];
   for (const result of input.results) {
     const errors = [];
@@ -84,7 +84,18 @@ export function synthesizeReview(workspace, required, input, preparationFailures
       if (parsed.value) normalized.push({ ...parsed.value, reviewer: result.reviewer });
     }
     const raw = result && typeof result === 'object' ? { ...result, ...(Array.isArray(result.findings) ? { findings: result.findings.toSorted((a, b) => compareText(stableJson(a), stableJson(b))) } : {}) } : result;
-    const provenance = invocationEvidence(result);
+    const provider = providers.find(value => value.perspective === result?.reviewer);
+    let provenance = invocationEvidence(result, provider?.name || result?.reviewer);
+    if (requireIndependent && provenance.independence !== 'rejected') {
+      let observation;
+      try { observation = observationFor?.(result, provider); } catch (error) { observation = { valid: false, reason: error.message }; }
+      provenance = observation?.valid
+        ? { kind: 'observed-native-invocation', independence: 'separate-reviewer', agent: provider.name, sessionId: observation.sessionId,
+          observationId: observation.observationId, assurance: observation.assurance }
+        : { kind: 'unverified-declaration', independence: 'unverified', declared: result?.provenance ?? null,
+          reason: observation?.reason || 'No matching current native reviewer observation' };
+    }
+    if (requireIndependent && provenance.independence !== 'separate-reviewer') errors.push('Required independent specialist invocation is missing or rejected');
     results.push({ reviewer: result?.reviewer || null, status: errors.length ? 'invalid' : 'completed', provenance, raw, errors: unique(errors) });
     if (errors.length) failures.push({ reviewer: result?.reviewer || null, errors: unique(errors) });
     else for (const finding of normalized) {

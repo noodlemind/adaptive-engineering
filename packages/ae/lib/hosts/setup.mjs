@@ -20,7 +20,7 @@ const equal = (left, right) => left === null ? right === null : right !== null &
 const equivalent = isDeepStrictEqual;
 const slash = value => value.replaceAll('\\', '/');
 
-function resolveRoots(options) {
+export function resolveHostRoots(options) {
   const home = path.resolve(options.home || harnessGlobalHome());
   const defaultConfig = options.host === 'terminal' ? path.join(home, 'terminal') : path.join(os.homedir(), options.host === 'claude-code' ? '.claude' : `.${options.host}`);
   const configHome = path.resolve(options.configHome || defaultConfig);
@@ -118,7 +118,7 @@ function atomicWrite(full, value) {
   finally { fs.rmSync(temporary, { force: true }); }
 }
 
-function applyChanges(roots, changes, snapshots) {
+function applyChanges(roots, changes, snapshots, validatePublication) {
   const locks = [path.join(roots.configHome, '.ae-host.lock'), path.join(roots.skillsHome, '.ae-host-skills.lock')].sort();
   const acquired = [];
   const completed = [];
@@ -142,7 +142,9 @@ function applyChanges(roots, changes, snapshots) {
     // Revalidate the exact observations that authorized this plan, including
     // unchanged ownership records and absent destinations.
     for (const item of snapshots.values()) checkSnapshot(item);
+    validatePublication?.();
     for (const item of changes) {
+      validatePublication?.();
       for (const dependency of ownership.values()) checkSnapshot(dependency);
       checkSnapshot(item);
       if (item.next === null) fs.unlinkSync(item.full);
@@ -151,6 +153,7 @@ function applyChanges(roots, changes, snapshots) {
       if (ownership.has(item.full)) ownership.get(item.full).previous = item.next;
     }
     for (const dependency of ownership.values()) checkSnapshot(dependency);
+    validatePublication?.();
   } catch (error) {
     const failures = [];
     for (const item of completed.reverse()) {
@@ -186,7 +189,7 @@ export function runHostSetup(options = {}) {
     if (result.verb === 'list') return { ...result, hosts: HOSTS.map(host => ({ host, nativeQualification: 'unverified', setup: `ae host setup --host ${host}` })) };
     if (!['setup', 'status', 'remove'].includes(result.verb)) throw new Error('Host verb must be list, setup, status or remove');
     if (!HOSTS.includes(result.host)) throw new Error(`Unsupported host: ${result.host}`);
-    const roots = resolveRoots(options);
+    const roots = resolveHostRoots(options);
     result.roots = roots;
     const packageRoot = path.resolve(options.packageRoot || fileURLToPath(new URL('../..', import.meta.url)));
     const packageVersion = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version;
@@ -209,7 +212,7 @@ export function runHostSetup(options = {}) {
     if (result.verb === 'remove' && !manifest) return { ...result, assetState: 'absent' };
     const changes = [];
     if (result.verb === 'setup') {
-      const projection = projectHostCorpus({ packageRoot, host: result.host, ...roots });
+      const projection = projectHostCorpus({ packageRoot, host: result.host, ...roots, personalAgents: options.personalAgents || [] });
       result.capabilities = projection.capabilities;
       result.limitations = projection.limitations;
       const previous = new Map((manifest?.files || []).map(file => [`${file.root}/${file.path}`, file]));
@@ -279,7 +282,7 @@ export function runHostSetup(options = {}) {
     }
     result.actions = changes.map(change => ({ kind: change.next === null ? 'remove' : change.previous === null ? 'create' : 'update', path: change.full }));
     result.dryRun = Boolean(options.dryRun);
-    if (!options.dryRun) applyChanges(roots, changes, snapshots);
+    if (!options.dryRun) applyChanges(roots, changes, snapshots, options.validatePublication);
     return result;
   } catch (error) {
     return { ...result, status: 'failed', exitCode: 2, configured: false, reason: error.message, actions: [] };

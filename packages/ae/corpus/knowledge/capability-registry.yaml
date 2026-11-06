@@ -1,6 +1,6 @@
 # Discoverable capability inventory. Skill metadata remains the primary trigger surface.
 version: 2
-updated: 2026-10-12
+updated: 2026-11-06
 lifecycle_states: [candidate, experimental, active, deprecated, retired]
 
 engineer:
@@ -209,6 +209,15 @@ capabilities:
     reason: Unreachable after starter-kit retirement; codification belongs to compounding.
   framework-docs-researcher: {type: agent, status: active, owner: developer-experience, version: 1, origin: starter}
   git-history-analyzer: {type: agent, status: active, owner: developer-experience, version: 1, origin: starter}
+  decision-agent:
+    type: agent
+    status: experimental
+    owner: developer-experience
+    version: 1
+    origin: adaptive-lifecycle
+    triggers: [scoped action judgment, capability acquisition decision, memory maintenance judgment, human-review readiness]
+    eval_suite: packages/ae/test/adaptive-corpus-contracts.test.mjs
+    promotion_evidence: [docs/adaptive-engineering.md#adaptive-capability-lifecycle]
   delivery-classifier: {type: agent, status: active, owner: developer-experience, version: 1, origin: delivery-routing}
   java-reviewer: {type: agent, status: active, owner: application-platform, version: 1, origin: starter}
   pattern-recognition-specialist: {type: agent, status: active, owner: architecture, version: 1, origin: starter}
@@ -276,6 +285,7 @@ capabilities:
     triggers: [structural expectations, verify severity, advisory check]
 
 engineer_allowlist:
+  - decision-agent
   - delivery-classifier
   - code-implementer
   - code-review-coordinator
@@ -299,8 +309,9 @@ engineer_allowlist:
   - spec-flow-analyzer
 
 growth:
-  discovery: skill metadata → registry lookup when a gap is encountered
-  promotion: verified use → learning classification → evidence review → governed creation
+  discovery: consented installed-source catalog → bounded relevant pointers → one consented refresh on a miss
+  acquisition: first-needed specialist → overlap and authority check → governed creation → observed native availability
+  promotion: recurring verified use → learning classification → evidence review → governed creation
   retirement: deprecate → warn and migrate → remove source → retain registry tombstone
 
 references:

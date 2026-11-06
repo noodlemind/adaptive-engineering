@@ -1,0 +1,16 @@
+flowchart TD
+    Consent["User inclusion and standing consent"] --> Catalog["Versioned capability catalog"]
+    Catalog --> Engineer["Engineer task context"]
+    Engineer --> Decision["Native decision agent"]
+    Decision -->|Acquire| Writer["Scoped personal resource writer"]
+    Writer --> Catalog
+    Decision -->|Authorize| Execution["Host tools and specialists"]
+    Execution --> Review["Independent review"]
+    Review -->|Repair| Engineer
+    Review --> Verify["Named behavioral verification"]
+    Verify --> Tour["Source linked visual tour"]
+    Tour --> Ready["Internal readiness decision"]
+    Ready -->|Repair or acquire| Engineer
+    Ready -->|Ready| Human["Human review"]
+    Verify --> Learning["Evidence bound learning"]
+    Learning --> Engineer

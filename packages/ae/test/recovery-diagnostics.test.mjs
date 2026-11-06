@@ -134,6 +134,21 @@ test('unknown readiness checks retain evidence and require inspection', () => {
   assert.ok(result.failures[0].nextActions.every(action => action.kind === 'guidance'));
 });
 
+test('adaptive core skill gaps recommend scoped capability acquisition instead of a full installation', () => {
+  const result = recoveryDiagnostics({ source: 'doctor', target: 'cli', workspace: '/product', copilotHome: '/selected', home: '/state',
+    checks: [{ id: 'H7', name: 'Adaptive bootstrap skill /create-primitive', pass: false, remediation: 'capability-acquisition', hint: 'The selected source is excluded.' }] });
+  const failure = result.failures[0];
+  assert.equal(failure.category, 'capability');
+  assert.equal(failure.severity, 'blocking');
+  assert.ok(failure.nextActions.every(action => action.kind === 'guidance'));
+  assert.ok(failure.nextActions.some(action => /consent.*source|included.*source/i.test(action.text)));
+  assert.ok(failure.nextActions.some(action => /create-primitive/i.test(action.text)));
+  assert.deepEqual(failure.retry, { automatic: false, when: 'after-inspection' });
+  const legacy = recoveryDiagnostics({ source: 'doctor', target: 'cli', workspace: '/product', checks: [{ id: 'H7', pass: false }] });
+  assert.equal(legacy.failures[0].category, 'installation');
+  assert.equal(legacy.failures[0].nextActions[0].argv[1], 'install');
+});
+
 test('a domain parent retains its domain command context in recovery guidance', () => {
   const result = recoveryDiagnostics({ source: 'gate', checks: [{ id: 'C-intent-sources', pass: false, severity: 'fail', message: 'Changed spec.' }], workspace: '/coordinator', copilotHome: '/copilot', home: '/state', plan: '/state/domains/catalog/plans/delivery.hplan', domain: 'catalog' });
   assert.deepEqual(result.failures[0].nextActions[0].argv, ['ae', 'domain', 'status', '--name', 'catalog', '--plan', '/state/domains/catalog/plans/delivery.hplan', '--workspace', '/coordinator', '--copilot-home', '/copilot', '--ae-home', '/state']);

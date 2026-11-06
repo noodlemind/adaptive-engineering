@@ -4,7 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { runHostSetup } from './setup.mjs';
+import { runHostSetup, resolveHostRoots } from './setup.mjs';
+import { onboardingDiscovery } from '../adaptive-context.mjs';
+import { personalDelegationSelection } from './personal-resource.mjs';
 import { buildPluginPackage } from './plugin-package.mjs';
 import { readLock } from '../lock.mjs';
 import { resolveCopilotHome, resolveIntelliJHome, harnessGlobalHome } from '../paths.mjs';
@@ -62,7 +64,8 @@ function runLegacy(options) {
     env: { ...process.env, ...(target === 'intellij' ? { AE_INTELLIJ_HOME: root } : {}) } });
   let details;
   try { details = JSON.parse(child.stdout); } catch { details = { stdout: child.stdout, stderr: child.stderr }; }
-  return { schema: 1, host: options.host, status: child.status === 0 ? 'ok' : 'failed', exitCode: child.status ?? 1, details, capabilities, nativeQualification: 'unverified' };
+  return { schema: 1, host: options.host, status: child.status === 0 ? 'ok' : 'failed', exitCode: child.status ?? 1, details,
+    ...(details.discovery ? { discovery: details.discovery } : {}), capabilities, nativeQualification: 'unverified' };
 }
 
 function exportPlugin(options) {
@@ -91,7 +94,12 @@ export function hostResultOf(argv) {
     const options = parse(argv);
     if (options.verb === 'export') return exportPlugin(options);
     if (Object.hasOwn(legacy, options.host)) return runLegacy(options);
-    const result = runHostSetup(options);
+    const roots = options.verb === 'list' ? null : resolveHostRoots(options);
+    const discoveryOptions = roots ? { ...roots, copilotHome: roots.configHome, host: options.host, workspace: options.workspace } : null;
+    const discovery = options.verb === 'setup' ? onboardingDiscovery(discoveryOptions) : null;
+    const delegation = options.verb === 'setup' ? personalDelegationSelection({ ...options, ...roots }) : null;
+    const result = runHostSetup({ ...options, ...(delegation ? { personalAgents: delegation.personalAgents, validatePublication: delegation.validatePublication } : {}) });
+    if (discovery) result.discovery = discovery;
     if (options.verb === 'setup' && result.roots) result.workspace = readWorkspaceOutcome({ workspace: options.workspace, ...result.roots, copilotHome: result.roots.configHome });
     if (options.verb === 'list') {
       result.hosts = result.hosts.map(item => ({ ...item, id: item.id || item.host }));
@@ -105,7 +113,15 @@ export function upgradeHostResultOf(argv) {
   try {
     const options = parse(['setup', ...argv]);
     options.skillsHome ||= process.env.AE_SKILLS_HOME;
-    const integration = runHostSetup({ ...options, requireExisting: true });
+    let integration;
+    try {
+      const roots = resolveHostRoots(options);
+      const delegation = personalDelegationSelection({ ...options, ...roots });
+      integration = runHostSetup({ ...options, requireExisting: true, personalAgents: delegation.personalAgents, validatePublication: delegation.validatePublication });
+    } catch (error) {
+      integration = { schema: 1, mode: 'host', verb: 'setup', host: options.host, status: 'failed', exitCode: 2, configured: false,
+        nativeQualification: 'unverified', actions: [], conflicts: [], preserved: [], capabilities: {}, limitations: [], reason: error.message };
+    }
     const workspace = integration.roots ? readWorkspaceOutcome({ workspace: options.workspace, ...integration.roots, copilotHome: integration.roots.configHome }) : null;
     return {
       command: 'upgrade', version: JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version,
@@ -122,6 +138,7 @@ export function cmdHost(argv) {
   else {
     console.log(result.reason || `${result.status}: ${result.host || result.output || 'host export'}`);
     if (result.workspace) console.log(formatWorkspaceOutcome(result.workspace));
+    if (result.discovery?.questions?.length) for (const question of result.discovery.questions) console.log(question.prompt);
   }
   return result.exitCode;
 }

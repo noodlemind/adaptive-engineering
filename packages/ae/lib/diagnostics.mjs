@@ -6,6 +6,7 @@ const PLAN_CHECKS = new Set(['C1', 'C1a', 'C1b', 'C2', 'C3', 'C4', 'C-goal', 'C-
 
 function recoveryFor(source, check, target) {
   if (source === 'doctor') {
+    if (check.id === 'H7' && check.remediation === 'capability-acquisition') return { category: 'capability', guidance: 'Inspect consented sources and restore an included current skill, or acquire the missing procedure through /create-primitive within standing authority. Reinstallation is not required for an intentionally reduced corpus.' };
     if (check.id === 'H8') return { category: 'installation', guidance: 'Reinstall the packaged CLI from the selected package source, then rerun doctor.' };
     if (check.id === 'V3' && target === 'vscode') return { category: 'installation', command: ['install', '--target', target, '--configure-vscode'] };
     if (INSTALL_CHECKS.has(check.id) || check.id === 'T2' && target === 'intellij'

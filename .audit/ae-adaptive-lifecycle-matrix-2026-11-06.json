@@ -1,0 +1,1102 @@
+{
+  "recordedForImplementationCommit": "6cffe2a94a717309ec6def648e23d66b622495b5",
+  "command": "node --test packages/ae/test/adaptive-lifecycle.test.mjs",
+  "report": {
+    "schema": 1,
+    "evaluatedCorpora": [
+      "full",
+      "minimal",
+      "sparse"
+    ],
+    "pass": true,
+    "qualification": {
+      "installedPackage": true,
+      "freshCliProcesses": true,
+      "nativeHookFixtures": true,
+      "liveModel": false,
+      "liveEditor": false,
+      "note": "Recorded native completion payloads validate adapter contracts. Independent live-agent and editor qualification must be reported separately."
+    },
+    "arms": [
+      {
+        "corpus": "full",
+        "inventory": {
+          "skills": 28,
+          "agents": 23,
+          "instructions": 5
+        },
+        "checks": [
+          {
+            "id": "consent-persistence",
+            "pass": true,
+            "evidence": {
+              "policyRevision": "6f88a63cd5ef62819b23c5988dadd4b3d745977d8aad8df2d17c786d7d3fb13f",
+              "selected": [
+                {
+                  "name": "enterprise-payments",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/enterprise/skills/enterprise-payments/SKILL.md"
+                }
+              ],
+              "freshProcesses": true
+            }
+          },
+          {
+            "id": "bounded-miss-refresh",
+            "pass": true,
+            "evidence": {
+              "selected": [
+                "enterprise-refunds"
+              ],
+              "refreshed": true,
+              "sameTaskRefreshBounded": true
+            }
+          },
+          {
+            "id": "native-action-decision",
+            "pass": true,
+            "evidence": {
+              "unobservedRejected": true,
+              "observedActionAllowed": true,
+              "sourceChangeInvalidated": true,
+              "unverifiedReadinessRejected": true
+            }
+          },
+          {
+            "id": "specialist-acquisition",
+            "pass": true,
+            "evidence": {
+              "decision": "acquire",
+              "creation": "ok",
+              "initialActivation": {
+                "state": "pending-reload",
+                "reason": "Native asset is published; confirm host reload and actual invocation before claiming activation."
+              },
+              "activation": {
+                "state": "available",
+                "reason": "A correlated native invocation succeeded while this approved source was current; native loader source hash remains unverified.",
+                "nativeQualification": "observed-invocation",
+                "loadedSourceHash": "unverified",
+                "sessionId": "lifecycle-session-reloaded",
+                "requestId": "77b3f6fb27d22b22c761befbebd3308ea72e8a4d55348fe4e9940d38b978f899",
+                "receiptId": "d041725f1ad2242e2c2bab966303ebf12da4b3c8da06ecfc79cb0dacb459001d",
+                "toolUseId": "fixture-specialist-first-invocation",
+                "digest": "sha256-3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10",
+                "sourceDigest": "sha256-cad88594602e8a335979383bfa7efb767d108a83706f0e313f887f083ad8c024",
+                "policyRevision": "87356aaa675ebac0c3b9abb1fd9f80d13756e61100d36ae6b3169b4a6c275d77",
+                "observedAt": 1793970568324
+              },
+              "source": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/user/.claude/agents/payment-retry-specialist.md",
+              "nativeFirstInvocationFixture": true,
+              "liveModelInvocation": false
+            }
+          },
+          {
+            "id": "verification-negative-control",
+            "pass": true,
+            "evidence": {
+              "seededDefectRejected": true,
+              "repairedCheckPassed": true,
+              "status": "ok"
+            }
+          },
+          {
+            "id": "independent-review",
+            "pass": true,
+            "evidence": {
+              "packet": "c424792e8b538dc87dce446738173a123f4a0fd2af665708e27258b689a5c8ea",
+              "selected": [
+                {
+                  "perspective": "code-simplicity-reviewer",
+                  "name": "enterprise-payment-reviewer",
+                  "resourceId": "agent:a771232307a5:enterprise-payment-reviewer",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                  "format": "copilot",
+                  "digest": "sha256-ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c",
+                  "activation": "host-dependent",
+                  "nativeQualification": "unverified"
+                }
+              ],
+              "acquiredNativeProviderUsed": false,
+              "selfReviewRejected": true,
+              "unobservedProvenanceRejected": true,
+              "observedNativeResultRequired": true,
+              "assurance": "Deterministic source-bound native result fixture; no live model invocation claimed."
+            }
+          },
+          {
+            "id": "source-bound-tour",
+            "pass": true,
+            "evidence": {
+              "tour": "102122eeba3cadd6d6f51cbe065d29aa2915f0dba83be1fd0d03367d5732ca1e",
+              "sourceChangeRejected": true,
+              "diagram": "flowchart TD\n  N0[\"Payment capture (changed)\"]\n  N1[\"Receipt ledger (context)\"]\n  N2[\"Behavioral checks (context)\"]\n  N0 -->|\"A matching request returns the prior receipt before any ledger mutation.\"| N1\n  N2 -->|\"The duplicate-delivery check compares receipt identity and ledger length.\"| N0"
+            }
+          },
+          {
+            "id": "verified-human-handoff",
+            "pass": true,
+            "evidence": {
+              "passedVerification": true,
+              "readiness": "ready",
+              "observedInvocation": "fixture-decision-ready"
+            }
+          },
+          {
+            "id": "cross-session-memory",
+            "pass": true,
+            "evidence": {
+              "learningId": "payments/payment-receipt-currency-units",
+              "futureOrientationContainsTeaching": true,
+              "freshProcesses": true
+            }
+          },
+          {
+            "id": "verified-learning-recurrence",
+            "pass": true,
+            "evidence": {
+              "privateEpisodes": [
+                "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md"
+              ],
+              "memoryReceipts": [
+                "cfc4a7f353ff869ee4da6163a04cc8b955cddeac40083c07683b63bc05d39579",
+                "f6f7f75ea68c0442ddac01c534f1b2bd09734bf22e7704265aac4b7225559473"
+              ],
+              "recurrence": {
+                "identity": "resource:916ea9f52e8cbd0e4e01f67ef24b6f2d47136019d2c8f90ff09823c2261ea5cc",
+                "recurrence": "verified-task-resource-use",
+                "count": 2,
+                "detail": {
+                  "kind": "resource-use",
+                  "resource": {
+                    "kind": "skill",
+                    "name": "enterprise-payments",
+                    "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/enterprise/skills/enterprise-payments/SKILL.md",
+                    "sha256": "3df5203c76f2972717b680bd12a153d0c364a2c69302285c30ebb9ce72b7a5f8"
+                  }
+                },
+                "tasks": [
+                  {
+                    "plan": "docs/plans/2026-11-06-payment-retries.md",
+                    "proofIdentity": "38361c17ff270fa5cf047851bb10fbaefd13a6d31699358442f1502801733cbf"
+                  },
+                  {
+                    "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                    "proofIdentity": "2b79ab34c937bddaf90fce450209b14028cd759f7e03ccff38a62039642c8af4"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                    "sha256": "47d5151a25baaf970e1e69a1b17b7968e0d03b6ba08d40c2b5509568958531db"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                    "sha256": "036a4b619db94dc5c57efbe7f4a1d59c691b1f2d7136256cf592d215872b5030"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/evidence/history/bde6615c42087e7e6daefc269cea4b567c2d3819169dc6c96011949c064b5f37.json",
+                    "sha256": "7e1b915af76c3260ce126cecf2d675d43af5f8700f1fd9bbbd6b197484bb6058"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                    "sha256": "7830832e28e1c8963baa14f31c1e292f32e721679653c1e1faef4fb1541750d1"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                    "sha256": "03fd52c388060e4fe1497fab0de73d8a91d2aa186fc253b1fbd77d1c7a1a2f61"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/evidence/history/4fc8de382779d5b4fe0126720ec421f5497a0cd4adc67c50d556acc4454c5b52.json",
+                    "sha256": "f510ad821b8b663e06b072443ed641188b19d5b303634722e14c54c54c78ad8b"
+                  }
+                ],
+                "omittedTasks": 0,
+                "recommendation": "reuse-or-improve",
+                "verifiedTaskEvidence": true,
+                "causalEffectiveness": "unassessed",
+                "id": "cda2bd573567ac973dc8aefe45c5146f02dfce44721e273c712ca90213cbb348"
+              },
+              "agentRecurrence": {
+                "identity": "resource:c05d66720f466537a955d171a4466f2d460e61a33009d414c090500bbdd52209",
+                "recurrence": "verified-task-resource-use",
+                "count": 2,
+                "detail": {
+                  "kind": "resource-use",
+                  "resource": {
+                    "kind": "agent",
+                    "name": "enterprise-payment-reviewer",
+                    "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                    "sha256": "ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c"
+                  }
+                },
+                "tasks": [
+                  {
+                    "plan": "docs/plans/2026-11-06-payment-retries.md",
+                    "proofIdentity": "38361c17ff270fa5cf047851bb10fbaefd13a6d31699358442f1502801733cbf",
+                    "nativeReview": {
+                      "schema": 1,
+                      "observationId": "20ed9a6b79424182ddb7f34e66efe388ce27affb4c2d52c2c044deb866e8d8cb",
+                      "packet": "c424792e8b538dc87dce446738173a123f4a0fd2af665708e27258b689a5c8ea",
+                      "sessionId": "lifecycle-session-reloaded",
+                      "plan": "docs/plans/2026-11-06-payment-retries.md",
+                      "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/product",
+                      "policyRevision": "87356aaa675ebac0c3b9abb1fd9f80d13756e61100d36ae6b3169b4a6c275d77",
+                      "loadedSourceHash": "unverified"
+                    }
+                  },
+                  {
+                    "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                    "proofIdentity": "2b79ab34c937bddaf90fce450209b14028cd759f7e03ccff38a62039642c8af4",
+                    "nativeReview": {
+                      "schema": 1,
+                      "observationId": "e7286f0892805d15cc010c0383e44eb3c1ae2caae40c94bcdb033c18e1033812",
+                      "packet": "dac90a95ca4627cdbf6a6f6eeefc7f02fecbff690ceb53f41d23bef6aa0127cf",
+                      "sessionId": "lifecycle-session-reloaded",
+                      "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                      "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/product",
+                      "policyRevision": "87356aaa675ebac0c3b9abb1fd9f80d13756e61100d36ae6b3169b4a6c275d77",
+                      "loadedSourceHash": "unverified"
+                    }
+                  }
+                ],
+                "evidence": [
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                    "sha256": "47d5151a25baaf970e1e69a1b17b7968e0d03b6ba08d40c2b5509568958531db"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                    "sha256": "036a4b619db94dc5c57efbe7f4a1d59c691b1f2d7136256cf592d215872b5030"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/evidence/history/bde6615c42087e7e6daefc269cea4b567c2d3819169dc6c96011949c064b5f37.json",
+                    "sha256": "7e1b915af76c3260ce126cecf2d675d43af5f8700f1fd9bbbd6b197484bb6058"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                    "sha256": "7830832e28e1c8963baa14f31c1e292f32e721679653c1e1faef4fb1541750d1"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                    "sha256": "03fd52c388060e4fe1497fab0de73d8a91d2aa186fc253b1fbd77d1c7a1a2f61"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/state/projects/local-03af9c112329",
+                    "path": ".harness/evidence/history/4fc8de382779d5b4fe0126720ec421f5497a0cd4adc67c50d556acc4454c5b52.json",
+                    "sha256": "f510ad821b8b663e06b072443ed641188b19d5b303634722e14c54c54c78ad8b"
+                  }
+                ],
+                "omittedTasks": 0,
+                "recommendation": "reuse-or-improve",
+                "verifiedTaskEvidence": true,
+                "causalEffectiveness": "unassessed",
+                "id": "d3ad7634212d3e8f1cfdd2566290f5f2dcba1391038ec5b7fe1389f7e73ab1b2"
+              },
+              "sourceBoundExternalSkill": true,
+              "sourceBoundObservedReviewer": {
+                "kind": "agent",
+                "name": "enterprise-payment-reviewer",
+                "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                "sha256": "ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c",
+                "policyRevision": "87356aaa675ebac0c3b9abb1fd9f80d13756e61100d36ae6b3169b4a6c275d77",
+                "reviewUse": {
+                  "schema": 1,
+                  "observationId": "20ed9a6b79424182ddb7f34e66efe388ce27affb4c2d52c2c044deb866e8d8cb",
+                  "packet": "c424792e8b538dc87dce446738173a123f4a0fd2af665708e27258b689a5c8ea",
+                  "sessionId": "lifecycle-session-reloaded",
+                  "plan": "docs/plans/2026-11-06-payment-retries.md",
+                  "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/full-fixture/product"
+                },
+                "loadedSourceHash": "unverified",
+                "assurance": "Native review adapter event; host loaded definition hash unverified; task outcome does not prove causal effectiveness"
+              },
+              "futureOrientationContainsRecommendation": true
+            }
+          },
+          {
+            "id": "exclusion-revocation",
+            "pass": true,
+            "evidence": {
+              "policyRevision": "65a3374915a08431486c2b9aa771e8acf958a230f36c4cf15dcb64b0d0196bd3",
+              "revokedResourceSelectable": false,
+              "ongoingConsentIndependent": true,
+              "actionApprovalRevoked": true
+            }
+          }
+        ],
+        "pass": true
+      },
+      {
+        "corpus": "minimal",
+        "inventory": {
+          "skills": 18,
+          "agents": 2,
+          "instructions": 1
+        },
+        "checks": [
+          {
+            "id": "consent-persistence",
+            "pass": true,
+            "evidence": {
+              "policyRevision": "ec3cbe4e5c510c2b8f31aa5f3a8712b688b66bde24d01851fa7098a02ec35079",
+              "selected": [
+                {
+                  "name": "enterprise-payments",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/enterprise/skills/enterprise-payments/SKILL.md"
+                }
+              ],
+              "freshProcesses": true
+            }
+          },
+          {
+            "id": "bounded-miss-refresh",
+            "pass": true,
+            "evidence": {
+              "selected": [
+                "enterprise-refunds"
+              ],
+              "refreshed": true,
+              "sameTaskRefreshBounded": true
+            }
+          },
+          {
+            "id": "native-action-decision",
+            "pass": true,
+            "evidence": {
+              "unobservedRejected": true,
+              "observedActionAllowed": true,
+              "sourceChangeInvalidated": true,
+              "unverifiedReadinessRejected": true
+            }
+          },
+          {
+            "id": "specialist-acquisition",
+            "pass": true,
+            "evidence": {
+              "decision": "acquire",
+              "creation": "ok",
+              "initialActivation": {
+                "state": "pending-reload",
+                "reason": "Native asset is published; confirm host reload and actual invocation before claiming activation."
+              },
+              "activation": {
+                "state": "available",
+                "reason": "A correlated native invocation succeeded while this approved source was current; native loader source hash remains unverified.",
+                "nativeQualification": "observed-invocation",
+                "loadedSourceHash": "unverified",
+                "sessionId": "lifecycle-session-reloaded",
+                "requestId": "8de77209aa7b690ccf22a773065c3f0840ad7faaf106e39c3f8638f69b093381",
+                "receiptId": "d3971da7b78d89facd6dcfcc2b1981967837b9a538f278adbd280608f0fe57bd",
+                "toolUseId": "fixture-specialist-first-invocation",
+                "digest": "sha256-3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10",
+                "sourceDigest": "sha256-cad88594602e8a335979383bfa7efb767d108a83706f0e313f887f083ad8c024",
+                "policyRevision": "0b1345d821207569b8adfed2138503686e6e96a389ca6b6f8c8b01d1f5f9ac55",
+                "observedAt": 1793970629211
+              },
+              "source": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/user/.claude/agents/payment-retry-specialist.md",
+              "nativeFirstInvocationFixture": true,
+              "liveModelInvocation": false
+            }
+          },
+          {
+            "id": "verification-negative-control",
+            "pass": true,
+            "evidence": {
+              "seededDefectRejected": true,
+              "repairedCheckPassed": true,
+              "status": "ok"
+            }
+          },
+          {
+            "id": "independent-review",
+            "pass": true,
+            "evidence": {
+              "packet": "22115e8d88b16999ce3da2bfb646fbdb8c79f70808ff9e1a9df4266d723bcf79",
+              "selected": [
+                {
+                  "perspective": "code-simplicity-reviewer",
+                  "name": "enterprise-payment-reviewer",
+                  "resourceId": "agent:15d14ed356e8:enterprise-payment-reviewer",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                  "format": "copilot",
+                  "digest": "sha256-ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c",
+                  "activation": "host-dependent",
+                  "nativeQualification": "unverified"
+                }
+              ],
+              "acquiredNativeProviderUsed": false,
+              "selfReviewRejected": true,
+              "unobservedProvenanceRejected": true,
+              "observedNativeResultRequired": true,
+              "assurance": "Deterministic source-bound native result fixture; no live model invocation claimed."
+            }
+          },
+          {
+            "id": "source-bound-tour",
+            "pass": true,
+            "evidence": {
+              "tour": "cc121066e40e8608201b2911039b282c268ab3110125e714571d1dc0887e07ce",
+              "sourceChangeRejected": true,
+              "diagram": "flowchart TD\n  N0[\"Payment capture (changed)\"]\n  N1[\"Receipt ledger (context)\"]\n  N2[\"Behavioral checks (context)\"]\n  N0 -->|\"A matching request returns the prior receipt before any ledger mutation.\"| N1\n  N2 -->|\"The duplicate-delivery check compares receipt identity and ledger length.\"| N0"
+            }
+          },
+          {
+            "id": "verified-human-handoff",
+            "pass": true,
+            "evidence": {
+              "passedVerification": true,
+              "readiness": "ready",
+              "observedInvocation": "fixture-decision-ready"
+            }
+          },
+          {
+            "id": "cross-session-memory",
+            "pass": true,
+            "evidence": {
+              "learningId": "payments/payment-receipt-currency-units",
+              "futureOrientationContainsTeaching": true,
+              "freshProcesses": true
+            }
+          },
+          {
+            "id": "verified-learning-recurrence",
+            "pass": true,
+            "evidence": {
+              "privateEpisodes": [
+                "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md"
+              ],
+              "memoryReceipts": [
+                "7b7db134676f1c4e68a6aa25cd15ff9d343105f5b4046c994b25f0f2878d8ee9",
+                "dd2d7f27266a0ed4721c52970fe19b7339daa0cf4450b2b2236b328e0f0c4efa"
+              ],
+              "recurrence": {
+                "identity": "resource:519d3ac7dfa1602dfd273c8bb8b2f574808c1238199873d5fa6b52b9c3036e69",
+                "recurrence": "verified-task-resource-use",
+                "count": 2,
+                "detail": {
+                  "kind": "resource-use",
+                  "resource": {
+                    "kind": "skill",
+                    "name": "enterprise-payments",
+                    "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/enterprise/skills/enterprise-payments/SKILL.md",
+                    "sha256": "3df5203c76f2972717b680bd12a153d0c364a2c69302285c30ebb9ce72b7a5f8"
+                  }
+                },
+                "tasks": [
+                  {
+                    "plan": "docs/plans/2026-11-06-payment-retries.md",
+                    "proofIdentity": "cfa38236772f92bc534832b8f3c3a53e88e764cd0971d44719c61dff6c71d246"
+                  },
+                  {
+                    "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                    "proofIdentity": "9e8ecce522d34b341e7cf107ee4d95deb93b80a0c59ef40f5e94bfa53c494d7a"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                    "sha256": "3769d1525278ed4ccf84b7a2e44f52febc4ecf0a85132ae54eb1160e497af7d0"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                    "sha256": "2a16c868141312bce5adde649e994df99fe80f35dea4faac41e69ab6370a7122"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/evidence/history/82885a97182c28abcdad254186b82944051952689123073d27f58b72d5ad40a5.json",
+                    "sha256": "a0f208f99a6614905a49352f1d15402524c77856fdfe4b5208a936b6cd7707dd"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                    "sha256": "88eabf1aabceeface7289e9dbc0e9031298e8b98383ab01a94deac4309b7bd76"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                    "sha256": "7a01fa0b7dc473e48a39300f6188dea4936516830259577a9c97769f9cdeaff5"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/evidence/history/b08af104392217249988c68ca4d98cfc2188d01cbfef41aba7a2ca628a82ecb9.json",
+                    "sha256": "f0767f35dbae8991e0fe11acf002684f022c6be13a36ad41ceda3ab35c2879c4"
+                  }
+                ],
+                "omittedTasks": 0,
+                "recommendation": "reuse-or-improve",
+                "verifiedTaskEvidence": true,
+                "causalEffectiveness": "unassessed",
+                "id": "673f78b5e921167c85b5c7a993ef5c119f1d913a3e902528d51e6c18e53f1fb3"
+              },
+              "agentRecurrence": {
+                "identity": "resource:88c8f3d219f2d281665c62ed7172aaa06f265533b6bde9317471599ebcb6de74",
+                "recurrence": "verified-task-resource-use",
+                "count": 2,
+                "detail": {
+                  "kind": "resource-use",
+                  "resource": {
+                    "kind": "agent",
+                    "name": "enterprise-payment-reviewer",
+                    "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                    "sha256": "ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c"
+                  }
+                },
+                "tasks": [
+                  {
+                    "plan": "docs/plans/2026-11-06-payment-retries.md",
+                    "proofIdentity": "cfa38236772f92bc534832b8f3c3a53e88e764cd0971d44719c61dff6c71d246",
+                    "nativeReview": {
+                      "schema": 1,
+                      "observationId": "96a9a88f1d05af7466c7c810ae1fd9c9004854f44b2995e3f3594fb49e13dd1f",
+                      "packet": "22115e8d88b16999ce3da2bfb646fbdb8c79f70808ff9e1a9df4266d723bcf79",
+                      "sessionId": "lifecycle-session-reloaded",
+                      "plan": "docs/plans/2026-11-06-payment-retries.md",
+                      "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/product",
+                      "policyRevision": "0b1345d821207569b8adfed2138503686e6e96a389ca6b6f8c8b01d1f5f9ac55",
+                      "loadedSourceHash": "unverified"
+                    }
+                  },
+                  {
+                    "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                    "proofIdentity": "9e8ecce522d34b341e7cf107ee4d95deb93b80a0c59ef40f5e94bfa53c494d7a",
+                    "nativeReview": {
+                      "schema": 1,
+                      "observationId": "e97e375d13872298ec0680a57581b1a077e5326217ae9e021c4dc632d57d1296",
+                      "packet": "eb26a5b7d524373f2c0841b3776fcc511c376ce2b748a3491f9f230511a07293",
+                      "sessionId": "lifecycle-session-reloaded",
+                      "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                      "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/product",
+                      "policyRevision": "0b1345d821207569b8adfed2138503686e6e96a389ca6b6f8c8b01d1f5f9ac55",
+                      "loadedSourceHash": "unverified"
+                    }
+                  }
+                ],
+                "evidence": [
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                    "sha256": "3769d1525278ed4ccf84b7a2e44f52febc4ecf0a85132ae54eb1160e497af7d0"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                    "sha256": "2a16c868141312bce5adde649e994df99fe80f35dea4faac41e69ab6370a7122"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/evidence/history/82885a97182c28abcdad254186b82944051952689123073d27f58b72d5ad40a5.json",
+                    "sha256": "a0f208f99a6614905a49352f1d15402524c77856fdfe4b5208a936b6cd7707dd"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                    "sha256": "88eabf1aabceeface7289e9dbc0e9031298e8b98383ab01a94deac4309b7bd76"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                    "sha256": "7a01fa0b7dc473e48a39300f6188dea4936516830259577a9c97769f9cdeaff5"
+                  },
+                  {
+                    "source": "user",
+                    "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/state/projects/local-8536409bb4af",
+                    "path": ".harness/evidence/history/b08af104392217249988c68ca4d98cfc2188d01cbfef41aba7a2ca628a82ecb9.json",
+                    "sha256": "f0767f35dbae8991e0fe11acf002684f022c6be13a36ad41ceda3ab35c2879c4"
+                  }
+                ],
+                "omittedTasks": 0,
+                "recommendation": "reuse-or-improve",
+                "verifiedTaskEvidence": true,
+                "causalEffectiveness": "unassessed",
+                "id": "7a913dad82fc93381635702d4c2c6c871ab1f2913b3b87032657a4f9ec33ce03"
+              },
+              "sourceBoundExternalSkill": true,
+              "sourceBoundObservedReviewer": {
+                "kind": "agent",
+                "name": "enterprise-payment-reviewer",
+                "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/enterprise/agents/enterprise-payment-reviewer.agent.md",
+                "sha256": "ee24e96f7e7be171c1a188275b34c7eebee779df96c204537239da9ab864667c",
+                "policyRevision": "0b1345d821207569b8adfed2138503686e6e96a389ca6b6f8c8b01d1f5f9ac55",
+                "reviewUse": {
+                  "schema": 1,
+                  "observationId": "96a9a88f1d05af7466c7c810ae1fd9c9004854f44b2995e3f3594fb49e13dd1f",
+                  "packet": "22115e8d88b16999ce3da2bfb646fbdb8c79f70808ff9e1a9df4266d723bcf79",
+                  "sessionId": "lifecycle-session-reloaded",
+                  "plan": "docs/plans/2026-11-06-payment-retries.md",
+                  "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/minimal-fixture/product"
+                },
+                "loadedSourceHash": "unverified",
+                "assurance": "Native review adapter event; host loaded definition hash unverified; task outcome does not prove causal effectiveness"
+              },
+              "futureOrientationContainsRecommendation": true
+            }
+          },
+          {
+            "id": "exclusion-revocation",
+            "pass": true,
+            "evidence": {
+              "policyRevision": "92574d4857dd805b3358fb39fb55dad8e60a07825d856e65cf1a81d1083049aa",
+              "revokedResourceSelectable": false,
+              "ongoingConsentIndependent": true,
+              "actionApprovalRevoked": true
+            }
+          }
+        ],
+        "pass": true
+      }
+    ],
+    "sparse": {
+      "corpus": "sparse",
+      "inventory": {
+        "skills": 4,
+        "agents": 2
+      },
+      "checks": [
+        {
+          "id": "consent-persistence",
+          "pass": true,
+          "evidence": {
+            "policyRevision": "a8a861a05fc4f8223ff39fc4e52c75640e3e9030c9d72a776c889ca2e44b1d11",
+            "selected": [
+              {
+                "name": "enterprise-payments",
+                "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/enterprise/skills/enterprise-payments/SKILL.md"
+              }
+            ],
+            "freshProcesses": true
+          }
+        },
+        {
+          "id": "bootstrap-diagnostics",
+          "pass": true,
+          "evidence": {
+            "requiredWorkflowSkills": [
+              "engineer",
+              "ensure-plan",
+              "create-primitive",
+              "ensure-capability"
+            ],
+            "optionalWorkflows": [
+              {
+                "skill": "auto-compound",
+                "status": "unavailable",
+                "hint": "Optional procedure; acquire /auto-compound through /create-primitive when the task needs it"
+              },
+              {
+                "skill": "auto-skill-draft",
+                "status": "unavailable",
+                "hint": "Optional procedure; acquire /auto-skill-draft through /create-primitive when the task needs it"
+              }
+            ],
+            "bootstrapSkills": [
+              "engineer",
+              "ensure-plan",
+              "create-primitive",
+              "ensure-capability"
+            ]
+          }
+        },
+        {
+          "id": "sparse-skill-acquisition",
+          "pass": true,
+          "evidence": {
+            "action": "acquire",
+            "acquired": [
+              {
+                "name": "architect",
+                "action": "acquire",
+                "source": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/skills/architect/SKILL.md",
+                "sha256": "857ae3efd66ef237ba61f9756e2bb602d823388cd213efe9517f82c7047eb7fc",
+                "actualSourceRead": true
+              },
+              {
+                "name": "code-review",
+                "action": "acquire",
+                "source": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/skills/code-review/SKILL.md",
+                "sha256": "8edc4ccb0f881f1988e1c81435c1819963019056382466fa0cac777fdd9bd5c6",
+                "actualSourceRead": true
+              }
+            ],
+            "actualSourceRead": true,
+            "validation": "ok"
+          }
+        },
+        {
+          "id": "bounded-miss-refresh",
+          "pass": true,
+          "evidence": {
+            "selected": [
+              "enterprise-refunds"
+            ],
+            "refreshed": true,
+            "sameTaskRefreshBounded": true
+          }
+        },
+        {
+          "id": "native-action-decision",
+          "pass": true,
+          "evidence": {
+            "unobservedRejected": true,
+            "observedActionAllowed": true,
+            "sourceChangeInvalidated": true,
+            "unverifiedReadinessRejected": true
+          }
+        },
+        {
+          "id": "specialist-acquisition",
+          "pass": true,
+          "evidence": {
+            "decision": "acquire",
+            "creation": "ok",
+            "missingReviewPrerequisite": {
+              "perspective": "code-simplicity-reviewer",
+              "kind": "agent",
+              "workflow": "create-primitive",
+              "state": "missing-provider",
+              "action": "Acquire or activate an independently invocable specialist, then prepare a new packet"
+            },
+            "initialActivation": {
+              "state": "pending-reload",
+              "reason": "Native asset is published; confirm host reload and actual invocation before claiming activation."
+            },
+            "activation": {
+              "state": "available",
+              "reason": "A correlated native invocation succeeded while this approved source was current; native loader source hash remains unverified.",
+              "nativeQualification": "observed-invocation",
+              "loadedSourceHash": "unverified",
+              "sessionId": "lifecycle-session-reloaded",
+              "requestId": "5dbd207556aeb92adb7fba98bd296918f2bc2eb88a5c581b6b5bd0b8040ec1c9",
+              "receiptId": "3e0c8f79e6a075968b724a07da1ea536629c9ff318007a5b65f6e4455ef9b0a0",
+              "toolUseId": "fixture-specialist-first-invocation",
+              "digest": "sha256-3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10",
+              "sourceDigest": "sha256-4f6e4185a30e918fb4e224cd0effec09707e86c96901dfb0292929d7b6e9b09e",
+              "policyRevision": "df0a0ceb2d6c685a0d7db6f90a3873416c6c739abebd2bab918daa02147997aa",
+              "observedAt": 1793970687153
+            },
+            "source": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/agents/payment-retry-specialist.md",
+            "nativeFirstInvocationFixture": true,
+            "liveModelInvocation": false
+          }
+        },
+        {
+          "id": "verification-negative-control",
+          "pass": true,
+          "evidence": {
+            "seededDefectRejected": true,
+            "repairedCheckPassed": true,
+            "status": "ok"
+          }
+        },
+        {
+          "id": "independent-review",
+          "pass": true,
+          "evidence": {
+            "packet": "3cf270b459adc0839eea4b76b1de050c661a7fa4ed187e74da9720d9b04c1619",
+            "selected": [
+              {
+                "perspective": "code-simplicity-reviewer",
+                "name": "payment-retry-specialist",
+                "resourceId": "agent:688ed6746c0b:payment-retry-specialist",
+                "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/agents/payment-retry-specialist.md",
+                "format": "markdown",
+                "digest": "sha256-3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10",
+                "activation": "available",
+                "nativeQualification": "observed-invocation"
+              }
+            ],
+            "acquiredNativeProviderUsed": true,
+            "selfReviewRejected": true,
+            "unobservedProvenanceRejected": true,
+            "observedNativeResultRequired": true,
+            "assurance": "Deterministic source-bound native result fixture; no live model invocation claimed."
+          }
+        },
+        {
+          "id": "source-bound-tour",
+          "pass": true,
+          "evidence": {
+            "tour": "c6feab5318ecc4c7f36078e826ea582cdc0d14df00cefe3fc534b1c4db895b9c",
+            "sourceChangeRejected": true,
+            "diagram": "flowchart TD\n  N0[\"Payment capture (changed)\"]\n  N1[\"Receipt ledger (context)\"]\n  N2[\"Behavioral checks (context)\"]\n  N0 -->|\"A matching request returns the prior receipt before any ledger mutation.\"| N1\n  N2 -->|\"The duplicate-delivery check compares receipt identity and ledger length.\"| N0"
+          }
+        },
+        {
+          "id": "verified-human-handoff",
+          "pass": true,
+          "evidence": {
+            "passedVerification": true,
+            "readiness": "ready",
+            "observedInvocation": "fixture-decision-ready"
+          }
+        },
+        {
+          "id": "cross-session-memory",
+          "pass": true,
+          "evidence": {
+            "learningId": "payments/payment-receipt-currency-units",
+            "futureOrientationContainsTeaching": true,
+            "freshProcesses": true
+          }
+        },
+        {
+          "id": "verified-learning-recurrence",
+          "pass": true,
+          "evidence": {
+            "privateEpisodes": [
+              "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+              "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75/docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md"
+            ],
+            "memoryReceipts": [
+              "9acb4bd3b50f9b8fe564e030f2b666b7f8cc75f10699845c082cb219d84aa034",
+              "4d64c48c75095787ecf33e86556e1bf1c5ff72bd1607024caa22207e8a846d59"
+            ],
+            "recurrence": {
+              "identity": "resource:c4803a8e6413fc228078f05d7294f37f47e19a0cc55d35cc4931cd7d4bee17d2",
+              "recurrence": "verified-task-resource-use",
+              "count": 2,
+              "detail": {
+                "kind": "resource-use",
+                "resource": {
+                  "kind": "skill",
+                  "name": "enterprise-payments",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/enterprise/skills/enterprise-payments/SKILL.md",
+                  "sha256": "3df5203c76f2972717b680bd12a153d0c364a2c69302285c30ebb9ce72b7a5f8"
+                }
+              },
+              "tasks": [
+                {
+                  "plan": "docs/plans/2026-11-06-payment-retries.md",
+                  "proofIdentity": "8952047274138ba18a72d07004c7251964113af56dad961d11ee17685ed83078"
+                },
+                {
+                  "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                  "proofIdentity": "3ee288f37da301e4ab768cfce7c48daf7a23bb208e89363685fa65f0942c100b"
+                }
+              ],
+              "evidence": [
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                  "sha256": "d8e8aaaa7b225ec46c0f1f9cc1a4876c038ab5e1435310a531d2148da117c9eb"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                  "sha256": "0111cbf520b60bd20ad9cb9271488ea2dde7deb3cb589e6c97c68dcaf7801eb2"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/evidence/history/2744c8dd6f1025e1d28ae9cdafbf59a902143ba36d1e4f759d907421662d721f.json",
+                  "sha256": "85aab7f389cffbd4213766d19d24f10d07810fa3e1e1af1c6352d7e64c9f5da7"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                  "sha256": "9b5772a7a841ab76c04e80f5f261424d12c56a098c030c157b529a406a96b98d"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                  "sha256": "c68ef54d2d5c1152d21a266d5e9c85a2d934ad3db6b1be0943cb564974946787"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/evidence/history/b65a4af75427439f8112b78248f4dd36dbc8356615c936ff54cdb93a0d29690c.json",
+                  "sha256": "6ff59baa6fdf3fb93adcc359826d44d67b98baf4846301aa8d26b0c2101a8a07"
+                }
+              ],
+              "omittedTasks": 0,
+              "recommendation": "reuse-or-improve",
+              "verifiedTaskEvidence": true,
+              "causalEffectiveness": "unassessed",
+              "id": "ce1b1a8170e14fe8c4de29a1ce544c1416a7118c40f4e64b6dda8b0aa174017f"
+            },
+            "agentRecurrence": {
+              "identity": "resource:46717bfdc135d0c0161e4db33939c90b8a2473b21b97ef49f721df1ee40c6eb3",
+              "recurrence": "verified-task-resource-use",
+              "count": 2,
+              "detail": {
+                "kind": "resource-use",
+                "resource": {
+                  "kind": "agent",
+                  "name": "payment-retry-specialist",
+                  "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/agents/payment-retry-specialist.md",
+                  "sha256": "3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10"
+                }
+              },
+              "tasks": [
+                {
+                  "plan": "docs/plans/2026-11-06-payment-retries.md",
+                  "proofIdentity": "8952047274138ba18a72d07004c7251964113af56dad961d11ee17685ed83078",
+                  "nativeReview": {
+                    "schema": 1,
+                    "observationId": "e321bd18c8cf1d20379184686a06301c599f7ef20a091b0a1a3987285bab924f",
+                    "packet": "3cf270b459adc0839eea4b76b1de050c661a7fa4ed187e74da9720d9b04c1619",
+                    "sessionId": "lifecycle-session-reloaded",
+                    "plan": "docs/plans/2026-11-06-payment-retries.md",
+                    "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/product",
+                    "policyRevision": "df0a0ceb2d6c685a0d7db6f90a3873416c6c739abebd2bab918daa02147997aa",
+                    "loadedSourceHash": "unverified"
+                  }
+                },
+                {
+                  "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                  "proofIdentity": "3ee288f37da301e4ab768cfce7c48daf7a23bb208e89363685fa65f0942c100b",
+                  "nativeReview": {
+                    "schema": 1,
+                    "observationId": "818fbc33640fa0a536c8c6f791eda8ec9aba7749efc4b6411dd1a8310de1642b",
+                    "packet": "4bbb29f08e13757c221946a1ba02777a776a41290bc337218353f3182969e307",
+                    "sessionId": "lifecycle-session-reloaded",
+                    "plan": ".harness/plans/2026-11-06-payment-invalid-amounts.md",
+                    "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/product",
+                    "policyRevision": "df0a0ceb2d6c685a0d7db6f90a3873416c6c739abebd2bab918daa02147997aa",
+                    "loadedSourceHash": "unverified"
+                  }
+                }
+              ],
+              "evidence": [
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-3f564e81d9940425.md",
+                  "sha256": "d8e8aaaa7b225ec46c0f1f9cc1a4876c038ab5e1435310a531d2148da117c9eb"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/learning/3f564e81d9940425617daeeeaa1b24eea288cfaf1e4892885a73eca21e84cbc5.json",
+                  "sha256": "0111cbf520b60bd20ad9cb9271488ea2dde7deb3cb589e6c97c68dcaf7801eb2"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/evidence/history/2744c8dd6f1025e1d28ae9cdafbf59a902143ba36d1e4f759d907421662d721f.json",
+                  "sha256": "85aab7f389cffbd4213766d19d24f10d07810fa3e1e1af1c6352d7e64c9f5da7"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": "docs/solutions/payments/2026-11-06-order-scoped-payment-retry-validation-4e4ed7dcfc5451a9.md",
+                  "sha256": "9b5772a7a841ab76c04e80f5f261424d12c56a098c030c157b529a406a96b98d"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/learning/4e4ed7dcfc5451a99d61233667a9f8fae9d9ceea934d7f8d3cacb768beb974bf.json",
+                  "sha256": "c68ef54d2d5c1152d21a266d5e9c85a2d934ad3db6b1be0943cb564974946787"
+                },
+                {
+                  "source": "user",
+                  "base": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/state/projects/local-15c7b44a2f75",
+                  "path": ".harness/evidence/history/b65a4af75427439f8112b78248f4dd36dbc8356615c936ff54cdb93a0d29690c.json",
+                  "sha256": "6ff59baa6fdf3fb93adcc359826d44d67b98baf4846301aa8d26b0c2101a8a07"
+                }
+              ],
+              "omittedTasks": 0,
+              "recommendation": "reuse-or-improve",
+              "verifiedTaskEvidence": true,
+              "causalEffectiveness": "unassessed",
+              "id": "8398b1ab1cda3d530efa7ad725055c9f08bdede8b57ce8cb6619ce70f92fe584"
+            },
+            "sourceBoundExternalSkill": true,
+            "sourceBoundObservedReviewer": {
+              "kind": "agent",
+              "name": "payment-retry-specialist",
+              "path": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/user/.claude/agents/payment-retry-specialist.md",
+              "sha256": "3e07bbd2c99e42ad7ce68b3bd4759d6b8ad17187fae999d16d40f2dc33792e10",
+              "policyRevision": "df0a0ceb2d6c685a0d7db6f90a3873416c6c739abebd2bab918daa02147997aa",
+              "reviewUse": {
+                "schema": 1,
+                "observationId": "e321bd18c8cf1d20379184686a06301c599f7ef20a091b0a1a3987285bab924f",
+                "packet": "3cf270b459adc0839eea4b76b1de050c661a7fa4ed187e74da9720d9b04c1619",
+                "sessionId": "lifecycle-session-reloaded",
+                "plan": "docs/plans/2026-11-06-payment-retries.md",
+                "workspace": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et/sparse/fixture/product"
+              },
+              "loadedSourceHash": "unverified",
+              "assurance": "Native review adapter event; host loaded definition hash unverified; task outcome does not prove causal effectiveness"
+            },
+            "futureOrientationContainsRecommendation": true
+          }
+        },
+        {
+          "id": "exclusion-revocation",
+          "pass": true,
+          "evidence": {
+            "policyRevision": "9ca0e487a1d474fefa9031f64c5ec408b44fff0ada208ed97f98bed450002967",
+            "revokedResourceSelectable": false,
+            "ongoingConsentIndependent": true,
+            "actionApprovalRevoked": true
+          }
+        }
+      ],
+      "pass": true,
+      "optionalAbsent": [
+        "code-review",
+        "document-review",
+        "recall",
+        "compound-learnings",
+        "consolidate",
+        "index-memory",
+        "auto-compound",
+        "auto-skill-draft",
+        "setup-models",
+        "architect",
+        "plan-issue",
+        "caffeinated",
+        "capture-issue",
+        "codebase-context"
+      ],
+      "action": "acquire",
+      "sharedReferencesPresent": true,
+      "noFullCorpusFallback": true
+    },
+    "fullCorpusUnchanged": true,
+    "fullInstalledCorpusUnchanged": true,
+    "directory": "/workspace/scratch/5d0d33601c13/ae-test-tmp/ae-installed-lifecycle-Qk77et"
+  }
+}

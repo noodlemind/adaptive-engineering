@@ -2,7 +2,7 @@
 
 Use this template for every delegated task. Subagents run in isolated context; assume they do not remember prior conversation, hidden plan details, or unstated constraints.
 
-Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rules/ae-models.md`. The role is `engineer`, `specialist`, `researcher`, or `reviewer`. Pass that model when the host spawn tool takes one. A missing file, a missing line, or `inherit` means omit the model.
+Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rules/ae-models.md`. The role is `engineer`, `specialist`, `researcher`, `reviewer`, or `decision`. Pass that model when the host spawn tool takes one. A missing file, a missing line, or `inherit` means omit the model. Preserve the effective model observation; an unsupported selection is inheritance, not evidence that a small model ran.
 
 ## Delegation Header
 
@@ -12,6 +12,8 @@ Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rul
 - **Priority:** P1 / P2 / P3
 - **Risk level:** low / medium / high
 - **Expected output format:**
+- **Eligible provider source path/digest:**
+- **Current authorization or standing grant revision:**
 
 ## Objective
 
@@ -59,7 +61,7 @@ List the domain-specific criteria the subagent should apply.
 
 ## Approval Dependencies
 
-List any decisions the subagent must not make without human approval.
+List boundaries not covered by existing direct authorization or scoped standing grants. A subagent cannot broaden consent or delegate beyond host authority. Native decision-agent requests retain the exact Harness packet and versioned reply schema; do not replace it with this generic response template.
 
 ## Expected Response
 

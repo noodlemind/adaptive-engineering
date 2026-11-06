@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { assertNoSymlinkAncestors, readFileNoFollow, writeFileContained } from '../fs-safe.mjs';
 import { validatePrimitiveContent } from '../resource-validation.mjs';
 import { withPlanUpdateLock } from '../plan-update.mjs';
+import { personalResourceAuthorization, personalResourcePermissions } from './personal-authorization.mjs';
 
 const fail = message => Object.assign(new Error(message), { code: 'E_USAGE', exit: 2, hint: 'ae host status --host <host>; ae help resources' });
 const digest = text => `sha256-${createHash('sha256').update(text).digest('hex')}`;
@@ -28,45 +29,68 @@ function readObject(root, relative) {
   throw fail('Host setup binding is malformed');
 }
 
-function checkBinding(configHome, skillsHome, name) {
+export function personalHostBinding({ configHome, skillsHome }) {
+  configHome = safeRoot(configHome, 'configHome');
+  skillsHome = safeRoot(skillsHome, 'skillsHome');
   const manifest = readObject(configHome, '.ae-host.json');
   const owner = readObject(skillsHome, '.ae-host-skills.json');
   if (manifest.schema !== 1 || !['claude-code', 'codex', 'cursor', 'terminal'].includes(manifest.host) || manifest.configHome !== configHome || manifest.skillsHome !== skillsHome || !Array.isArray(manifest.files) || owner.schema !== 1 || owner.host !== manifest.host || owner.configHome !== configHome || owner.skillsHome !== skillsHome) throw fail('Selected roots do not match the saved host setup binding');
   for (const file of manifest.files) {
     if (!isObject(file) || !ROOTS.has(file.root) || typeof file.path !== 'string' || path.isAbsolute(file.path) || file.path.includes('\\') || file.path.split('/').some(part => !part || part === '.' || part === '..') || typeof file.owned !== 'boolean' || !/^[a-f0-9]{64}$/.test(file.sha256 || '')) throw fail('Host setup ownership is malformed');
-    if (file.root === 'skills' && file.path.startsWith(`${name}/`)) throw fail(`${name} is a setup-managed shipped skill; personal writes cannot replace it`);
   }
+  return { manifest, configHome, skillsHome };
+}
+
+function checkBinding(configHome, skillsHome, name) {
+  const { manifest } = personalHostBinding({ configHome, skillsHome });
+  if (manifest.files.some(file => file.root === 'skills' && file.path.startsWith(`${name}/`))) throw fail(`${name} is a setup-managed shipped skill; personal writes cannot replace it`);
+  return manifest;
 }
 
 /** Create only a personal native skill; setup retains authority over shipped assets. */
-export function createHostSkill({ configHome, skillsHome, name, input, dryRun = false }) {
+export function createHostSkill({ configHome, skillsHome, name, input, dryRun = false, home, yes = false, authorize }) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name || '')) throw fail('Personal skill name must be canonical kebab-case');
   if (!isObject(input) || input.schema !== 1 || Object.keys(input).some(key => !['schema', 'text', 'expectedDigest'].includes(key))) throw fail('Personal skill input requires schema 1, text and optional expectedDigest');
+  input = { ...input };
   if (input.expectedDigest !== undefined && !/^sha256-[a-f0-9]{64}$/.test(input.expectedDigest)) throw fail('Personal skill expectedDigest must be a sha256 digest');
   const config = safeRoot(configHome, 'configHome'), skills = safeRoot(skillsHome, 'skillsHome');
   const relative = `${name}/SKILL.md`, full = path.join(skills, relative);
   const perform = () => {
-    checkBinding(config, skills, name);
+    const manifest = checkBinding(config, skills, name);
     if (!assertNoSymlinkAncestors(skills, relative)) throw fail('Personal skill destination is unsafe or redirected');
     const validation = validatePrimitiveContent({ type: 'skill', name, text: input.text, root: skills, rel: relative });
     if (!validation.valid) throw fail(validation.errors.join('; '));
+    const permissions = personalResourcePermissions({ text: input.text, metadata: validation.frontmatter, host: manifest.host, type: 'skill' });
     const stat = fs.lstatSync(full, { throwIfNoEntry: false });
     const prior = stat ? readFileNoFollow(full, { root: skills, maxBytes: 65536 }) : null;
     if (stat && prior === null) throw fail('Existing personal skill is unsafe or unreadable');
     const previousDigest = prior === null ? null : digest(prior);
     if (input.expectedDigest !== undefined && previousDigest !== input.expectedDigest) throw fail('Expected personal skill bytes are stale');
     if (prior !== null && prior !== input.text && input.expectedDigest === undefined) throw fail('Replacing a personal skill requires its expectedDigest');
+    const authorization = personalResourceAuthorization({ home, configHome: config, skillsHome: skills, host: manifest.host, yes, authorize, legacySkill: true,
+      request: { operation: prior === null ? 'create' : 'update', type: 'skill', name, path: full, ...permissions, previousDigest, home, copilotHome: config, skillsHome: skills, host: manifest.host } });
     const changed = prior !== input.text;
     if (!dryRun && changed) {
       // Repeat the byte check immediately before publication under both locks.
       const current = fs.lstatSync(full, { throwIfNoEntry: false }) ? readFileNoFollow(full, { root: skills, maxBytes: 65536 }) : null;
       if (current !== prior) throw fail('Personal skill changed before publication; inspect and retry');
+      authorization.assertCurrent();
+      checkBinding(config, skills, name);
       if (!writeFileContained(skills, relative, input.text, { exclusive: prior === null, mode: 0o600 })) throw fail('Personal skill publication was refused; inspect the selected destination');
+      try { authorization.assertCurrent(); checkBinding(config, skills, name); }
+      catch (error) {
+        if (readFileNoFollow(full, { root: skills, maxBytes: 65536 }) === input.text) {
+          if (prior === null) fs.unlinkSync(full);
+          else writeFileContained(skills, relative, prior, { mode: 0o600 });
+        }
+        throw error;
+      }
     }
     return {
       schema: 1, verb: 'create', status: 'ok', exitCode: 0, validation, dryRun: Boolean(dryRun),
       primitive: { path: full, name, kind: 'skill', digest: digest(input.text), state: dryRun ? 'preview' : !changed ? 'unchanged' : prior === null ? 'created' : 'replaced' },
       activated: !dryRun && changed,
+      authorization: authorization.record,
     };
   };
   if (dryRun) return perform();

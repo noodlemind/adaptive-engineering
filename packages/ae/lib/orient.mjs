@@ -259,6 +259,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     skills,
     instructions,
     contacts,
+    ...(facts.slice.capabilities ? { capabilities: facts.slice.capabilities, adaptation: facts.slice.adaptation } : {}),
     index,
     ...(flags.contextVersion === 2 ? { context: buildContextRecord({ workspace, flags, query: q, facts }) } : {}),
   };
