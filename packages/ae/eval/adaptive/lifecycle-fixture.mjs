@@ -94,12 +94,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncBuiltinESMExports } from 'node:module';
 const forbidden = ${JSON.stringify([path.join(sourcePackageRoot, 'corpus'), ...forbiddenCorpusRoots])};
+const nativeRealpath = fs.realpathSync.native;
+const identity = file => {
+  let full;
+  try { full = nativeRealpath(file); } catch { full = path.resolve(file); }
+  return process.platform === 'win32' ? full.toLowerCase() : full;
+};
+const forbiddenIdentities = forbidden.map(identity);
 const protect = (owner, keys) => {
   for (const key of keys) {
     const original = owner[key];
     owner[key] = function (file, ...args) {
-    const full = file instanceof URL ? fileURLToPath(file) : typeof file === 'string' || Buffer.isBuffer(file) ? path.resolve(String(file)) : null;
-    if (full && forbidden.some(root => full === root || full.startsWith(root + path.sep))) throw new Error('Evaluation detected unselected-corpus fallback: ' + full);
+    const full = file instanceof URL ? fileURLToPath(file) : typeof file === 'string' || Buffer.isBuffer(file) ? String(file) : null;
+    const resolved = full ? identity(full) : null;
+    if (resolved && forbiddenIdentities.some(root => resolved === root || resolved.startsWith(root + path.sep))) throw new Error('Evaluation detected unselected-corpus fallback: ' + full);
     return original.call(this, file, ...args);
     };
   }

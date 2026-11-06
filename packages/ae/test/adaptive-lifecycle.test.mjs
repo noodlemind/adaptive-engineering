@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CORE_CORPUS_MANIFEST, lifecycleNpmCommand, runAdaptiveLifecycle } from '../eval/adaptive/lifecycle.mjs';
+import { CORE_CORPUS_MANIFEST, lifecycleNpmCommand, parseEpisodeResourceUses, runAdaptiveLifecycle } from '../eval/adaptive/lifecycle.mjs';
 import { materializeMinimalCorpus } from '../eval/adaptive/core-corpus.mjs';
 import { createLifecycleFixture, run, writeFile } from '../eval/adaptive/lifecycle-fixture.mjs';
 
@@ -60,13 +60,23 @@ test('installed fixture rejects synchronous and asynchronous reads from unselect
     const original = writeFile(source, 'corpus/probe.md', 'original');
     const unselected = writeFile(full, 'corpus/probe.md', 'unselected');
     const allowed = writeFile(selected, 'corpus/probe.md', 'selected');
+    const sourceAlias = path.join(root, 'source-alias'), fullAlias = path.join(root, 'full-alias');
+    for (const [target, alias] of [[source, sourceAlias], [full, fullAlias]]) fs.symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    fs.mkdirSync(path.join(source, 'corpus/child'));
+    fs.symlinkSync(path.join(source, 'corpus/child'), path.join(selected, 'parent-link'), process.platform === 'win32' ? 'junction' : 'dir');
+    const linkedParent = `${path.join(selected, 'parent-link')}${path.sep}..${path.sep}probe.md`;
     const fx = createLifecycleFixture({ directory: path.join(root, 'fixture'), installedPackageRoot: selected, sourcePackageRoot: source, forbiddenCorpusRoots: [path.join(full, 'corpus')] });
     const invoke = text => run(process.execPath, ['--input-type=module', '-e', text], { cwd: fx.workspace, env: fx.env });
-    for (const text of [
+    const deniedReads = [
       `import fs from 'node:fs'; fs.readFileSync(${JSON.stringify(original)});`,
       `import { readFileSync } from 'node:fs'; readFileSync(${JSON.stringify(unselected)});`,
       `import { readFile } from 'node:fs/promises'; await readFile(${JSON.stringify(original)});`,
-    ]) {
+      `import { readFileSync } from 'node:fs'; readFileSync(${JSON.stringify(path.join(sourceAlias, 'corpus/probe.md'))});`,
+      `import { readFile } from 'node:fs/promises'; await readFile(${JSON.stringify(path.join(fullAlias, 'corpus/probe.md'))});`,
+    ];
+    if (fs.existsSync(linkedParent)) deniedReads.push(`import fs from 'node:fs'; process.stdout.write(fs.readFileSync(${JSON.stringify(linkedParent)}));`);
+    if (process.platform === 'win32' && fs.existsSync(original.toUpperCase())) deniedReads.push(`import fs from 'node:fs'; fs.readFileSync(${JSON.stringify(original.toUpperCase())});`);
+    for (const text of deniedReads) {
       const denied = invoke(text);
       assert.notEqual(denied.status, 0, 'unselected corpus was readable');
       assert.match(denied.stderr, /unselected-corpus fallback/);
@@ -110,4 +120,13 @@ test('fixture path aliases retain one exact native workspace identity', () => {
     assert.equal(observed.status, 0, observed.stderr);
     assert.equal(observed.stdout, fx.workspace, 'native observation and fixture must bind the identical canonical workspace');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('episode provenance decodes native Windows paths and exact source hashes', () => {
+  const resource = { kind: 'skill', name: 'enterprise-payments', path: path.win32.join('C:\\Users\\runneradmin', 'enterprise', 'skills', 'enterprise-payments', 'SKILL.md'), sha256: 'a'.repeat(64) };
+  const episode = `---\r\nresource_uses: ${JSON.stringify([resource])}\r\n---\r\n# Verified learning\r\n`;
+  const parsed = parseEpisodeResourceUses(episode);
+  assert.equal(parsed[0].path, resource.path);
+  assert.equal(parsed[0].sha256, resource.sha256);
+  assert.throws(() => parseEpisodeResourceUses(`---\ntitle: No provenance\n---\nresource_uses: ${JSON.stringify([resource])}\n`), /omitted observed loaded resources/);
 });

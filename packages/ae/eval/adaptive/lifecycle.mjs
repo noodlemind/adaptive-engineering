@@ -6,11 +6,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import YAML from 'yaml';
 import { CORE_CORPUS_MANIFEST, corpusDigest, corpusInventory, materializeMinimalCorpus } from './core-corpus.mjs';
 import { createLifecycleFixture, seedEnterprise, seedPaymentProject, forwardTask, writeFile, run, requireExit, PAYMENT_FIXED } from './lifecycle-fixture.mjs';
 import { npmCommand } from '../../test/helpers/npm-launch.mjs';
 
 export { CORE_CORPUS_MANIFEST, forwardTask };
+
+export function parseEpisodeResourceUses(text) {
+  const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  assert.ok(header, 'verified episode omitted structured frontmatter');
+  const metadata = YAML.parse(header[1], { maxAliasCount: 0 });
+  assert.ok(Array.isArray(metadata?.resource_uses), 'verified episode omitted observed loaded resources');
+  return metadata.resource_uses;
+}
 
 /** Prefer npm-cli.js through Node; never interpolate unsafe archive paths into cmd. */
 export function lifecycleNpmCommand(args) {
@@ -385,8 +394,10 @@ function runArm({ packageRoot, installedPackageRoot, root, corpus, forbiddenCorp
       assert.match(observedAgent.reviewUse?.observationId || '', /^[a-f0-9]{64}$/);
       assert.equal(publish(fx.plan, 'lifecycle-first-payment-task').replayed, true, 'an idempotent publication replay became another task');
       const episode = fs.readFileSync(first.publishedPath, 'utf8');
-      assert.match(episode, /resource_uses:/, 'verified episode omitted observed loaded resources');
-      assert.ok(episode.includes(path.join(fx.enterpriseRoot, 'skills/enterprise-payments/SKILL.md')), 'verified episode omitted the approved external skill source');
+      const persistedSkill = parseEpisodeResourceUses(episode).find(row => row.kind === 'skill' && row.name === 'enterprise-payments');
+      const skillPath = path.join(fx.enterpriseRoot, 'skills/enterprise-payments/SKILL.md');
+      assert.equal(persistedSkill?.path, skillPath, 'verified episode omitted the exact approved external skill source');
+      assert.equal(persistedSkill.sha256, createHash('sha256').update(fs.readFileSync(skillPath)).digest('hex'), 'verified episode omitted the exact loaded source version');
       const secondPlan = '.harness/plans/2026-11-06-payment-invalid-amounts.md';
       const secondText = fs.readFileSync(path.join(fx.workspace, fx.plan), 'utf8').replaceAll('Payment retry correctness', 'Payment non-finite amount coverage').replaceAll('Make payment delivery idempotent within each order.', 'Prove non-finite and sub-cent amounts cannot mutate the payment ledger.');
       writeFile(fx.workspace, secondPlan, secondText);
