@@ -113,9 +113,15 @@ export function upgradeHostResultOf(argv) {
   try {
     const options = parse(['setup', ...argv]);
     options.skillsHome ||= process.env.AE_SKILLS_HOME;
-    const roots = resolveHostRoots(options);
-    const delegation = personalDelegationSelection({ ...options, ...roots });
-    const integration = runHostSetup({ ...options, requireExisting: true, personalAgents: delegation.personalAgents, validatePublication: delegation.validatePublication });
+    let integration;
+    try {
+      const roots = resolveHostRoots(options);
+      const delegation = personalDelegationSelection({ ...options, ...roots });
+      integration = runHostSetup({ ...options, requireExisting: true, personalAgents: delegation.personalAgents, validatePublication: delegation.validatePublication });
+    } catch (error) {
+      integration = { schema: 1, mode: 'host', verb: 'setup', host: options.host, status: 'failed', exitCode: 2, configured: false,
+        nativeQualification: 'unverified', actions: [], conflicts: [], preserved: [], capabilities: {}, limitations: [], reason: error.message };
+    }
     const workspace = integration.roots ? readWorkspaceOutcome({ workspace: options.workspace, ...integration.roots, copilotHome: integration.roots.configHome }) : null;
     return {
       command: 'upgrade', version: JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version,
