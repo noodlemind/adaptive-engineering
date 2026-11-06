@@ -98,3 +98,32 @@ test('Windows source drive casing matches the same current included file', { ski
   configureDiscovery({ ...options, input: { schema: 1, roots: [{ path: copilotHome, included: true }], ongoing: true, grants: {} } });
   assert.equal(loadedResourceUses(options).length, 1);
 });
+
+test('a raw parent traversal through a redirect cannot borrow the selected skill source identity', t => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-memory-parent-traversal-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, 'product'), copilotHome = path.join(root, 'copilot');
+  const selected = path.join(copilotHome, 'skills', 'create-primitive', 'SKILL.md');
+  const other = path.join(root, 'other', 'skills', 'create-primitive', 'SKILL.md');
+  const selectedBody = '---\nname: create-primitive\n---\nRead the trusted creation workflow.\n';
+  const otherBody = '---\nname: create-primitive\n---\nAn unrelated source with different instructions.\n';
+  for (const directory of [workspace, path.dirname(selected), path.dirname(other), path.join(root, 'other', 'child')]) fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(selected, selectedBody); fs.writeFileSync(other, otherBody);
+  const redirect = path.join(copilotHome, 'link');
+  try { fs.symlinkSync(path.join(root, 'other', 'child'), redirect, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('Host does not permit directory redirects'); throw error; }
+  const raw = `${redirect}${path.sep}..${path.sep}skills${path.sep}create-primitive${path.sep}SKILL.md`;
+  const actual = fs.readFileSync(raw, 'utf8');
+  // POSIX resolves the redirect before '..'. Windows may normalize '..' first;
+  // neither spelling is accepted as selected-source activation evidence.
+  if (process.platform !== 'win32') assert.equal(actual, otherBody);
+  const activation = readSkillActivation({ cwd: workspace, session_id: 'session', tool_name: 'Read', tool_input: { file_path: raw },
+    tool_response: { truncated: false }, success: true }, { copilotHome });
+  assert.equal(activation, null, `Raw traversal returned ${actual === otherBody ? 'different' : 'selected'} bytes and must not establish activation`);
+  const rawCwd = `${redirect}${path.sep}..`;
+  const relative = `skills${path.sep}create-primitive${path.sep}SKILL.md`;
+  for (const field of ['cwd', 'workspace']) {
+    assert.equal(readSkillActivation({ [field]: rawCwd, session_id: 'session', tool_name: 'Read', tool_input: { file_path: relative },
+      tool_response: { truncated: false }, success: true }, { copilotHome }), null, `${field} cannot erase a raw redirect/parent traversal either`);
+  }
+});

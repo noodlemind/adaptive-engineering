@@ -9,8 +9,9 @@ const MAX_SKILL_BYTES = 128 * 1024;
 const localHome = fileURLToPath(new URL('../..', import.meta.url));
 const packaged = path.basename(path.resolve(localHome)) === 'corpus' && fs.existsSync(path.resolve(localHome, '../bin/ae.mjs'));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const hasParentTraversal = value => typeof value === 'string' && value.replace(/^[A-Za-z]:/, '').split(/[\\/]/).includes('..');
 function sourceIdentity(value) {
-  if (typeof value !== 'string' || !path.isAbsolute(value) || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (typeof value !== 'string' || !path.isAbsolute(value) || hasParentTraversal(value) || /[\u0000-\u001f\u007f]/.test(value)) return null;
   try {
     const full = path.resolve(value), root = path.parse(full).root;
     let current = root;
@@ -116,6 +117,9 @@ function returnedText(value) {
 export function readSkillActivation(payload, { copilotHome, additionalSources = [], restrictSources = false } = {}) {
   additionalSources = Array.isArray(additionalSources) ? additionalSources : [];
   const normalizedInput = normalizeToolPayload(payload);
+  // Do not erase a redirect followed by '..' before checking its identity:
+  // filesystem lookup can read different bytes than path.resolve predicts.
+  if (normalizedInput.targets.some(hasParentTraversal) || [payload.workspace, payload.cwd].some(hasParentTraversal)) return null;
   const selectedExtra = additionalSources.find(source => normalizedInput.targets.some(target => samePath(path.resolve(normalizedInput.workspace, target), source)));
   const skill = activatedSkillFromPayload(payload) || (selectedExtra ? path.basename(path.dirname(selectedExtra)) : null);
   if (!skill || !toolMutationSucceeded(payload)) return null;
