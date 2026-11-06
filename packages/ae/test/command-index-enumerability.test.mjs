@@ -163,8 +163,8 @@ const DECLARED_VERBS = Object.freeze({
   // `register`/`unregister` change what the harness recognizes; `list`/`show`
   // override DOWN to read.
   model: ['show', 'set', 'clear', 'refresh'],
-  resources: ['validate', 'scaffold', 'candidates', 'propose', 'list', 'show', 'register', 'unregister', 'discard', 'create', 'bundles', 'add', 'update', 'remove'],
-  review: ['prepare', 'assemble'],
+  resources: ['discover', 'decision', 'validate', 'scaffold', 'candidates', 'propose', 'list', 'show', 'register', 'unregister', 'discard', 'create', 'bundles', 'add', 'update', 'remove'],
+  review: ['prepare', 'assemble', 'tour'],
   undo: ['list'],
   todo: ['list', 'sync', 'add', 'complete', 'clear'],
   domain: ['show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound'],

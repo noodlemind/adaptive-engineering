@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { copyDirectorySync } from './fs-copy.mjs';
 import { parseFlags } from './flags.mjs';
-import { resolveCopilotHome } from './paths.mjs';
+import { resolveCopilotHome, harnessGlobalHome } from './paths.mjs';
 import { createStyle, keyWidthFor, EXIT } from './style.mjs';
 import { redactedJson } from './redact.mjs';
 import { inertLine } from './knowledge/store.mjs';
@@ -13,8 +14,12 @@ import { getCorpusRoot } from './assets.mjs';
 import { resourceInput, scaffoldPrimitive, createStructuredPrimitive, validateResourceInventory } from './resource-validation.mjs';
 import { resourceCandidates, proposeResource } from './resource-candidates.mjs';
 import { readBoundedInput } from './fs-safe.mjs';
-import { createHostSkill } from './hosts/personal-skill.mjs';
+import { createHostResource, reconcilePersonalDelegation, reconcileCopilotDelegation } from './hosts/personal-resource.mjs';
 import { nativeResourceRead } from './hosts/resource-read.mjs';
+import { configureDiscovery, discoverCapabilities, discoveryPolicy, authorizeCapabilityChange, adoptCreatedCapability } from './capability-catalog.mjs';
+import { capabilityOptions, onboardingDiscovery } from './adaptive-context.mjs';
+import { decisionResultOf, decisionPolicyFromDiscovery, inspectCapabilityDecision } from './decision-agent.mjs';
+import { readSession } from './session.mjs';
 import {
   createPersonalPrimitive,
   discardPrimitive,
@@ -28,7 +33,7 @@ import {
 const ui = createStyle({ argv: process.argv.slice(2) });
 
 export const RESOURCES_VERBS = Object.freeze([
-  'list', 'show', 'register', 'unregister', 'discard', 'create', 'validate', 'scaffold', 'candidates', 'propose',
+  'list', 'show', 'register', 'unregister', 'discard', 'create', 'validate', 'scaffold', 'candidates', 'propose', 'discover', 'decision',
     'add', 'update', 'remove', 'bundles',
 ]);
 
@@ -38,7 +43,7 @@ function usageError(message, hint) {
 
 /** Flags on this entry that take a value — a BOOLEAN flag before the verb must
  * not swallow it, which is the bug the same parser had in `run`. */
-const VALUE_FLAGS = new Set(['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home', '--file', '--path']);
+const VALUE_FLAGS = new Set(['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home', '--file', '--path', '--query', '--limit']);
 
 function context(argv) {
   const flags = parseFlags(argv);
@@ -58,7 +63,7 @@ function context(argv) {
       'ae resources create <skill|agent|instruction> <name>',
     );
   }
-  if (flags.files?.length && !['create', 'propose'].includes(positionals[0])) {
+  if (flags.files?.length && !['create', 'propose', 'discover', 'decision'].includes(positionals[0])) {
     throw usageError(
       'resources create reads the primitive body from stdin',
       'ae resources create <skill|agent|instruction> <name>',
@@ -129,15 +134,53 @@ export async function resourcesResultOf(argv, ctx = {}) {
   if (!RESOURCES_VERBS.includes(verb)) {
     throw usageError(`unknown resources verb: ${verb}`, `one of ${RESOURCES_VERBS.join(', ')}`);
   }
+  const adaptive = capabilityOptions({ workspace: path.resolve(flags.workspace), copilotHome, home: flags.harnessHome || harnessGlobalHome(), skillsHome: flags.skillsHome });
+  const authorizeResource = input => request => {
+    const granted = authorizeCapabilityChange({ ...adaptive, ...request });
+    if (!granted.allowed) return granted;
+    const policy = decisionPolicyFromDiscovery(discoveryPolicy(adaptive));
+    if (!policy.enabled || flags.yes) return granted;
+    const capability = { operation: request.operation, kind: target, name, tools: request.tools || [], agents: request.agents || [],
+      textDigest: `sha256-${createHash('sha256').update(input.text).digest('hex')}`,
+      ...(input.expectedDigest ? { expectedDigest: input.expectedDigest } : {}) };
+    const receipt = inspectCapabilityDecision({ ...adaptive, policy, sessionId: readSession(adaptive.workspace)?.sessionId,
+      capability, consume: !flags.dryRun });
+    return receipt.authorized ? { ...granted, decisionReceipt: receipt.receiptId } : { ...granted, allowed: false, reason: receipt.reason };
+  };
+  const finishCreation = result => {
+    if (!flags.dryRun && result.authorization?.policyRevision) {
+      result.adoption = adoptCreatedCapability({ ...adaptive, type: target, name, path: path.resolve(copilotHome, result.primitive.path),
+        expectedPolicyRevision: result.authorization.policyRevision, expectedDigest: result.primitive.digest,
+        expectedSourceDigest: result.primitive.sourceDigest });
+      if (target === 'agent') result.delegation = process.env.AE_SKILLS_HOME
+        ? reconcilePersonalDelegation({ configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME, home: adaptive.home, name, expectedPolicyRevision: result.adoption.policyRevision })
+        : reconcileCopilotDelegation({ configHome: copilotHome, home: adaptive.home, name, expectedPolicyRevision: result.adoption.policyRevision });
+    }
+    if (!flags.dryRun && discoveryPolicy(adaptive).configured) result.discovery = discoverCapabilities({ ...adaptive, query: name, limit: 8 });
+    return result;
+  };
+  if (verb === 'discover') {
+    if (!flags.files?.length) return { ...onboardingDiscovery({ ...adaptive, query: flags.query, limit: flags.limit }), verb: 'discover' };
+    const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
+    const { operation, ...input } = resourceInput(inputFlags);
+    if (operation === 'configure') return { ...configureDiscovery({ ...adaptive, input, dryRun: flags.dryRun }), verb: 'discover' };
+    if (['scan', 'status', 'query'].includes(operation)) return { ...discoverCapabilities({ ...adaptive, query: input.query || flags.query, taskId: input.taskId, refresh: operation === 'scan', limit: input.limit || flags.limit }), verb: 'discover' };
+    throw usageError('Discovery input operation must be configure, scan, status or query', 'ae resources discover --file - --json');
+  }
+  if (verb === 'decision') {
+    if (!flags.files?.length) throw usageError('Native decisions require a versioned decision input', 'ae resources decision --file - --json');
+    const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
+    return { ...decisionResultOf({ ...adaptive, policy: decisionPolicyFromDiscovery(discoveryPolicy(adaptive)), input: resourceInput(inputFlags) }), verb: 'decision' };
+  }
   if (process.env.AE_SKILLS_HOME) {
     if (['list', 'show', 'validate'].includes(verb) && !flags.corpus && !flags.path) {
       return nativeResourceRead({ verb, target, configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME });
     }
     if (verb === 'create') {
-      if (target !== 'skill') throw usageError('Native personal agents/instructions require a mapped host writer; Copilot-format fallback is refused', 'Create a capability proposal; native personal skills use resources create skill --file');
-      if (!flags.files?.length) throw usageError('Native personal skills require a schema 1 decision through --file', 'ae resources create skill <name> --file -');
+      if (!flags.files?.length) throw usageError('Native personal resources require a schema 1 decision through --file', 'ae resources create <skill|agent|instruction> <name> --file -');
       const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
-      return createHostSkill({ configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME, name, input: resourceInput(inputFlags), dryRun: flags.dryRun });
+      const input = resourceInput(inputFlags);
+      return finishCreation(createHostResource({ configHome: copilotHome, skillsHome: process.env.AE_SKILLS_HOME, home: adaptive.home, type: target, name, input, yes: flags.yes, dryRun: flags.dryRun, authorize: authorizeResource(input) }));
     }
     if (['add', 'update', 'remove', 'register', 'unregister', 'discard'].includes(verb)) {
       throw usageError('Legacy bundle and primitive mutation is not mapped for the selected native host', 'Use ae host setup/status/remove for managed assets; preserve personal files');
@@ -201,7 +244,12 @@ export async function resourcesResultOf(argv, ctx = {}) {
         'ae resources create <skill|agent|instruction> <name>',
       );
     }
-    if (flags.files?.length) return createStructuredPrimitive({ flags, copilotHome, type: target, name, input: resourceInput(flags), shippedFiles, lockFiles });
+    if (flags.files?.length) {
+      const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
+      const input = resourceInput(inputFlags);
+      return finishCreation(createStructuredPrimitive({ flags, copilotHome, home: adaptive.home, type: target, name, input, shippedFiles, lockFiles, authorize: authorizeResource(input) }));
+    }
+    if (discoveryPolicy(adaptive).configured) throw usageError('Configured adaptive publication requires schema 1 input through --file', 'ae resources create <skill|agent|instruction> <name> --file -');
     if (process.stdin.isTTY) {
       throw usageError(
         'resources create reads the primitive body from stdin',
@@ -293,7 +341,7 @@ export async function cmdResources(argv, ctx = {}) {
 
   if (flags.json) {
     console.log(redactedJson(result, { pretty: flags.verbose }));
-  } else if (['validate', 'scaffold', 'candidates', 'propose'].includes(result.verb) || result.validation) {
+  } else if (['validate', 'scaffold', 'candidates', 'propose', 'discover', 'decision'].includes(result.verb) || result.validation) {
     console.log(redactedJson(result, { pretty: true }));
   } else if (result.verb === 'list') {
     const keyWidth = keyWidthFor(['primitives', ...result.primitives.map((p) => p.path)]);
@@ -364,6 +412,7 @@ export async function cmdResources(argv, ctx = {}) {
 }
 
 export function resourcesExitFor(result) {
+    if (Number.isInteger(result?.exitCode)) return result.exitCode;
     if (result?.verb === 'validate' && result.status !== 'ok') return 1;
     if ((result?.verb === 'list' || result?.verb === 'bundles') && result.status !== 'ok') return 1;
     if (result?.sync?.refused?.length) return 1;

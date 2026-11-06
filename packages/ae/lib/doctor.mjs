@@ -36,6 +36,7 @@ import { assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { leftoverWorkspaceArtifacts } from './migrate-layout.mjs';
 import { planReadDirs } from './project-layout.mjs';
 import { inspectCheckReadiness } from './check-readiness.mjs';
+import { discoverCapabilities } from './capability-catalog.mjs';
 
 const MIN_ENRICHED_RATIO = 0.5;
 
@@ -655,6 +656,25 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
   ];
 }
 
+/** The adaptive bootstrap needs four eligible procedures; richer automation is acquired on demand. */
+export function inspectLifecycleSkillChecks(options) {
+  const catalog = discoverCapabilities({ ...options, onboarding: false, limit: 2000 });
+  if (!catalog.configured) return ['ensure-plan', 'auto-compound', 'ensure-capability', 'auto-skill-draft'].map(skill => ({
+    id: 'H7', name: `Autopilot skill /${skill}`, pass: fs.existsSync(path.join(options.copilotHome, 'skills', skill, 'SKILL.md')), hint: 'Run: ae upgrade',
+  }));
+  const required = ['engineer', 'ensure-plan', 'create-primitive', 'ensure-capability'];
+  const resources = new Map(catalog.resources.filter(item => item.kind === 'skill' && item.included && item.current && item.invocable).map(item => [item.id, item]));
+  return [...required, 'auto-compound', 'auto-skill-draft'].map(skill => {
+    const resource = resources.get(skill), optional = !required.includes(skill), available = Boolean(resource);
+    return { id: 'H7', name: `Adaptive ${optional ? 'optional' : 'bootstrap'} skill /${skill}`, skill, pass: available || optional, available,
+      status: available ? 'available' : 'unavailable', optional, policyRevision: catalog.policyRevision,
+      ...(resource ? { path: resource.path, digest: resource.digest } : { remediation: 'capability-acquisition' }),
+      hint: available ? `Included current source: ${resource.path}`
+        : optional ? `Optional procedure; acquire /${skill} through /create-primitive when the task needs it`
+          : `Include a current /${skill} in consented sources, or acquire it through /create-primitive within standing authority` };
+  });
+}
+
 export async function runDoctor({ copilotHome, assetsRoot, pkgRoot, flags, vscodeSettingsPaths = null, workspace = flags.workspace }) {
   const target = selectedDoctorTarget(flags);
   const customizationOnly = target === 'intellij';
@@ -723,15 +743,7 @@ export async function runDoctor({ copilotHome, assetsRoot, pkgRoot, flags, vscod
     optional: true,
   });
 
-  for (const skill of ['ensure-plan', 'auto-compound', 'ensure-capability', 'auto-skill-draft']) {
-    const p = path.join(copilotHome, 'skills', skill, 'SKILL.md');
-    checks.push({
-      id: 'H7',
-      name: `Autopilot skill /${skill}`,
-      pass: fs.existsSync(p),
-      hint: 'Run: ae upgrade',
-    });
-  }
+  checks.push(...inspectLifecycleSkillChecks({ workspace, copilotHome, home: flags.harnessHome || flags.home }));
 
   checks.push({
     id: 'H8',

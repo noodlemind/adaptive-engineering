@@ -4,7 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { runHostSetup } from './setup.mjs';
+import { runHostSetup, resolveHostRoots } from './setup.mjs';
+import { onboardingDiscovery } from '../adaptive-context.mjs';
+import { discoverCapabilities } from '../capability-catalog.mjs';
 import { buildPluginPackage } from './plugin-package.mjs';
 import { readLock } from '../lock.mjs';
 import { resolveCopilotHome, resolveIntelliJHome, harnessGlobalHome } from '../paths.mjs';
@@ -62,7 +64,8 @@ function runLegacy(options) {
     env: { ...process.env, ...(target === 'intellij' ? { AE_INTELLIJ_HOME: root } : {}) } });
   let details;
   try { details = JSON.parse(child.stdout); } catch { details = { stdout: child.stdout, stderr: child.stderr }; }
-  return { schema: 1, host: options.host, status: child.status === 0 ? 'ok' : 'failed', exitCode: child.status ?? 1, details, capabilities, nativeQualification: 'unverified' };
+  return { schema: 1, host: options.host, status: child.status === 0 ? 'ok' : 'failed', exitCode: child.status ?? 1, details,
+    ...(details.discovery ? { discovery: details.discovery } : {}), capabilities, nativeQualification: 'unverified' };
 }
 
 function exportPlugin(options) {
@@ -91,7 +94,12 @@ export function hostResultOf(argv) {
     const options = parse(argv);
     if (options.verb === 'export') return exportPlugin(options);
     if (Object.hasOwn(legacy, options.host)) return runLegacy(options);
-    const result = runHostSetup(options);
+    const roots = options.verb === 'list' ? null : resolveHostRoots(options);
+    const discoveryOptions = roots ? { ...roots, copilotHome: roots.configHome, host: options.host, workspace: options.workspace } : null;
+    const discovery = options.verb === 'setup' ? onboardingDiscovery(discoveryOptions) : null;
+    const personalAgents = discovery?.configured ? discoverCapabilities({ ...discoveryOptions, onboarding: false, limit: 2000 }).resources.filter(item => item.kind === 'agent').map(item => item.id) : [];
+    const result = runHostSetup({ ...options, personalAgents });
+    if (discovery) result.discovery = discovery;
     if (options.verb === 'setup' && result.roots) result.workspace = readWorkspaceOutcome({ workspace: options.workspace, ...result.roots, copilotHome: result.roots.configHome });
     if (options.verb === 'list') {
       result.hosts = result.hosts.map(item => ({ ...item, id: item.id || item.host }));
@@ -122,6 +130,7 @@ export function cmdHost(argv) {
   else {
     console.log(result.reason || `${result.status}: ${result.host || result.output || 'host export'}`);
     if (result.workspace) console.log(formatWorkspaceOutcome(result.workspace));
+    if (result.discovery?.questions?.length) for (const question of result.discovery.questions) console.log(question.prompt);
   }
   return result.exitCode;
 }

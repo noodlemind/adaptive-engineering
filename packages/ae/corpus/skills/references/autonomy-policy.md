@@ -10,7 +10,7 @@ autonomy: full   # full | balanced | strict
 
 | Profile | Tier 0 (auto) | Tier 1 (notify) | Tier 2 (soft) | Tier 3 (block) |
 |---------|---------------|-----------------|---------------|----------------|
-| **full** | All green + amber | Same | Enabled | red + new agents |
+| **full** | All green + amber | Same | Enabled | uncovered red or primitive authority |
 | **balanced** | green | amber + compound | limited | same as full Tier 3 |
 | **strict** | Answer mode + direct TDD fixes only | — | — | capture, plan, implement, primitives |
 
@@ -57,10 +57,10 @@ The gates and approval interpretation are defined only in [Human Approval Policy
 | Solution + manifest + memory cards | Yes (Tier 0) |
 | Review check from repeated pattern | Draft proposal; activate under Human Approval Policy |
 | New skill from approved proposal | Yes if proposal approved |
-| New skill/agent without proposal | No (Tier 3) |
-| New agent | **Never** auto (Tier 3) |
+| New skill/agent without a scoped proposal | Draft the boundary and evidence before activation |
+| First-needed specialist | Yes within recorded direct or scoped standing authorization, creator validation, and observed host availability |
 
-Capability-gap proposals may be drafted after repeat failures. Repetition is a candidate signal. Creation or activation follows Human Approval Policy for every primitive type.
+Capability-gap proposals may be drafted on first need for separate judgment, independence, isolation, or tool authority. Repetition is a durable-skill promotion signal, not a specialist prerequisite. Creation or activation follows Human Approval Policy for every primitive type. The native decision-agent judges an exact covered action and readiness; it cannot supply missing user consent. Record standing grants once, apply their current revision, and stop further autonomous actions when revoked.
 
 ## Risk tier (plan frontmatter)
 

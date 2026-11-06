@@ -10,7 +10,7 @@ import { readFileNoFollow } from './fs-safe.mjs';
 import { bindPlaybook, validatePlaybookBinding } from './playbook-binding.mjs';
 import { locateVerification } from './verification-location.mjs';
 import { validateExperimentContract } from './experiment-contract.mjs';
-import { skillActivationSourceCurrent } from '../corpus/hooks/lib/skill-activation.mjs';
+import { currentSkillActivation } from './skill-provenance.mjs';
 
 export const PLAN_ACTIONS = Object.freeze(['start', 'amend', 'progress', 'finding', 'gap', 'complete']);
 export const planRevision = text => createHash('sha256').update(text).digest('hex');
@@ -99,7 +99,7 @@ export function validatePlanDecision(input) {
   return input;
 }
 
-export function applyPlanDecision(workspace, plan, input, { applyUpdate, recordedAt, copilotHome }) {
+export function applyPlanDecision(workspace, plan, input, { applyUpdate, recordedAt, copilotHome, home }) {
   validatePlanDecision(input);
   const change = { activity: [`${recordedAt} ${input.action} (${input.id})${input.rationale ? `: ${text(input.rationale, 'rationale')}` : ''}`] };
   if (input.action === 'start') {
@@ -192,7 +192,7 @@ export function applyPlanDecision(workspace, plan, input, { applyUpdate, recorde
         const activation = session.activatedSkills?.[name], at = Date.parse(activation?.activatedAt || '');
         const start = session.sessionStartedAt === undefined ? null : Date.parse(session.sessionStartedAt);
         if (activation?.complete !== true || activation?.sessionId !== session.sessionId || !Number.isFinite(at) || at > Date.now() + 1000 || start !== null && (!Number.isFinite(start) || at < start)
-          || !skillActivationSourceCurrent(activation, name, { copilotHome })) fail(`skill ${name} needs an actual complete read of its current installed or bundled source in the current session`);
+          || !currentSkillActivation(activation, name, { workspace, copilotHome, home })) fail(`skill ${name} needs an actual complete read of its current installed or bundled source in the current session`);
       }
       fm.skills_used = [...new Set([...(fm.skills_used || []), ...changes.skillsUsed])];
     }

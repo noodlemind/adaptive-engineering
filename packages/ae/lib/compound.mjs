@@ -4,6 +4,7 @@ import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'node:crypto';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
 import { readSession, writeSession } from './session.mjs';
@@ -20,6 +21,10 @@ import { withPlanUpdateLock } from './plan-update.mjs';
 import { proofPrerequisites } from './completion.mjs';
 import { recordHash, readReviewRecord, publishReviewRecord } from './review.mjs';
 import { learningPointerRel, publicationTarget, learningPublicationCurrent } from './learning-record.mjs';
+import { capabilityOptions, capabilityContext, adaptationContext, loadedResourceUses } from './adaptive-context.mjs';
+import { retainVerifiedPublication } from './resource-recurrence.mjs';
+import { discoveryPolicy } from './capability-catalog.mjs';
+import { decisionPolicyFromDiscovery, inspectMemoryDecision } from './decision-agent.mjs';
 
 import { buildStructuralIndex } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';
@@ -49,7 +54,7 @@ function snapshotRestored(p, snap) {
   }
 }
 
-function reserveEpisodePath(baseRoot, dirRel, base, doc, { replay = false } = {}) {
+function reserveEpisodePath(baseRoot, dirRel, base, doc, { replay = false, authorize } = {}) {
   const dirFull = assertNoSymlinkAncestors(baseRoot, dirRel);
   if (!dirFull) return { ok: false };
   fs.mkdirSync(dirFull, { recursive: true });
@@ -59,9 +64,19 @@ function reserveEpisodePath(baseRoot, dirRel, base, doc, { replay = false } = {}
     const rel = path.join(dirRel, candidate);
     const full = assertNoSymlinkAncestors(baseRoot, rel);
     if (!full) return { ok: false };
-    if (writeFileContainedExclusive(baseRoot, rel, doc)) return { ok: true, rel };
     if (fs.existsSync(full)) {
       if (replay) return readFileNoFollow(full, { root: baseRoot }) === doc ? { ok: true, rel, replayed: true } : { ok: false, error: new Error('Learning operation conflicts with existing episode bytes') };
+      candidate = `${base}-${n}.md`;
+      n += 1;
+      continue;
+    }
+    // Judge the final collision-selected path and exact serialized bytes. A
+    // consumed verdict cannot be reused if an external writer wins this path.
+    const authority = authorize?.(rel);
+    if (authority && !authority.authorized) return { ok: false, ...authority };
+    if (writeFileContainedExclusive(baseRoot, rel, doc)) return { ok: true, rel, ...(authority?.receiptId ? { memoryDecisionReceipt: authority.receiptId } : {}) };
+    if (authority?.required) return { ok: false, ...authority, authorized: false, reason: 'Memory publication lost its exclusive destination; prepare a new exact memory decision before retrying' };
+    if (fs.existsSync(full)) {
       candidate = `${base}-${n}.md`;
       n += 1;
       continue;
@@ -69,6 +84,24 @@ function reserveEpisodePath(baseRoot, dirRel, base, doc, { replay = false } = {}
     return { ok: false, error: new Error('Atomic episode publication failed before the final file was published') };
   }
   return { ok: false };
+}
+
+function memoryPublicationAuthority({ workspace, copilotHome, home, kind, scope, recordRoot, memory, consume = false }) {
+  // Human teaching is a separate explicit-authority lane. Automatic inferred
+  // knowledge may use only the project-private destination chosen by the
+  // harness; memory:true does not grant global/corpus publication authority.
+  if (kind === 'human-teaching') return null;
+  const options = capabilityOptions({ workspace, copilotHome, home });
+  const consent = discoveryPolicy(options);
+  if (!consent.configured) return null;
+  const base = { required: true, memoryDecision: memory };
+  if (!consent.policy.grants.memory) return { ...base, authorized: false, reason: 'Standing memory authority does not permit inferred publication' };
+  if (scope !== 'private') return { ...base, authorized: false, reason: 'Standing memory authority covers private project learning; shared or corpus publication requires explicit authority' };
+  if (!consent.policy.grants.decision) return { ...base, authorized: false, reason: 'Memory publication requires the native decision agent under standing decision authority' };
+  if (!consume) return { ...base, authorized: true };
+  const sessionId = readSession(recordRoot || workspace)?.sessionId;
+  if (!sessionId) return { ...base, authorized: false, reason: 'Memory decision requires a current native task session' };
+  return { ...base, ...inspectMemoryDecision({ ...options, policy: decisionPolicyFromDiscovery(consent), sessionId, memory, consume: true }) };
 }
 
 function slugify(text) {
@@ -154,6 +187,8 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
     : '';
   const fmLines = [`title: ${yamlQuote(title)}`, `kind: ${kind}`, `date: ${date}`];
   if (verifiedProof) fmLines.push(`verification: ${yamlQuote(verifiedProof.evidencePath)}`, `work_contract: ${verifiedProof.binding.planDigest}`, `proof_identity: ${verifiedProof.verificationIdentity}`);
+  const resourceUses = verifiedProof ? loadedResourceUses({ workspace, copilotHome, home, plan: publicationPlan }) : [];
+  if (resourceUses.length) fmLines.push(`resource_uses: ${JSON.stringify(resourceUses)}`);
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
@@ -205,22 +240,35 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
     };
   }
   const privateParent = publicationPlan?.fm?.domain_parent && scope === 'private' ? publicationPlan : null;
+  const memoryFor = rel => ({ operation: 'publish', kind, scope, destination: path.resolve(target.base, rel), contentDigest: `sha256-${createHash('sha256').update(doc).digest('hex')}`, proofIdentity: verifiedProof?.verificationIdentity || null });
+  const authorizeMemory = (rel, consume) => memoryPublicationAuthority({ workspace, copilotHome, home, kind, scope, recordRoot: privateParent ? planRecordRoot(workspace, privateParent) : workspace, memory: memoryFor(rel), consume });
   const knowledgeRoot = privateParent ? path.join(planRecordRoot(workspace, privateParent), '.harness/knowledge') : copilotHome ? path.join(copilotHome, 'knowledge') : null;
   return withKnowledgeIndexLock({ knowledgeRoot, workspace, copilotHome, flags, log, home, plan: privateParent }, rebuild => {
     let rel;
     let replayed = false;
+    let memoryAuthority;
+    const memoryBlocked = authority => ({ pass: false, exitCode: 2, kind, path: null, indexed: null,
+      blockedReason: `Memory decision required: ${authority.reason}`, memoryDecision: authority.memoryDecision, memoryContent: doc,
+      nextTools: ['Prepare a memory decision packet with memoryDecision, invoke native decision-agent, and record its observed verdict before retrying'] });
+    // Consent is also checked on an idempotent replay. Existing exact bytes do
+    // not consume a second verdict, but revocation remains immediately binding.
+    const currentAuthority = authorizeMemory(path.join(dirRel, `${base}.md`), false);
+    if (currentAuthority && !currentAuthority.authorized) return memoryBlocked(currentAuthority);
     if (flags.dryRun) {
       // Dry run writes nothing, so a plain existence probe is enough to report a
       // representative would-be name (no reservation, no file created).
       rel = path.join(dirRel, `${base}.md`);
       let n = 2;
       while (fs.existsSync(path.join(target.base, rel))) {
+        if (flags.operationSuffix && readFileNoFollow(path.join(target.base, rel), { root: target.base }) === doc) break;
         rel = path.join(dirRel, `${base}-${n}.md`);
         n += 1;
       }
+      memoryAuthority = authorizeMemory(rel, false);
     } else {
-      const reserved = reserveEpisodePath(target.base, dirRel, base, doc, { replay: Boolean(flags.operationSuffix) });
+      const reserved = reserveEpisodePath(target.base, dirRel, base, doc, { replay: Boolean(flags.operationSuffix), authorize: candidate => authorizeMemory(candidate, true) });
       if (!reserved.ok) {
+        if (reserved.memoryDecision) return memoryBlocked(reserved);
         return {
           pass: false,
           exitCode: 1,
@@ -235,11 +283,13 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       }
       rel = reserved.rel;
       replayed = Boolean(reserved.replayed);
+      memoryAuthority = reserved;
     }
     // Under dryRun nothing was actually written (the write above is skipped), so
     // the log line must not claim otherwise.
     log(`${flags.dryRun ? 'would write' : 'wrote'} ${rel}`);
-    const publication = { publicationVersion: 1, scope, publishedPath: path.resolve(target.base, rel), publishedHash: recordHash(doc) };
+    const publication = { publicationVersion: 1, scope, publishedPath: path.resolve(target.base, rel), publishedHash: recordHash(doc),
+      ...(currentAuthority ? { memoryDecision: memoryFor(rel), ...(flags.dryRun ? { memoryContent: doc } : {}) } : {}), ...(memoryAuthority?.memoryDecisionReceipt ? { memoryDecisionReceipt: memoryAuthority.memoryDecisionReceipt } : {}) };
     if (scope === 'ship-set-proposal') return { pass: true, exitCode: 0, kind, path: rel.split(path.sep).join('/'), ...publication, indexed: null, proposal: true, activated: false, blockedReason: null, nextTools: ['Review the proposal before requesting a shipped-corpus change'] };
     // runIndexKnowledge can throw (a duplicate manifest id, an fs error). An
     // unhandled throw here would leave the episode we JUST wrote orphaned on disk
@@ -314,6 +364,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       path: rel.split(path.sep).join('/'),
       ...publication,
       indexed,
+      resourceUses,
       blockedReason: null,
       nextTools: ['ae consolidate --status'],
     };
@@ -357,6 +408,12 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
     compatible(prior);
     const priorPublicationCurrent = !prior || learningPublicationCurrent(recordRoot, prior, { workspace, copilotHome, home, plan: selected.plan });
     if (prior?.state === 'done' && priorPublicationCurrent) {
+      if (decision.decision === 'publish') {
+        const memory = prior.result.memoryDecision || null;
+        const authority = memoryPublicationAuthority({ workspace, copilotHome, home, kind: 'fix', scope: decision.scope || 'private', recordRoot, memory });
+        if (authority && !authority.authorized) return { pass: false, exitCode: 2, kind: 'fix', path: null, indexed: null,
+          blockedReason: `Memory decision required: ${authority.reason}`, memoryDecision: memory, learningRecord: rel };
+      }
       publishReviewRecord(recordRoot, pointer, { version: 1, operation, record: rel });
       return { ...prior.result, learningRecord: rel, replayed: true };
     }
@@ -368,15 +425,37 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
     const result = decision.decision === 'no-learning'
       ? { pass: true, exitCode: 0, decision: 'no-learning', path: null, indexed: null, plan: selected.plan.path, verificationEvidence: checked.value.evidencePath }
       : publish(pending.captureDate);
-    publishReviewRecord(recordRoot, rel, { ...pending, state: result.pass ? 'done' : result.partialRecovery ? 'blocked' : 'pending', result });
-    return { ...result, learningRecord: rel };
+    const completed = { ...pending, state: result.pass ? 'done' : result.partialRecovery ? 'blocked' : 'pending', result };
+    publishReviewRecord(recordRoot, rel, completed);
+    let retainedEvidence;
+    if (result.pass && !selected.plan.fm.domain_parent && decision.decision === 'publish' && (!decision.scope || decision.scope === 'private')
+      && capabilityContext({ workspace, copilotHome, home, limit: 1 })) {
+      try {
+        retainedEvidence = retainVerifiedPublication({ workspace: recordRoot, home, record: completed });
+        if (!retainedEvidence.retained) throw new Error('Verified learning proof could not be retained outside the worktree');
+      } catch (error) {
+        const failure = { ...result, pass: false, exitCode: 2, blockedReason: `Learning evidence retention failed: ${error.message}` };
+        publishReviewRecord(recordRoot, rel, { ...completed, state: 'blocked', result: failure });
+        return { ...failure, learningRecord: rel };
+      }
+    }
+    return { ...result, learningRecord: rel, ...(retainedEvidence ? { retainedEvidence } : {}) };
   }));
 }
 
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
-  if (flags.learningDecision) return runLearningDecision({ workspace, copilotHome, flags, log, domainContext });
+  if (flags.learningDecision) {
+    const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });
+    if (result.pass) {
+      try {
+        const home = flags.harnessHome || flags.home;
+        if (capabilityContext({ workspace, copilotHome, home, limit: 1 })) result.adaptation = adaptationContext({ workspace, copilotHome, home });
+      } catch (error) { result.adaptation = { candidates: [], assessment: 'Recurrence assessment unavailable', reason: error.message }; }
+    }
+    return result;
+  }
   if (domainContext && flags.insight) throw new Error('Domain learning requires a selected verified parent and an authored learning decision');
-  if (flags.insight) return runInsightCompound({ workspace, copilotHome, flags, log, home: flags.home });
+  if (flags.insight) return runInsightCompound({ workspace, copilotHome, flags, log, home: flags.harnessHome || flags.home });
   const session = readSession(domainContext ? validateDomainContext(domainContext, workspace).root : workspace);
   const selected = selectPlan(workspace, { planPath: flags.plan, session, requireUnique: true, home: flags.harnessHome, domainContext });
   if (!selected.plan) {

@@ -37,13 +37,16 @@ function skillSource(root, skill) {
   } catch { return null; }
 }
 
-function selectedSources(skill, copilotHome) {
+function selectedSources(skill, copilotHome, additionalSources = []) {
+  const additional = additionalSources.filter(source => typeof source === 'string' && path.isAbsolute(source))
+    .map(source => ({ root: path.dirname(path.dirname(path.dirname(source))), source: skillSource(path.dirname(path.dirname(source)), skill) }))
+    .filter(item => item.source && additionalSources.includes(item.source.path));
   if (process.env.AE_SKILLS_HOME) {
     const skillsRoot = path.resolve(process.env.AE_SKILLS_HOME);
     const source = skillSource(skillsRoot, skill);
-    return source ? [{ root: path.dirname(skillsRoot), source }] : [];
+    return [...(source ? [{ root: path.dirname(skillsRoot), source }] : []), ...additional];
   }
-  return homes(copilotHome).map(root => ({ root, source: skillSource(path.join(root, 'skills'), skill) })).filter(item => item.source);
+  return [...homes(copilotHome).map(root => ({ root, source: skillSource(path.join(root, 'skills'), skill) })).filter(item => item.source), ...additional];
 }
 
 function coversSource(input, text) {
@@ -90,13 +93,16 @@ function returnedText(value) {
 }
 
 /** Recorded adapter evidence, not an authenticated native-host transcript. */
-export function readSkillActivation(payload, { copilotHome } = {}) {
-  const skill = activatedSkillFromPayload(payload);
+export function readSkillActivation(payload, { copilotHome, additionalSources = [], restrictSources = false } = {}) {
+  additionalSources = Array.isArray(additionalSources) ? additionalSources : [];
+  const normalizedInput = normalizeToolPayload(payload);
+  const selectedExtra = additionalSources.find(source => normalizedInput.targets.some(target => samePath(path.resolve(normalizedInput.workspace, target), source)));
+  const skill = activatedSkillFromPayload(payload) || (selectedExtra ? path.basename(path.dirname(selectedExtra)) : null);
   if (!skill || !toolMutationSucceeded(payload)) return null;
   const normalized = normalizeToolPayload(payload), input = normalized.toolInput;
   if (normalized.terminalEffects.hasOpaque) return null;
   const candidates = normalized.targets;
-  const source = selectedSources(skill, copilotHome).find(({ root, source }) => {
+  const source = selectedSources(skill, copilotHome, additionalSources).filter(({ source }) => !restrictSources || additionalSources.includes(source.path)).find(({ root, source }) => {
     if (!candidates.length) return ['read_skill', 'readSkill'].includes(normalized.toolName);
     const requested = path.resolve(normalized.workspace, candidates[0]);
     return candidates.length === 1 && (samePath(requested, path.join(root, 'skills', skill, 'SKILL.md')) || samePath(requested, source.path));
@@ -113,7 +119,7 @@ export function readSkillActivation(payload, { copilotHome } = {}) {
   return { skill, source: { version: 1, path: source.path, sha256: source.sha256 } };
 }
 
-export function skillActivationSourceCurrent(activation, skill, { copilotHome } = {}) {
+export function skillActivationSourceCurrent(activation, skill, { copilotHome, additionalSources = [] } = {}) {
   const binding = activation?.source;
-  return binding?.version === 1 && typeof binding.path === 'string' && selectedSources(skill, copilotHome).some(({ source }) => samePath(source.path, binding.path) && source.sha256 === binding.sha256);
+  return binding?.version === 1 && typeof binding.path === 'string' && selectedSources(skill, copilotHome, additionalSources).some(({ source }) => samePath(source.path, binding.path) && source.sha256 === binding.sha256);
 }

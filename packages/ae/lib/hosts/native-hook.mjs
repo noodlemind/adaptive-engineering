@@ -8,13 +8,14 @@ import { FILE_MUTATION_TOOLS, READ_ONLY_TOOLS, TERMINAL_TOOLS } from '../../corp
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HOSTS = new Set(['claude-code', 'codex', 'cursor']);
-const EVENTS = new Set(['start', 'pre', 'post', 'stop', 'compact']);
+const EVENTS = new Set(['start', 'pre', 'post', 'stop', 'compact', 'agent-stop']);
 const scripts = {
   start: ['load-context.mjs'],
-  pre: ['guard-critical-files.mjs', 'block-destructive-commands.mjs', 'require-plan-gate.mjs'],
+  pre: ['guard-decision.mjs', 'guard-critical-files.mjs', 'block-destructive-commands.mjs', 'require-plan-gate.mjs'],
   post: ['record-successful-edit.mjs'],
   stop: ['require-verification.mjs'],
   compact: ['preserve-context.mjs'],
+  'agent-stop': ['observe-decision.mjs'],
 };
 
 function assertHost(host) {
@@ -48,7 +49,7 @@ export function nativeHookConfig({ host, configHome, skillsHome, home, packageRo
     return { path: 'hooks.json', value: { version: 1, hooks } };
   }
   const hooks = {};
-  const mapping = { SessionStart: 'start', PreToolUse: 'pre', PostToolUse: 'post', Stop: 'stop', PreCompact: 'compact' };
+  const mapping = { SessionStart: 'start', PreToolUse: 'pre', PostToolUse: 'post', SubagentStop: 'agent-stop', Stop: 'stop', PreCompact: 'compact' };
   if (host === 'claude-code') mapping.PostToolUseFailure = 'post';
   for (const [name, event] of Object.entries(mapping)) {
     hooks[name] = [{ ...(['pre', 'post'].includes(event) ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: invoke(event), timeout: event === 'stop' ? 90 : 60 }] }];
@@ -75,7 +76,8 @@ function normalize(raw, host, event) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('Native hook payload requires an absolute workspace cwd');
   const workspace = fs.realpathSync.native(cwd);
   if (raw.workspace && fs.realpathSync.native(raw.workspace) !== workspace) throw new Error('Native hook payload has conflicting workspace identities');
-  const result = { ...raw, workspace, cwd: workspace, session_id: raw.session_id || raw.conversation_id || null };
+  const result = { ...raw, workspace, cwd: workspace, session_id: raw.session_id || raw.conversation_id || null,
+    ...(event === 'agent-stop' ? { hook_event_name: raw.hook_event_name || 'SubagentStop' } : {}) };
   if (!['pre', 'post'].includes(event)) return result;
   if (typeof raw.tool_name !== 'string' || !raw.tool_name || !raw.tool_input || typeof raw.tool_input !== 'object' || Array.isArray(raw.tool_input)) throw new Error('Native tool event requires tool_name and object tool_input');
   for (const field of ['working_directory', 'workdir', 'cwd']) {
@@ -90,6 +92,7 @@ function normalize(raw, host, event) {
   // These native dispatch controls do not execute product edits; child tool use
   // still passes through the separately configured native mutation hooks.
   if (host === 'codex') for (const name of ['spawn_agent', 'wait_agent', 'send_input', 'close_agent', 'resume_agent']) aliases[name] = 'think';
+  result.ae_native_tool_name = raw.tool_name;
   result.tool_name = aliases[raw.tool_name] || raw.tool_name;
   result.tool_input = { ...raw.tool_input };
   if (TERMINAL_TOOLS.has(result.tool_name) && (typeof result.tool_input.command !== 'string' || !result.tool_input.command.trim())) throw new Error('Native shell event requires a command');
@@ -122,13 +125,15 @@ function translated(value, roots) {
 function nativeOutput(host, event, result) {
   const reason = result.permissionDecisionReason || result.hookSpecificOutput?.permissionDecisionReason || result.reason || result.systemMessage;
   const denied = result.permissionDecision === 'deny' || result.hookSpecificOutput?.permissionDecision === 'deny' || result.decision === 'block';
+  const allowed = result.permissionDecision === 'allow' || result.hookSpecificOutput?.permissionDecision === 'allow';
   const context = result.additionalContext || result.hookSpecificOutput?.additionalContext || result.systemMessage;
   if (host === 'cursor') {
-    if (event === 'pre') return denied ? { permission: 'deny', user_message: reason, agent_message: reason } : {};
+    if (event === 'pre') return denied ? { permission: 'deny', user_message: reason, agent_message: reason } : allowed ? { permission: 'allow' } : {};
     if (event === 'stop') return denied ? { followup_message: reason } : {};
     return context ? { additional_context: context } : {};
   }
   if (denied && event === 'pre') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+  if (allowed && event === 'pre') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: reason } };
   if (denied && event === 'stop') return { decision: 'block', reason };
   const names = { start: 'SessionStart', post: 'PostToolUse' };
   return context ? (names[event] ? { hookSpecificOutput: { hookEventName: names[event], additionalContext: context } } : { additionalContext: context }) : {};
@@ -138,6 +143,7 @@ function execute(roots, payload) {
   const bin = path.join(packageRoot, 'bin/ae.mjs');
   const env = { ...process.env, COPILOT_HOME: roots.configHome, AE_SKILLS_HOME: roots.skillsHome, HARNESS_SKILLS_HOME: roots.skillsHome, AE_HOME: roots.home, HARNESS_HOME: roots.home, AE_BIN: bin, HARNESS_BIN: bin, AE_HOST: roots.host, HARNESS_HOST: roots.host };
   const messages = [];
+  let permission = null;
   const deadline = Date.now() + (roots.event === 'stop' ? 85000 : 45000);
   for (const script of scripts[roots.event]) {
     const child = spawnSync(process.execPath, [path.join(packageRoot, 'corpus/hooks', script)], { cwd: payload.workspace, env, input: JSON.stringify(payload), encoding: 'utf8', timeout: Math.max(1, deadline - Date.now()), maxBuffer: 2 * 1024 * 1024 });
@@ -146,10 +152,14 @@ function execute(roots, payload) {
     const result = line ? JSON.parse(line) : {};
     if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(`Native hook ${script} returned invalid output`);
     if (result.permissionDecision === 'deny' || result.hookSpecificOutput?.permissionDecision === 'deny' || result.decision === 'block') return result;
+    if (roots.event === 'pre' && result.permissionDecision === 'allow') permission = { permissionDecision: 'allow', permissionDecisionReason: result.permissionDecisionReason };
     if (result.systemMessage) messages.push(result.systemMessage);
-    if (result.additionalContext || result.hookSpecificOutput?.additionalContext) return result;
+    if (result.additionalContext || result.hookSpecificOutput?.additionalContext) {
+      if (roots.event !== 'pre') return result;
+      messages.push(result.additionalContext || result.hookSpecificOutput.additionalContext);
+    }
   }
-  return messages.length ? { systemMessage: messages.join('\n') } : {};
+  return { ...(permission || {}), ...(messages.length ? { systemMessage: messages.join('\n') } : {}) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

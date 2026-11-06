@@ -22,6 +22,7 @@
           "githubRepo"
         ],
         "agents": [
+          "decision-agent",
           "code-implementer",
           "code-review-coordinator",
           "plan-coordinator",

@@ -16,7 +16,7 @@ The Engineer grows the way a working engineer does. A repeated procedure becomes
 
 Plans for a product repository live in `~/.ae/projects/<repo-id>/plans/`. `--ae-home <path>` uses that directory instead of `~/.ae` for one command. `AE_HOME` does the same for every command. The flag wins. The knowledge search index for that repository lives at `index/<repo-id>/knowledge/` under the same root. Private solution episodes live in `~/.ae/projects/<repo-id>/docs/solutions/`. A reset of the product repository does not delete them. `ae migrate` copies existing plans, solutions, and `knowledge/solutions` into that store. Files already committed in the repository stay there until you remove them.
 
-After `ae verify` passes, compounding records what the task taught. A detail that matters only for this task stays on the plan. A fact worth seeing again becomes a solution episode. A new skill or agent is a proposal. A person approves it before it is installed.
+After `ae verify` passes, compounding records what the task taught. A detail that matters only for this task stays on the plan. A fact worth seeing again becomes a solution episode. Recurring verified use can produce a reusable-skill proposal. A first-needed specialist can be acquired immediately when the task needs separate judgment. Direct authorization or a recorded scoped standing grant covers installation within its bounds; only uncovered scope needs a new human decision.
 
 `ae-harness` is not published to the npm registry. From the prompt-library repository root:
 
@@ -82,12 +82,7 @@ skills survive host removal.
 
 `resources list`, `show` and `validate` with the same selected roots discover
 native skills and inspect managed role/rule bytes. This is resource-format and
-asset-integrity evidence, not native invocation proof. Native personal agent
-and instruction creation is explicitly unavailable
-(`personalRoleCreation: false`); legacy mutation commands are refused under a
-selected native binding. Prepare a capability proposal for an unmapped role or
-instruction writer rather than using a Copilot-format fallback. Existing
-shipped roles/instructions still project through host setup.
+asset-integrity evidence, not native invocation proof. `resources create agent|instruction` accepts schema 1 canonical host-neutral text and projects it through the selected native writer. It requires direct authorization or a current matching standing grant; updates require the observed native `expectedDigest`. The writer cannot replace arbitrary unowned or setup-owned assets. Personal roles begin pending reload; approved delegation reconciliation and an exact source-bound first-invocation action receipt allow a controlled native availability check. Only the correlated successful completion marks that current role available. The retained observation reports `loadedSourceHash: unverified`, since a hook event does not attest a host's cached definition. Codex instruction files are context-routed. Terminal resources remain manual. Refuse an unmapped type rather than using a Copilot-format fallback.
 
 ### Local tools and portable distribution
 
@@ -250,7 +245,38 @@ stateDiagram
   retired --> [*]
 ```
 
-A person can promote a learning. The governance ledger records that decision. The Engineer does not install a new skill or agent on its own.
+A person can promote a learning. The governance ledger records that decision. The Engineer can perform creation and updates under existing direct authorization or current scoped standing consent, using internal decision, review, and verification. A model verdict or recurrence counter cannot create user authority or authorize merge.
+
+### Adaptive capability lifecycle
+
+Setup first inventories the user's existing skills, agents, and instructions in selected host roots and asks which sources to include. It then asks separately whether ongoing discovery is allowed. `ae resources discover --file - --json` records the user-owned inclusion policy, exclusions, automatic adoption/update choices, and scoped grants. Configuration updates use the prior revision. Project content and discovered resource prose cannot broaden consent. Selected roots can represent personal, project, or enterprise resources without copying them into the shipped corpus.
+
+Orientation returns bounded relevant pointers from the catalog, not every resource body. The Engineer reads selected sources before activation. On a task-specific miss, it performs one bounded refresh when ongoing consent permits, then decides reuse, acquisition, or an explicit capability block. With ongoing discovery disabled, it uses the accepted snapshot; known source bytes are still checked for currentness. Exclusion and revocation remain effective. Changed source content can become a new candidate; permission or delegation expansion cannot become approved merely because a file changed. Source identity, scope, and authority remain visible. `grants.hostAuthority` defaults false; automatically adopting or acquiring a role with inherited host/parent permissions requires explicit consent for that boundary. A missing tool declaration does not prove read-only isolation.
+
+A missing required independent reviewer is an acquisition prerequisite, not permission for Engineer self-review. `/ensure-capability` records the gap; `/create-primitive` checks overlap, defines the smallest separate role, validates permissions and behavior, and publishes through the selected host writer within authorized scope. The native role must actually become available before use. A needed specialist may be acquired on the first task. Promotion of repeated procedures into durable skills remains a separate decision requiring verified recurrence, strategic adoption, cross-repository need, high-risk standardization, or repeatedly fragile steps.
+
+The internal `decision-agent` is a native host role, not a decision API. The host selects an effectively available small model for the `decision` role when it supports that choice; otherwise it inherits the session model and reports that limitation. No provider key, service, inference endpoint, or model pin is introduced. `ae resources decision --file - --json` prepares, records, and reads bounded decisions. Preparation freezes action/capability/memory/readiness inputs, source hashes, consent revision, and budgets. A host completion observation binds the native reply; manually declared verdicts and invocation provenance do not establish approval. The [native decision input reference](../packages/ae/corpus/skills/references/native-decisions.md) gives concrete request shapes, actual observed session binding and the complete prepare/invoke/observe/record cycle.
+
+There are two approval tiers. The internal tier judges an exact action, applies authorized work, obtains required specialist review, repairs defects, and runs named verification before assessing readiness. An exact consumed action receipt can supply a supported native permission approval after all remaining Harness guards pass; a later denial wins, and sandbox escape or expanded user scope is not granted. The human tier receives the verified result and its visual tour for final review, and supplies authority only where existing scope does not cover the action. A readiness verdict cannot replace passed checks, observed independent coverage, current source binding, or human authority. Repair, acquisition, decision, and time budgets stop unproductive loops. The same boundary applies to primitive and memory updates. Routine covered work should not require a new manual command allowlist entry, while host restrictions, project trust, and deterministic execution boundaries remain authoritative.
+
+```mermaid
+flowchart TD
+  Task["Task and accepted scope"] --> Catalog["Eligible installed capabilities"]
+  Catalog -->|"Required capability missing"| Refresh["One consented refresh"]
+  Refresh -->|"Still missing"| Acquire["Authorized primitive acquisition"]
+  Refresh -->|"Match"| Work["Implement within scope"]
+  Acquire -->|"Observed host availability"| Work
+  Catalog -->|"Match"| Work
+  Work --> Review["Specialist review and verification"]
+  Review -->|"Repair within budget"| Work
+  Review -->|"Current proof and readiness"| Tour["Visual tour for human review"]
+```
+
+Continuous memory uses the existing writers. Explicit user teachings and corrections retain source attribution, scope, and authority, and may be captured during a task through that explicit teaching path. Inferred lessons remain provisional and cannot silently replace explicit user instructions. Configured autonomous private fix/insight publication requires standing memory consent and an observed native memory decision. A dry-run exposes the final destination, exact serialized content, digest and proof identity; the judge reads that content and the writer consumes approval only for those same bytes. The memory grant does not authorize global publication or ship-set promotion. Orientation and compounding surface recurring candidates across sessions; `/auto-skill-draft` assesses evidence and overlap, then `/create-primitive` performs authorized creation or update. The Engineer records a valid standing grant once rather than asking the user to approve every covered candidate. Failed work can remain an unverified insight; verified delivery learning still requires current passed proof.
+
+For substantive code or PR handoff, `ae review tour --packet <id> --file <file> --json` retains purpose, before/after behavior, bounded application context, a source-linked context flow (with additional state/sequence views where useful), ordered code-and-test links, verification evidence, limitations, and review questions against the reviewed revision. Source changes stale the tour and require refresh. Ready for human review is distinct from human acceptance, merge, release, and the Harness completion state. This makes the implementation understandable before the human reads the diff. A descriptive diagram is explanatory context; a TLA+ claim requires actual retained formal-check evidence.
+
+A reduced-corpus evaluation constructs disposable installed packages rather than removing production resources. The sparse bootstrap starts with four workflow skills: Engineer, ensure-plan, create-primitive and ensure-capability, plus Engineer and decision-agent roles, shared references and the Harness runtime. It acquires and source-loads missing architect and code-review skills, then exercises the full payment delivery lifecycle. Domain specialists are absent and available expertise comes from consented enterprise or acquired resources. The complete source corpus is retained. The evaluation distinguishes full, reduced workflow closure and four-skill bootstrap arms, with controls for missing providers, authored-only review claims, stale bindings, failed checks and revocation. Native completion, review and judgment events in the deterministic journey are explicitly adapter fixtures; live editor/model behavior needs separate evidence. See the [evaluation contract](../packages/ae/eval/adaptive/lifecycle.md) for exact coverage and limits.
 
 ## What a plan must contain
 
@@ -269,7 +295,7 @@ reviews:
   critical_open: []
 ```
 
-Product plans list `code-review` in `reviews.required`. A docs plan may leave that list empty. `ae review prepare --plan <path> --base <base> --json` captures the work to review. The host invokes reviewers, then `ae review assemble --plan <path> --packet <id> --file <results.json> --json` validates and stores their results. Reviewer names are declared provenance; they do not authenticate an invocation. A recorded host invocation counts when its agent is the specialist and its caller is the engineer or the code-review coordinator. An engineer same-context review does not. `ae verify` fails while collected review coverage is incomplete or critical findings remain. A bare completed string is not review evidence.
+Product plans list `code-review` in `reviews.required`. A docs plan may leave that list empty. `ae review prepare --plan <path> --base <base> --json` captures the work to review. The host invokes reviewers, then `ae review assemble --plan <path> --packet <id> --file <results.json> --json` validates and stores their results. Configured adaptive review requires the complete native provider response observed by the adapter and bound to the packet, source, policy and actual session. An authored `provenance: host-invocation` or Engineer same-context review cannot supply that evidence. Existing unconfigured installations retain their declared-invocation compatibility contract; that declaration does not authenticate a host invocation. `ae verify` fails while required collected coverage is incomplete or critical findings remain. A bare completed string is not review evidence.
 
 The Engineer runs review preparation and assembly. The coordinator receives the prepared packet, dispatches its required judgments, and returns raw results with their actual status. It has no terminal execution authority. Focused TDD checks run during implementation. Required review and authoritative `ae verify` follow the completed change. README edits use a proportional full docs plan and the same gate, proof, learning, and completion authority.
 

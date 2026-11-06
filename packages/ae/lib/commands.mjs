@@ -21,6 +21,7 @@ import { runInitRepo } from './init-repo.mjs';
 import { inspectCheckReadiness } from './check-readiness.mjs';
 import { readWorkspaceOutcome, formatWorkspaceOutcome } from './workspace-outcome.mjs';
 import { upgradeHostResultOf } from './hosts/command.mjs';
+import { onboardingDiscovery } from './adaptive-context.mjs';
 import { withGitIdentityCache } from './git-observation-cache.mjs';
 import { leftoverWorkspaceArtifacts, runMigrateLayout } from './migrate-layout.mjs';
 import { migrateHome } from './migrate-home.mjs';
@@ -198,6 +199,9 @@ export async function cmdInstallOrUpgrade(command, argv) {
   }
   const copilotEntry = copilotSelected ? selectedHomes.get(homeKey(copilotHome)) : null;
   const previousLock = copilotEntry?.previous || null;
+  // Installation inventories selected homes without granting product-task authority.
+  // Validate every ownership boundary first; task/configuration paths retain their external-home rule.
+  const discovery = onboardingDiscovery({ copilotHome: copilotSelected ? copilotHome : intellijHome || copilotHome, home: flags.harnessHome });
 
   if (copilotSelected) installGlobalHarnessShim(copilotHome, { ...flags, dryRun: true }, () => {});
   for (const entry of selectedHomes.values()) applyRetired(entry.home, retired, entry.owned, flags, logger);
@@ -299,6 +303,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
           runner: allStats.runner ?? null,
           checkReadiness,
           installation,
+          discovery,
           workspace,
           ...(ownershipWarnings.length ? { ownershipWarnings } : {}),
         },
@@ -353,6 +358,10 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }
     if (flags.dryRun) console.log(ui.paint('muted', '  dry-run — no files written'));
     else {
+      if (discovery.questions?.length) {
+        for (const question of discovery.questions) console.log(question.prompt);
+        printNext('ae resources discover --json  # inspect existing resources and record discovery consent');
+      }
       console.log(formatWorkspaceOutcome(workspace));
       printNext('ae doctor');
             if (command === 'upgrade') {

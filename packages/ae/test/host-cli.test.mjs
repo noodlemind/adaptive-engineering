@@ -47,10 +47,11 @@ test('Codex CLI setup binds separate skill roots and preserves unrelated setting
   assert.match(JSON.parse(reference.stdout).excerpt, /Engineer/);
   const refused = cli('resources', 'create', 'agent', 'native-reviewer', '--copilot-home', config, '--skills-home', skills, '--json');
   assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /Native personal agents/);
+  assert.equal(JSON.parse(refused.stderr).error.code, 'E_USAGE');
+  assert.match(JSON.parse(refused.stderr).error.message, /schema 1.*--file/i);
   assert.equal(fs.existsSync(path.join(config, 'agents/native-reviewer.agent.md')), false);
   const skillText = '---\nname: personal-cli-probe\ndescription: Check a personal probe when asked to inspect it.\n---\n\n# Personal probe\n\n## Should trigger\n- inspect a probe\n- explain a probe\n- assess a probe\n\n## Should not trigger\n- publish production\n- manage secrets\n- review unrelated code\n';
-  const created = spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), 'resources', 'create', 'skill', 'personal-cli-probe', '--file', '-', '--copilot-home', config, '--skills-home', skills, '--ae-home', home, '--json'], { encoding: 'utf8', input: JSON.stringify({ schema: 1, text: skillText }) });
+  const created = spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), 'resources', 'create', 'skill', 'personal-cli-probe', '--file', '-', '--yes', '--copilot-home', config, '--skills-home', skills, '--ae-home', home, '--json'], { encoding: 'utf8', input: JSON.stringify({ schema: 1, text: skillText }) });
   assert.equal(created.status, 0, created.stderr);
   assert.equal(fs.readFileSync(path.join(skills, 'personal-cli-probe/SKILL.md'), 'utf8'), skillText);
   for (const verb of ['list', 'show', 'validate']) {

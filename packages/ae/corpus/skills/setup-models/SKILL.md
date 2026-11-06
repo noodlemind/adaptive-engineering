@@ -24,11 +24,11 @@ Write one user rule that names the model for each AE role. AE does not call a mo
 
 ### 1. Detect available models
 
-List the model slugs this session can pass to a subagent. On Cursor that is a Task `model`. On Claude Code that is an Agent tool `model`. If none are visible, ask the user to paste the slugs they have. Never write a real slug you have not confirmed. `inherit` is always allowed.
+List the model slugs this session can pass to a subagent. On Cursor that is a Task `model`. On Claude Code that is an Agent tool `model`. If none are visible, keep `inherit`; for optional role customization, ask the user to paste the slugs they have. Never write a real slug you have not confirmed. `inherit` is always allowed.
 
 ### 2. Load the current rule
 
-The roles are `engineer`, `specialist`, `researcher`, and `reviewer`. Each default is `inherit`. The user home is `USERPROFILE` on Windows and `HOME` on macOS and Linux. Cursor stores `.cursor/rules/ae-models.mdc` under that home. Claude Code stores `.claude/rules/ae-models.md` under that home. If the file exists, read its `# budget` line and its role values. On a re-run, keep a role the user changed by family or by `inherit`, and apply the new budget only to the effort token of a real slug. Drop a role line that is not one of those four.
+The roles are `engineer`, `specialist`, `researcher`, `reviewer`, and `decision`. Each default is `inherit`; prefer a detected small model for `decision` when the user accepts it. The user home is `USERPROFILE` on Windows and `HOME` on macOS and Linux. Cursor stores `.cursor/rules/ae-models.mdc` under that home. Claude Code stores `.claude/rules/ae-models.md` under that home. If the file exists, read its `# budget` line and its role values. On a re-run, keep a role the user changed by family or by `inherit`, and apply the new budget only to the effort token of a real slug. Drop a role line that is not one of those five.
 
 ### 3. Ask for one budget
 
@@ -43,9 +43,9 @@ Prefer the host question tool over free text. Offer these labels. With no rule, 
 
 ### 4. Show each role
 
-Show `engineer`, `specialist`, `researcher`, and `reviewer`, and ask the user to accept or change each one. Offer the detected slugs plus `inherit`. Prefer the host question tool.
+Show `engineer`, `specialist`, `researcher`, `reviewer`, and `decision`, and ask the user to accept or change each one. Offer the detected slugs plus `inherit`. Prefer the host question tool.
 
-`engineer` is the orchestrator. `specialist` is `code-implementer` and `bug-reproduction-validator`. `researcher` is `repo-research-analyst`, `best-practices-researcher`, `framework-docs-researcher`, and `git-history-analyzer`. `reviewer` is a review specialist, including reviewers dispatched by `code-review` and document-review personas.
+`engineer` is the orchestrator. `specialist` is `code-implementer` and `bug-reproduction-validator`. `researcher` is `repo-research-analyst`, `best-practices-researcher`, `framework-docs-researcher`, and `git-history-analyzer`. `reviewer` is a review specialist, including reviewers dispatched by `code-review` and document-review personas. `decision` is the internal `decision-agent` for bounded action/capability/memory/readiness judgment; it is not an external inference API. Select a small model only from effectively available host choices. When per-role selection is unsupported or ignored, report inheritance rather than claiming a small model ran.
 
 ### 5. Validate
 
@@ -69,6 +69,7 @@ engineer: inherit
 specialist: inherit
 researcher: inherit
 reviewer: inherit
+decision: inherit
 ```
 
 On Claude Code, write `~/.claude/rules/ae-models.md` with no frontmatter, then the same comment lines, the `# budget` line, and one line per role. Map a Claude slug such as `claude-opus-5-5-xhigh` to `opus xhigh`, which is `model` `opus` and `effort` `xhigh`. The family is `opus`, `sonnet`, `haiku`, or `fable`. Drop `-fast`. A `grok-*`, `gpt-*`, or other non-Claude slug is omitted: write `inherit` for that role. `inherit` means omit `model`. Do not put the role lines in `CLAUDE.md` or `AGENTS.md`.

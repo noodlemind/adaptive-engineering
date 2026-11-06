@@ -17,6 +17,7 @@ import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { loadHookPolicy, projectTrustIsCurrent } from './lib/policy.mjs';
 import { checkConfigurationRecoveryControl, harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
 import { parseImpactedText } from './lib/impacted-files.mjs';
+import { decisionInputStaging } from './lib/decision-staging.mjs';
 
 const startedAt = Date.now();
 let payload = {};
@@ -332,6 +333,10 @@ try {
 try {
   normalized = normalizeToolPayload(payload);
 } catch (error) { deny('invalid-runtime-configuration', error.message, 'invalid'); }
+if (decisionInputStaging(payload, normalized)) {
+  output({ continue: true });
+  process.exit(0);
+}
 try { syncSessionIdentity(normalized.workspace, normalized.sessionId); }
 catch (error) { deny('invalid-session-identity', error.message, 'invalid'); }
 if (normalized.command) {

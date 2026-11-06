@@ -5,6 +5,7 @@ import { readFileNoFollow, readBoundedInput, writeFileContained, assertNoSymlink
 import { createHash } from 'node:crypto';
 import { createPersonalPrimitive, readPrimitiveOnce, registeredPath } from './local-primitives.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
+import { personalResourceAuthorization, personalResourcePermissions } from './hosts/personal-authorization.mjs';
 const primitiveDigest = text => `sha256-${createHash('sha256').update(text).digest('hex')}`;
 const SUPPORTED_HOST_TOOLS = new Set(['agent', 'edit', 'edit/editFiles', 'execute', 'execute/getTerminalOutput', 'githubRepo', 'read', 'read/problems', 'read/terminalLastCommand', 'search', 'search/changes', 'search/codebase', 'search/usages', 'web/fetch']);
 
@@ -78,10 +79,14 @@ export function scaffoldPrimitive(type, name) {
   return { schema: 1, verb: 'scaffold', status: 'ok', path: rel, text, requiresJudgment: true, activated: false };
 }
 
-export function createStructuredPrimitive({ flags, copilotHome, type, name, input, shippedFiles, lockFiles }) {
+export function createStructuredPrimitive({ flags, copilotHome, home, skillsHome = process.env.AE_SKILLS_HOME || path.join(copilotHome, 'skills'), host = process.env.AE_HOST || 'copilot', type, name, input, shippedFiles, lockFiles, authorize }) {
+  input = input && { ...input };
   if (input?.schema !== 1 || Object.keys(input).some(k => !['schema', 'text', 'expectedDigest'].includes(k))) throw fail('Creation input requires schema 1, text, and optional expectedDigest; payload approval cannot authorize writes');
   const rel = primitivePath(type, name), validation = validatePrimitiveContent({ type, name, text: input.text, root: copilotHome, rel });
   if (!validation.valid) throw fail(validation.errors.join('; '));
+  if (!['copilot', 'vscode', 'cli', 'intellij'].includes(host)) throw fail('Copilot publication requires a selected Copilot host; use the native resource adapter for this host');
+  const permissions = personalResourcePermissions({ text: input.text, metadata: validation.frontmatter, host, type });
+  if (type === 'agent' && validation.frontmatter.agents.length && !validation.frontmatter.tools.includes('agent')) throw fail('Delegation targets require declared agent tool authority');
   const perform = () => {
     if (shippedFiles.has(rel) || lockFiles.has(rel)) throw fail(`${rel} is shipped with Harness; personal writes cannot replace it`);
     if (!assertNoSymlinkAncestors(copilotHome, rel)) throw fail('Primitive destination is unsafe');
@@ -96,10 +101,62 @@ export function createStructuredPrimitive({ flags, copilotHome, type, name, inpu
       }
     }
     const expanded = ['tools', 'agents'].some(key => (validation.frontmatter[key] || []).some(value => !(old[key] || []).includes(value)));
-    if (expanded && !flags.yes) throw fail('Permission expansion requires caller --yes after human authorization; a payload field is not authority');
+    const registryRel = 'harness/registered.yaml', digest = primitiveDigest(input.text), now = new Date().toISOString();
+    const readSafe = (relative, maxBytes = 1024 * 1024) => {
+      const full = assertNoSymlinkAncestors(copilotHome, relative);
+      if (!full) throw fail('Primitive publication path is unsafe');
+      let stat;
+      try { stat = fs.lstatSync(full); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      if (!stat.isFile() || stat.nlink !== 1) throw fail('Primitive publication requires an unlinked regular file');
+      const text = readFileNoFollow(full, { root: copilotHome, maxBytes });
+      if (text === null) throw fail('Primitive publication file is unsafe or unreadable');
+      return text;
+    };
+    const registryBefore = readSafe(registryRel);
+    const ownershipBefore = readSafe('.harness-lock.json');
+    let registry;
+    try { registry = registryBefore === null ? { primitives: {} } : YAML.parse(registryBefore, { maxAliasCount: 50 }); }
+    catch { throw fail('Personal registration store is unreadable'); }
+    if (!registry?.primitives || typeof registry.primitives !== 'object' || Array.isArray(registry.primitives)) throw fail('Personal registration store is malformed');
+    const activation = { state: 'pending-reload', reason: 'Publication does not establish host loading or specialist invocation.' };
+    const registryAfter = YAML.stringify({ version: 1, primitives: { ...registry.primitives, [rel]: { registeredAt: now, digest, kind: `${type}s`, name, activation } } });
+    const authorization = personalResourceAuthorization({ home, configHome: copilotHome, skillsHome, host,
+      request: { operation: prior ? 'update' : 'create', type, name, path: path.join(copilotHome, rel), ...permissions, previousDigest: prior?.digest },
+      yes: Boolean(flags.yes), authorize, legacyAllowed: !expanded });
+    const check = stage => {
+      authorization.assertCurrent();
+      if (shippedFiles.has(rel) || lockFiles.has(rel)) throw fail('Primitive ownership changed during publication');
+      if (readSafe('.harness-lock.json') !== ownershipBefore) throw fail('Primitive installation ownership changed during publication');
+      const current = readSafe(rel, 65536);
+      if (current !== (stage === 'before-source' ? prior?.text ?? null : input.text)) throw fail('Primitive bytes changed during publication');
+      if (readSafe(registryRel) !== (stage === 'after-registry' ? registryAfter : registryBefore)) throw fail('Personal registration changed during publication');
+    };
+    check('before-source');
     if (flags.dryRun) return { schema: 1, verb: 'create', status: 'ok', validation, primitive: { path: rel, state: 'preview' }, activated: false };
-    const primitive = createPersonalPrimitive({ copilotHome, kind: type, name, text: input.text, shippedFiles, lockFiles });
-    return { schema: 1, verb: 'create', status: 'ok', validation, primitive: { ...primitive, digest: readPrimitiveOnce(copilotHome, rel).digest }, activated: true };
+    let primitive;
+    try {
+      primitive = createPersonalPrimitive({ copilotHome, kind: type, name, text: input.text, shippedFiles, lockFiles, now, validatePublication: check, activation });
+      authorization.assertCurrent();
+      if (readSafe(rel, 65536) !== input.text) throw fail('Primitive bytes changed during publication');
+    } catch (error) {
+      // Restore only this writer's exact bytes; preserve subsequent user edits and registrations.
+      try {
+        if (readSafe(registryRel) === registryAfter) {
+          if (registryBefore === null) fs.unlinkSync(path.join(copilotHome, registryRel));
+          else writeFileContained(copilotHome, registryRel, registryBefore);
+        }
+      } catch { /* Preserve a redirected or concurrently edited registration store. */ }
+      try {
+        if (readSafe(rel, 65536) === input.text && prior?.text !== input.text) {
+          if (!prior) fs.unlinkSync(path.join(copilotHome, rel));
+          else writeFileContained(copilotHome, rel, prior.text);
+        }
+      } catch { /* Preserve a redirected or concurrently edited primitive. */ }
+      throw error;
+    }
+    return { schema: 1, verb: 'create', status: 'ok', validation, primitive: { ...primitive, digest }, authorization: authorization.record,
+      activated: false, activation,
+      ...(type === 'agent' ? { delegation: { state: 'requires-approved-reconciliation', activated: false, reason: 'Copilot Engineer delegation needs a source-bound managed projection before this role is callable.' } } : {}) };
   };
   if (flags.dryRun) return perform();
   if (!writeFileContained(copilotHome, 'harness/.resource-ready.json', '{"version":1}\n')) throw fail('Resource root is unsafe or unwritable');

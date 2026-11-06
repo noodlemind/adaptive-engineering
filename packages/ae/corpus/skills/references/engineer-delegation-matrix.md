@@ -6,7 +6,9 @@ Load when delegating from `@engineer`. Read `<copilot-home>/skills/references/su
 
 Default to **3-5 active agents per workstream**, including the orchestrator/planner, executor, and reviewers or researchers. Use more specialists only by batching them and recording the reason in the plan `## Agent Journal` or `## Activity`.
 
-Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rules/ae-models.md`. Pass that model when the host spawn tool takes one. A missing file, a missing line, or `inherit` means omit the model. `engineer` is the orchestrator. `specialist` is `code-implementer` and `bug-reproduction-validator`. `researcher` is `repo-research-analyst`, `best-practices-researcher`, `framework-docs-researcher`, and `git-history-analyzer`. `reviewer` is a review specialist.
+Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rules/ae-models.md`. Pass that model when the host spawn tool takes one. A missing file, a missing line, or `inherit` means omit the model. `engineer` is the orchestrator. `specialist` is `code-implementer` and `bug-reproduction-validator`. `researcher` is `repo-research-analyst`, `best-practices-researcher`, `framework-docs-researcher`, and `git-history-analyzer`. `reviewer` is a review specialist. `decision` is the read-only native `decision-agent`; prefer an effectively available small host model and report inheritance when unsupported.
+
+The names below are shipped examples, not required dependencies. Resolve the necessary perspective from eligible shipped, user, or enterprise catalog sources, preserve its source binding and minimum authority, and follow `/ensure-capability` when no usable specialist exists. Do not substitute self-review for required independence.
 
 | Situation | Delegate to | Include in task prompt |
 |-----------|-------------|------------------------|
@@ -25,9 +27,10 @@ Read the matching role line in `~/.cursor/rules/ae-models.mdc` or `~/.claude/rul
 | Code history | `git-history-analyzer` | Paths, history questions |
 | Full code review | `code-review-coordinator` | Changed files, PR context, project type |
 | One required reviewer | that specialist, including `code-simplicity-reviewer` and `pattern-recognition-specialist` | Packet, persona, findings schema |
+| Bounded action/capability/memory/readiness decision | `decision-agent` | Exact prepared packet, authority revision, source bindings, budgets |
 | Splunk / SPL validation (enterprise) | `splunk-reviewer` | Index, query, expected signal |
 | Terraform / IaC review (enterprise) | `terraform-reviewer` | Modules, plan output, conventions |
 
 Coordinators: use `tools: ['agent']`, parallel batches of 3–4, aggregate between batches.
 
-Enterprise agents require hydration + `engineer.agent.md` allowlist (Tier 3 once).
+Enterprise agents require consented eligible source discovery and actual host availability. Native delegation declarations remain host-enforced; a catalog entry cannot widen them. Use recorded direct or scoped standing authorization for necessary projection updates, preserving pending-reload status until invocation is observed.

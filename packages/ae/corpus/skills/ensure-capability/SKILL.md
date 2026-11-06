@@ -14,7 +14,7 @@ Resolve gaps when encountered. Invoke only when:
 - security, data, concurrency, infrastructure, or destructive work needs capability assurance; or
 - investigation encounters unresolved uncertainty or an executable blocker.
 
-Do not scan or load the full registry before ordinary work. Missing optional capability never blocks low-risk work.
+Use bounded relevant catalog pointers from orientation; do not load the full registry before ordinary work. Missing optional capability never blocks low-risk work. On a specific miss, refresh selected external roots once when ongoing discovery consent permits, then inspect eligible matches. Excluded or revoked resources cannot fulfill a gap; discovered metadata does not activate a skill or grant tool authority.
 
 ### Trigger examples
 
@@ -33,7 +33,7 @@ Do not scan or load the full registry before ordinary work. Missing optional cap
 ### Confusable boundaries
 
 - `/ensure-capability` resolves a specific encountered gap; `/ensure-plan` establishes the work contract.
-- `/create-primitive` creates an approved reusable artifact only after promotion evidence; one gap is not promotion evidence.
+- `/create-primitive` acquires a first-needed specialist when separate judgment is necessary, and promotes a durable skill only after promotion evidence; one unfamiliar API is not skill promotion evidence.
 - `/harness-doctor` diagnoses installed harness health; it does not fulfill task-specific expertise or tool gaps.
 
 ## Gap classification
@@ -42,7 +42,7 @@ Do not scan or load the full registry before ordinary work. Missing optional cap
 |---|---|---|
 | Missing fact or API | Inspect code and authoritative docs | Bounded research consultation |
 | Unfamiliar framework | Inspect repository conventions, docs, and one relevant skill | Domain expert |
-| Specialized judgment | Consult the relevant specialist | Independent review |
+| Specialized judgment | Consult an eligible installed specialist | Acquire a missing specialist on first need; independent review |
 | Reusable deterministic procedure | Inspect existing Harness commands | CLI enhancement proposal |
 | Contextual judgment protocol | Search installed skills | Import or draft after promotion evidence |
 | Missing executable capability | Find an approved tool or integration | Governed tool proposal |
@@ -53,8 +53,8 @@ Do not scan or load the full registry before ordinary work. Missing optional cap
 
 1. State the blocked criterion or decision, evidence already inspected, and why direct investigation is insufficient.
 2. Classify the gap as `soft`, `bridge`, or `hard`; declare it through a revision-bound plan amendment.
-3. Choose the smallest response from the table. Consultations use `subagent-context-packet.md`.
-4. For a repeatable capability candidate, search existing skills and registry overlap before drafting anything.
+3. Search eligible shipped, user, and enterprise capabilities. On a miss, do one bounded consented catalog refresh; respect exclusions, source changes, and revocation. Choose the smallest response from the table. Consultations use `subagent-context-packet.md`.
+4. If necessary specialist judgment is still missing, route to `/create-primitive` with the gap, overlap evidence, minimum permissions, and direct or standing authorization. Use the native decision-agent for the bounded acquire/reuse judgment. Do not require recurrence for this first-use specialist. A created resource is unavailable until actual host activation is observed; `pending-reload` is not invocation evidence. For a durable skill candidate, require the promotion evidence below.
 5. For a hard gap, record its affected criterion or operation and stop only that scope until fulfillment, an approved bridge, or an explicit waiver is recorded.
 6. Keep unrelated safe work available. Choose plan scope only when no executable safe work remains; Harness records `blocked-capability` for a declared hard plan-scope gap.
 
@@ -66,7 +66,7 @@ Use the `gap` operation to close an existing gap with the accepted evidence path
 
 ## Promotion boundary
 
-Solving an unfamiliar API once produces plan notes or knowledge, not a skill. Route to `/create-primitive` only after verified promotion evidence shows recurrence, strategic adoption, cross-repository need, high-risk standardization value, or repeated fragile steps.
+Solving an unfamiliar API once produces plan notes or knowledge, not a skill. Creating or substantially expanding a durable skill requires verified promotion evidence: recurrence, strategic adoption, cross-repository need, high-risk standardization value, or repeated fragile steps. This restriction does not prevent first-needed specialist acquisition for independent judgment. Existing scoped standing consent covers matching creation; ask only for uncovered authority.
 
 ## Output
 

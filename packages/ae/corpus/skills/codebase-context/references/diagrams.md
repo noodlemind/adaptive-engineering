@@ -77,3 +77,35 @@ ae diagrams status --receipt .harness/diagrams/<id>/receipt.json --json
 Use the returned receipt path rather than constructing an identity. Status rechecks the retained artifacts and the relevant source bindings. Changed or missing evidence must remain visible; a successful old render is not evidence of current source. Open the canonical SVG or HTML path returned in `artifacts`; there is no diagram-specific output destination flag.
 
 Report the view's purpose, input scope, authored versus extracted provenance, currentness, omissions, and artifact paths. If the diagram conflicts with accepted intent, preserve the finding and follow the ordinary amendment or defect workflow. Diagrams never accept requirements, grant mutation authority, satisfy correctness checks, or upgrade a descriptive statechart into TLA+ proof. Deep model checking remains in the selected product verification recipe.
+
+## Human review tour
+
+Use `ae review tour --packet <id> --file <file> --json` after current internal review and verification. Harness generates source-bound Mermaid Markdown and SVG from the authored context graph. Follow this schema 1 shape, replacing every example path, line, and symbol with inspected current code:
+
+```json
+{
+  "schema": 1,
+  "packet": "<current review packet ID>",
+  "purpose": "Persist and return the request result.",
+  "before": "The result was discarded.",
+  "after": "The result is saved and returned.",
+  "context": {
+    "summary": "The request uses the existing storage boundary.",
+    "components": [
+      {"id":"request","label":"Request","role":"changed","source":{"path":"src.js","line":1,"symbol":"run"}},
+      {"id":"store","label":"Store","role":"context","source":{"path":"store.js","line":1,"symbol":"save"}}
+    ],
+    "edges": [
+      {"from":"request","to":"store","claim":"Saves result","kind":"observed","evidence":[{"path":"src.js","line":1,"symbol":"save"}]}
+    ]
+  },
+  "readingOrder": [{"step":"Follow the request into storage, then inspect its assertion.","component":"request","code":[{"path":"src.js","line":1,"symbol":"run"}],"tests":[{"path":"test.js","line":1,"symbol":"assert.equal"}]}],
+  "verification": [{"claim":"The assertion checks the returned value; execution evidence is recorded separately.","refs":[{"path":"test.js","line":1,"symbol":"assert.equal"}]}],
+  "risks": ["Operational storage availability requires separate evidence."],
+  "questions": ["Is the storage failure behavior acceptable?"]
+}
+```
+
+Every component needs a unique ID, `changed|context` role, and regular product-source reference. Every edge names existing components, is `observed|inferred`, and cites evidence. The reading order must cover every changed source and test in the review packet. Optional `symbol` must occur at the stated line. Empty risks/questions arrays are allowed when justified. These references bind source bytes, not a claim that tests ran; use actual Harness verification receipts for that claim. Additional state or sequence views use the diagram operations above when they clarify the behavior.
+
+Changed head, packet, context bytes, or tour artifacts invalidate freshness. Refresh after repairs. Present the returned Markdown/SVG alongside the code reading path for human review. A current tour helps explain a change; it cannot establish independent review, formal proof, human acceptance, merge, or release authority.

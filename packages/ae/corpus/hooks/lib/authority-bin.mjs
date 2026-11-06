@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { normalizeRuntimeEnvironment, runtimeSetting } from './runtime-identity.mjs';
+import { normalizeRuntimeEnvironment, runtimeSetting, runtimeCopilotHome } from './runtime-identity.mjs';
 
 export function authorityBin({ includeOverride = true } = {}) {
+  process.env.COPILOT_HOME ||= runtimeCopilotHome();
   normalizeRuntimeEnvironment();
   if (includeOverride && runtimeSetting('BIN')) return runtimeSetting('BIN');
   const candidates = ['../../.ae-bin/bin/ae.mjs', '../../../bin/ae.mjs', '../../.harness-bin/bin/harness.mjs'];

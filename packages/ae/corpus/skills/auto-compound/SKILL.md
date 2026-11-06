@@ -66,6 +66,12 @@ Supply a learning decision to Harness with an approved private/global publicatio
 
 Use `decision: "no-learning"` with a rationale when no durable lesson exists. It produces no episode. Operation IDs support safe replay; reuse an ID only for the same decision and proof. Promotion recommendations are proposals, never activation authority.
 
+## Continuous memory and recurring work
+
+Explicit user instructions and corrections can be captured during work through the existing memory writer under recorded authority; do not postpone them until this success gate. Preserve source attribution, scope, and instruction authority. Inferred lessons remain provisional and cannot silently override explicit user instructions. The native decision-agent can assess conflicts, evidence, and a proposed scoped update, but cannot grant memory-write authority. Revoked grants stop subsequent autonomous updates.
+
+On recurrence candidates surfaced by orientation or after a checkpoint, invoke `/auto-skill-draft` to assess reuse, update, or creation from distinct verified uses. Preserve superseded and conflicting claims with their provenance. Classification itself does not create a primitive; the Engineer can route an authorized candidate to `/create-primitive` without repeating a consent request already covered by a standing grant.
+
 ## Promotion test
 
 Recommend primitive creation only when at least one is evidenced: the procedure succeeded more than once; organizational strategy adopted it; multiple repositories need it; high risk warrants standardization; or repeated fragile steps are commonly missed. A one-time unfamiliar API, simple task, adequate upstream documentation, or overlap with an existing skill is not promotion evidence.
@@ -73,6 +79,8 @@ Recommend primitive creation only when at least one is evidenced: the procedure 
 Every promoted skill must have 8–10 positive trigger evals, 8–10 negative/confusable evals, outcome assertions, and supported-host coverage. Primitive creation is a separate governed `/create-primitive` action.
 
 ## Persist
+
+For configured autonomous private publication, first preview this same request with `--dry-run`. Read `<copilot-home>/skills/references/native-decisions.md` with the host read tool. Prepare `type: memory` using the returned `memoryDecision` and exact raw `memoryContent` in `context.memoryContent`; use the observed current native session and accepted plan. Obtain the native decision-agent's observed `allow`, record it, then retry the unchanged publication. The writer consumes that exact receipt once and rechecks bytes, destination, proof and standing memory consent. This private grant does not authorize global publication or ship-set promotion. Explicit user teaching retains its separate attributed authority.
 
 Pass the JSON decision file to the writer:
 

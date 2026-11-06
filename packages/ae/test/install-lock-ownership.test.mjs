@@ -160,3 +160,16 @@ test('a copied bound ledger cannot grant ownership in another selected home', t 
   assert.equal(fs.readFileSync(personal, 'utf8'), 'unowned copied-ledger sibling');
   assert.equal(fs.existsSync(path.join(f.intellij, 'skills')), false);
 });
+
+test('installation inventory with nested state grants no product discovery consent', t => {
+  const f = fixture(t);
+  const result = okay(f.invoke('install', '--target', 'cli'));
+  assert.equal(result.discovery.configured, false);
+  const state = path.join(f.root, 'state');
+  assert.equal(fs.existsSync(path.join(state, 'capabilities')), false, 'read-only onboarding must not create policy or cache state');
+  const input = write(f.root, 'discovery.json', JSON.stringify({ schema: 1, operation: 'configure', roots: [{ path: f.copilot, included: true, host: 'copilot' }], ongoing: false, autoIncludeNew: false }));
+  const denied = f.invoke('resources', 'discover', '--file', input);
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr + denied.stdout, /AE home must be outside the product workspace/);
+  assert.equal(fs.existsSync(path.join(state, 'capabilities')), false);
+});

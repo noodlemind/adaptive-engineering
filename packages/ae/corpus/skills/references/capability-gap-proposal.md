@@ -1,12 +1,12 @@
 # Capability Gap Proposal
 
-Use this template when `@engineer` believes the current prompt library lacks a reusable capability. Do not create or modify primitives until the proposal is reviewed and approved by the human liaison.
+Use this template when `@engineer` encounters missing capability after eligible installed-source lookup and one bounded consented refresh. A first-needed specialist can be justified by separate judgment; durable skill promotion requires its own evidence. Record direct authorization or a matching current standing grant before installation; request new consent only for uncovered scope.
 
 ## Usage Workflow
 
 ### `@engineer`
 
-1. Detect a missing reusable capability while planning, investigating, or implementing.
+1. Detect a missing required specialist or reusable capability while planning, investigating, or implementing.
 2. Run the overlap check in the `## Existing Primitive Check` table before proposing anything new.
 3. Fill out this template (Summary, Trigger Evidence, Proposed Primitive, Behavior Contract, Risks, Validation Coverage).
 4. State the primitive type and boundary reason.
@@ -18,12 +18,12 @@ Use this template when `@engineer` believes the current prompt library lacks a r
 1. Read the filled-in proposal and verify the requested outcome, observed gap, overlap check, primitive recommendation, risks, and validation coverage.
 2. If the proposal is missing or incomplete, stop and produce the missing sections instead of creating files.
 3. Apply the primitive decision rules even if the user asked for a specific primitive type.
-4. Confirm human approval is recorded in the `## Human Decision` section before writing or changing the primitive.
+4. Confirm direct authorization or current scoped standing consent is recorded in the `## Human Decision` section before writing or changing the primitive. Use the native decision-agent to judge reuse/acquire/repair within that authority; its verdict cannot supply missing consent.
 5. Keep the change scoped to the approved primitive and its required wrappers, references, checks, docs, and validation artifacts.
 6. Document how the primitive's routing, HITL, delegation, safety, verification, or cost behavior will be validated.
 7. Record any approval conditions in the plan or the proposal artifact.
 
-`@engineer` coordinates the gap proposal; `/create-primitive` is the only path that creates or substantially changes primitives, and only after approval.
+`@engineer` coordinates the gap proposal; `/create-primitive` is the only path that creates or substantially changes primitives, within recorded authority, followed by actual host availability, internal review, and verification. A native writer's `pending-reload` result cannot fulfill the gap.
 
 ## Summary
 
@@ -97,6 +97,8 @@ Minimum: list at least 3 should-trigger and 3 should-not-trigger scenarios for s
 - **Decision:** Approved / rejected / needs changes
 - **Reviewer:**
 - **Date:**
+- **Authorization source or standing grant ID/revision:**
+- **Applicable roots, primitive types, and tool scope:**
 - **Conditions or required edits:**
 
 ## Decision Handling
@@ -108,4 +110,4 @@ Agents must interpret `## Human Decision` as follows:
 - **Approved**: proceed to `/create-primitive`; treat all listed conditions as constraints.
 - **Rejected**: log the rejection and stop the capability-expansion path.
 - **Needs changes**: address the listed conditions and re-present the proposal for review.
-- **Blank or incomplete**: inspect prior direct authorization under the linked policy. Record it when it covers the action; otherwise treat activation as pending approval.
+- **Blank or incomplete**: inspect prior direct authorization and standing grants under the linked policy. Record it when it covers the action; otherwise treat activation as pending approval.

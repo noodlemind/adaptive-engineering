@@ -128,7 +128,7 @@ test('CLI: review rejects extra and post-boundary file operands', t => {
   ]) {
     const result = f.cli(...args);
     assert.equal(result.status, 2, result.stderr);
-    assert.match(result.stderr, /unexpected argument|requires prepare or assemble/);
+    assert.match(result.stderr, /unexpected argument|requires prepare.*assemble/);
   }
 });
 test('prepare owns mandatory coverage and brace/comma/glob discovery', t => {

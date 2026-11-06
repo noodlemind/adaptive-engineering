@@ -24,11 +24,11 @@ Classify and maintain Harness capabilities. Before any governed change, read `<c
 
 Governed paths include `packages/ae/corpus/skills/`, `packages/ae/corpus/agents/`, `packages/ae/corpus/instructions/`, `packages/ae/corpus/enterprise/`, `.github/checks/`, and `packages/ae/corpus/knowledge/capability-registry.yaml`. `.github/prompts/` stays retired. Reintroduction, reference, and solution changes use this governance.
 
-Personal skills, agents, and instructions use only `ae resources create <skill|agent|instruction> <name>` with a schema1 decision file via `--file`, writing under the Copilot home. Do not plan a product-repo or ship-set edit for a personal primitive.
+Personal skills, agents, and instructions use only `ae resources create <skill|agent|instruction> <name> --file <decision>` with schema 1 text under selected host roots. Honor native mapping, ownership, expected digests, and pending-reload status. Do not edit the product repo or ship set for a personal primitive. Follow the required creator reference for host limits.
 
 Activation means this `SKILL.md` was actually loaded in the current chat session. Do not claim activation by only adding `create-primitive` to `skills_used`. Classify → check overlap → choose the smallest artifact → record rationale → create or reuse a plan → pass the implement gate → edit → verify → report evidence.
 
-For a missing capability, first read `<copilot-home>/skills/references/capability-gap-proposal.md` with the host read tool. Follow its Usage Workflow. Do not create primitives in non-interactive mode unless prior human approval is recorded. Read `<copilot-home>/skills/references/human-approval-policy.md` with the host read tool. Existing direct authorization covers necessary work within its scope. Declare the smallest sufficient permissions and tools.
+For gaps, read `<copilot-home>/skills/references/capability-gap-proposal.md` and `<copilot-home>/skills/references/human-approval-policy.md` with the host read tool. Direct or scoped standing authorization must cover target roots, permissions, and effects, including in non-interactive mode. Do not repeat covered consent. A decision-agent cannot grant or expand authority.
 
 ## Choose the owner
 
@@ -42,26 +42,26 @@ For a missing capability, first read `<copilot-home>/skills/references/capabilit
 | Dense examples, schemas, criteria, or templates for one skill | Its reference or asset |
 | Verified learning from completed work | Solution doc |
 
-Inspect repository and installed capabilities, references, solutions, and product checks. Do not create agents to store references. Read `<copilot-home>/skills/references/knowledge-locations.md` with the host read tool. It resolves the Copilot home and learning destinations.
+Check eligible shipped/external capabilities for overlap; refresh once within discovery consent on a miss. Do not create agents to store references. Read `<copilot-home>/skills/references/knowledge-locations.md` with the host read tool for learning destinations.
 
 For Java/Spring/AWS migrations, compare explicitly: Existing /java skill; Existing /aws skill; Reference under /java; Reference under /aws; New cross-domain migration skill. When those installed paths are present, read `<copilot-home>/skills/java/SKILL.md` and `<copilot-home>/skills/aws/SKILL.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/java/SKILL.md --json` and `ae get --reference skills/aws/SKILL.md --json` print the same files. State the inspected evidence and smallest justified option before editing. Keep dense migration guidance in references.
 
 ## Promotion evidence
 
-Before creating or substantially expanding a skill, link passed artifacts, prior uses or adoption, overlap analysis, an owner, lifecycle state, a trigger eval suite, and an outcome eval suite. Require repeated success, strategic adoption, cross-repo use, high-risk standardization, or fragile steps models repeatedly miss. A one-off task, unfamiliar API, adequate upstream docs, or duplication is insufficient.
+Before skill creation/expansion, link passed artifacts, prior use/adoption, overlap, owner, lifecycle, trigger evals, and outcome evals. Require recurrence, strategic adoption, cross-repo need, high-risk standardization, or repeatedly missed fragile steps. One unfamiliar API, adequate upstream docs, or duplication is insufficient.
 
 Promoted, core, or confusable skills need 8–10 trigger and 8–10 negative/confusable prompts, outcome assertions, and host coverage. Checks and instructions need good/bad examples. Structural validation does not prove usefulness.
 
-Learning classification cannot authorize creation. `/auto-compound` may recommend candidates. The reference covers provenance and `ae learning promote`, recorded only after the primitive PR merges; promotion is never automatic.
+Learning classification and model verdicts cannot authorize creation or merge. Use native decision judgment and review/verification within current authority. First-needed specialists need separate judgment and evaluation, not recurrence. Follow the creator reference for provenance and post-merge promotion recording.
 
 ## Execute and verify
 
-Read the relevant skill, agent, instruction, or check template with the host read tool: `<copilot-home>/skills/create-primitive/references/skill-template.md`, `<copilot-home>/skills/create-primitive/references/agent-template.md`, `<copilot-home>/skills/create-primitive/references/instruction-template.md`, or `<copilot-home>/skills/create-primitive/references/check-template.md`. Read `<copilot-home>/skills/create-primitive/references/product-verification.md` with the host read tool for recipes and feature maps, and `<copilot-home>/skills/create-primitive/references/creation-details.md` with the host read tool for per-type patterns, frontmatter, and budgets. Reuse the selected directory after a scoped Deliver plan and gate pass.
+Load the relevant template and creation detail through the already-required creator reference before writing. Read `<copilot-home>/skills/create-primitive/references/product-verification.md` with the host read tool for product recipes and feature maps. Reuse the selected directory after a scoped Deliver plan and gate pass.
 
-When critical state, retry, concurrency, or input properties need durable verification, read `<copilot-home>/skills/create-primitive/references/formal-verification.md` with the host read tool. Create or maintain the specialized check inside the selected product recipe, with accepted properties, source coverage, negative controls, implementation correspondence, and rerunnable evidence. This extends the existing product skill; it does not add a global entry point. Preserve failed or blocked maintenance results and keep requirement changes subject to accepted intent.
+For durable critical-state, retry, concurrency, or input properties, read `<copilot-home>/skills/create-primitive/references/formal-verification.md` with the host read tool. The creator reference defines maintenance and evidence requirements.
 
-Before the first full `ae verify`, map every acceptance criterion to trusted checks from the selected configuration source reported by `ae checks list --json`. Inspect their commands and assertions, complete only proven tasks and criteria, and include `prompt-contracts` and `host-contracts` when configured. A specialized check for another output, such as `schema-validation` with no schema artifact, is forbidden. When standard primitive checks are absent, use the generic or strongest relevant local named check and report that absence. Do not invent check names, run unrelated optional checks, repair their failures, widen scope for them, or fake registry updates.
+Before full `ae verify`, map every acceptance criterion to trusted checks from `ae checks list --json`. Inspect commands/assertions and complete only proven work. Include `prompt-contracts` and `host-contracts` when configured; otherwise use the strongest relevant local check and report the absence. Do not invent check names, use checks for another output, run unrelated checks, widen scope for their failures, or fake registry updates. The creator reference retains these proof requirements.
 
-Read `<copilot-home>/skills/references/resource-operations.md` with the host read tool. Use it for scaffolding and `resources validate --corpus` for ship-set edits. Add skills and agents to the version 2 `capabilities` mapping, with lifecycle metadata and eval evidence. Human-approved delegatable agents also update `engineer_allowlist` and Engineer `agents:`. Derive inventory from source, not hand-maintained counts.
+Read `<copilot-home>/skills/references/resource-operations.md` with the host read tool. Run `resources validate --corpus` for ship-set edits. Update version 2 `capabilities` with lifecycle and eval evidence; authorized delegatable agents also update `engineer_allowlist` and Engineer `agents:` through generation. Derive inventory from source.
 
-Target hosts are Copilot in VS Code and IntelliJ IDEA. Describe fallbacks without claiming parity. Judge boundary, overlap, usefulness, evaluation, and authority from evidence.
+Use the selected host's declared capabilities; preserve isolation/reload limits without claiming parity. Judge boundary, overlap, usefulness, evaluation, and authority from evidence.
