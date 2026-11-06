@@ -80,7 +80,9 @@ export function requireExit(result, status, label) {
 }
 
 export function createLifecycleFixture({ directory, installedPackageRoot, sourcePackageRoot, forbiddenCorpusRoots = [], corpus = 'minimal' }) {
-  const root = directory || fs.mkdtempSync(path.join(os.tmpdir(), 'ae-adaptive-lifecycle-'));
+  const requestedRoot = directory || fs.mkdtempSync(path.join(os.tmpdir(), 'ae-adaptive-lifecycle-'));
+  fs.mkdirSync(requestedRoot, { recursive: true });
+  const root = fs.realpathSync.native(requestedRoot);
   const fx = { root, installedPackageRoot, corpus, bootstrap: corpus === 'sparse', reviewAgent: corpus === 'sparse' ? 'payment-retry-specialist' : 'enterprise-payment-reviewer', sessionId: 'lifecycle-session', workspace: path.join(root, 'product'), userHome: path.join(root, 'user'), home: path.join(root, 'state'), configHome: path.join(root, 'user/.claude'), skillsHome: path.join(root, 'user/.claude/skills'), enterpriseRoot: path.join(root, 'enterprise'), bin: path.join(installedPackageRoot, 'bin/ae.mjs') };
   for (const dir of [fx.workspace, fx.userHome, fx.home, fx.configHome, fx.skillsHome, fx.enterpriseRoot]) fs.mkdirSync(dir, { recursive: true });
   fx.env = { ...process.env, HOME: fx.userHome, HARNESS_HOME: fx.home, HARNESS_NO_EVENTS: '1', COPILOT_HOME: fx.configHome, AE_SKILLS_HOME: fx.skillsHome, HARNESS_SKILLS_HOME: fx.skillsHome, AE_HOST: 'claude-code', HARNESS_HOST: 'claude-code', AE_BIN: fx.bin, HARNESS_BIN: fx.bin, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_AUTHOR_NAME: 'AE lifecycle fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'AE lifecycle fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };

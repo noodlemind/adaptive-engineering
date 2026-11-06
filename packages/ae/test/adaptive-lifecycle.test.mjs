@@ -95,3 +95,19 @@ test('lifecycle npm launcher executes the shared Node translation and preserves 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('fixture path aliases retain one exact native workspace identity', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-fixture-alias-')));
+  try {
+    const physical = path.join(root, 'physical'), alias = path.join(root, 'alias');
+    fs.mkdirSync(physical);
+    fs.symlinkSync(physical, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const selected = path.join(alias, 'fixture');
+    const fx = createLifecycleFixture({ directory: selected, installedPackageRoot: path.join(root, 'installation'), sourcePackageRoot: packageRoot });
+    assert.equal(fx.root, fs.realpathSync.native(selected));
+    assert.equal(fx.workspace, fs.realpathSync.native(path.join(selected, 'product')));
+    const observed = run(process.execPath, ['--input-type=module', '-e', 'import fs from "node:fs"; process.stdout.write(fs.realpathSync.native(process.cwd()));'], { cwd: fx.workspace, env: fx.env });
+    assert.equal(observed.status, 0, observed.stderr);
+    assert.equal(observed.stdout, fx.workspace, 'native observation and fixture must bind the identical canonical workspace');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

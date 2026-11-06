@@ -456,7 +456,7 @@ function runSparseCase({ packageRoot, installedPackageRoot, root, forbiddenCorpu
 export function runAdaptiveLifecycle({ packageRoot, keepArtifacts = false, corpora = ['full', 'minimal', 'sparse'] } = {}) {
   assert.ok(path.isAbsolute(packageRoot || ''), 'packageRoot must be explicit and absolute');
   assert.ok(Array.isArray(corpora) && corpora.length > 0 && new Set(corpora).size === corpora.length && corpora.every(name => ['full', 'minimal', 'sparse'].includes(name)), 'corpora must select distinct full, minimal or sparse cases');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-installed-lifecycle-'));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-installed-lifecycle-')));
   const original = corpusDigest(path.join(packageRoot, 'corpus'));
   try {
     const { installedPackageRoot } = installLifecyclePackage({ packageRoot, directory: path.join(root, 'packed') });
