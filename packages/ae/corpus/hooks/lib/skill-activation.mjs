@@ -9,7 +9,27 @@ const MAX_SKILL_BYTES = 128 * 1024;
 const localHome = fileURLToPath(new URL('../..', import.meta.url));
 const packaged = path.basename(path.resolve(localHome)) === 'corpus' && fs.existsSync(path.resolve(localHome, '../bin/ae.mjs'));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+function sourceIdentity(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value) || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  try {
+    const full = path.resolve(value), root = path.parse(full).root;
+    let current = root;
+    const parts = path.relative(root, full).split(path.sep).filter(Boolean);
+    for (let index = 0; index <= parts.length; index++) {
+      if (index) current = path.join(current, parts[index - 1]);
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink() || (index < parts.length ? !stat.isDirectory() : !stat.isFile())) return null;
+    }
+    return fs.realpathSync.native(full);
+  } catch { return null; }
+}
+
+/** Canonical spelling may expand a Windows short path; redirects never establish identity. */
+export function sameSkillSourcePath(left, right) {
+  const first = sourceIdentity(left), second = sourceIdentity(right);
+  return first !== null && second !== null && (process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second);
+}
+const samePath = sameSkillSourcePath;
 
 function homes(copilotHome) {
   const xdg = process.env.XDG_CONFIG_HOME && path.join(process.env.XDG_CONFIG_HOME, 'copilot');
@@ -40,7 +60,7 @@ function skillSource(root, skill) {
 function selectedSources(skill, copilotHome, additionalSources = []) {
   const additional = additionalSources.filter(source => typeof source === 'string' && path.isAbsolute(source))
     .map(source => ({ root: path.dirname(path.dirname(path.dirname(source))), source: skillSource(path.dirname(path.dirname(source)), skill) }))
-    .filter(item => item.source && additionalSources.includes(item.source.path));
+    .filter(item => item.source && additionalSources.some(source => samePath(source, item.source.path)));
   if (process.env.AE_SKILLS_HOME) {
     const skillsRoot = path.resolve(process.env.AE_SKILLS_HOME);
     const source = skillSource(skillsRoot, skill);
@@ -102,7 +122,7 @@ export function readSkillActivation(payload, { copilotHome, additionalSources = 
   const normalized = normalizeToolPayload(payload), input = normalized.toolInput;
   if (normalized.terminalEffects.hasOpaque) return null;
   const candidates = normalized.targets;
-  const source = selectedSources(skill, copilotHome, additionalSources).filter(({ source }) => !restrictSources || additionalSources.includes(source.path)).find(({ root, source }) => {
+  const source = selectedSources(skill, copilotHome, additionalSources).filter(({ source }) => !restrictSources || additionalSources.some(allowed => samePath(allowed, source.path))).find(({ root, source }) => {
     if (!candidates.length) return ['read_skill', 'readSkill'].includes(normalized.toolName);
     const requested = path.resolve(normalized.workspace, candidates[0]);
     return candidates.length === 1 && (samePath(requested, path.join(root, 'skills', skill, 'SKILL.md')) || samePath(requested, source.path));

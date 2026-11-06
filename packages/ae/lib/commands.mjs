@@ -22,6 +22,7 @@ import { inspectCheckReadiness } from './check-readiness.mjs';
 import { readWorkspaceOutcome, formatWorkspaceOutcome } from './workspace-outcome.mjs';
 import { upgradeHostResultOf } from './hosts/command.mjs';
 import { onboardingDiscovery } from './adaptive-context.mjs';
+import { reconcileApprovedDelegation } from './hosts/personal-resource.mjs';
 import { withGitIdentityCache } from './git-observation-cache.mjs';
 import { leftoverWorkspaceArtifacts, runMigrateLayout } from './migrate-layout.mjs';
 import { migrateHome } from './migrate-home.mjs';
@@ -286,6 +287,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
     }, flags.dryRun);
   }
 
+  const delegation = [...selectedHomes.values()].map(entry => ({ configHome: entry.home, ...reconcileApprovedDelegation({ configHome: entry.home, home: flags.harnessHome, host: 'copilot', dryRun: flags.dryRun }) }));
   const workspace = readWorkspaceOutcome({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
   const checkReadiness = workspace.checkReadiness || inspectCheckReadiness({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
   const installation = { status: flags.dryRun ? 'planned' : 'completed', runtime: path.join(copilotSelected ? path.join(copilotHome, '.ae-bin') : pkgRoot, 'bin/ae.mjs') };
@@ -304,6 +306,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
           checkReadiness,
           installation,
           discovery,
+          delegation,
           workspace,
           ...(ownershipWarnings.length ? { ownershipWarnings } : {}),
         },

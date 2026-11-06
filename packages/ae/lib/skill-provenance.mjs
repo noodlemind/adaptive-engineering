@@ -1,5 +1,5 @@
 import { discoveryPolicy, resolveCapability } from './capability-catalog.mjs';
-import { skillActivationSourceCurrent } from '../corpus/hooks/lib/skill-activation.mjs';
+import { skillActivationSourceCurrent, sameSkillSourcePath } from '../corpus/hooks/lib/skill-activation.mjs';
 
 /** Extra source paths come only from current included catalog entries, never a tool payload. */
 export function authorizedSkillSources(name, options = {}) {
@@ -14,5 +14,5 @@ export function currentSkillActivation(activation, name, options = {}) {
   if (!sourceCurrent) return false;
   const consent = discoveryPolicy(options);
   if (!consent.configured) return true;
-  return additionalSources.includes(activation.source.path);
+  return additionalSources.some(source => sameSkillSourcePath(source, activation.source.path));
 }

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
 import { normalizeToolPayload } from './lib/tool-payload.mjs';
-import { decisionInputStaging } from './lib/decision-staging.mjs';
+import { decisionInputTarget } from './lib/decision-staging.mjs';
 
 let policy = { enforcement: 'enforce' };
 
@@ -64,7 +64,7 @@ if (!mutation.mutation) {
   process.exit(0);
 }
 for (const target of mutation.targets) {
-  if (decisionInputStaging(payload, mutation) && !BLOCKED.some(pattern => pattern.test(`${mutation.workspace.replaceAll('\\', '/')}/`))) continue;
+  if (decisionInputTarget(payload, mutation) && !BLOCKED.some(pattern => pattern.test(`${mutation.workspace.replaceAll('\\', '/')}/`))) continue;
   const candidates = [target, resolvedTarget(mutation.workspace, target)]
     .filter(Boolean)
     .map((value) => value.replace(/\\/g, '/'));

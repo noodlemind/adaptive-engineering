@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { createPersonalPrimitive, readPrimitiveOnce, registeredPath } from './local-primitives.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
 import { personalResourceAuthorization, personalResourcePermissions } from './hosts/personal-authorization.mjs';
+import { inspectCopilotDelegation } from './hosts/personal-resource.mjs';
 const primitiveDigest = text => `sha256-${createHash('sha256').update(text).digest('hex')}`;
 const SUPPORTED_HOST_TOOLS = new Set(['agent', 'edit', 'edit/editFiles', 'execute', 'execute/getTerminalOutput', 'githubRepo', 'read', 'read/problems', 'read/terminalLastCommand', 'search', 'search/changes', 'search/codebase', 'search/usages', 'web/fetch']);
 
@@ -163,7 +164,7 @@ export function createStructuredPrimitive({ flags, copilotHome, home, skillsHome
   return withPlanUpdateLock(registeredPath(copilotHome), perform);
 }
 
-export function validateResourceInventory(root, { shipped = false, shippedFiles = new Set() } = {}) {
+export function validateResourceInventory(root, { shipped = false, shippedFiles = new Set(), home, skillsHome, host } = {}) {
   const primitives = [], diagnostics = [];
   if (!fs.existsSync(root) || fs.lstatSync(root).isSymbolicLink() || !fs.lstatSync(root).isDirectory()) return { schema: 1, verb: 'validate', status: 'failed', root, counts: { skill: 0, agent: 0, instruction: 0 }, primitives, diagnostics: [{ path: root, reason: 'resource root is absent or unsafe' }], registry: null };
   for (const type of ['skill', 'agent', 'instruction']) {
@@ -202,7 +203,12 @@ export function validateResourceInventory(root, { shipped = false, shippedFiles 
     const declared = Array.isArray(engineer?.frontmatter?.agents) ? engineer.frontmatter.agents : [];
     const indexed = Array.isArray(registry.engineer_allowlist) && registry.engineer_allowlist.every(v => typeof v === 'string') ? registry.engineer_allowlist : [];
     if (!Array.isArray(registry.engineer_allowlist)) diagnostics.push({ path: registryRel, reason: 'invalid engineer allowlist declaration' });
-    if (JSON.stringify([...new Set(declared)].sort()) !== JSON.stringify([...new Set(indexed)].sort())) diagnostics.push({ path: registryRel, reason: 'Engineer delegation registry differs from declared agents' });
+    const delegation = shipped ? null : inspectCopilotDelegation({ configHome: root, home, skillsHome, host });
+    if (delegation?.present && !delegation.valid) diagnostics.push({ path: 'harness/engineer-delegation.json', reason: delegation.reason });
+    const normalized = values => JSON.stringify([...new Set(values)].sort());
+    if (delegation?.valid && delegation.present && normalized(indexed) !== normalized(delegation.factoryAgents)) diagnostics.push({ path: registryRel, reason: 'Factory Engineer registry differs from the shipped source' });
+    const effective = delegation?.valid ? [...indexed, ...delegation.personalAgents] : indexed;
+    if (normalized(declared) !== normalized(effective)) diagnostics.push({ path: registryRel, reason: 'Engineer delegation registry differs from declared agents' });
   }
   for (const p of primitives.filter(p => p.type === 'agent')) for (const target of Array.isArray(p.frontmatter?.agents) ? p.frontmatter.agents : []) if (!primitives.some(q => q.type === 'agent' && q.name === target)) diagnostics.push({ path: p.path, reason: `delegation target absent: ${target}` });
   const personal = primitives.filter(p => !shipped && !shippedFiles.has(p.path));

@@ -14,7 +14,7 @@ import { getCorpusRoot } from './assets.mjs';
 import { resourceInput, scaffoldPrimitive, createStructuredPrimitive, validateResourceInventory } from './resource-validation.mjs';
 import { resourceCandidates, proposeResource } from './resource-candidates.mjs';
 import { readBoundedInput } from './fs-safe.mjs';
-import { createHostResource, reconcilePersonalDelegation, reconcileCopilotDelegation } from './hosts/personal-resource.mjs';
+import { createHostResource, reconcilePersonalDelegation, reconcileCopilotDelegation, reconcileApprovedDelegation } from './hosts/personal-resource.mjs';
 import { nativeResourceRead } from './hosts/resource-read.mjs';
 import { configureDiscovery, discoverCapabilities, discoveryPolicy, authorizeCapabilityChange, adoptCreatedCapability } from './capability-catalog.mjs';
 import { capabilityOptions, onboardingDiscovery } from './adaptive-context.mjs';
@@ -134,6 +134,7 @@ export async function resourcesResultOf(argv, ctx = {}) {
   if (!RESOURCES_VERBS.includes(verb)) {
     throw usageError(`unknown resources verb: ${verb}`, `one of ${RESOURCES_VERBS.join(', ')}`);
   }
+  if (flags.refresh && (verb !== 'discover' || flags.files?.length)) throw usageError('--refresh requires resources discover without --file', 'ae resources discover --refresh --json');
   const adaptive = capabilityOptions({ workspace: path.resolve(flags.workspace), copilotHome, home: flags.harnessHome || harnessGlobalHome(), skillsHome: flags.skillsHome });
   const authorizeResource = input => request => {
     const granted = authorizeCapabilityChange({ ...adaptive, ...request });
@@ -159,12 +160,30 @@ export async function resourcesResultOf(argv, ctx = {}) {
     if (!flags.dryRun && discoveryPolicy(adaptive).configured) result.discovery = discoverCapabilities({ ...adaptive, query: name, limit: 8 });
     return result;
   };
+  const finishScan = discovered => {
+    const delegation = reconcileApprovedDelegation({ configHome: copilotHome, skillsHome: adaptive.skillsHome, home: adaptive.home, host: discovered.binding.host,
+      expectedPolicyRevision: discovered.policyRevision, dryRun: flags.dryRun });
+    return { ...discovered, verb: 'discover', delegation, reload: { state: delegation.state, observed: false, activated: false, nativeQualification: 'unverified',
+      reason: delegation.reason || 'The scan retains existing inclusion and permission limits; publication does not establish native loading or invocation.' } };
+  };
   if (verb === 'discover') {
+    if (flags.refresh) return finishScan(discoverCapabilities({ ...adaptive, refresh: true, query: flags.query, limit: flags.limit }));
     if (!flags.files?.length) return { ...onboardingDiscovery({ ...adaptive, query: flags.query, limit: flags.limit }), verb: 'discover' };
     const inputFlags = flags.files.length === 1 && flags.files[0] === '-' ? { ...flags, files: null } : flags;
     const { operation, ...input } = resourceInput(inputFlags);
-    if (operation === 'configure') return { ...configureDiscovery({ ...adaptive, input, dryRun: flags.dryRun }), verb: 'discover' };
-    if (['scan', 'status', 'query'].includes(operation)) return { ...discoverCapabilities({ ...adaptive, query: input.query || flags.query, taskId: input.taskId, refresh: operation === 'scan', limit: input.limit || flags.limit }), verb: 'discover' };
+    if (operation === 'configure') {
+      const configured = configureDiscovery({ ...adaptive, input, dryRun: flags.dryRun });
+      return { ...configured, verb: 'discover', delegation: reconcileApprovedDelegation({ configHome: copilotHome, skillsHome: adaptive.skillsHome, home: adaptive.home,
+        host: configured.binding.host, expectedPolicyRevision: configured.policyRevision, dryRun: flags.dryRun }) };
+    }
+    if (['scan', 'status', 'query'].includes(operation)) {
+      if (input.schema !== 1 || Object.keys(input).some(key => !['schema', 'query', 'taskId', 'limit'].includes(key))
+        || input.query !== undefined && (typeof input.query !== 'string' || input.query.length > 4000 || /[\u0000]/.test(input.query))
+        || input.taskId !== undefined && (typeof input.taskId !== 'string' || !input.taskId || input.taskId.length > 1024 || /[\u0000]/.test(input.taskId))) throw usageError('Discovery input requires schema 1 and bounded query, taskId or limit; unknown authority fields are forbidden', 'ae resources discover --file <scan.json> --json');
+      const discovered = discoverCapabilities({ ...adaptive, query: input.query ?? flags.query, taskId: input.taskId, refresh: operation === 'scan', limit: input.limit ?? flags.limit });
+      if (operation !== 'scan') return { ...discovered, verb: 'discover' };
+      return finishScan(discovered);
+    }
     throw usageError('Discovery input operation must be configure, scan, status or query', 'ae resources discover --file - --json');
   }
   if (verb === 'decision') {
@@ -187,7 +206,7 @@ export async function resourcesResultOf(argv, ctx = {}) {
     }
   }
   if (verb === 'scaffold') return scaffoldPrimitive(target, name);
-  if (verb === 'validate') return validateResourceInventory(flags.corpus ? getCorpusRoot() : flags.path ? path.resolve(flags.workspace, flags.path) : copilotHome, { shipped: flags.corpus, shippedFiles: !flags.path ? shippedAssetFiles() : new Set() });
+  if (verb === 'validate') return validateResourceInventory(flags.corpus ? getCorpusRoot() : flags.path ? path.resolve(flags.workspace, flags.path) : copilotHome, { shipped: flags.corpus, shippedFiles: !flags.path ? shippedAssetFiles() : new Set(), home: adaptive.home, skillsHome: adaptive.skillsHome, host: adaptive.host });
   if (verb === 'candidates') return resourceCandidates({ workspace: path.resolve(flags.workspace), copilotHome, home: flags.harnessHome, dryRun: flags.dryRun });
   if (verb === 'propose') return proposeResource({ workspace: path.resolve(flags.workspace), copilotHome, input: resourceInput(flags), dryRun: flags.dryRun });
   const { shippedFiles, lockFiles } = primitiveOrigins(copilotHome);

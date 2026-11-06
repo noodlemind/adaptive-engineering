@@ -8,16 +8,28 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CORE_CORPUS_MANIFEST, corpusDigest, corpusInventory, materializeMinimalCorpus } from './core-corpus.mjs';
 import { createLifecycleFixture, seedEnterprise, seedPaymentProject, forwardTask, writeFile, run, requireExit, PAYMENT_FIXED } from './lifecycle-fixture.mjs';
+import { npmCommand } from '../../test/helpers/npm-launch.mjs';
 
 export { CORE_CORPUS_MANIFEST, forwardTask };
 
+/** Prefer npm-cli.js through Node; never interpolate unsafe archive paths into cmd. */
+export function lifecycleNpmCommand(args) {
+  const invocation = npmCommand(args);
+  if (invocation.args[0] === '/d' && invocation.args[1] === '/s' && invocation.args[2] === '/c') {
+    assert.ok(args.every(value => typeof value === 'string' && value.length > 0 && !/[\s"%!^&|<>()\u0000-\u001f]/.test(value)), 'Windows npm shell fallback requires plain arguments; install npm-cli.js to preserve paths containing spaces or command characters');
+  }
+  return invocation;
+}
+
 export function installLifecyclePackage({ packageRoot, directory }) {
   fs.mkdirSync(directory, { recursive: true });
-  const packed = requireExit(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', directory], { cwd: packageRoot }), 0, 'npm pack');
+  const pack = lifecycleNpmCommand(['pack', '--ignore-scripts', '--json', '--pack-destination', directory]);
+  const packed = requireExit(run(pack.command, pack.args, { cwd: packageRoot }), 0, 'npm pack');
   assert.ok(Array.isArray(packed) && packed[0]?.filename, 'npm pack must return a tarball');
   const tarball = path.join(directory, packed[0].filename);
   const prefix = path.join(directory, 'installation');
-  requireExit(run('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', prefix, tarball]), 0, 'offline installed tarball');
+  const install = lifecycleNpmCommand(['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', prefix, tarball]);
+  requireExit(run(install.command, install.args), 0, 'offline installed tarball');
   const name = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).name;
   const installedPackageRoot = path.join(prefix, 'node_modules', name);
   assert.ok(fs.existsSync(path.join(installedPackageRoot, 'bin/ae.mjs')));

@@ -5,8 +5,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
+import { decisionInputStaging, nativeDecisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
 import { normalizeToolPayload } from '../corpus/hooks/lib/tool-payload.mjs';
+import { guardDecisionTool } from '../lib/decision-agent.mjs';
 
 const hooks = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../corpus/hooks');
 function fixture(t) {
@@ -46,4 +47,103 @@ test('decision staging rejects symlink roots and ancestor links and existing har
   fs.rmdirSync(path.join(f.workspace, '.harness/decisions'));
   fs.symlinkSync(f.workspace, path.join(f.workspace, '.harness/decisions'));
   assert.equal(f.allowed(f.payload()), false);
+});
+
+test('legacy plan creation, plan operations and learning inputs remain authorable without becoming native verdicts', t => {
+  const f = fixture(t);
+  const decisions = [
+    { version: 1, format: 'full', goal: 'Preserve existing service behavior.', acceptance: ['The behavioral check passes.'], scope: ['src/service.mjs'] },
+    { version: 1, id: 'start-accepted-work', action: 'start', expect: 'a'.repeat(64) },
+    { operation: 'record-verified-learning', decision: 'publish', rationale: 'Retain the verified service convention.', title: 'Service convention', body: 'Use integer minor currency units.' },
+  ];
+  for (const decision of decisions) {
+    const payload = f.payload(decision);
+    assert.equal(nativeDecisionInputStaging(payload, normalizeToolPayload(payload)), false, 'lifecycle authoring is not a native judgment receipt');
+    assert.equal(f.allowed(payload), true);
+    const guarded = guardDecisionTool({ workspace: f.workspace, home: `${f.workspace}-state`, policy: { enabled: true, revision: 'staging-consent', tools: [] }, payload });
+    assert.equal(guarded.mediation, 'bounded-decision-input-staging', 'configured decisions must not recursively require an action verdict to author CLI input');
+    assert.equal(guarded.permissionDecision, undefined, 'authoring data confers no tool execution approval');
+    for (const script of ['guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+      const result = spawnSync(process.execPath, [path.join(hooks, script)], { cwd: f.workspace, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, input: JSON.stringify(payload), encoding: 'utf8', timeout: 15000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)).continue, true, `${script}: ${result.stdout}`);
+    }
+  }
+});
+
+test('closed resource input authoring cannot smuggle new grants, receipt provenance or unknown lifecycle authority', t => {
+  const f = fixture(t), draft = { schema: 1, text: 'A canonical primitive draft.', expectedDigest: `sha256-${'a'.repeat(64)}` };
+  assert.equal(f.allowed(f.payload(draft)), true);
+  for (const decision of [
+    { ...draft, approved: true },
+    { ...draft, provenance: { kind: 'native' } },
+    { version: 1, action: 'start', id: 'start-work', expect: 'a'.repeat(64), authority: { scope: 'tool-permissions', basis: 'Self approval', grants: { tools: ['execute'] } } },
+    { version: 1, action: 'amend', id: 'amend-work', expect: 'a'.repeat(64), authority: { scope: 'plan-intent', basis: 'Task scope', approved: true } },
+  ]) {
+    const payload = f.payload(decision);
+    assert.equal(f.allowed(payload), false);
+    assert.equal(guardDecisionTool({ workspace: f.workspace, home: `${f.workspace}-state`, policy: { enabled: true, revision: 'staging-consent', tools: [] }, payload }).permissionDecision, 'deny');
+  }
+});
+
+test('a well-formed native judgment input cannot bypass either gate through hardlinked lifecycle state', t => {
+  const f = fixture(t), protectedFile = path.join(f.workspace, '.harness/session.json');
+  fs.mkdirSync(path.join(f.workspace, '.harness/decisions'), { recursive: true });
+  fs.writeFileSync(protectedFile, '{"protected":true}\n');
+  fs.linkSync(protectedFile, path.join(f.workspace, '.harness/decisions/start.v1.json'));
+  for (const script of ['guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+    const result = spawnSync(process.execPath, [path.join(hooks, script)], { cwd: f.workspace, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, input: JSON.stringify(f.payload()), encoding: 'utf8', timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)).permissionDecision, 'deny', `${script}: ${result.stdout}`);
+  }
+  assert.equal(fs.readFileSync(protectedFile, 'utf8'), '{"protected":true}\n');
+});
+
+test('Codex stages only one new whole Add File JSON input through the same closed authoring protocol', t => {
+  const f = fixture(t), makePatch = (value, name = 'codex.json') => `*** Begin Patch\n*** Add File: .harness/decisions/${name}\n+${JSON.stringify(value)}\n*** End Patch\n`;
+  const payload = patch => ({ workspace: f.workspace, session_id: 'stage-session', tool_name: 'apply_patch', tool_input: { input: patch } });
+  for (const decision of [
+    { schema: 1, operation: 'status', taskId: 'task' },
+    { version: 1, format: 'full', goal: 'Preserve the selected behavior.', acceptance: ['Required checks pass.'] },
+    { version: 1, action: 'start', id: 'start-work', expect: 'a'.repeat(64) },
+    { operation: 'retain-learning', decision: 'no-learning', rationale: 'No reusable pattern was observed.' },
+    { schema: 1, text: 'A canonical primitive draft.' },
+  ]) {
+    const input = payload(makePatch(decision));
+    assert.equal(f.allowed(input), true);
+    assert.equal(f.allowed({ ...input, tool_name: 'Edit', ae_native_tool_name: 'apply_patch' }), true, 'native adapters retain the actual patch tool identity');
+    assert.equal(guardDecisionTool({ workspace: f.workspace, home: `${f.workspace}-state`, policy: { enabled: true, revision: 'staging-consent', tools: [] }, payload: input }).mediation, 'bounded-decision-input-staging');
+  }
+  const input = payload(makePatch({ schema: 1, operation: 'status', taskId: 'task' }));
+  for (const script of ['guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+    const result = spawnSync(process.execPath, [path.join(hooks, script)], { cwd: f.workspace, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, input: JSON.stringify(input), encoding: 'utf8', timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)).continue, true, `${script}: ${result.stdout}`);
+  }
+  const valid = makePatch({ schema: 1, operation: 'status', taskId: 'task' });
+  for (const patch of [
+    valid.replace('*** Add File:', '*** Update File:'),
+    valid.replace('*** Add File:', '*** Delete File:'),
+    valid.replace('*** End Patch', '*** Move to: src/other.json\n*** End Patch'),
+    valid.replace('*** End Patch', '*** Add File: src/unrelated.json\n+{}\n*** End Patch'),
+    valid + valid,
+    valid.replace('codex.json', '../session.json'),
+    makePatch({ schema: 1, operation: 'record', requestId: 'a'.repeat(64), approved: true }),
+  ]) assert.equal(f.allowed(payload(patch)), false);
+  for (const invalid of [makePatch({}), makePatch({ schema: 1, operation: 'record', requestId: 'a'.repeat(64), approved: true }), valid.replace(/\n\+[^\n]*\n/, '\n+not JSON\n')]) {
+    for (const script of ['guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+      const result = spawnSync(process.execPath, [path.join(hooks, script)], { cwd: f.workspace, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, input: JSON.stringify(payload(invalid)), encoding: 'utf8', timeout: 15000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)).permissionDecision, 'deny', `${script}: ${result.stdout}`);
+    }
+  }
+  fs.mkdirSync(path.join(f.workspace, '.harness/decisions'), { recursive: true });
+  const target = path.join(f.workspace, '.harness/decisions/codex.json');
+  fs.writeFileSync(target, '{}\n');
+  assert.equal(f.allowed(input), false, 'Add File cannot replace an existing staging file');
+  fs.unlinkSync(target);
+  const protectedFile = path.join(f.workspace, '.harness/session.json');
+  fs.writeFileSync(protectedFile, '{"protected":true}\n');
+  fs.linkSync(protectedFile, target);
+  assert.equal(f.allowed(input), false);
 });

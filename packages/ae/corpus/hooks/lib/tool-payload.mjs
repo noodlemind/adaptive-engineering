@@ -621,7 +621,7 @@ function nativeResourceObject(full) {
 const CONFIGURATION_ROOT_FLAGS = ['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home'];
 const CONTROL_BOOLEAN_FLAGS = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
 
-function boundedControlFlags(args, start, extra = [], { repeatable = [] } = {}) {
+function boundedControlFlags(args, start, extra = [], { repeatable = [], additionalBoolean = [] } = {}) {
   const valued = new Set([...CONFIGURATION_ROOT_FLAGS, ...extra]);
   const seen = new Set(), values = new Map();
   for (let index = start; index < args.length; index++) {
@@ -629,7 +629,7 @@ function boundedControlFlags(args, start, extra = [], { repeatable = [] } = {}) 
     const key = name === '-v' ? '--verbose' : name === '--harness-home' ? '--ae-home' : name;
     if (seen.has(key) && !repeatable.includes(key)) return null;
     seen.add(key);
-    if ((CONTROL_BOOLEAN_FLAGS.has(name) || name === '--read') && split < 0) {
+    if ((CONTROL_BOOLEAN_FLAGS.has(name) || additionalBoolean.includes(name) || name === '--read') && split < 0) {
       if (name === '--read' && args[0] !== 'orient') return null;
       continue;
     }
@@ -771,13 +771,15 @@ function nativePersonalSkillControl(args, workspace) {
 function nativeDecisionControl(args, workspace) {
   if (args[1] !== 'decision' && args[1] !== 'discover') return null;
   try {
-    const values = boundedControlFlags(args, 2, args[1] === 'decision' ? ['--file'] : ['--query', '--limit']);
+    const values = boundedControlFlags(args, 2, args[1] === 'decision' ? ['--file'] : ['--query', '--limit'], { additionalBoolean: args[1] === 'discover' ? ['--refresh'] : [] });
     if (!values) return null;
     if (!values.has('--workspace')) values.set('--workspace', workspace);
     if (!selectedControlRoots(values, workspace)) return null;
     if (args[1] === 'decision') {
       const input = values.get('--file');
       if (!input || input !== '-' && !nativeResourcePath(path.resolve(workspace, input), 'file')) return null;
+    } else if (args.includes('--refresh') && !args.includes('--json')) {
+      return null;
     }
     return 'resources';
   } catch { return null; }

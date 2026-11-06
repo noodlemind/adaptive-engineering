@@ -50,7 +50,7 @@ test('custom hydrated session startup carries its own consented catalog without 
   assert.notEqual(position, -1);
   const slice = JSON.parse(result.additionalContext.slice(position + marker.length));
   assert.equal(slice.capabilities?.configured, true);
-  assert.equal(slice.capabilities.binding.configHome, f.copilotHome);
+  assert.equal(slice.capabilities.policyRevision, f.policy.revision);
   assert.equal(slice.capabilities.resources.some(resource => resource.id === 'excluded-workflow'), false);
 });
 

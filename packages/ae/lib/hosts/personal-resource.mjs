@@ -151,6 +151,32 @@ export function createHostResource({ type, name, input, configHome, skillsHome, 
   } finally { for (const lock of acquired.reverse()) fs.rmdirSync(lock); }
 }
 
+/** Source-bound extra roles shared by consent, setup and upgrade; factory roles stay in the corpus projection. */
+export function personalDelegationSelection({ configHome, skillsHome = path.join(configHome, 'skills'), home, host, packageRoot, expectedPolicyRevision }) {
+  configHome = path.resolve(configHome); skillsHome = path.resolve(skillsHome);
+  const options = { home, copilotHome: configHome, skillsHome, host };
+  const consent = discoveryPolicy(options);
+  if (expectedPolicyRevision !== undefined && consent.policyRevision !== expectedPolicyRevision) throw fail('Discovery policy revision changed before delegation selection');
+  const corpus = packageRoot ? path.join(packageRoot, 'corpus') : getCorpusRoot();
+  const factory = new Set(fs.readdirSync(path.join(corpus, 'agents')).filter(file => file.endsWith('.agent.md')).map(file => file.slice(0, -9)));
+  const legacy = ['copilot', 'vscode', 'cli', 'intellij'].includes(host);
+  const agentsNow = () => !consent.configured ? [] : discoverCapabilities({ ...options, query: '', limit: 2000, onboarding: false }).resources.filter(resource => {
+    if (resource.kind !== 'agent' || !resource.current || !resource.valid || !resource.included || resource.host !== host || factory.has(resource.id)) return false;
+    const relative = legacy ? `agents/${resource.id}.agent.md` : nativeAgentAsset({ host, name: resource.id, metadata: {}, body: '' }).path;
+    return resource.path === path.join(configHome, relative);
+  }).sort((a, b) => a.path.localeCompare(b.path));
+  const agents = agentsNow();
+  const binding = values => JSON.stringify(values.map(resource => ({ id: resource.id, path: resource.path, digest: resource.digest, sourceDigest: resource.sourceDigest || null })));
+  const expected = binding(agents);
+  const validatePublication = () => {
+    const current = discoveryPolicy(options);
+    if (current.configured !== consent.configured || current.policyRevision !== consent.policyRevision) throw fail('Discovery policy revision changed during delegation publication');
+    if (binding(agentsNow()) !== expected) throw fail('Approved specialist source changed during delegation publication');
+  };
+  validatePublication();
+  return { configured: consent.configured, policyRevision: consent.policyRevision, agents, personalAgents: agents.map(resource => resource.id), validatePublication };
+}
+
 /** Reconcile approved native agent delegation through setup's existing ownership transaction. */
 export function reconcilePersonalDelegation({ configHome, skillsHome, home, name, expectedPolicyRevision, dryRun = false }) {
   const { manifest, configHome: config, skillsHome: skills } = personalHostBinding({ configHome, skillsHome });
@@ -159,12 +185,12 @@ export function reconcilePersonalDelegation({ configHome, skillsHome, home, name
   const pending = reason => ({ status: 'pending', state: 'requires-approved-reconciliation', agent: name, reason, activated: false, nativeQualification: 'unverified' });
   if (!consent.configured) return pending('Configure source inclusion before changing Engineer delegation.');
   if (expectedPolicyRevision !== undefined && expectedPolicyRevision !== consent.policyRevision) throw fail('Discovery policy revision changed before delegation reconciliation');
-  const selection = discoverCapabilities({ ...options, query: '', limit: 2000, onboarding: false });
-  const agents = selection.resources.filter(resource => resource.kind === 'agent' && resource.current && resource.valid && resource.host === manifest.host
-    && resource.id !== 'engineer' && path.dirname(resource.path) === path.join(config, 'agents'));
-  if (!agents.some(resource => resource.id === name)) return pending('The created agent is not currently included under selected native host consent.');
+  const selection = personalDelegationSelection({ configHome: config, skillsHome: skills, home, host: manifest.host, packageRoot: manifest.packageRoot, expectedPolicyRevision });
+  const agents = selection.agents;
+  if (name && !agents.some(resource => resource.id === name)) return pending('The created agent is not currently included under selected native host consent.');
   if (manifest.host === 'terminal') return { ...pending('Terminal integration has no isolated native agent invocation.'), state: 'manual' };
   const validatePublication = () => {
+    selection.validatePublication();
     if (discoveryPolicy(options).policyRevision !== consent.policyRevision) throw fail('Discovery policy revision changed during delegation reconciliation');
     const personal = readPersonalResources({ configHome: config, skillsHome: skills, host: manifest.host });
     for (const resource of agents) {
@@ -201,6 +227,7 @@ export function reconcileCopilotDelegation({ configHome, skillsHome = path.join(
     const projectionBefore = readFileNoFollow(path.join(configHome, projectionRel), { root: configHome, maxBytes: 1024 * 1024 });
     if (base === null || prior === null) return pending('The current shipped and installed Engineer sources are unavailable or unsafe.');
     const render = names => {
+      if (!names.length) return base;
       const split = splitNativeSource(base);
       if (!Array.isArray(split.metadata.agents) || !split.metadata.tools?.includes('agent')) throw fail('Shipped Engineer lacks explicit native delegation authority');
       split.metadata.agents = [...new Set([...split.metadata.agents, ...names])].sort();
@@ -212,13 +239,15 @@ export function reconcileCopilotDelegation({ configHome, skillsHome = path.join(
       if (previous?.schema !== 1 || previous.configHome !== configHome || previous.baseDigest !== hash(base) || previous.digest !== hash(prior)
         || !Array.isArray(previous.agents) || previous.agents.some(agent => !canonical.test(agent)) || prior !== render(previous.agents)) return pending('Preserve the edited or outdated Engineer and reconcile it with the current shipped source first.');
     }
-    const selected = discoverCapabilities({ ...options, query: '', limit: 2000 }).resources;
-    const agents = selected.filter(resource => resource.kind === 'agent' && resource.id !== 'engineer' && resource.current && resource.included && resource.valid && path.dirname(resource.path) === path.join(configHome, 'agents'));
-    if (!agents.some(resource => resource.id === name)) return pending('The created Copilot role is not included under current source consent.');
+    const selection = personalDelegationSelection({ configHome, skillsHome, home, host, expectedPolicyRevision });
+    const agents = selection.agents;
+    if (name && !agents.some(resource => resource.id === name)) return pending('The created Copilot role is not included under current source consent.');
     const names = agents.map(resource => resource.id).sort(), content = render(names);
+    if (!names.length && prior === base && projectionBefore === null) return { status: 'ok', state: 'unchanged', activated: false, nativeQualification: 'unverified', policyRevision: consent.policyRevision };
     const after = `${JSON.stringify({ schema: 1, configHome, baseDigest: hash(base), digest: hash(content), agents: names, policyRevision: consent.policyRevision,
       sources: agents.map(resource => ({ id: resource.id, path: resource.path, digest: resource.digest, sourceDigest: resource.sourceDigest || null })) }, null, 2)}\n`;
     const validate = (engineer, projection) => {
+      selection.validatePublication();
       if (discoveryPolicy(options).policyRevision !== consent.policyRevision) throw fail('Discovery policy revision changed during Copilot delegation publication');
       if (readFileNoFollow(path.join(configHome, LOCK_NAME), { root: configHome, maxBytes: 1024 * 1024 }) !== lockBefore || readFileNoFollow(basePath, { root: corpus, maxBytes: 65536 }) !== base) throw fail('Copilot ownership or shipped Engineer changed during delegation publication');
       if (readFileNoFollow(path.join(configHome, engineerRel), { root: configHome, maxBytes: 65536 }) !== engineer || readFileNoFollow(path.join(configHome, projectionRel), { root: configHome, maxBytes: 1024 * 1024 }) !== projection) throw fail('Copilot Engineer or delegation projection changed during publication');
@@ -247,6 +276,39 @@ export function reconcileCopilotDelegation({ configHome, skillsHome = path.join(
       engineerDigest: hash(content), reason: 'Approved current specialists were projected into managed Copilot Engineer delegation; native reload and actual invocation remain unverified.' };
   };
   return dryRun ? perform() : withPlanUpdateLock(registeredPath(configHome), perform);
+}
+
+/** Bulk reconciliation after explicit inclusion or installation; preserve unsafe or edited ownership. */
+export function reconcileApprovedDelegation(options) {
+  try {
+    const consent = discoveryPolicy({ home: options.home, copilotHome: options.configHome, skillsHome: options.skillsHome, host: options.host });
+    if (!consent.configured) return { status: 'pending', state: 'needs-consent', activated: false, nativeQualification: 'unverified' };
+    const selected = { ...options, host: consent.binding.host, expectedPolicyRevision: options.expectedPolicyRevision ?? consent.policyRevision };
+    return ['copilot', 'vscode', 'cli', 'intellij'].includes(selected.host) ? reconcileCopilotDelegation(selected) : reconcilePersonalDelegation(selected);
+  } catch (error) { return { status: 'pending', state: 'requires-approved-reconciliation', reason: error.message, activated: false, nativeQualification: 'unverified' }; }
+}
+
+/** Installed Copilot validation reads effective delegation without modifying factory registry data. */
+export function inspectCopilotDelegation({ configHome, skillsHome = path.join(configHome, 'skills'), home, host }) {
+  const relative = 'harness/engineer-delegation.json', file = path.join(configHome, relative);
+  if (!assertNoSymlinkAncestors(configHome, relative)) return { present: true, valid: false, reason: 'Copilot delegation projection is redirected', personalAgents: [] };
+  if (!fs.lstatSync(file, { throwIfNoEntry: false })) return { present: false, valid: true, personalAgents: [] };
+  try {
+    if (!assertNoSymlinkAncestors(configHome, relative)) throw fail('Copilot delegation projection is redirected');
+    const raw = readFileNoFollow(file, { root: configHome, maxBytes: 1024 * 1024 }), projection = JSON.parse(raw);
+    const snapshot = discoveryPolicy({ copilotHome: configHome, skillsHome, home, host });
+    if (!snapshot.configured || projection?.policyRevision !== snapshot.policyRevision) throw fail('Copilot delegation projection consent is stale');
+    const selected = personalDelegationSelection({ configHome, skillsHome, home, host: snapshot.binding.host, expectedPolicyRevision: snapshot.policyRevision });
+    const expectedSources = selected.agents.map(resource => ({ id: resource.id, path: resource.path, digest: resource.digest, sourceDigest: resource.sourceDigest || null }));
+    if (JSON.stringify(projection.agents) !== JSON.stringify([...selected.personalAgents].sort()) || JSON.stringify(projection.sources) !== JSON.stringify(expectedSources)) throw fail('Copilot delegation projection sources are stale or forged');
+    const preview = reconcileCopilotDelegation({ configHome, skillsHome, home, host: snapshot.binding.host, expectedPolicyRevision: snapshot.policyRevision, dryRun: true });
+    const current = readFileNoFollow(path.join(configHome, 'agents/engineer.agent.md'), { root: configHome, maxBytes: 65536 });
+    if (preview.status !== 'ok' || !current || preview.engineerDigest !== hash(current)) throw fail(preview.reason || 'Copilot Engineer differs from its current approved projection');
+    const base = readFileNoFollow(path.join(getCorpusRoot(), 'agents/engineer.agent.md'), { root: getCorpusRoot(), maxBytes: 65536 });
+    selected.validatePublication();
+    if (readFileNoFollow(file, { root: configHome, maxBytes: 1024 * 1024 }) !== raw) throw fail('Copilot delegation projection changed during validation');
+    return { present: true, valid: true, personalAgents: selected.personalAgents, factoryAgents: splitNativeSource(base).metadata.agents };
+  } catch (error) { return { present: true, valid: false, reason: error.message, personalAgents: [] }; }
 }
 
 /** Trusted native-event consumers call this; no CLI accepts authored activation evidence. */

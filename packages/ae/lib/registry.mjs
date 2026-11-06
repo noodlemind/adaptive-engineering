@@ -1585,6 +1585,7 @@ registerCommand({
     flags: [
       { name: '--file', type: 'string', valueName: 'path', description: 'Versioned creation, discovery, native decision or proposal JSON input', required: false, default: null, tui: 'cli-only' },
       { name: '--query', type: 'string', valueName: 'text', description: 'Bounded task-specific discovery query', required: false, default: null, tui: 'cli-only' },
+      { name: '--refresh', type: 'boolean', description: 'Refresh consented sources and reconcile eligible selected-host agents; never changes consent', required: false, default: false, tui: 'cli-only', appliesToVerbs: ['discover'] },
       { name: '--limit', type: 'number', valueName: 'n', description: 'Maximum relevant capability cards', required: false, default: null, tui: 'cli-only' },
       { name: '--path', type: 'string', valueName: 'directory', description: 'Root to inspect with validate', required: false, default: null, tui: 'cli-only' },
       { name: '--corpus', type: 'boolean', description: 'Validate shipped corpus and capability registry', required: false, default: false, tui: 'cli-only' },

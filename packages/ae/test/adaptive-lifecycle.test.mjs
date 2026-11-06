@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CORE_CORPUS_MANIFEST, runAdaptiveLifecycle } from '../eval/adaptive/lifecycle.mjs';
+import { CORE_CORPUS_MANIFEST, lifecycleNpmCommand, runAdaptiveLifecycle } from '../eval/adaptive/lifecycle.mjs';
 import { materializeMinimalCorpus } from '../eval/adaptive/core-corpus.mjs';
 import { createLifecycleFixture, run, writeFile } from '../eval/adaptive/lifecycle-fixture.mjs';
 
@@ -75,4 +75,23 @@ test('installed fixture rejects synchronous and asynchronous reads from unselect
     assert.equal(read.status, 0, read.stderr);
     assert.equal(read.stdout, 'selected');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lifecycle npm launcher executes the shared Node translation and preserves archive arguments', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-npm-launch-'));
+  const previous = process.env.npm_execpath;
+  try {
+    const cli = writeFile(root, 'npm directory/npm-cli.js', 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+    process.env.npm_execpath = cli;
+    const args = ['install', '--offline', '--prefix', path.join(root, 'install space'), path.join(root, 'archive & literal!.tgz')];
+    const invocation = lifecycleNpmCommand(args);
+    assert.equal(invocation.command, process.execPath);
+    const result = run(invocation.command, invocation.args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), args, 'npm launcher changed the actual prefix or archive path');
+  } finally {
+    if (previous === undefined) delete process.env.npm_execpath;
+    else process.env.npm_execpath = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
