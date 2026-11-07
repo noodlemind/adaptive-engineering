@@ -1,3 +1,0 @@
-# Copy to .npmrc (do not commit tokens). Point @dev-kit scope at Nexus.
-@dev-kit:registry=https://nexus.your-company.com/repository/npm-hosted/
-//nexus.your-company.com/repository/npm-hosted/:_authToken=${NEXUS_NPM_TOKEN}
