@@ -69,7 +69,7 @@ function groupedForHelp() {
 
 function renderHelp() {
   const lines = [];
-  lines.push(`ae ${out.paint('muted', '— Adaptive Engineer Harness')}`);
+  lines.push(`ae ${out.paint('muted', '— Adaptive Engineering')}`);
   lines.push(out.paint('muted', 'Choose a host: ae host list · ae host setup --host <id>'));
   lines.push('');
   lines.push(`Usage: ae ${out.paint('muted', '<command> [options]')}`);

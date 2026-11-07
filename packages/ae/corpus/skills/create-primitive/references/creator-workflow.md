@@ -4,7 +4,7 @@ Read this reference in full before governed primitive changes. Read `<copilot-ho
 
 ## Pipeline Role
 
-Canonical primitive creator and maintainer for the harness. Use it to keep the library skill-driven. Harness owns deterministic reusable operations, skills hold contextual judgment protocols, agents hold isolated roles, instructions hold scoped conventions, checks hold narrow review criteria, references hold dense supporting material, and solution docs hold verified learnings.
+Canonical primitive creator and maintainer for the harness. Use it to keep the corpus skill-driven. Harness owns deterministic reusable operations, skills hold contextual judgment protocols, agents hold isolated roles, instructions hold scoped conventions, checks hold narrow review criteria, references hold dense supporting material, and solution docs hold verified learnings.
 
 ## When to Use
 

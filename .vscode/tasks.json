@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Dev Kit: Install Harness",
+      "label": "AE: Install Harness",
       "type": "shell",
       "command": "node",
       "args": [
@@ -19,7 +19,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Dev Kit: Upgrade Harness",
+      "label": "AE: Upgrade Harness",
       "type": "shell",
       "command": "node",
       "args": ["${workspaceFolder}/packages/ae/bin/ae.mjs", "upgrade", "--configure-vscode"],
@@ -29,7 +29,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Dev Kit: Harness Doctor",
+      "label": "AE: Harness Doctor",
       "type": "shell",
       "command": "node",
       "args": ["${workspaceFolder}/packages/ae/bin/ae.mjs", "doctor"],

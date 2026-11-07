@@ -71,13 +71,13 @@ function hashBytes(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-const PROMPT_LIBRARY_PROJECT = '\n## Project\n\nSkill-driven prompt library for software development using GitHub Copilot in VS Code and IntelliJ IDEA on Windows. Install hydrates agents, skills, and instructions into the user profile. Product repositories do not receive a copy of that corpus.\n';
+const REPOSITORY_PROJECT = '\n## Project\n\nAdaptive Engineering corpus: the skills, agents and instructions that AE installs into a selected host. Install writes them into the user profile. Product repositories do not receive a copy of that corpus.\n';
 
 /** Installed global instructions describe the user's host, not this repository's own project blurb. */
 export function installedCopilotInstructions(source) {
   const text = String(source).replace(/\r\n/g, '\n');
-  if (!text.includes(PROMPT_LIBRARY_PROJECT)) return source;
-  return text.replace(PROMPT_LIBRARY_PROJECT, '\n');
+  if (!text.includes(REPOSITORY_PROJECT)) return source;
+  return text.replace(REPOSITORY_PROJECT, '\n');
 }
 
 function renderTargetAsset(src, rel, targetRoot) {

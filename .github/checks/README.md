@@ -2,7 +2,7 @@
 
 Product-repo automated review criteria. Each `.md` file in this directory defines a workspace-specific check that `/code-review` discovers and applies during reviews.
 
-Library-managed checks are bundled with the `/code-review` skill under `.github/skills/code-review/references/checks/` so global installations can load them with the skill. Use `.github/checks/` only for product-specific additions.
+Bundled checks ship with the `/code-review` skill under `packages/ae/corpus/skills/code-review/references/checks/`, so every installation loads them with the skill. Use `.github/checks/` only for product-specific additions.
 
 ## How It Works
 

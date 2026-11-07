@@ -4,7 +4,7 @@ Shared context loaded into every agent and skill session.
 
 ## Project
 
-Skill-driven prompt library for software development using GitHub Copilot in VS Code and IntelliJ IDEA on Windows. Install hydrates agents, skills, and instructions into the user profile. Product repositories do not receive a copy of that corpus.
+Adaptive Engineering corpus: the skills, agents and instructions that AE installs into a selected host. Install writes them into the user profile. Product repositories do not receive a copy of that corpus.
 
 ## Primitives
 

@@ -37,7 +37,7 @@ Review the finished diff once before `ae verify`, not after each task. Cap the d
 
 ## prove-with-evidence
 
-See `docs/adaptive-engineering.md`. Run the checks named on the plan. Paste the result that shows the pass.
+See `docs/reference/plans-and-proof.md`. Run the checks named on the plan. Paste the result that shows the pass.
 
 ## behavior-not-implementation
 

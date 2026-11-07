@@ -122,7 +122,7 @@ test('docs surface is the adaptive engineering explanation', () => {
     .readdirSync(docsRoot)
     .filter((name) => !name.startsWith('.') && !generated.has(name))
     .sort();
-  assert.deepEqual(topLevel, ['adaptive-engineering.md', 'diagrams', 'migration', 'model-preferences.md', 'site', 'structural-knowledge.md', 'workspace-layout-detection.md']);
+  assert.deepEqual(topLevel, ['adaptive-engineering.md', 'diagrams', 'getting-started.md', 'hosts.md', 'migration', 'reference', 'site', 'using-ae.md']);
   assert.equal(exists('docs/architecture'), false, 'docs/architecture should be removed');
   for (const name of supersededArchitectureDocs) {
     assert.equal(exists(`docs/${name}`), false, `docs/${name} should be removed`);
@@ -135,6 +135,28 @@ test('docs surface is the adaptive engineering explanation', () => {
   assert.match(concept, /@engineer/);
   assert.doesNotMatch(read('packages/ae/README.md'), /ae agent[\s\S]{0,80}Adaptive Engineer runtime/i);
   assert.match(read('packages/ae/README.md'), /opt-in add-on/i);
+});
+
+test('documentation relative links and heading anchors resolve', () => {
+  const docs = ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'SECURITY.md', 'packages/ae/README.md'];
+  const generated = new Set(['docs/codebase-map.md', 'docs/codebase-snapshot.md']);
+  const listed = execFileSync('git', ['-C', repoRoot, 'ls-files', '--cached', '--others', '--exclude-standard', '--', 'docs'], { encoding: 'utf8' });
+  docs.push(...listed.split('\n').filter((rel) => rel.endsWith('.md') && !generated.has(rel) && exists(rel)));
+  const slug = (heading) => heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+  const anchors = (rel) => new Set(read(rel).replace(/```[\s\S]*?```/g, '').split('\n')
+    .filter((line) => /^#{1,6} /.test(line)).map((line) => slug(line.replace(/^#+ /, ''))));
+  const broken = [];
+  for (const rel of docs) {
+    const text = read(rel).replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
+    for (const [, href] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href)) continue;
+      const [target, anchor] = href.split('#');
+      const resolved = target ? path.posix.normalize(path.posix.join(path.posix.dirname(rel), target)) : rel;
+      if (!exists(resolved)) { broken.push(`${rel} -> ${href}`); continue; }
+      if (anchor && resolved.endsWith('.md') && !anchors(resolved).has(anchor)) broken.push(`${rel} -> ${href} (anchor)`);
+    }
+  }
+  assert.deepEqual(broken, []);
 });
 
 test('adaptive engineering doc states the start and the growth path', () => {

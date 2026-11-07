@@ -1,6 +1,6 @@
 # Capability Gap Proposal
 
-Use this template when `@engineer` believes the current prompt library lacks a reusable capability. Do not create or modify primitives until the proposal is reviewed and approved by the human liaison.
+Use this template when `@engineer` believes the current AE corpus lacks a reusable capability. Do not create or modify primitives until the proposal is reviewed and approved by the human liaison.
 
 ## Usage Workflow
 

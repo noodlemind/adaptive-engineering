@@ -4,7 +4,22 @@ This file provides context for AI coding agents working in this repository. It f
 
 ## Project Overview
 
-This is a skill-driven prompt library for software development teams. A shared corpus is projected through selected Copilot, Claude Code, Codex, Cursor or terminal integrations. Host capability declarations and actual native qualification are separate. Teams configure native assets from this repo; product repositories should not receive prompt-library source artifacts.
+This repository is Adaptive Engineering (AE): the `ae` CLI in `packages/ae/` (npm package `ae-harness`) and the corpus of skills, agents and instructions it installs into a coding host. The Engineer decides; the Harness (`ae`) orients, gates, verifies and records. `ae host setup` projects the corpus into Claude Code, Codex, Cursor or terminal integrations; `ae install` keeps the legacy GitHub Copilot path. Host capability declarations and actual native qualification are separate. Product repositories never receive a copy of the corpus.
+
+User documentation lives in `README.md` and `docs/`. The concept and contract overview is `docs/adaptive-engineering.md`; detailed contracts are in `docs/reference/`.
+
+## Build and test
+
+```bash
+npm ci --prefix packages/ae
+cd packages/ae
+npm test               # full suite (Linux and Windows in CI)
+npm run check:repo     # repository contract tests, including docs and links
+npm run check:engineer # generated Engineer files match the contract
+npm run check:release  # versions, packaged assets and prompt budgets
+```
+
+On macOS, run tests with `TMPDIR="$(cd "$TMPDIR" && pwd -P)/"`; AE refuses the redirected `/var` temporary path. Run the CLI from source with `node packages/ae/bin/ae.mjs`.
 
 ## Architecture
 
@@ -33,7 +48,7 @@ Deliver-mode internal skill chain:
                          open → planned → in-progress → review → done
 ```
 
-Harness architecture: `docs/adaptive-engineering.md`. Knowledge lookup: `~/.copilot/skills/references/knowledge-locations.md`.
+Harness architecture: `docs/adaptive-engineering.md` and `docs/reference/plans-and-proof.md`. Knowledge lookup: `~/.copilot/skills/references/knowledge-locations.md`.
 
 New plan files live in `~/.ae/projects/<repo-id>/plans/`. Existing `.harness/plans/` and `docs/plans/` remain readable legacy locations. Harness returns the path and updates managed plans from authored decisions. Plans track state via YAML frontmatter (`status`, `plan_lock`, `phase`). Team-wide learnings hydrate from `packages/ae/corpus/knowledge/` to `~/.copilot/knowledge/`. Run `/recall` before engineering work. Inter-step memory flows through plan sections including `## Memory Cards`, `## Context`, `## Research Notes`, and `## Activity`. See `docs/adaptive-engineering.md`.
 
@@ -43,12 +58,19 @@ New plan files live in `~/.ae/projects/<repo-id>/plans/`. Existing `.harness/pla
 .github/
   checks/          — optional product-specific review check examples
   harness/         — product policy, checks, and routing
-  agent-context.md — prompt-library repo knowledge, not a global Copilot primitive
+  agent-context.md — this repository's accumulated knowledge, not a global primitive
+  workflows/       — CI: full suite on Linux and Windows, docs build, package candidates
 .vscode/
   mcp.json         — MCP server configuration
 docs/
+  getting-started.md, using-ae.md, hosts.md — user guides
   adaptive-engineering.md — how the Engineer and Harness work, and how capability is acquired
+  reference/       — detailed contracts (plans and proof, project setup, verification, domains, ...)
+  migration/       — moving from the older harness command and state
+  site/            — Pages layout; scripts/build-docs.mjs builds the site from the Markdown sources
 packages/ae/  — CLI package
+  bin/ lib/        — command entry point and harness kernel
+  test/            — Node test suite
   corpus/
     skills/        — 28 skill directories with SKILL.md
     agents/        — 22 Copilot agent definitions (Engineer is generated)
@@ -78,7 +100,7 @@ packages/ae/  — CLI package
 
 ## Orchestration
 
-The `engineer` agent is a full-cycle hybrid and Adaptive Engineer Harness coordinator. It classifies Answer, Investigate, Deliver, or Review before acting; only Deliver mode enters the nine-step lifecycle and mutation/verification gates. It understands requirements, selects the right skill/flow, debugs, plans, implements, verifies, and delegates implementation to `code-implementer` or specialist review/research agents when separate judgment, authority, or isolation is useful. Missing reusable capability goes through a capability-gap proposal and `/create-primitive` with human approval. `code-review-coordinator` and `plan-coordinator` are internal-only — dispatched by the Engineer for merge isolation, never invoked by users — and use `tools: ['agent']` to delegate work to specialist agents as subagents. `code-review-coordinator` is a thin dispatcher of the `/code-review` skill, which owns all criteria, confidence scoring, and checks. Each subagent runs in isolated context, and coordinators dispatch in parallel batches (3-4 at a time). Pipeline handoffs between steps are guided by the Engineer itself.
+The `engineer` agent is a full-cycle hybrid and the coordinator for adaptive capability expansion. It classifies Answer, Investigate, Deliver, or Review before acting; only Deliver mode enters the nine-step lifecycle and mutation/verification gates. It understands requirements, selects the right skill/flow, debugs, plans, implements, verifies, and delegates implementation to `code-implementer` or specialist review/research agents when separate judgment, authority, or isolation is useful. Missing reusable capability goes through a capability-gap proposal and `/create-primitive` with human approval. `code-review-coordinator` and `plan-coordinator` are internal-only — dispatched by the Engineer for merge isolation, never invoked by users — and use `tools: ['agent']` to delegate work to specialist agents as subagents. `code-review-coordinator` is a thin dispatcher of the `/code-review` skill, which owns all criteria, confidence scoring, and checks. Each subagent runs in isolated context, and coordinators dispatch in parallel batches (3-4 at a time). Pipeline handoffs between steps are guided by the Engineer itself.
 
 ### Frontmatter Properties (VS Code 1.109)
 
@@ -101,6 +123,17 @@ Skills follow proven design patterns from Google ADK and Compound Engineering:
 
 Read `docs/adaptive-engineering.md` before adding or substantially changing agents, skills, instructions, checks, plan structure, or solution templates.
 
+### When adding or removing agents or skills
+
+Keep these files in sync:
+
+1. `AGENTS.md` — counts and inventory
+2. `packages/ae/corpus/copilot-instructions.md` — shared context
+3. `.github/agent-context.md` — repository knowledge
+4. `packages/ae/corpus/knowledge/capability-registry.yaml` — lifecycle state
+5. `README.md` and `docs/` — if user-visible behavior changed
+6. `docs/adaptive-engineering.md` or `docs/reference/` — if primitive boundaries or workflow contracts changed
+
 ## Accumulated Knowledge
 
-Read `.github/agent-context.md` for prompt-library repo patterns. In product repositories, follow `~/.copilot/skills/references/knowledge-locations.md`.
+Read `.github/agent-context.md` for this repository's patterns. In product repositories, follow `~/.copilot/skills/references/knowledge-locations.md`.

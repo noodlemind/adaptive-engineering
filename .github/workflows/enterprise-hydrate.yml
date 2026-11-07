@@ -1,5 +1,5 @@
-# Publishes enterprise overlay artifact for team hydrate pipelines.
-# Customize ORG_ENTERPRISE_REPO secret to your platform overlay repository.
+# Publishes the enterprise overlay as a build artifact for team pipelines.
+# Teams extract it into the host configuration's enterprise/ directory.
 name: Enterprise Hydrate
 
 on:
@@ -27,4 +27,3 @@ jobs:
           path: enterprise-overlay.tar.gz
           retention-days: 90
 
-# DevEx: extract artifact to ~/.copilot/enterprise/ or document in ae upgrade runbook
