@@ -15,7 +15,7 @@ Read cited source relationships, bounded change impact and retained historical g
 - Run `ae graph path <file> <target>` or `ae graph explain <file> <target>` for a directed relationship; add `--generation <id>` to select retained historical facts.
 - Run `ae orient --read --context-version 2 --question-kind change-impact --file <path> --json` for a source packet.
 - Pass the same arguments through the existing native Harness tool. Returned evidence does not prove editor or model consumption.
-- Read [the structural knowledge guide](../../../../docs/structural-knowledge.md) for selection, scope and freshness semantics.
+- Read [the structural knowledge guide](../../../../docs/reference/structural-knowledge.md) for selection, scope and freshness semantics.
 
 ## Driving it
 

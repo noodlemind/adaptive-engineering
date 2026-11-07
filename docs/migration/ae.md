@@ -1,22 +1,20 @@
 # Migrate to `ae`
 
-Adaptive Engineering uses the `ae` command, distributed as `ae-harness`. The source package is `packages/ae`. Continue to select `@engineer` in Copilot Chat or use `/engineer`.
+Adaptive Engineering uses the `ae` command, distributed as `ae-harness`. The source package is `packages/ae`. This guide is for people who used the older `harness` command, its `~/.harness` state home, or a checkout of the repository under its former name, `prompt-library`. New users should start with [Getting started](../getting-started.md).
 
-The repository owner will rename GitHub to `adaptive-engineering` after the migration is accepted. Until then, repository links use the current name.
+The repository is now `noodlemind/adaptive-engineering`. GitHub redirects the old URLs, but update your remotes; see [After the repository rename](#after-the-repository-rename).
 
-## Install the candidate
+## Install the package
 
-Use the reviewed archive from the candidate workflow or pack it from this checkout:
+Install from a checkout, or from an archive built by the package candidate workflow:
 
 ```sh
 npm ci --prefix packages/ae
 npm pack ./packages/ae --pack-destination /path/to/artifacts
-npm install -g /path/to/artifacts/ae-harness-0.12.0.tgz
-ae install --configure-vscode
-ae doctor --host vscode
+npm install -g /path/to/artifacts/ae-harness-<version>.tgz
 ```
 
-Reload VS Code after installation. Registry installation becomes available only after the owner publishes `ae-harness`. The archive exposes `ae`; a fresh installation does not claim a `harness` executable. An owned legacy Copilot shim is retargeted to the same runtime during upgrade. An unrelated command is preserved.
+Then refresh the host you use. For GitHub Copilot in VS Code, run `ae install --configure-vscode`, check it with `ae doctor --target vscode`, and reload VS Code. For Claude Code, Codex or Cursor, run `ae host setup --host <id>` or, for an existing integration, `ae upgrade --host <id>`. Registry installation becomes available once `ae-harness` is published. The archive exposes `ae`; a fresh installation does not claim a `harness` executable. An owned legacy Copilot shim is retargeted to the same runtime during upgrade. An unrelated command is preserved.
 
 Before upgrading, retain the previous package archive and a backup of the Copilot home and its managed bridge extension directory. Installation replaces managed assets, so these are separate from the saved-state backup described below. To roll back installation, restore those snapshots and reinstall the previous archive. Keep the candidate archive and checksum with its qualification results.
 
@@ -51,20 +49,21 @@ To roll back saved state, select the original home with `AE_HOME` or `--ae-home`
 
 ## After the repository rename
 
-A GitHub remote rename changes the derived repository ID. Record the current ID from the existing store before the owner renames the repository. After updating a checkout's origin to the renamed repository, bind its new identity to the original physical store:
+The repository ID is derived from the `origin` remote, so pointing an existing checkout at the renamed repository changes its ID. Before you change the remote, note the current ID: the directory under `projects/` in your AE home (`~/.ae` unless you set `AE_HOME` or pass `--ae-home`) named after the old remote, such as `github.com-noodlemind-prompt-library-<hash>`. Then update the remote and bind the new identity to the original store:
 
 ```sh
-ae knowledge migrate-store --from-id <previous-repository-id> --ae-home ~/.ae --dry-run --json
-ae knowledge migrate-store --from-id <previous-repository-id> --ae-home ~/.ae --json
+git remote set-url origin https://github.com/noodlemind/adaptive-engineering.git
+ae knowledge migrate-store --from-id <previous-repository-id> --dry-run --json
+ae knowledge migrate-store --from-id <previous-repository-id> --json
 ```
 
-The explicit binding keeps saved plans and knowledge at their original physical paths. It refuses an occupied destination or another binding. Repeated application is safe. Rebuild indexes for the new remote ID and refresh active-work proof. Renaming a governing document still requires the existing content-bound intent amendment.
+Both commands use the same AE home as your other `ae` commands; add `--ae-home <path>` if the old store lives elsewhere. The explicit binding keeps saved plans and knowledge at their original physical paths. It refuses an occupied destination or another binding. Repeated application is safe. Rebuild indexes for the new remote ID and refresh active-work proof. Renaming a governing document still requires the existing content-bound intent amendment.
 
-The repository owner then updates package repository/homepage URLs, Pages settings, trusted publisher configuration and release links to the renamed repository. The local directory name can remain unchanged. The `.github/harness` policy directory, `.harness` workspace records, lock filenames, JSON fields, protocol keys and historical evidence retain their existing contracts.
+Package metadata and documentation links already point to the renamed repository. The local directory name can remain unchanged. The `.github/harness` policy directory, `.harness` workspace records, lock filenames, JSON fields, protocol keys and historical evidence retain their existing contracts.
 
 ## Recover learnings that are still on disk
 
-An empty `learnings/` directory is the shell created the first time a checkout is opened. It is not evidence that a learning file was deleted. Consolidated learning files are written only by `ae consolidate --apply`. A store whose git history has never contained a file under `learnings/` never received that command. `config.json` with `"commit": "none"` skips only the checkout mirror at `docs/knowledge/learnings/`. Schema 2 is the current store schema and accepts writes. `ae compound` and `ae remember` write episode files to `projects/<id>/docs/solutions/` in the harness home. A global publication writes `~/.copilot/knowledge/solutions/`. The harness home has no `knowledge/solutions/` directory. From the product checkout, point the command at the home you want to repair:
+An empty `learnings/` directory is the shell created the first time a checkout is opened. It is not evidence that a learning file was deleted. Learning files are written only by `ae consolidate --apply` and `ae remember`. A store whose git history has never contained a file under `learnings/` never received either command. `config.json` with `"commit": "none"` skips only the checkout mirror at `docs/knowledge/learnings/`. Schema 2 is the current store schema and accepts writes. `ae compound` and `ae remember` write episode files to `projects/<id>/docs/solutions/` in the harness home. A global publication writes `~/.copilot/knowledge/solutions/`. The harness home has no `knowledge/solutions/` directory. From the product checkout, point the command at the home you want to repair:
 
 ```sh
 ae knowledge migrate-store --ae-home ~/.harness --dry-run --json
@@ -75,4 +74,4 @@ Run the command from any directory inside the product checkout. The dry run writ
 
 ## Qualification
 
-Source tests and isolated archive checks do not establish native editor acceptance. The release notes must state the exact archive digest and distinguish automated Windows checks from the later Windows VS Code/Copilot run owned by the user. Publication also requires an owner-controlled npm name and the repository's chosen license terms. No license change is part of this migration.
+Source tests and isolated archive checks do not establish native editor acceptance. Release notes state the exact archive digest and distinguish automated Windows checks from native editor runs. Publication requires an owner-controlled npm name and chosen license terms.
