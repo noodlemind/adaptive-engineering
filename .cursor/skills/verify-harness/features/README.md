@@ -4,7 +4,7 @@ This directory is the maintained source for verifying user-facing Harness CLI be
 
 ## Baseline preconditions
 
-- Work from a prompt-library checkout that contains `packages/ae/bin/ae.mjs`.
+- Work from an Adaptive Engineering checkout that contains `packages/ae/bin/ae.mjs`.
 - Run `node .cursor/skills/verify-harness/scripts/doctor.mjs` and require exit `0`.
 - Drive only disposable git workspaces. Never pass `--workspace` at the operator checkout for a mutating proof.
 - Set `AE_HOME` and `--copilot-home` to temp directories owned by the drive.

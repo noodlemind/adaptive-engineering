@@ -90,7 +90,7 @@ test('the Investigate confirmation rule has one authored source and exact native
 test('installed copilot instructions omit the repository project description', () => {
   const source = read(path.join(corpus, 'copilot-instructions.md'));
   assert.match(source, /## Project/);
-  assert.match(source, /Skill-driven prompt library/);
+  assert.match(source, /Adaptive Engineering corpus/);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-corpus-install-'));
   const copilot = path.join(root, 'copilot');
   const workspace = path.join(root, 'ws');
@@ -105,6 +105,6 @@ test('installed copilot instructions omit the repository project description', (
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const installed = read(path.join(copilot, 'copilot-instructions.md'));
   assert.doesNotMatch(installed, /## Project/);
-  assert.doesNotMatch(installed, /Skill-driven prompt library/);
+  assert.doesNotMatch(installed, /Adaptive Engineering corpus/);
   assert.match(installed, /## Primitives/);
 });

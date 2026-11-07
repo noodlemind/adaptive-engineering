@@ -40,7 +40,7 @@ final gate requires their union to match the current discovered inventory exactl
 once and to name the same source revision.
 
 Initial weights in `.github/ci/windows-test-costs.json` come from that complete
-passing run ([39330090134](https://github.com/noodlemind/prompt-library/actions/runs/39330090134)).
+passing run ([39330090134](https://github.com/noodlemind/adaptive-engineering/actions/runs/39330090134)).
 File attribution was inferred from unique test titles and covered about 92% of
 observed duration. These are scheduling hints,
 not correctness proof or a speedup claim. New runs use Node's file-completion
@@ -59,7 +59,7 @@ root npm configuration or license files. Both operating systems install their
 exact archive. Manual execution remains available.
 
 Documentation runs when its workflow, renderer, site templates or one of its
-three canonical Markdown inputs changes. The input list follows
+Markdown inputs changes. The input list follows
 `scripts/build-docs.mjs`. Publishing still requires a manual run with the publish
 input enabled.
 

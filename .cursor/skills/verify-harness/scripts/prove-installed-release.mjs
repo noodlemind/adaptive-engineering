@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-assert.equal(process.argv.length, 2, 'Run this check from the prompt-library checkout without arguments.');
+assert.equal(process.argv.length, 2, 'Run this check from the repository checkout without arguments.');
 assert.equal(process.platform, 'darwin', 'This proof requires the currently supported macOS experiment sandbox.');
 assert.ok(process.env.HARNESS_CHECK_ARTIFACT_DIR, 'The verification controller must provide HARNESS_CHECK_ARTIFACT_DIR.');
 const artifactRoot = fs.realpathSync(path.resolve(process.env.HARNESS_CHECK_ARTIFACT_DIR));

@@ -1,4 +1,4 @@
-/** First-run / replay Adaptive Engineer story. Session chrome, not a kernel command. */
+/** First-run / replay Adaptive Engineering story. Session chrome, not a kernel command. */
 
 import { overlayBoxChrome, overlayBoxWidth } from './overlay.mjs';
 import { clipTo, displayWidth, wrapCells } from './width.mjs';
@@ -7,7 +7,7 @@ export const WALKTHROUGH_SEEN_KEY = 'walkthrough.seen';
 
 export const WALKTHROUGH_BEATS = Object.freeze([
   {
-    title: 'Adaptive Engineer Harness',
+    title: 'Adaptive Engineering',
     footer: 'Enter next · ← → · Esc skip',
     body: Object.freeze([
       'This is the evidence-governed kernel behind @engineer. The model may be stochastic. Delivery is not: intent is locked, mutation is gated, "done" requires fresh proof, and only proven work is allowed to become team memory.',
