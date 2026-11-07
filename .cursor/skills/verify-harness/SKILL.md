@@ -11,7 +11,7 @@ The user-facing surface is the `ae` CLI in `packages/ae`. There is no web UI. Ag
 
 There is no long-lived server. Install package deps once, then start each drive in its own temp git workspace.
 
-From the prompt-library root:
+From the repository root:
 
 ```bash
 node packages/ae/bin/ae.mjs help

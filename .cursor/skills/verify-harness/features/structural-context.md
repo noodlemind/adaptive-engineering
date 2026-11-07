@@ -19,7 +19,7 @@ Read cited source relationships, bounded change impact and retained historical g
 
 ## Driving it
 
-Preconditions: Work from the prompt-library checkout with Git, a supported Node runtime and package dependencies installed. Require the verification recipe's Doctor to pass. Each proof owns and cleans its disposable workspaces and temporary homes.
+Preconditions: Work from the repository checkout with Git, a supported Node runtime and package dependencies installed. Require the verification recipe's Doctor to pass. Each proof owns and cleans its disposable workspaces and temporary homes.
 
 - **Doctor.** Run `node .cursor/skills/verify-harness/scripts/doctor.mjs`; require exit `0` before driving.
 - **Relationships and impact.** Run `node packages/ae/bin/ae.mjs checks run verify-structural-context --json`; require exit `0`, check status `passed` and the captured `structural-context/drive.json` artifact. The real CLI must include a caller in impact, exclude a commented import, cite the import occurrence, retain historical facts after an edit, refresh live impact and return a current source-bound orientation packet.

@@ -332,8 +332,8 @@ const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
  * verifiedAndPlans: a distinct-plans count) as pure assertions — nothing on
  * the read path verifies a `plan` points at a real plan file; it remains an
  * assertion feeding only human-gated displays (`ae learnings --why`,
- * `consolidate --status`), never an automated decision on its own (P1-1,
- * documented in docs/adaptive-engineer-harness.md). Still admitted with a shape check:
+ * `consolidate --status`), never an automated decision on its own (P1-1).
+ * Still admitted with a shape check:
  * when present, must be a short, single-line, workspace-relative-LOOKING
  * string — never a vehicle for a control-char injection (inertLine's doc
  * comment covers the render-side half of that same defense) or a `..`

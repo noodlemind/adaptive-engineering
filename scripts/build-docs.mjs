@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = process.argv[2] && path.resolve(process.argv[2]);
 if (!output || fs.existsSync(output)) throw new Error('Provide a new output directory.');
-const repository = process.env.GITHUB_REPOSITORY || 'noodlemind/prompt-library';
+const repository = process.env.GITHUB_REPOSITORY || 'noodlemind/adaptive-engineering';
 if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('Invalid repository identity.');
 const source = `https://github.com/${repository}/blob/main`;
 fs.cpSync(path.join(root, 'docs/site'), output, { recursive: true });

@@ -18,7 +18,7 @@ knowledge/
 
 | Artifact | Location |
 |----------|----------|
-| Active issues / plans | `.harness/plans/` (gitignored) or committed `docs/plans/` |
+| Active issues / plans | `~/.ae/projects/<repo-id>/plans/`; existing `.harness/plans/` and `docs/plans/` stay readable |
 | Reusable fixes / patterns | Here (`knowledge/solutions/`) |
 | Repo-private episodes | `~/.ae/projects/<repo-id>/docs/solutions/` or committed `docs/solutions/` |
 | Repo-specific conventions | `.harness/agent-context.md` or committed `docs/agent-context.md` |
