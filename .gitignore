@@ -12,3 +12,6 @@ evals/
 .superpowers/
 
 .cursor/skills/verify-harness/evidence/
+
+# Local audit and research notes — never committed
+.audit/
