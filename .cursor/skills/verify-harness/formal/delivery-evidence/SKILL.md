@@ -7,7 +7,7 @@ description: Check the bounded delivery-evidence model plus actual AE CLI/hook b
 
 Read this skill explicitly from the selected verify-harness recipe. It is a repo-local specialized skill, not a new global entry or a claim of native editor registration.
 
-The promise is that governed product edits require accepted intent, verified-delivery learning requires current source/intent-bound proof, and recovery controls do not authorize mixed product mutations. Violations can allow unintended edits or certify stale work. Accepted authority is `docs/adaptive-engineering.md` and the shipped Harness tool contract, recorded in `manifest.json`.
+The promise is that governed product edits require accepted intent, verified-delivery learning requires current source/intent-bound proof, and recovery controls do not authorize mixed product mutations. Violations can allow unintended edits or certify stale work. Accepted authority is `docs/adaptive-engineering.md`, `docs/reference/plans-and-proof.md` and the shipped Harness tool contract, recorded in `manifest.json`.
 
 Run from the repository root:
 

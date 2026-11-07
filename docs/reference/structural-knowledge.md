@@ -63,3 +63,46 @@ The named `verify-structural-context` drive exercises actual CLI impact, citatio
 Live studies require frozen tasks, exact model identity, retention policy, budget and acceptance checks. Measure correctness, missed evidence, unsupported assertions, citations and abstention before time or tokens. Existing promotion requirements and legacy defaults remain unchanged. Mechanical tests establish no model-quality or productivity gain.
 
 Use `ae diagrams graph` for a rendered dependency view. Its projections retain the additive graph evidence. Cited imports remain descriptive evidence, not runtime traces, architecture correctness or formal proof; flow diagrams separately retain their committed-default-branch model scope.
+
+## Repository dependencies
+
+Use the file graph when an orientation neighborhood needs more detail:
+
+```bash
+ae graph deps src/main.mjs --depth 2 --json
+ae graph dependents src/service.mjs --depth 2 --json
+ae graph path src/main.mjs src/audit.mjs --json
+ae index --structural
+```
+
+Queries read current tracked source files and reuse extraction only when the
+content hash matches. Dirty edits and deleted files affect the next query.
+An uncached query uses lexical extraction and does not build an index.
+`orient --read` advertises the commands without scanning the full graph.
+
+The graph describes observed module imports. Relative paths and unique local
+name matches have separate resolution labels; the latter are heuristics.
+Lexical extraction is approximate, and dynamic runtime dependencies are outside
+its guarantee. Stored symbol references are name matches, not an exact call
+graph. `not-found` means no observed import path within complete reported
+coverage. Missing files, parse errors, unresolved imports, source changes and
+limits qualify absence as `unknown`.
+
+Depth defaults to 1 for dependencies and dependents, and 8 for paths (maximum
+32). Output defaults to 50 edges and unresolved imports (maximum 200 each).
+Queries scan at most 4,000 tracked source files of 200 KB each and retain at
+most 20,000 module edges and 4,000 unresolved imports. JSON reports coverage,
+omissions, extraction tiers, a worktree snapshot hash and any reused generation.
+
+Structural data lives locally under
+`~/.ae/index/<repo-id>/<worktree-id>/structural/`. Each immutable
+`generations/<id>/` contains `meta.json`, `files.json`, `symbols.json` and
+`graph.json`; `current.json` selects one generation and records table hashes.
+Each table is limited to 10 MB. Complete reads and publication share a short
+lock, and publication retains the current and previous generations. A failed
+publication preserves the previous selection. Busy or corrupt caches fall back
+to current lexical facts for graph queries. Locks with a confirmed dead owner
+can recover; missing ownership or interrupted recovery requires inspection.
+Legacy flat indexes remain readable and upgrade on the next build; their
+compatibility read cannot guarantee isolation from an older writer. The cache
+is derived data and stays out of product repositories and Git.
