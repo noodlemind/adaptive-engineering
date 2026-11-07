@@ -173,9 +173,12 @@ test('Git metadata inspection is bounded and recognizes an exact cat pager', (t)
 test('opaque terminal generators fail before execution without a current gate on both native aliases', (t) => {
   const f = fixture(t);
   for (const tool_name of ['run_in_terminal', 'execute/runInTerminal']) {
-    const pre = f.hook('require-plan-gate.mjs', 'node generator.mjs', { tool_name, tool_input: { command: 'node generator.mjs', filePath: f.plan } });
+    const pre = f.hook('require-plan-gate.mjs', 'node generator.mjs', { tool_name });
     assert.equal(pre.permissionDecision, 'deny', tool_name);
     assert.match(pre.permissionDecisionReason, /missing-implement-gate/);
+    const decoy = f.hook('require-plan-gate.mjs', 'node generator.mjs', { tool_name, tool_input: { command: 'node generator.mjs', filePath: f.plan } });
+    assert.equal(decoy.permissionDecision, 'deny', tool_name);
+    assert.match(decoy.permissionDecisionReason, /managed-plan-write/);
   }
   assert.equal(fs.readFileSync(path.join(f.workspace, 'src/generated.txt'), 'utf8'), 'before\n');
 });

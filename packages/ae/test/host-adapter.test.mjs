@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { binPath, runHarness } from './helpers/cli.mjs';
 
-const SLICE_KEYS = ['activePlan', 'checkReadiness', 'contacts', 'contextEvidence', 'gateStatus', 'graph', 'index', 'instructions', 'intentDetail', 'intentDiscovery', 'intentSources', 'layout', 'learnings', 'neighborhood', 'planGoal', 'procedure', 'reviewCoverage', 'skills', 'trust', 'verification'];
+const SLICE_KEYS = ['activePlan', 'checkReadiness', 'contacts', 'contextEvidence', 'gateStatus', 'graph', 'index', 'instructions', 'intentDetail', 'intentDiscovery', 'intentSources', 'layout', 'learnings', 'neighborhood', 'planGoal', 'procedure', 'reviewCoverage', 'skills', 'trust', 'verification', 'workflow'];
 
 function git(cwd, args) {
   return spawnSync('git', args, {
@@ -99,6 +99,9 @@ test('doctor --adapter checks the installed file and grok-build start preserves 
   assert.equal(started.status, 0, started.stderr + started.stdout);
   const slice = JSON.parse(started.stdout);
   assert.deepEqual(Object.keys(slice).sort(), SLICE_KEYS);
+  assert.equal(slice.workflow.plan, null);
+  assert.equal(slice.workflow.mutationAuthority, 'none');
+  assert.equal(slice.workflow.actions[0].tool, 'ae_plan_new');
   assert.equal(slice.trust.trusted, false);
   assert.equal(slice.checkReadiness.status, 'missing');
   assert.equal(slice.checkReadiness.ready, false);

@@ -31,7 +31,7 @@ test('version two is opt-in and a cold read writes no context artifacts', (t) =>
   const f = fixture(t);
   const result = f.invoke('--read', '--context-version', '2', '--file', 'a.mjs');
   assert.equal(result.schema, 'harness.context.v2');
-  assert.equal(Object.keys(result.slice).length, 19);
+  assert.equal(Object.keys(result.slice).length, 20);
   assert.equal(result.slice.checkReadiness.status, 'missing');
   assert.equal(result.slice.checkReadiness.ready, false);
   assert.equal(fs.existsSync(result.slice.checkReadiness.source), false);

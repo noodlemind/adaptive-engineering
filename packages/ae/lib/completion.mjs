@@ -6,6 +6,10 @@ import { validateReview, recordHash, readReviewRecord, publishReviewRecord } fro
 import { validateLearningDecision } from './learning-record.mjs';
 import { experimentProof } from './experiment-authority.mjs';
 import { withGitObservationCache } from './git-observation-cache.mjs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFileNoFollow } from './fs-safe.mjs';
+import { inspectHostIntent } from './host-intent.mjs';
 
 export function openHardGaps(plan, policy) {
   return (plan.fm.capability_gaps || []).filter(gap => {
@@ -13,6 +17,19 @@ export function openHardGaps(plan, policy) {
     if (!['bridge', 'waived'].includes(gap.fulfillment)) return true;
     return !policy.waivers.some(waiver => waiver && typeof waiver === 'object' && waiver.plan === plan.path && waiver.gap === gap.id && waiver.action === gap.fulfillment && typeof waiver.reason === 'string' && waiver.reason.trim());
   });
+}
+
+function requireReconciledIntent(workspace, plan) {
+  let message;
+  try {
+    const current = readFileNoFollow(plan.fullPath || path.resolve(workspace, plan.path), { maxBytes: 1024 * 1024 });
+    const observation = inspectHostIntent({ workspace, planPath: plan.fullPath || plan.path,
+      revision: current === null ? undefined : createHash('sha256').update(current).digest('hex') });
+    if (observation.state === 'pending') message = 'Observed intent must be reconciled by a current plan decision before completion';
+  } catch (error) {
+    message = `Host intent cannot be established: ${error.message}`;
+  }
+  if (message) throw Object.assign(new Error(`Completion blocked: ${message}`), { code: 'E_TARGET', exit: 1 });
 }
 
 export function proofPrerequisites({ workspace, plan, copilotHome }) {
@@ -50,6 +67,7 @@ export function completionPrerequisites(options) {
 const completionRel = plan => `.harness/completions/${recordHash(plan.path)}.json`;
 
 export function completeWork({ workspace, plan, copilotHome, dryRun = false }) {
+  requireReconciledIntent(workspace, plan);
   const recordRoot = planRecordRoot(workspace, plan);
   const checked = completionPrerequisites({ workspace, plan, copilotHome });
   if (!checked.pass) throw Object.assign(new Error(`Completion blocked: ${checked.message}`), { code: 'E_TARGET', exit: 1 });
@@ -60,6 +78,7 @@ export function completeWork({ workspace, plan, copilotHome, dryRun = false }) {
   if (!dryRun) {
     const fresh = completionPrerequisites({ workspace, plan, copilotHome });
     if (!fresh.pass || fresh.id !== record.id) throw new Error('Work changed before completion publication');
+    requireReconciledIntent(workspace, plan);
     publishReviewRecord(recordRoot, rel, record);
   }
   return record;

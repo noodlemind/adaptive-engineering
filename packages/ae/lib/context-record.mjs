@@ -8,6 +8,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { accountContext } from './token-meter.mjs';
 import { policyDigest } from './trust.mjs';
 import { DEFAULT_MAX_BYTES } from './fs-safe.mjs';
+import { compactPlanWorkflow } from './plan-decisions.mjs';
 
 const EVIDENCE_LIMIT = 80;
 const MAX_RECORD_BYTES = 32768;
@@ -32,6 +33,7 @@ export function buildContextRecord({ workspace, flags = {}, query = '', facts })
     schema: 'harness.context.v2',
     worktree: worktreeId(workspace),
     task: { plan: facts.active?.path || null, contractDigest: facts.active ? planDigest(facts.active.text) : null },
+    workflow: facts.slice.workflow,
     selection: { queryHash: digest(facts.query ?? query), files: facts.namedFiles },
     sourceState: snapshot.state || null,
     policyDigest: facts.slice.trust.digest || null,
@@ -43,7 +45,7 @@ export function buildContextRecord({ workspace, flags = {}, query = '', facts })
     ...impactSources.map(source => [source.location, source.sha256]),
   ]);
   const currentPlan = facts.active ? loadPlan(workspace, facts.active.path, { home: flags.harnessHome || flags.home }) : null;
-  const planChanged = facts.active && (!currentPlan || planDigest(currentPlan.text) !== identity.task.contractDigest);
+  const planChanged = facts.active && (!currentPlan || currentPlan.text !== facts.active.text);
   const currentPolicy = policyDigest(workspace, undefined, { home: flags.harnessHome || flags.home });
   const changed = Boolean(facts.slice.impactContext?.coverage.sourceState === 'changed-or-unavailable' || planChanged || !currentPolicy || currentPolicy !== identity.policyDigest || !snapshot.valid || !after.valid || snapshot.state.digest !== after.state.digest || evidence.some((record) =>
     (record.sha256 && inspectSourceFile(workspace, record.location, { maxBytes: DEFAULT_MAX_BYTES }).hash !== record.sha256) ||
@@ -74,7 +76,7 @@ export function buildContextRecord({ workspace, flags = {}, query = '', facts })
   if (!omittedNewFile && Buffer.byteLength(JSON.stringify(record)) <= MAX_RECORD_BYTES) return record;
   const barrier = {
     schema: record.schema, contextId: record.contextId, worktree: record.worktree,
-    task: record.task, policyDigest: record.policyDigest,
+    task: record.task, workflow: record.workflow && Buffer.byteLength(JSON.stringify(record.workflow)) > 8192 ? compactPlanWorkflow(record.workflow) : record.workflow, policyDigest: record.policyDigest,
     selection: { queryHash: identity.selection.queryHash, filesHash: digest(JSON.stringify(facts.namedFiles)), fileCount: facts.namedFiles.length },
     sourceState: snapshot.state ? { version: snapshot.state.version, digest: snapshot.state.digest, extractorRevision: snapshot.state.extractorRevision, configDigest: snapshot.state.configDigest } : null,
     evidence: [], slice: null,

@@ -11,6 +11,7 @@ import { bindPlaybook, validatePlaybookBinding } from './playbook-binding.mjs';
 import { locateVerification } from './verification-location.mjs';
 import { validateExperimentContract } from './experiment-contract.mjs';
 import { skillActivationSourceCurrent } from '../corpus/hooks/lib/skill-activation.mjs';
+import { inspectHostIntent } from './host-intent.mjs';
 
 export const PLAN_ACTIONS = Object.freeze(['start', 'amend', 'progress', 'finding', 'gap', 'complete']);
 export const planRevision = text => createHash('sha256').update(text).digest('hex');
@@ -58,6 +59,28 @@ export function planState(plan) {
   const tasks = [...body.matchAll(/^-\s*\[([ xX])\]\s+(.+)$/gm)];
   return { phases: [...body.matchAll(/^### Phase \d+/gm)].length, tasks: tasks.length, completedTasks: tasks.filter(task => task[1] !== ' ').length };
 }
+const DECISION_INPUTS = Object.freeze({ start: [], amend: ['rationale'], progress: ['progress'], finding: ['finding'], gap: ['rationale', 'gap'], complete: [] });
+export function planWorkflow(plan, { workspace, missing = [], evaluatedAction = null } = {}) {
+  const observedIntent = workspace ? inspectHostIntent({ workspace, planPath: plan?.path, revision: plan ? planRevision(plan.text) : undefined }) : { source: 'unobserved', state: 'unavailable' };
+  if (!plan) return { version: 1, plan: null, mutationAuthority: 'none', observedIntent, actions: [{ action: 'create', tool: 'ae_plan_new', command: 'plan-new', arguments: { decision: { version: 1, format: 'full' } }, required: ['goal', 'acceptance'], prerequisites: { state: 'not-evaluated', missing: [] } }] };
+  const revision = planRevision(plan.text);
+  const prerequisites = [...new Set(missing)];
+  const actions = PLAN_ACTIONS.filter(action => (action !== 'start' || ['open', 'needs-info', 'planned', 'in-progress'].includes(plan.status)) && (action !== 'progress' || ['in-progress', 'review'].includes(plan.status))).map(action => {
+    const pending = observedIntent.state === 'pending';
+    const blocked = action === 'complete' && pending ? ['Reconcile the current observed intent before completion'] : evaluatedAction === action ? prerequisites : [];
+    return {
+      action, tool: 'ae_plan_update', command: 'plan-update',
+      arguments: { plan: plan.path, decision: { version: 1, action, expect: revision, ...(pending && action !== 'complete' ? { observedIntent: { id: observedIntent.id } } : {}) } },
+      required: ['id', ...DECISION_INPUTS[action], ...(pending && action !== 'complete' ? ['observedIntent.disposition', 'observedIntent.rationale'] : [])],
+      prerequisites: { state: blocked.length ? 'blocked' : 'not-evaluated', missing: blocked },
+    };
+  });
+  return { version: 1, plan: { path: plan.path, revision, status: plan.status, locked: Boolean(plan.plan_lock), phase: Number(plan.phase) || 0, ...planState(plan) }, mutationAuthority: 'none', observedIntent, actions };
+}
+export function compactPlanWorkflow(workflow) {
+  if (!workflow) return workflow;
+  return { version: workflow.version, plan: workflow.plan, mutationAuthority: 'none', observedIntent: workflow.observedIntent, actions: [], actionsOmitted: workflow.actions.length, requiresRead: true };
+}
 function markProgress(body, heading, ids, { tasks = false } = {}) {
   if (ids === undefined) return body;
   if (!Array.isArray(ids) || !ids.length || !ids.every(id => typeof id === 'string' && /^[A-Za-z][A-Za-z0-9]*$/.test(id))) fail('progress requires criterion or task IDs');
@@ -84,7 +107,7 @@ export function scopePaths(values) {
 }
 
 export function validatePlanDecision(input) {
-  fields(input, ['version', 'id', 'action', 'expect', 'rationale', 'authority', 'changes', 'intentSources', 'intentSelection', 'finding', 'gap', 'migrateIntent', 'progress'], 'operation');
+  fields(input, ['version', 'id', 'action', 'expect', 'rationale', 'authority', 'changes', 'intentSources', 'intentSelection', 'finding', 'gap', 'migrateIntent', 'progress', 'observedIntent'], 'operation');
   if (input.version !== 1 || typeof input.id !== 'string' || !ID.test(input.id) || !PLAN_ACTIONS.includes(input.action) || !HASH.test(input.expect || '')) fail('operation requires version 1, id, action and observed plan sha256 in expect');
   if (input.migrateIntent !== undefined && typeof input.migrateIntent !== 'boolean') fail('migrateIntent must be boolean');
   if (['amend', 'gap'].includes(input.action)) text(input.rationale, 'rationale');
@@ -94,6 +117,12 @@ export function validatePlanDecision(input) {
     fields(input.authority, ['scope', 'basis'], 'authority');
     text(input.authority.scope, 'authority scope');
     text(input.authority.basis, 'authority basis');
+  }
+  if (input.observedIntent !== undefined) {
+    fields(input.observedIntent, ['id', 'disposition', 'rationale'], 'observedIntent');
+    if (text(input.observedIntent.id, 'observed intent id').length > 128 || text(input.observedIntent.rationale, 'observed intent rationale').length > 1000 || !['amend', 'unchanged'].includes(input.observedIntent.disposition)) fail('invalid observedIntent decision');
+    if (input.action === 'complete') fail('complete cannot reconcile new host intent');
+    if (input.observedIntent.disposition === 'amend' && input.action !== 'amend') fail('amend disposition requires an amendment');
   }
   if (input.migrateIntent && (input.authority?.scope !== 'plan-intent' || !input.rationale)) fail('migration requires a rationale and explicit plan-intent authority scope');
   return input;

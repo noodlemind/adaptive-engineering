@@ -12,18 +12,22 @@ import { approveProject } from '../lib/trust.mjs';
 
 const root = path.resolve(packageRoot, '../..');
 const recipes = ['intent-lock', 'prepare', 'issue-worktree'];
+const checks = YAML.parse(fs.readFileSync(path.join(root, '.github/harness/checks.yaml'), 'utf8')).checks;
 
 for (const feature of recipes) {
   for (const fail of [false, true]) {
     test(`${feature} drive preserves evidence and cleans its fixtures on ${fail ? 'failure' : 'success'}`, t => {
       const evidenceRoot = tempDir('recipe-evidence-');
       t.after(() => fs.rmSync(evidenceRoot, { recursive: true, force: true }));
+      const timeout = checks[`verify-${feature}`]?.timeout_seconds * 1000;
+      assert.ok(Number.isSafeInteger(timeout) && timeout > 0, `${feature} requires a bounded configured timeout`);
       const result = spawnSync(process.execPath, [`.cursor/skills/verify-harness/scripts/prove-${feature}.mjs`], {
         cwd: root,
         encoding: 'utf8',
-        timeout: 40_000,
+        timeout,
         env: { ...process.env, HARNESS_DRIVE_EVIDENCE_ROOT: evidenceRoot, HARNESS_DRIVE_FAIL_AFTER: fail ? '1' : '' },
       });
+      assert.ifError(result.error);
       assert.equal(result.status, fail ? 1 : 0, result.stderr);
       const dir = path.join(evidenceRoot, feature);
       const files = fs.readdirSync(dir).filter(file => file.endsWith('.json'));
@@ -47,7 +51,6 @@ for (const feature of recipes) {
 }
 
 test('each verification recipe is a configured behavioral named check', () => {
-  const checks = YAML.parse(fs.readFileSync(path.join(root, '.github/harness/checks.yaml'), 'utf8')).checks;
   for (const feature of recipes) {
     const check = checks[`verify-${feature}`];
     assert.ok(check, feature);

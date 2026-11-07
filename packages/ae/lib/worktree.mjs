@@ -226,13 +226,18 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
   const root = primaryRoot(workspace);
   const dest = path.join(root, '.worktrees', slug);
   const branch = `harness/${slug}`;
-  const start = resolveStartPoint(workspace, from);
-  if (dryRun) {
-    return { path: dest, branch, created: false, isolated: true, dryRun: true };
+  let start = resolveStartPoint(workspace, from);
+  if (from !== undefined) {
+    if (typeof from !== 'string' || !from || from.startsWith('-') || /[\0\r\n]/.test(from)) throw usage('worktree: --from requires a commit or revision');
+    start = gitOut(workspace, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${from}^{commit}`]);
+    if (!start) throw usage(`worktree: --from ${from} could not be resolved to a commit`);
   }
-  const prefix = readGitArgs(root);
-  if (!prefix) throw usage('worktree: Git helper configuration could not be resolved safely');
-  ensureWorktreeIgnore(root);
+  const requireStart = (head, existing) => {
+    if (from !== undefined && (!head || gitOut(root, ['merge-base', '--is-ancestor', start, head]) === null)) {
+      throw usage(`worktree: ${existing} does not contain requested --from ${from} (${start}), or its ancestry could not be verified; choose a fresh --slug for this start point`);
+    }
+  };
+  let reuse = false;
   if (fs.existsSync(dest)) {
     const destReal = physicalPath(path.resolve(dest));
     const listed = gitOut(root, ['worktree', 'list', '--porcelain']) || '';
@@ -243,15 +248,25 @@ export function addIsolatedWorktree({ workspace, slug, from, dryRun = false, rec
     });
     const primaryCommon = gitCommonDir(root);
     if (destReal && primaryCommon && (listedHit || isLinkedWorktree(dest)) && gitCommonDir(dest) === primaryCommon) {
-      carryCheckoutPlans(root, dest);
-      if (record) recordAeWorktree(root, dest);
-      return { path: dest, branch: currentBranch(dest) || branch, created: false, isolated: true };
-    }
-    throw usage(`worktree: ${dest} exists and is not a worktree of this repository`);
+      requireStart(gitOut(dest, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']), dest);
+      reuse = true;
+    } else throw usage(`worktree: ${dest} exists and is not a worktree of this repository`);
+  }
+  const branchHead = reuse ? null : gitOut(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]);
+  if (branchHead) requireStart(branchHead, branch);
+  if (dryRun) {
+    return { path: dest, branch, created: false, isolated: true, dryRun: true };
+  }
+  const prefix = readGitArgs(root);
+  if (!prefix) throw usage('worktree: Git helper configuration could not be resolved safely');
+  ensureWorktreeIgnore(root);
+  if (reuse) {
+    carryCheckoutPlans(root, dest);
+    if (record) recordAeWorktree(root, dest);
+    return { path: dest, branch: currentBranch(dest) || branch, created: false, isolated: true };
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const branchExists = Boolean(gitOut(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]));
-  const args = branchExists
+  const args = branchHead
     ? ['worktree', 'add', '--no-checkout', dest, branch]
     : ['worktree', 'add', '--no-checkout', '-b', branch, dest, start];
   const hooksDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-worktree-hooks-'));

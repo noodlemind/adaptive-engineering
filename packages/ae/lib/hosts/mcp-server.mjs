@@ -3,6 +3,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { windowsTaskkillExecutable } from '../../corpus/hooks/lib/git-executable.mjs';
+import { validatePlanDecision } from '../plan-decisions.mjs';
+import { planCreationDecisionSchema, planUpdateDecisionSchema } from './plan-decision-schemas.mjs';
 
 // Explicit legacy stdio compatibility. No claim of the 2026 per-request protocol.
 export const MCP_PROTOCOL_VERSIONS = Object.freeze(['2025-11-25', '2025-03-26', '2024-11-05']);
@@ -17,8 +19,8 @@ const DEFINITIONS = [
   { name: 'ae_get_reference', command: 'get', description: 'Read a reference from the selected AE corpus. Not a substitute for required native skill activation.', properties: { reference: TEXT }, required: ['reference'], read: true },
   { name: 'ae_gate', command: 'gate', description: 'Ask the existing kernel for an implement gate on an accepted plan.', properties: { plan: TEXT }, required: ['plan'] },
   { name: 'ae_verify', command: 'verify', description: 'Run existing plan verification; repo-authored checks require the existing person-approved trust decision.', properties: { plan: TEXT, base: TEXT }, required: ['plan', 'base'] },
-  { name: 'ae_plan_new', command: 'plan-new', description: 'Submit an authored plan creation decision to the existing CLI writer.', properties: { decision: DECISION }, required: ['decision'] },
-  { name: 'ae_plan_update', command: 'plan-update', description: 'Submit a revision-bound authored decision to the existing plan writer.', properties: { plan: TEXT, decision: DECISION }, required: ['plan', 'decision'] },
+  { name: 'ae_plan_new', command: 'plan-new', description: 'Submit a structured creation decision to the CLI writer; no decision file or shell quoting is needed. The CLI validates readiness and source bindings.', properties: { decision: planCreationDecisionSchema() }, required: ['decision'] },
+  { name: 'ae_plan_update', command: 'plan-update', description: 'Submit an action-specific decision using the observed plan revision. The CLI writes amendments and progress, validates state, and rejects stale revisions. No manual plan edit or decision file is needed.', properties: { plan: TEXT, decision: planUpdateDecisionSchema() }, required: ['plan', 'decision'] },
   { name: 'ae_review_prepare', command: 'review', verb: 'prepare', description: 'Capture the accepted plan scope and current required review perspectives.', properties: { plan: TEXT, base: TEXT }, required: ['plan', 'base'] },
   { name: 'ae_review_assemble', command: 'review', verb: 'assemble', description: 'Collect actual packet-bound review results. Reviewer declarations never authenticate an invocation.', properties: { plan: TEXT, packet: TEXT, decision: DECISION }, required: ['plan', 'packet', 'decision'] },
   { name: 'ae_compound', command: 'compound', description: 'Submit a learning decision after current passed verification. Existing proof requirements remain authoritative.', properties: { plan: TEXT, decision: DECISION }, required: ['plan', 'decision'] },
@@ -42,6 +44,10 @@ function validateArguments(definition, args) {
     if (type === 'string' && (typeof value !== 'string' || !value.trim() || value.length > 4096 || value.startsWith('-') || /[\u0000-\u001f\u007f]/.test(value))) throw invalid(`Invalid string argument: ${key}`);
     if (type === 'object' && !object(value)) throw invalid(`Invalid decision object: ${key}`);
     if (type === 'array' && (!Array.isArray(value) || value.length > 64 || value.some(item => typeof item !== 'string' || !item.trim() || item.length > 4096 || item.startsWith('-') || /[\u0000-\u001f\u007f]/.test(item)))) throw invalid(`Invalid file list: ${key}`);
+  }
+  if (definition.command === 'plan-update' && args.decision.action !== 'convert') {
+    try { validatePlanDecision(args.decision); }
+    catch (error) { throw invalid(error.message); }
   }
 }
 
@@ -162,7 +168,7 @@ export function startMcpServer({ workspace = process.cwd(), home, corpusHome, sk
         if (initialized) throw Object.assign(new Error('Already initialized'), { rpcCode: -32600 });
         if (!object(value.params) || typeof value.params.protocolVersion !== 'string' || !object(value.params.capabilities) || !object(value.params.clientInfo)) throw invalid('Invalid initialize parameters');
         initialized = true;
-        result(id, { protocolVersion: MCP_PROTOCOL_VERSIONS.includes(value.params.protocolVersion) ? value.params.protocolVersion : MCP_PROTOCOL_VERSIONS[0], capabilities: { tools: {} }, serverInfo: { name: 'ae-harness', version }, instructions: 'AE tools are bound to the startup workspace and existing trust/proof requirements. Native host tools outside AE are not intercepted by MCP.' });
+        result(id, { protocolVersion: MCP_PROTOCOL_VERSIONS.includes(value.params.protocolVersion) ? value.params.protocolVersion : MCP_PROTOCOL_VERSIONS[0], capabilities: { tools: {} }, serverInfo: { name: 'ae-harness', version }, instructions: `AE tools are bound to startup workspace ${JSON.stringify(workspace)} and existing trust/proof requirements. These tools do not follow another editor folder or worktree; reconnect with that workspace explicitly. Native host tools outside AE are not intercepted by MCP.` });
       } else if (value.method === 'ping') result(id, {});
       else if (!ready) throw Object.assign(new Error('Initialize the MCP session first'), { rpcCode: -32002 });
       else if (value.method === 'tools/list') {
