@@ -31,6 +31,7 @@ export function buildPluginPackage({ packageRoot, workspace }) {
   const portableMarker = marker.replaceAll('\\', '/');
   const portable = text => text.replaceAll(`${portableMarker}/skills`, '<skills-root>').replaceAll(portableMarker, '<ae-plugin-root>')
     .replace(/^If the `ae` command is unavailable on PATH, invoke the installed package directly with literal argv:.*$/gm, 'If `ae` is unavailable on PATH, install a compatible AE CLI separately before using this package. The portable package provides no runtime executable fallback.')
+    .replace(/^For native decision preparation or recording, use these exact installed executable argv elements:.*$/gm, 'Native decision preparation and recording require a separately configured native integration and its actual installed executable and root binding. This portable package supplies no native hook bootstrap authority.')
     .replace(/## Host hook boundary\n[\s\S]*?(?=\n## Context budget mapping\n)/, '## Host hook boundary\n\nThis portable package configures no native hooks. MCP guards only operations routed through AE; client permissions and unrelated native tools remain separate. Package loading is not evidence of native activation or independent review.\n');
   const files = projection.files.map(file => {
     let rel = file.root === 'skills' ? `skills/${file.path}` : file.path;

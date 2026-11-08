@@ -6,16 +6,19 @@ import { createHash } from 'node:crypto';
 import { parseFlags } from './flags.mjs';
 import { positionalsOf } from './positionals.mjs';
 import { loadPlan } from './plan-parse.mjs';
-import { createEvidenceBinding, proofPolicyDigest } from './evidence.mjs';
+import { createEvidenceBinding, proofPolicyDigest, readEvidence, validateEvidence } from './evidence.mjs';
 import { collectChangedFiles } from './plan-scope.mjs';
 import { readFileNoFollow, writeFileContained, readBoundedInput } from './fs-safe.mjs';
-import { ensureHarnessDir } from './session.mjs';
+import { ensureHarnessDir, readSession } from './session.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { redactedJson } from './redact.mjs';
 import { reviewPreparation, preparationIsCurrent, selectedDocumentSources, refreshDocumentSources, reviewHash, stableJson, compareText, DOCUMENT_REVIEW_DEFINITIONS } from './review-preparation.mjs';
 import { synthesizeReview, renderReview } from './review-synthesis.mjs';
+import { createReviewTour, validateReviewTour } from './review-tour.mjs';
+import { discoverCapabilities } from './capability-catalog.mjs';
+import * as nativeSpecialists from './native-specialist-observation.mjs';
 
-export const REVIEW_VERBS = Object.freeze(['prepare', 'assemble']);
+export const REVIEW_VERBS = Object.freeze(['prepare', 'assemble', 'tour']);
 const ID = /^[a-f0-9]{64}$/;
 export const recordHash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const reviewKey = plan => recordHash(plan?.path || 'standalone');
@@ -72,6 +75,24 @@ export function publishReviewRecord(workspace, rel, record) {
   return rel;
 }
 
+/** Re-derived source binding for native reviewer observations, never a client pass flag. */
+export function nativeReviewPacketBinding({ workspace, home, copilotHome, packetId }) {
+  try {
+    if (!ID.test(packetId || '')) return { current: false, reason: 'Invalid review packet identity' };
+    const relative = `.harness/reviews/packets/${packetId}.json`;
+    let packet = readReviewRecord(workspace, relative);
+    const planPath = packet?.plan || readSession(workspace)?.activePlan;
+    const plan = planPath ? loadPlan(workspace, planPath, { home }) : null;
+    if (!packet && plan) packet = readReviewRecord(planRecordRoot(workspace, plan), relative);
+    if (!packet || packet.version !== 2 || packet.id !== packetId || packetHash(packet) !== packetId
+      || packet.plan !== (plan?.path || null) || !packet.adaptive?.independentReview) return { current: false, reason: 'Current adaptive review packet is unavailable' };
+    const scope = packetScopeNow(workspace, plan, packet, copilotHome);
+    if (stableJson(scope) !== stableJson(packet.scope) || !preparationIsCurrent(workspace, packet.preparation, { plan, home, copilotHome })) return { current: false, reason: 'Review packet source, provider or consent changed' };
+    return { current: true, binding: { workspace: fs.realpathSync.native(workspace), packet: packetId, plan: packet.plan, scope,
+      policyRevision: packet.adaptive.policyRevision, preparationHash: reviewHash(packet.preparation) }, providers: packet.preparation.providers || [] };
+  } catch (error) { return { current: false, reason: error.message }; }
+}
+
 export function prepareReview({ workspace, plan, base = null, copilotHome, kind = 'code', reviewers = [], files = null, maxBytes = 16384, dryRun = false, home }) {
   const recordRoot = planRecordRoot(workspace, plan);
   if (!['code', 'document'].includes(kind)) throw usage('Review domain must be code or document');
@@ -79,7 +100,7 @@ export function prepareReview({ workspace, plan, base = null, copilotHome, kind 
   const selectedDocument = kind === 'document' && !plan && files?.length;
   if (selectedDocument && !validBase(base)) throw usage('Review base must be a nonempty safe string or null');
   const scope = selectedDocument ? { mode: 'selected-document-v1', base, policyDigest: proofPolicyDigest(workspace, copilotHome), files: selectedDocumentSources(workspace, files) } : currentReviewScope(workspace, plan, base, copilotHome);
-  const prepared = reviewPreparation({ workspace, scope, plan, kind, reviewers, files: files || (plan?.fm?.domain_parent ? [plan.path] : null), maxBytes, home });
+  const prepared = reviewPreparation({ workspace, scope, plan, kind, reviewers, files: files || (plan?.fm?.domain_parent ? [plan.path] : null), maxBytes, home, copilotHome });
   const contract = { version: 2, plan: plan?.path || null, kind, scope, ...prepared };
   const id = reviewHash(contract);
   const packet = { ...contract, id, createdAt: new Date().toISOString() };
@@ -87,10 +108,10 @@ export function prepareReview({ workspace, plan, base = null, copilotHome, kind 
   const existing = readReviewRecord(recordRoot, rel);
   if (existing) {
     if (packetHash(existing) !== id) throw usage('Stored review packet is invalid');
-    if (selectedDocument && (stableJson(scope) !== stableJson(packetScopeNow(workspace, plan, existing, copilotHome)) || !preparationIsCurrent(workspace, existing.preparation, { plan, home }))) throw usage('Review scope changed during preparation');
+    if (selectedDocument && (stableJson(scope) !== stableJson(packetScopeNow(workspace, plan, existing, copilotHome)) || !preparationIsCurrent(workspace, existing.preparation, { plan, home, copilotHome }))) throw usage('Review scope changed during preparation');
     return existing;
   }
-  if (JSON.stringify(scope) !== JSON.stringify(packetScopeNow(workspace, plan, packet, copilotHome)) || !preparationIsCurrent(workspace, prepared.preparation, { plan, home })) throw usage('Review scope changed during preparation');
+  if (JSON.stringify(scope) !== JSON.stringify(packetScopeNow(workspace, plan, packet, copilotHome)) || !preparationIsCurrent(workspace, prepared.preparation, { plan, home, copilotHome })) throw usage('Review scope changed during preparation');
   if (Buffer.byteLength(JSON.stringify(packet)) > 1024 * 1024) throw usage('Review packet exceeds storage limit; narrow the explicit review files');
   if (!dryRun) publishReviewRecord(recordRoot, rel, packet);
   return packet;
@@ -103,13 +124,17 @@ export function assembleReview({ workspace, plan, packetId, input, copilotHome, 
   if (!packet || packet.id !== packetId || packetHash(packet) !== packetId) throw usage('Review packet is missing or tampered');
   if (packet.version !== 2) throw usage('Review packet version requires current preparation; version 1 records remain readable');
   const scope = packetScopeNow(workspace, plan, packet, copilotHome);
-  if (packet.plan !== (plan?.path || null) || JSON.stringify(scope) !== JSON.stringify(packet.scope) || (packet.version === 2 && !preparationIsCurrent(workspace, packet.preparation, { plan, home }))) throw usage('Review packet is stale; prepare and review the current scope');
+  if (packet.plan !== (plan?.path || null) || JSON.stringify(scope) !== JSON.stringify(packet.scope) || (packet.version === 2 && !preparationIsCurrent(workspace, packet.preparation, { plan, home, copilotHome }))) throw usage('Review packet is stale; prepare and review the current scope');
   if (input?.packet !== packetId || !Array.isArray(input.results)) throw usage('Results must reference the packet and contain a results array');
-  const synthesis = synthesizeReview(workspace, packet.required, input, packet.preparation?.failures || [], packet.kind === 'document' ? packet.preparation.refs : [], scope.mode === 'selected-document-v1');
-  const value = { version: packet.version, plan: packet.plan, packet: packetId, kind: packet.kind || 'code', scope, required: packet.required, declaredRequired: packet.declaredRequired || packet.required, ...synthesis };
+  const synthesis = synthesizeReview(workspace, packet.required, input, packet.preparation?.failures || [], packet.kind === 'document' ? packet.preparation.refs : [], scope.mode === 'selected-document-v1', {
+    requireIndependent: Boolean(packet.adaptive?.independentReview), providers: packet.preparation?.providers || [],
+    observationFor: (result, provider) => nativeSpecialists.validateReviewObservation?.({ workspace, home: plan ? planHome(workspace, plan) : home,
+      copilotHome, packetId, result, provider, sessionId: readSession(workspace)?.sessionId }),
+  });
+  const value = { version: packet.version, plan: packet.plan, packet: packetId, kind: packet.kind || 'code', ...(packet.adaptive ? { adaptive: packet.adaptive } : {}), scope, required: packet.required, declaredRequired: packet.declaredRequired || packet.required, ...synthesis };
   const id = reviewHash(value);
   const record = { ...value, id, recordedAt: new Date().toISOString() };
-  if (JSON.stringify(scope) !== JSON.stringify(packetScopeNow(workspace, plan, packet, copilotHome)) || (packet.version === 2 && !preparationIsCurrent(workspace, packet.preparation, { plan, home }))) throw usage('Review scope changed during assembly');
+  if (JSON.stringify(scope) !== JSON.stringify(packetScopeNow(workspace, plan, packet, copilotHome)) || (packet.version === 2 && !preparationIsCurrent(workspace, packet.preparation, { plan, home, copilotHome }))) throw usage('Review scope changed during assembly');
   if (Buffer.byteLength(JSON.stringify(record)) > 1024 * 1024) throw usage('Review record exceeds storage limit; reduce input size');
   const observationPath = `.harness/reviews/observations/${recordHash(input)}.json`;
   if (!dryRun) {
@@ -121,11 +146,11 @@ export function assembleReview({ workspace, plan, packetId, input, copilotHome, 
   return { ...record, observationPath };
 }
 
-export function validateReview({ workspace, plan, copilotHome }) {
+export function validateReview({ workspace, plan, copilotHome, requireHandoff = false }) {
   const home = planHome(workspace, plan);
   const recordRoot = planRecordRoot(workspace, plan);
   const required = plan.fm.reviews?.required || [];
-  if (!required.length) return { pass: true, record: null, missing: [], critical: [], message: 'No required reviews' };
+  if (!required.length && !requireHandoff) return { pass: true, record: null, missing: [], critical: [], message: 'No required reviews' };
   const pointer = readReviewRecord(recordRoot, `.harness/reviews/latest/${reviewKey(plan)}.json`);
   const record = ID.test(pointer?.id || '') ? readReviewRecord(recordRoot, `.harness/reviews/records/${pointer.id}.json`) : null;
   const failure = message => ({ pass: false, record, missing: required.slice(), critical: [], message });
@@ -138,23 +163,73 @@ export function validateReview({ workspace, plan, copilotHome }) {
   if (JSON.stringify(record.scope) !== JSON.stringify(currentReviewScope(workspace, plan, record.scope.base, copilotHome))) return failure('Reviewed content or policy changed; prepare and review the current scope');
   if (record.version === 2) {
     const packet = readReviewRecord(recordRoot, `.harness/reviews/packets/${record.packet}.json`);
-    if (!packet || packetHash(packet) !== record.packet || packet.kind !== record.kind || JSON.stringify(packet.required) !== JSON.stringify(record.required) || !preparationIsCurrent(workspace, packet.preparation, { plan, home })) return failure('Review definitions or retrieved sources changed');
+    if (!packet || packetHash(packet) !== record.packet || packet.kind !== record.kind || JSON.stringify(packet.required) !== JSON.stringify(record.required) || !preparationIsCurrent(workspace, packet.preparation, { plan, home, copilotHome })) return failure('Review definitions or retrieved sources changed');
+    if (packet.adaptive?.independentReview) for (const result of record.results.filter(result => result.status === 'completed')) {
+      const provider = packet.preparation.providers.find(value => value.perspective === result.reviewer);
+      const observation = nativeSpecialists.validateReviewObservation?.({ workspace, home, copilotHome, packetId: packet.id,
+        result: result.raw, provider, sessionId: result.provenance?.sessionId });
+      if (result.provenance?.independence !== 'separate-reviewer' || !observation?.valid) return failure('Required independent native review observation is absent or stale');
+    }
+    if (packet.adaptive?.tourRequired) {
+      const tour = validateReviewTour({ workspace, recordRoot, packet, currentScope: packetScopeNow(workspace, plan, packet, copilotHome), plan, home, copilotHome });
+      if (!tour.pass) return failure(tour.message);
+    }
   }
   if (!record.coverage?.complete) return { ...failure('Review coverage is incomplete'), missing: record.coverage?.missing || required };
   return { pass: true, record, missing: [], critical: record.findings.filter(f => f.severity === 'P1'), message: 'Required results collected; review judgment and invocation identity remain host responsibilities' };
+}
+
+export async function authorReviewTour({ workspace, plan, packetId, input, home, copilotHome, dryRun = false }) {
+  const recordRoot = planRecordRoot(workspace, plan);
+  if (!ID.test(packetId || '')) throw usage('--packet requires the captured packet ID');
+  const packet = readReviewRecord(recordRoot, `.harness/reviews/packets/${packetId}.json`);
+  if (!packet || packet.id !== packetId || packetHash(packet) !== packetId || packet.plan !== (plan?.path || null)) throw usage('Review packet is missing, tampered or bound to another plan');
+  const result = await createReviewTour({ workspace, recordRoot, plan, packet, input, home, copilotHome, currentScope: packetScopeNow(workspace, plan, packet, copilotHome), dryRun });
+  if (JSON.stringify(packet.scope) !== JSON.stringify(packetScopeNow(workspace, plan, packet, copilotHome)) || !preparationIsCurrent(workspace, packet.preparation, { plan, home, copilotHome })) throw usage('Review scope changed during tour rendering');
+  return result;
+}
+
+/** Server-derived handoff evidence for the native decision agent; input claims never establish readiness. */
+export function reviewReadinessEvidence({ workspace, home, copilotHome, planPath }) {
+  const failures = [];
+  const plan = typeof planPath === 'string' ? loadPlan(workspace, planPath, { home }) : null;
+  if (!plan) return { ready: false, binding: { plan: planPath || null }, failures: ['A current valid plan is required for review readiness'] };
+  try {
+    const recordRoot = planRecordRoot(workspace, plan);
+    const catalog = discoverCapabilities({ workspace, home: planHome(workspace, plan), copilotHome, limit: 1 });
+    const review = validateReview({ workspace, plan, copilotHome, requireHandoff: catalog.configured });
+    if (!review.pass) failures.push(review.message);
+    if (review.critical.length) failures.push('Critical review findings remain open');
+    const pointer = readReviewRecord(recordRoot, `.harness/reviews/latest/${reviewKey(plan)}.json`);
+    const record = ID.test(pointer?.id || '') ? readReviewRecord(recordRoot, `.harness/reviews/records/${pointer.id}.json`) : null;
+    const packet = ID.test(record?.packet || '') ? readReviewRecord(recordRoot, `.harness/reviews/packets/${record.packet}.json`) : null;
+    let tour = null;
+    if (catalog.configured || packet?.adaptive?.tourRequired) {
+      if (!packet?.adaptive || !record?.coverage?.complete) failures.push('Adaptive handoff requires a current independent review packet and complete specialist coverage');
+      if (packet) {
+        tour = validateReviewTour({ workspace, recordRoot, plan, packet, home, copilotHome, currentScope: packetScopeNow(workspace, plan, packet, copilotHome) });
+        if (!tour.pass) failures.push(tour.message);
+      } else failures.push('A current source-linked review tour is required');
+    }
+    const evidence = readEvidence(recordRoot, plan.path);
+    const verification = validateEvidence({ workspace, plan, evidence, copilotHome });
+    if (!verification.pass) failures.push(verification.message);
+    const binding = { plan: plan.path, scope: currentReviewScope(workspace, plan, packet?.scope?.base || null, copilotHome), policyRevision: catalog.policyRevision, review: record?.id || null, packet: packet?.id || null, tour: tour?.pass ? { id: tour.id, sources: tour.sources } : null, verification: evidence ? reviewHash(evidence) : null };
+    return { ready: failures.length === 0, binding, failures: [...new Set(failures)] };
+  } catch (error) { return { ready: false, binding: { plan: plan.path }, failures: [...new Set([...failures, error.message])] }; }
 }
 
 export async function reviewResultOf(argv) {
   const flags = parseFlags(argv);
   const positionals = positionalsOf(argv);
   const verb = positionals[0];
-  if (!REVIEW_VERBS.includes(verb)) throw usage('review requires prepare or assemble');
+  if (!REVIEW_VERBS.includes(verb)) throw usage('review requires prepare, assemble or tour');
   const boundary = argv.indexOf('--');
   const unexpected = positionals[1] ?? (boundary === -1 ? undefined : argv[boundary + 1]);
   if (unexpected !== undefined) throw usage(`review: unexpected argument ${unexpected}; use --file for input paths`);
-  if (verb === 'assemble' && flags.files?.length > 1) throw usage('review assemble: --file accepts one JSON document containing all reviewer results');
+  if (verb !== 'prepare' && flags.files?.length > 1) throw usage(`review ${verb}: --file accepts one JSON document`);
   const workspace = path.resolve(flags.workspace);
-  const plan = flags.plan ? loadPlan(workspace, flags.plan) : null;
+  const plan = flags.plan ? loadPlan(workspace, flags.plan, { home: flags.harnessHome }) : null;
   if (flags.plan && !plan) throw usage('Review plan is missing or invalid');
   const copilotHome = resolveCopilotHome(flags.copilotHome);
   if (verb === 'prepare') {
@@ -165,6 +240,7 @@ export async function reviewResultOf(argv) {
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw usage('Review input is absent, unreadable, or too large');
   let input;
   try { input = JSON.parse(text); } catch { throw usage('Review input must be JSON'); }
+  if (verb === 'tour') return authorReviewTour({ workspace, plan, home: flags.harnessHome, packetId: flags.packet, input, copilotHome, dryRun: flags.dryRun });
   const result = assembleReview({ workspace, plan, home: flags.harnessHome, packetId: flags.packet, input, copilotHome, dryRun: flags.dryRun });
   const recordPath = `.harness/reviews/records/${result.id}.json`;
   const rendered = renderReview({ ...result, recordPath });

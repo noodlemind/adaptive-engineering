@@ -8,7 +8,7 @@ Canonical primitive creator and maintainer for the harness. Use it to keep the l
 
 ## When to Use
 
-- A personal agent, skill, or instruction is created only by `ae resources create <skill|agent|instruction> <name>` with a schema1 decision file via `--file`. The command writes under the Copilot home.
+- A personal agent, skill, or instruction is created only by `ae resources create <skill|agent|instruction> <name>` with a schema1 decision file via `--file`. The command writes under the selected host configuration/skills roots. Native support is explicit: refuse an unmapped type rather than writing Copilot metadata as fallback. A pending-reload result requires actual host reload/availability before use.
 - A skill for every install is a commit under `packages/ae/corpus/skills/<name>/SKILL.md`. Agents use `packages/ae/corpus/agents/<name>.agent.md`. Instructions use `packages/ae/corpus/instructions/<name>.instructions.md`.
 - Creating a new review check (bundled under `packages/ae/corpus/skills/code-review/references/checks/*.md` or product-owned `.github/checks/*.md`)
 - Creating or moving dense supporting material into skill `references/` or `assets/`
@@ -49,7 +49,7 @@ Do not create a new agent just to store reference material. Put long criteria in
 
 ### Host Mapping
 
-The harness corpus is host-neutral source material. The current primary consumption target is GitHub Copilot in VS Code and IntelliJ IDEA.
+The harness corpus is host-neutral source material. Select the configured Copilot, Claude Code, Codex, Cursor, or terminal integration. Native configuration, permission isolation, and observed invocation are separate facts.
 
 | Primitive | Host-native status |
 |---|---|
@@ -64,7 +64,7 @@ Do not claim feature parity across hosts. When a host lacks a primitive, documen
 
 ## Creator Workflow
 
-Ship-set edits under `packages/ae/corpus/skills/`, `packages/ae/corpus/agents/`, `packages/ae/corpus/instructions/`, `packages/ae/corpus/enterprise/`, `.github/checks/`, or `packages/ae/corpus/knowledge/capability-registry.yaml` are governed primitive work. `.github/prompts/` stays retired, and reintroduction requires this governance. A personal skill, agent, or instruction is created only by `ae resources create <skill|agent|instruction> <name>` with a schema1 decision file via `--file`, writing under the Copilot home. Do not plan an edit of the product repo or this checkout for a personal primitive. Before a ship-set edit, use this sequence: classify primitive → check overlap → decide minimal artifact structure → record the change rationale and, before creating or substantially expanding a skill, promotion evidence → create or reuse a plan → gate → edit → run primitive verification → report evidence.
+Ship-set edits under `packages/ae/corpus/skills/`, `packages/ae/corpus/agents/`, `packages/ae/corpus/instructions/`, `packages/ae/corpus/enterprise/`, `.github/checks/`, or `packages/ae/corpus/knowledge/capability-registry.yaml` are governed primitive work. `.github/prompts/` stays retired, and reintroduction requires this governance. A personal skill, agent, or instruction is created only by `ae resources create <skill|agent|instruction> <name>` with a schema1 decision file via `--file`, writing under the selected host configuration/skills roots, with expected-digest protection for updates. Do not plan an edit of the product repo or this checkout for a personal primitive. Before a ship-set edit, use this sequence: classify primitive → check overlap → decide minimal artifact structure → record the change rationale and, before creating or substantially expanding a skill, promotion evidence → create or reuse a plan → gate → edit → run primitive verification → report evidence.
 
 Activation means this `SKILL.md` was actually loaded in the current chat session. Do not claim activation by only adding `create-primitive` to `skills_used`.
 
@@ -75,16 +75,16 @@ Inspect both repository-owned capabilities and, when those installed paths exist
 Before writing files:
 
 1. **Classify the primitive** using the decision rules above.
-2. **Check for overlap** in `<copilot-home>/skills/`, `<copilot-home>/agents/`, `<copilot-home>/instructions/`, skill `references/`, `<copilot-home>/knowledge/solutions/`, optional product `.github/checks/`, and product `docs/solutions/`. The home defaults to `~/.copilot`. The home rule is in `knowledge-locations.md`.
+2. **Check for overlap** in eligible shipped and consented user/enterprise catalog sources, skill `references/`, knowledge solutions, optional product `.github/checks/`, and product `docs/solutions/`. On a miss, refresh approved roots once when ongoing discovery consent permits. Honor exclusion, revocation, source changes, and tool permissions. The home rule is in `knowledge-locations.md`.
 3. **State the decision** before editing: "This should be a [primitive] because [boundary]."
 4. **Define triggers and negative triggers** for discovery when the primitive is user/model selectable.
-5. **Declare permissions/tool needs** using the smallest sufficient tool set.
+5. **Declare permissions/tool needs** using the smallest sufficient tool set. Record existing direct authorization or the current standing grant and use the native decision-agent for the exact capability/action judgment; a model cannot supply missing authority.
 6. **Define outputs and verification**: generated files, state changes, review criteria, or acceptance checks.
 7. **Add eval scenarios**: for promoted or core/confusable skills, add 8–10 should-trigger prompts, 8–10 should-not/confusable prompts, outcome assertions, and supported-host coverage. Checks and instructions need good/bad examples.
 8. **Update docs** listed in the validation checklist.
 9. **Update growth inventory** when adding a skill or agent to the ship set:
    - Add the named entry to the version 2 `capabilities` mapping in `packages/ae/corpus/knowledge/capability-registry.yaml`, with its type, lifecycle status, owner, version, origin, and applicable trigger and eval evidence. Do not use the retired `starter_skills` or `starter_agents` inventories.
-   - If new agent is delegatable from `@engineer`, add to `engineer_allowlist` and `engineer.agent.md` frontmatter `agents:` (human-approved).
+   - If new agent is delegatable from `@engineer`, add to `engineer_allowlist` and the Engineer adapter's `agents:` under recorded authorization, then regenerate Engineer exports; never hand-edit generated `engineer.agent.md`.
 
 Before the first full `ae verify`, map every acceptance criterion to trusted checks from the selected configuration source reported by `ae checks list --json`, complete only the tasks and criteria actually proven, and include `prompt-contracts` and `host-contracts` when those standard primitive checks are configured. Inspect candidate commands/assertions: a specialized check for another output (such as `schema-validation` with no schema artifact) is forbidden. In a product repo where standard primitive checks are absent, use only the generic or strongest relevant local named check and state that the harness contract checks are not present. Do not invent check names, run unrelated optional checks, repair their failures, widen scope for them, or fake registry updates.
 
@@ -92,7 +92,7 @@ Before the first full `ae verify`, map every acceptance criterion to trusted che
 
 When invoked because `@engineer` or another skill found a missing capability, read `<copilot-home>/skills/references/capability-gap-proposal.md` with the host read tool before creating or substantially changing primitives. Outside the enforce hook, `ae get --reference skills/references/capability-gap-proposal.md --json` prints the same file. Follow the steps in that template's `## Usage Workflow`.
 
-Do not create primitives in non-interactive mode unless prior human approval is already recorded.
+In non-interactive mode, create or update only within recorded direct authorization or a current scoped standing grant. Do not ask again for covered work. The decision-agent's bounded verdict is internal judgment, not user authority. A required specialist can be acquired on first need; recurring-skill promotion follows the separate evidence rules below.
 
 ### Promotion evidence
 
@@ -117,7 +117,7 @@ When the evidence for the promotion originates from the knowledge layer rather t
 3. Use that evidence in the promotion evidence record above, then create the primitive and open its PR through the normal creator workflow.
 4. Only after the primitive's PR merges, record the promotion: `ae learning promote <id> --to <path>`. This leaves the learning's `status` untouched and stamps only `promoted_to`, which retires it from ranking, cap counts, and future promotion candidates.
 
-Promotion is never automatic — the CLI only records history after a human has merged the PR; it never creates or approves the primitive itself.
+The Engineer may automatically draft, validate, review, and install within current scoped authorization, but it cannot authorize its own scope or merge a PR without that authority. The CLI records promotion history only after the primitive PR merges; it never supplies the user's approval.
 
 ## Primitive Creation Paths
 
@@ -182,6 +182,12 @@ Required locations:
 ## Detailed creation paths
 
 For per-type creation detail — agent classifications and templates, skill patterns, cross-tool frontmatter, token budgets, review-check, and instruction creation — read `creation-details.md` on demand.
+
+## Execution detail
+
+Before writing, read the matching `skill-template.md`, `agent-template.md`, `instruction-template.md`, or `check-template.md` here with the host read tool. Read `creation-details.md` for per-type patterns, frontmatter, and budgets. Use the selected native writer, minimum permissions, and current expected digests for personal resources. Preserve `pending-reload`: role publication is not invocation evidence. Hosts that inherit parent authority require explicit `grants.hostAuthority` for automatic adoption or acquisition; an omitted tool list does not establish read-only isolation.
+
+When critical state, retry, concurrency, or input properties need durable verification, read `formal-verification.md` here with the host read tool. Create or maintain the specialized check inside the selected product recipe, with accepted properties, source coverage, negative controls, implementation correspondence, and rerunnable evidence. This extends the existing product skill; it does not add a global entry point. Preserve failed or blocked maintenance results and keep requirement changes subject to accepted intent.
 
 ## Validation
 

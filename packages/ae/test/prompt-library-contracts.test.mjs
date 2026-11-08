@@ -166,10 +166,17 @@ test('engineer agent is frozen, thin, and leaves the delivery checklist to the h
   for (const mode of ['Answer', 'Investigate', 'Deliver', 'Review']) {
     assert.match(engineer, new RegExp(`\\*\\*${mode}\\*\\*`), `missing ${mode} mode`);
   }
-  assert.match(engineer, /Switch .* to Deliver before editing/i);
+  assert.match(engineer, /Requested file changes enter Deliver before editing/i);
   assert.match(engineer, /For changed work/i);
   assert.match(engineer, /code-review[\s\S]{0,80}require passed `ae verify`/);
   assert.match(engineer, /ae plan-update/);
+  assert.match(engineer, /Use orient's `workflow` and bound AE plan tools/);
+  assert.match(engineer, /Reconcile pending `workflow\.observedIntent`/);
+  assert.match(engineer, /Check readiness apart from trust/);
+  assert.match(engineer, /Compound before completion\/cleanup/);
+  assert.match(engineer, /after commit\/merge revalidate final HEAD/);
+  assert.match(engineer, /adaptive-lifecycle\.md/);
+  assert.match(engineer, /source-linked visual tour/);
   assert.match(engineer, /architect\/SKILL\.md/);
   assert.match(engineer, /do not edit the CLI's state store in the editor/i);
 
@@ -184,7 +191,7 @@ test('engineer recovers blocked mutations, routes primitives, and exposes findin
   const frontmatter = YAML.parse(engineer.match(/^---\n([\s\S]*?)\n---/)?.[1] || '');
   const handoffs = new Map((frontmatter.handoffs || []).map((handoff) => [handoff.label, handoff]));
 
-  assert.match(engineer, /requested file mutation enters Deliver before the first edit/i);
+  assert.match(engineer, /Requested file changes enter Deliver before editing/i);
   assert.match(engineer, /blocked[\s\S]*ensure-plan[\s\S]*start decision[\s\S]*implement gate before editing/i);
   assert.match(engineer, /skill, agent, instruction, prompt, check, reference, or solution[\s\S]{0,100}create-primitive/i);
   assert.match(engineer, /skills\/create-primitive\/SKILL\.md[\s\S]{0,180}not activation/i);
@@ -428,7 +435,9 @@ test('delivery keeps the smallest change and review flags extra code', () => {
 
   const engineer = read('packages/ae/corpus/agents/engineer.agent.md');
   assert.match(engineer, /smallest change that meets the spec/);
-  assert.match(engineer, /Investigate\*\* names evidence and never calls `plan-new` or `ensure-plan`/);
+  const investigation = engineer.split('**Investigate**')[1].split('**Review**')[0];
+  assert.match(investigation, /names evidence/);
+  assert.match(investigation, /never call(?:s)? `plan-new` or `ensure-plan`/);
   assert.doesNotMatch(engineer, /fix the findings/);
 
   const globalWorkflow = read('packages/ae/corpus/instructions/harness-global.instructions.md');
@@ -539,14 +548,25 @@ test('corpus hooks are the only hook tree and their cwd token is hooks', () => {
   assert.equal(exists('packages/ae/assets'), false);
   assert.equal(exists('scripts/build-harness-assets.mjs'), false);
   const hooks = JSON.parse(read('packages/ae/corpus/hooks/hooks.json'));
-  const cwds = [];
-  for (const entries of Object.values(hooks.hooks || {})) {
+  assert.equal(hooks.version, 1);
+  const commandsByEvent = {};
+  for (const [event, entries] of Object.entries(hooks.hooks || {})) {
+    assert.ok(Array.isArray(entries) && entries.length, `${event} must contain hook groups`);
+    commandsByEvent[event] = [];
     for (const entry of entries) {
-      for (const command of entry.hooks || []) cwds.push(command.cwd);
+      assert.ok(Array.isArray(entry.hooks) && entry.hooks.length, `${event} must contain commands`);
+      for (const command of entry.hooks) {
+        assert.equal(command.type, 'command');
+        assert.equal(command.cwd, 'hooks', `${event} must hydrate its cwd token`);
+        assert.ok(Number.isFinite(command.timeout) && command.timeout > 0);
+        commandsByEvent[event].push(command.command);
+      }
     }
   }
-  assert.deepEqual(cwds, ['hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks', 'hooks']);
-  assert.ok(hooks.hooks.UserPromptSubmit[0].hooks.some(command => command.command === 'node observe-user-intent.mjs'));
+  assert.ok(commandsByEvent.PreToolUse.includes('node guard-decision.mjs'));
+  assert.ok(commandsByEvent.PostToolUse.includes('node record-successful-edit.mjs'));
+  assert.deepEqual(commandsByEvent.SubagentStop, ['node observe-decision.mjs']);
+  assert.ok(commandsByEvent.UserPromptSubmit.includes('node observe-user-intent.mjs'));
 });
 
 test('prompt-library retains at most one non-terminal PR plan and documents cleanup', () => {

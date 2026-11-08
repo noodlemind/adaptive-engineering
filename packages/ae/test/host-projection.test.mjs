@@ -41,7 +41,7 @@ test('Claude native roles preserve read-only tool boundaries and bounded main-th
   assert.ok(actor.tools.includes('Bash') && actor.tools.includes('Edit') && actor.tools.includes('Write'));
   assert.ok(!actor.tools.some(tool => tool.startsWith('Agent')));
   const engineer = metadata(find(result, 'config', 'agents/engineer.md'));
-  assert.ok(engineer.tools.some(tool => tool.startsWith('Agent(code-implementer,')));
+  assert.ok(engineer.tools.some(tool => tool.startsWith('Agent(') && tool.includes('code-implementer')));
   assert.equal(engineer.model, undefined);
   assert.equal(engineer.permissionMode, undefined);
   assert.ok(result.limitations.some(line => /subagent.*allowlist/i.test(line)));
@@ -69,7 +69,7 @@ test('Codex agents use standalone TOML and report inherited permission limitatio
   const text = find(result, 'config', 'agents/engineer.toml');
   assert.match(text, /^name = "engineer"\ndescription = /);
   const prompt = JSON.parse(text.split('\n').find(line => line.startsWith('developer_instructions = ')).slice('developer_instructions = '.length));
-  assert.match(prompt, /successful implement gate before editing/);
+  assert.match(prompt, /(?:successful implement gate|pass its implement gate) before editing/);
   assert.ok(prompt.includes(portablePath(path.join(skillsHome, 'engineer/references/ae-instructions.md'))));
   assert.doesNotMatch(text, /sandbox_mode|approval_policy|model_provider|config_file/);
   assert.equal(find(result, 'config', 'AGENTS.md'), undefined);
@@ -168,14 +168,25 @@ test('CRLF source instructions receive the same native invocation guidance', t =
   }
 });
 
-test('native personal skill creation is mapped while personal roles and instructions remain explicit capability gaps', () => {
+test('native personal resource writers declare actual activation and scoped-instruction limits', () => {
   for (const host of ['claude-code', 'codex', 'cursor', 'terminal']) {
     const result = project(host);
     const creator = find(result, 'skills', 'create-primitive/SKILL.md');
     assert.equal(result.capabilities.personalSkillCreation, true);
-    assert.equal(result.capabilities.personalRoleCreation, false);
+    assert.equal(result.capabilities.personalRoleCreation, true);
+    assert.equal(result.capabilities.personalInstructionCreation, true);
+    assert.equal(result.capabilities.nativeScopedInstructions, ['claude-code', 'cursor'].includes(host));
     assert.match(creator, /Native personal skills[\s\S]*schema 1[\s\S]*`ae resources create skill/);
-    assert.match(creator, /personal agents and instructions[\s\S]*unmapped capability/i);
+    assert.match(creator, /Personal agents and instructions[\s\S]*same schema 1/);
+    assert.match(creator, /pending reload/);
     assert.match(creator, /Do not fall back to Copilot/);
   }
+});
+
+test('approved external delegation is projected only into the Engineer role', () => {
+  const result = projectHostCorpus({ packageRoot, host: 'claude-code', configHome, skillsHome, personalAgents: ['enterprise-reviewer'] });
+  const engineer = metadata(find(result, 'config', 'agents/engineer.md'));
+  assert.ok(engineer.tools.some(tool => tool.startsWith('Agent(') && tool.includes('enterprise-reviewer')));
+  const reviewer = metadata(find(result, 'config', 'agents/security-sentinel.md'));
+  assert.ok(!reviewer.tools.some(tool => tool.startsWith('Agent(')));
 });

@@ -11,6 +11,7 @@ import { performanceContext, performanceContextIsCurrent } from './performance.m
 import { parsePlanFrontmatter } from './plan-parse.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors, canonicalPath } from './fs-safe.mjs';
 import { readProductDiff, gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
+import { discoverCapabilities, resolveCapability } from './capability-catalog.mjs';
 
 export const CODE_REVIEWERS = Object.freeze(['architecture-strategist', 'security-sentinel', 'performance-oracle', 'code-simplicity-reviewer', 'pattern-recognition-specialist']);
 export const REVIEW_BUDGET_CAP = 3;
@@ -91,6 +92,11 @@ function source(root, rel, origin) {
   return { origin, path: rel.replace(/\\/g, '/'), state: bytes === null ? (missing ? 'missing' : 'unreadable') : 'regular', sha256: bytes === null ? null : createHash('sha256').update(origin === 'domain-plan' ? planContractText(bytes.toString('utf8')) : bytes).digest('hex'), ...(origin === 'domain-plan' ? { hashPolicy: 'work-contract-v3' } : {}) };
 }
 
+function installedSource(resource) {
+  const bytes = readFileNoFollow(resource.path, { root: resource.root, encoding: null });
+  return { origin: 'installed', path: resource.path, resourceId: resource.key, name: resource.id, format: resource.format, state: bytes === null ? 'unreadable' : 'regular', sha256: bytes === null ? null : createHash('sha256').update(bytes).digest('hex') };
+}
+
 function projectPlanLocation(workspace, file, { plan } = {}) {
   const context = domainContextOf(plan);
   if (context && typeof file === 'string') {
@@ -134,6 +140,11 @@ export function readReviewFile(workspace, ref, options = {}) {
 }
 
 function currentSource(workspace, ref, options = {}) {
+  if (ref.origin === 'installed') {
+    const resource = resolveCapability({ ...options, workspace, kind: 'agent', id: ref.name });
+    return resource && resource.key === ref.resourceId && resource.path === ref.path && resource.format === ref.format && resource.invocable !== false
+      ? installedSource(resource) : { ...ref, state: 'unavailable', sha256: null };
+  }
   if (['project-plan', 'domain-plan'].includes(ref.origin)) {
     const location = projectPlanLocation(workspace, ref.path, options);
     return location ? { ...source(location.root, location.rel, ref.origin), path: ref.path } : { ...ref, state: 'unreadable', sha256: null };
@@ -204,7 +215,7 @@ export function discoverReviewChecks(workspace, files) {
   return { checks, failures };
 }
 
-export function reviewPreparation({ workspace, scope, plan, kind, reviewers, files, maxBytes = 16384, home }) {
+export function reviewPreparation({ workspace, scope, plan, kind, reviewers, files, maxBytes = 16384, home, copilotHome }) {
   const corpus = getCorpusRoot();
   const selectedDocument = scope.mode === 'selected-document-v1';
   const selectedRefs = new Map(selectedDocument ? scope.files.map(ref => [ref.path, ref]) : (files?.length ? files : scope.changedFiles).map(file => {
@@ -221,9 +232,28 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
   const perspectives = kind === 'document' ? DOCUMENT_REVIEWERS : [...new Set([...selectedReviewers, ...reviewers, ...declaredRequired.filter(id => id !== 'code-review')])];
   const reserved = kind === 'document' ? perspectives : [...new Set([...CODE_REVIEWERS, ...LANGUAGE_REVIEWERS.map(([id]) => id), ...perspectives])];
   const collisions = discovery.checks.filter(c => c.matched && reserved.includes(c.name)).map(c => `Review check name collides with a required perspective: ${c.name}`);
-  const sources = kind === 'document' ? [source(corpus, DOCUMENT_REVIEW_DEFINITIONS[0], 'corpus')] : perspectives.map(id => source(corpus, `agents/${id}.agent.md`, 'corpus'));
-  sources.push(source(corpus, DOCUMENT_REVIEW_DEFINITIONS[1], 'corpus'));
-  const failures = [...discovery.failures, ...collisions, ...sources.filter(s => !s.sha256).map(s => `Review definition unavailable: ${s.path}`)];
+  const catalogOptions = { workspace, home: plan ? planHome(workspace, plan) : home, copilotHome };
+  const catalog = kind === 'code' ? discoverCapabilities({ ...catalogOptions, limit: 1 }) : null;
+  const adaptive = Boolean(catalog?.configured);
+  const providers = [], acquisitionPrerequisites = [];
+  const sources = kind === 'document' ? [source(corpus, DOCUMENT_REVIEW_DEFINITIONS[0], 'corpus')] : [];
+  if (adaptive) {
+    for (const perspective of required) {
+      // A check is a criterion assigned to a specialist, rather than a new agent role.
+      const criterion = discovery.checks.some(check => check.matched && check.name === perspective);
+      const resource = resolveCapability({ ...catalogOptions, kind: 'agent', id: perspective })
+        || (criterion ? resolveCapability({ ...catalogOptions, kind: 'agent', id: 'code-simplicity-reviewer' }) : null);
+      if (!resource || resource.invocable === false) {
+        acquisitionPrerequisites.push({ perspective, kind: 'agent', workflow: 'create-primitive', state: resource ? 'activation-unavailable' : 'missing-provider', action: 'Acquire or activate an independently invocable specialist, then prepare a new packet' });
+        continue;
+      }
+      providers.push({ perspective, name: resource.id, resourceId: resource.key, path: resource.path, format: resource.format, digest: resource.digest, activation: resource.activation, nativeQualification: resource.nativeQualification });
+      const ref = installedSource(resource);
+      if (!sources.some(value => value.resourceId === ref.resourceId)) sources.push(ref);
+    }
+  } else if (kind === 'code') sources.push(...perspectives.map(id => source(corpus, `agents/${id}.agent.md`, 'corpus')));
+  if (!adaptive) sources.push(source(corpus, DOCUMENT_REVIEW_DEFINITIONS[1], 'corpus'));
+  const failures = [...discovery.failures, ...collisions, ...sources.filter(s => !s.sha256).map(s => `Review definition unavailable: ${s.path}`), ...acquisitionPrerequisites.map(value => `Independent review provider unavailable for ${value.perspective}; follow create-primitive` )];
   const performance = kind === 'code' ? performanceContext({ workspace, home: plan ? planHome(workspace, plan) : home || harnessGlobalHome(), files: covered }) : null;
   if (performance?.state === 'invalid') failures.push('Performance profile is invalid; inspect the current profile before completing review');
   const refs = selectedDocument ? scope.files : covered.map(file => selectedRefs.get(file) || source(workspace, file, 'product'));
@@ -241,10 +271,20 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
     bytes += Buffer.byteLength(excerpt);
     included.push({ ...ref, excerpt, truncated: Buffer.byteLength(text) > Buffer.byteLength(excerpt) });
   }
-  return { declaredRequired, required, preparation: { kind, ...(performance ? { performance } : {}), branch: branchResult.status === 0 ? branchResult.stdout.trim() : null, checks: discovery.checks, sources, refs, files: included, omitted, diff: diff === null ? null : Buffer.from(diff).subarray(0, budget).toString('utf8'), diffTruncated: selectedDocument ? false : diff === null || Buffer.byteLength(diff) > budget, coverage: { totalFiles: covered.length, includedFiles: included.length, omittedFiles: omitted.length, byteBudget: budget, excerptBytes: bytes }, failures, provenance: 'Host invocation identity unknown; declarations and same-context perspectives are not independent evidence' } };
+  return { declaredRequired, required, ...(adaptive ? { adaptive: { schema: 1, policyRevision: catalog.policyRevision, independentReview: true, tourRequired: true } } : {}), preparation: { kind, ...(adaptive ? { catalog: { policyRevision: catalog.policyRevision }, providers, acquisitionPrerequisites, findingsSchema: 'review-findings-v1' } : {}), ...(performance ? { performance } : {}), branch: branchResult.status === 0 ? branchResult.stdout.trim() : null, checks: discovery.checks, sources, refs, files: included, omitted, diff: diff === null ? null : Buffer.from(diff).subarray(0, budget).toString('utf8'), diffTruncated: selectedDocument ? false : diff === null || Buffer.byteLength(diff) > budget, coverage: { totalFiles: covered.length, includedFiles: included.length, omittedFiles: omitted.length, byteBudget: budget, excerptBytes: bytes }, failures, provenance: 'Host invocation identity unknown; declarations and same-context perspectives are not independent evidence' } };
 }
 
 export function preparationIsCurrent(workspace, preparation, options = {}) {
+  if (preparation.catalog) {
+    const catalogOptions = { ...options, workspace, home: options.plan ? planHome(workspace, options.plan) : options.home };
+    const catalog = discoverCapabilities({ ...catalogOptions, limit: 1 });
+    if (!catalog.configured || catalog.policyRevision !== preparation.catalog.policyRevision) return false;
+    for (const provider of preparation.providers) {
+      const resource = resolveCapability({ ...catalogOptions, kind: 'agent', id: provider.perspective })
+        || (preparation.checks.some(check => check.matched && check.name === provider.perspective) ? resolveCapability({ ...catalogOptions, kind: 'agent', id: 'code-simplicity-reviewer' }) : null);
+      if (!resource || resource.invocable === false || resource.key !== provider.resourceId || resource.path !== provider.path || resource.digest !== provider.digest || resource.format !== provider.format) return false;
+    }
+  }
   if (preparation.kind === 'code') {
     const home = options.plan ? planHome(workspace, options.plan) : options.home || harnessGlobalHome();
     if (preparation.performance) {

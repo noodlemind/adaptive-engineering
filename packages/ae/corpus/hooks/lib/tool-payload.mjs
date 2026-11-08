@@ -1,11 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { authorityBin } from './authority-bin.mjs';
 import { windowsEnvironmentValue, spawnGitSync } from './git-executable.mjs';
-import { runtimeHome, runtimeSetting } from './runtime-identity.mjs';
+import { runtimeHome, runtimeSetting, runtimeCopilotHome } from './runtime-identity.mjs';
 
 export const FILE_MUTATION_TOOLS = new Set([
   'Edit',
@@ -622,7 +621,7 @@ function nativeResourceObject(full) {
 const CONFIGURATION_ROOT_FLAGS = ['--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home'];
 const CONTROL_BOOLEAN_FLAGS = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
 
-function boundedControlFlags(args, start, extra = [], { repeatable = [] } = {}) {
+function boundedControlFlags(args, start, extra = [], { repeatable = [], additionalBoolean = [] } = {}) {
   const valued = new Set([...CONFIGURATION_ROOT_FLAGS, ...extra]);
   const seen = new Set(), values = new Map();
   for (let index = start; index < args.length; index++) {
@@ -630,7 +629,7 @@ function boundedControlFlags(args, start, extra = [], { repeatable = [] } = {}) 
     const key = name === '-v' ? '--verbose' : name === '--harness-home' ? '--ae-home' : name;
     if (seen.has(key) && !repeatable.includes(key)) return null;
     seen.add(key);
-    if ((CONTROL_BOOLEAN_FLAGS.has(name) || name === '--read') && split < 0) {
+    if ((CONTROL_BOOLEAN_FLAGS.has(name) || additionalBoolean.includes(name) || name === '--read') && split < 0) {
       if (name === '--read' && args[0] !== 'orient') return null;
       continue;
     }
@@ -648,8 +647,7 @@ function selectedControlRoots(values, workspace) {
   if (!values || !path.isAbsolute(values.get('--workspace') || '') || path.resolve(values.get('--workspace')) !== path.resolve(workspace)
     || !nativeResourcePath(values.get('--workspace'), 'directory')) return false;
   const home = runtimeHome();
-  const xdg = process.env.XDG_CONFIG_HOME && path.join(process.env.XDG_CONFIG_HOME, 'copilot');
-  const copilot = process.env.COPILOT_HOME || (xdg && fs.existsSync(xdg) ? xdg : path.join(os.homedir(), '.copilot'));
+  const copilot = runtimeCopilotHome();
   const skills = runtimeSetting('SKILLS_HOME') || path.join(copilot, 'skills');
   runtimeSetting('HOST'); // Conflicting native aliases cannot select a different binding.
   for (const [flag, selected] of [['--ae-home', home], ['--copilot-home', copilot], ['--skills-home', skills]]) {
@@ -701,7 +699,7 @@ export function checkConfigurationRecoveryControl(tokens, workspace) {
 
 /** The native writer owns schema/CAS checks; this admits only its saved binding. */
 function nativePersonalSkillControl(args, workspace) {
-  if (args[1] !== 'create' || args[2] !== 'skill' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args[3] || '')) return null;
+  if (args[1] !== 'create' || !['skill', 'agent', 'instruction'].includes(args[2]) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args[3] || '')) return null;
   const boolean = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
   const valued = new Set(['--file', '--workspace', '--copilot-home', '--skills-home', '--ae-home', '--harness-home']);
   const seen = new Set(), values = new Map();
@@ -719,7 +717,27 @@ function nativePersonalSkillControl(args, workspace) {
     values.set(key, value);
   }
   try {
-    const host = process.env.AE_HOST;
+    const host = runtimeSetting('HOST');
+    if (!host || ['copilot', 'copilot-cli', 'copilot-vscode', 'copilot-intellij'].includes(host)) {
+      if (values.has('--skills-home') || runtimeSetting('SKILLS_HOME')) return null;
+      if (!values.has('--workspace')) values.set('--workspace', workspace);
+      if (!selectedControlRoots(values, workspace) || !values.has('--copilot-home') || !values.has('--ae-home')) return null;
+      const config = path.resolve(runtimeCopilotHome()), state = path.resolve(runtimeHome());
+      if (path.resolve(values.get('--copilot-home')) !== config || path.resolve(values.get('--ae-home')) !== state) return null;
+      const lock = nativeResourceObject(path.join(config, '.harness-lock.json'));
+      if (lock?.lockVersion !== 2 || lock.package !== 'ae-harness' || lock.installationRoot !== config
+        || !Array.isArray(lock.targets) || !lock.targets.length || lock.targets.some(target => !['cli', 'vscode', 'intellij'].includes(target))
+        || !Array.isArray(lock.files) || lock.files.some(file => typeof file !== 'string' || !file || path.isAbsolute(file) || path.win32.isAbsolute(file) || file.includes('\\') || file.split('/').some(part => !part || part === '.' || part === '..'))) return null;
+      const installed = authorityBin({ includeOverride: false });
+      if (!installed || ![path.join(config, '.ae-bin/bin/ae.mjs'), path.join(config, '.harness-bin/bin/harness.mjs')].includes(path.resolve(installed))
+        || path.resolve(authorityBin()) !== path.resolve(installed)) return null;
+      const input = values.get('--file');
+      if (!input || input !== '-' && !nativeResourcePath(path.resolve(workspace, input), 'file')) return null;
+      const destination = args[2] === 'skill' ? `skills/${args[3]}/SKILL.md`
+        : args[2] === 'agent' ? `agents/${args[3]}.agent.md` : `instructions/${args[3]}.instructions.md`;
+      if (lock.files.includes(destination) || !nativeResourcePath(path.join(config, destination), 'file', true)) return null;
+      return 'resources';
+    }
     if (!['claude-code', 'codex', 'cursor', 'terminal'].includes(host) || process.env.HARNESS_HOST && process.env.HARNESS_HOST !== host) return null;
     const bindings = [['--copilot-home', process.env.COPILOT_HOME], ['--skills-home', process.env.AE_SKILLS_HOME], ['--ae-home', process.env.AE_HOME]];
     for (const [flag, selected] of bindings) {
@@ -737,11 +755,32 @@ function nativePersonalSkillControl(args, workspace) {
     for (const file of manifest.files) {
       if (!file || typeof file !== 'object' || !['config', 'skills'].includes(file.root) || typeof file.path !== 'string' || path.isAbsolute(file.path)
         || file.path.includes('\\') || file.path.split('/').some(part => !part || part === '.' || part === '..') || typeof file.owned !== 'boolean' || !/^[a-f0-9]{64}$/.test(file.sha256 || '')) return null;
-      if (file.root === 'skills' && file.path.startsWith(`${args[3]}/`)) return null;
+      if (args[2] === 'skill' && file.root === 'skills' && file.path.startsWith(`${args[3]}/`)) return null;
     }
     const input = values.get('--file');
     if (!input || input !== '-' && !nativeResourcePath(path.resolve(workspace, input), 'file')) return null;
-    if (!nativeResourcePath(path.join(skills, args[3], 'SKILL.md'), 'file', true)) return null;
+    const destination = args[2] === 'skill' ? path.join(skills, args[3], 'SKILL.md')
+      : args[2] === 'agent' ? path.join(config, 'agents', `${args[3]}${host === 'codex' ? '.toml' : '.md'}`)
+        : path.join(config, host === 'codex' ? 'instructions' : 'rules', `${args[3]}${host === 'cursor' ? '.mdc' : '.md'}`);
+    if (!nativeResourcePath(destination, 'file', true)) return null;
+    return 'resources';
+  } catch { return null; }
+}
+
+/** Preparing/recording a native verdict cannot grant consent or execute a product action. */
+function nativeDecisionControl(args, workspace) {
+  if (args[1] !== 'decision' && args[1] !== 'discover') return null;
+  try {
+    const values = boundedControlFlags(args, 2, args[1] === 'decision' ? ['--file'] : ['--query', '--limit'], { additionalBoolean: args[1] === 'discover' ? ['--refresh'] : [] });
+    if (!values) return null;
+    if (!values.has('--workspace')) values.set('--workspace', workspace);
+    if (!selectedControlRoots(values, workspace)) return null;
+    if (args[1] === 'decision') {
+      const input = values.get('--file');
+      if (!input || input !== '-' && !nativeResourcePath(path.resolve(workspace, input), 'file')) return null;
+    } else if (args.includes('--refresh') && !args.includes('--json')) {
+      return null;
+    }
     return 'resources';
   } catch { return null; }
 }
@@ -762,7 +801,7 @@ export function harnessControlCommand(tokens, workspace) {
   if (!args.length) return 'help';
   if (HARNESS_CONTROL.has(args[0])) return args[0];
   if (args[0] === 'checks' && args[1] === 'configure') return nativeWriterAuthority ? checkConfigurationControl(args, workspace) : null;
-  if (args[0] === 'resources') return nativeWriterAuthority ? nativePersonalSkillControl(args, workspace) : null;
+  if (args[0] === 'resources') return nativeWriterAuthority ? nativeDecisionControl(args, workspace) || nativePersonalSkillControl(args, workspace) : null;
   if (args[0] === 'diagrams') {
     // Hydrated hooks cannot import package lib/. Keep this bounded grammar in
     // step with diagram-cmd.mjs; diagram-native tests cover the shared forms.

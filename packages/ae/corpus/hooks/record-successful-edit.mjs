@@ -5,6 +5,7 @@ import { writeHookEvent } from './lib/events.mjs';
 import { readSessionState, writeSessionState } from './lib/session-state.mjs';
 import { normalizeToolPayload, toolMutationSucceeded } from './lib/tool-payload.mjs';
 import { readSkillActivation } from './lib/skill-activation.mjs';
+import { observeNativeDecision, nativeSkillSources } from './lib/decision-bridge.mjs';
 
 const startedAt = Date.now();
 
@@ -21,8 +22,16 @@ try {
 }
 
 const normalized = normalizeToolPayload(payload);
+try { await observeNativeDecision(payload); }
+catch (error) {
+  // A failed observation never becomes permission; normal edit accounting
+  // still runs and recording the decision will report missing native evidence.
+  writeHookEvent(normalized.workspace, payload, { type: 'post_tool', mutation: false, decision: 'decision-observation-unavailable', blockedReason: error.message });
+}
 const success = toolMutationSucceeded(payload);
-const activation = readSkillActivation(payload);
+let sourceSelection = null;
+try { sourceSelection = await nativeSkillSources(payload); } catch { sourceSelection = []; }
+const activation = readSkillActivation(payload, { additionalSources: sourceSelection || [], restrictSources: sourceSelection !== null });
 const activatedSkill = activation?.skill;
 if (success && activatedSkill) {
   const session = readSessionState(normalized.workspace) || {};

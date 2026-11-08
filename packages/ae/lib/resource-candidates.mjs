@@ -9,6 +9,8 @@ import { withPlanUpdateLock } from './plan-update.mjs';
 import { loadNamedChecks } from './checks.mjs';
 import { consolidateStatus } from './knowledge/consolidate.mjs';
 import { primitivePath, validatePrimitiveContent } from './resource-validation.mjs';
+import { verifiedEpisodeRecurrence } from './resource-recurrence.mjs';
+import { solutionsScanRoots } from './project-layout.mjs';
 
 const fail = message => Object.assign(new Error(message), { code: 'E_USAGE', exit: 2 });
 const digest = text => createHash('sha256').update(text).digest('hex');
@@ -22,6 +24,8 @@ function source(root, rel) {
 }
 export function resourceCandidates({ workspace, copilotHome, home, dryRun = false }) {
   const exact = new Map(), suspected = new Map(), diagnostics = [];
+  const verified = verifiedEpisodeRecurrence({ workspace, home });
+  diagnostics.push(...verified.diagnostics);
   const observe = (map, key, observation, evidence, detail) => {
     const entry = map.get(key) || { identity: key, observations: new Map(), detail };
     if (!entry.observations.has(observation)) entry.observations.set(observation, evidence);
@@ -70,17 +74,17 @@ export function resourceCandidates({ workspace, copilotHome, home, dryRun = fals
   const globalTagClustering = [...tags.values()].filter(e => e.observations.size >= 3).map(e => { const value = { tag: e.identity, count: e.observations.size, evidence: [...e.observations.values()], eligibleToPropose: true, verifiedUse: false }; return { ...value, id: reviewHash(value) }; });
   const { checks, error } = loadNamedChecks(workspace);
   const existingChecks = checks ? Object.keys(checks).sort() : [];
-  const candidates = [...rows, ...related].map(e => ({ ...e, id: reviewHash(e), existingChecks, checkRelevance: 'unassessed; agent decides' })).sort((a, b) => a.id.localeCompare(b.id));
+  const candidates = [...rows, ...related, ...verified.claimRecurrence].map(e => ({ ...e, id: reviewHash(e), existingChecks, checkRelevance: 'unassessed; agent decides' })).sort((a, b) => a.id.localeCompare(b.id));
   const promotion = consolidateStatus({ workspace, copilotHome, home }).promotionCandidates || [];
-  const packet = { schema: 1, verb: 'candidates', status: 'ok', candidates, globalTagClustering, verifiedUsePromotion: { source: 'consolidate --status', assurance: 'legacy fix/plan declarations; audit passed proof before promotion', candidates: promotion }, existingChecks, diagnostics: [...diagnostics, ...(error ? [{ path: '.github/harness/checks.yaml', reason: error }] : [])], activated: false };
+  const packet = { schema: 1, verb: 'candidates', status: 'ok', candidates, resourceUseRecurrence: verified.resourceUseRecurrence, recurrenceCoverage: { omitted: verified.omitted, scanned: verified.scanned, assurance: verified.assurance }, globalTagClustering, verifiedUsePromotion: { source: 'consolidate --status', assurance: 'legacy fix/plan declarations; audit passed proof before promotion', candidates: promotion }, existingChecks, diagnostics: [...diagnostics, ...(error ? [{ path: '.github/harness/checks.yaml', reason: error }] : [])], activated: false };
   const id = reviewHash(packet), packetPath = `.harness/proposals/candidates/${id}.json`;
   if (!dryRun) publishReviewRecord(workspace, packetPath, packet);
-  const bounded = { ...packet, candidates: candidates.slice(0, 100), globalTagClustering: globalTagClustering.slice(0, 100), diagnostics: packet.diagnostics.slice(0, 100), existingChecks: existingChecks.slice(0, 100), verifiedUsePromotion: { ...packet.verifiedUsePromotion, candidates: promotion.slice(0, 100) }, omitted: { candidates: Math.max(0, candidates.length - 100), globalTagClustering: Math.max(0, globalTagClustering.length - 100), diagnostics: Math.max(0, packet.diagnostics.length - 100), existingChecks: Math.max(0, existingChecks.length - 100), verifiedUsePromotion: Math.max(0, promotion.length - 100) }, id, packetPath, persisted: !dryRun };
-  if (Buffer.byteLength(JSON.stringify(bounded)) > 65536) return { schema: 1, verb: 'candidates', status: 'ok', candidates: [], globalTagClustering: [], diagnostics: [], existingChecks: [], verifiedUsePromotion: { ...packet.verifiedUsePromotion, candidates: [] }, activated: false, omitted: { candidates: candidates.length, globalTagClustering: globalTagClustering.length, diagnostics: packet.diagnostics.length, existingChecks: existingChecks.length, verifiedUsePromotion: promotion.length }, id, packetPath, persisted: !dryRun, detail: 'Rows exceed 64 KiB; retrieve the frozen packet by packetPath' };
+  const bounded = { ...packet, candidates: candidates.slice(0, 100), resourceUseRecurrence: packet.resourceUseRecurrence.slice(0, 100), globalTagClustering: globalTagClustering.slice(0, 100), diagnostics: packet.diagnostics.slice(0, 100), existingChecks: existingChecks.slice(0, 100), verifiedUsePromotion: { ...packet.verifiedUsePromotion, candidates: promotion.slice(0, 100) }, omitted: { candidates: Math.max(0, candidates.length - 100), resourceUseRecurrence: Math.max(0, packet.resourceUseRecurrence.length - 100), globalTagClustering: Math.max(0, globalTagClustering.length - 100), diagnostics: Math.max(0, packet.diagnostics.length - 100), existingChecks: Math.max(0, existingChecks.length - 100), verifiedUsePromotion: Math.max(0, promotion.length - 100) }, id, packetPath, persisted: !dryRun };
+  if (Buffer.byteLength(JSON.stringify(bounded)) > 65536) return { schema: 1, verb: 'candidates', status: 'ok', candidates: [], resourceUseRecurrence: [], recurrenceCoverage: packet.recurrenceCoverage, globalTagClustering: [], diagnostics: [], existingChecks: [], verifiedUsePromotion: { ...packet.verifiedUsePromotion, candidates: [] }, activated: false, omitted: { candidates: candidates.length, resourceUseRecurrence: packet.resourceUseRecurrence.length, globalTagClustering: globalTagClustering.length, diagnostics: packet.diagnostics.length, existingChecks: existingChecks.length, verifiedUsePromotion: promotion.length }, id, packetPath, persisted: !dryRun, detail: 'Rows exceed 64 KiB; retrieve the frozen packet by packetPath' };
   return bounded;
 }
 
-export function proposeResource({ workspace, copilotHome, input, dryRun = false }) {
+export function proposeResource({ workspace, copilotHome, home, input, dryRun = false }) {
   const allowed = ['schema', 'operation', 'type', 'name', 'rationale', 'text', 'evidence', 'candidatePacket', 'candidate'];
   if (input?.schema !== 1 || Object.keys(input).some(k => !allowed.includes(k)) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(input.operation || '') || typeof input.rationale !== 'string' || !input.rationale.trim()) throw fail('Proposal needs schema 1, operation, authored type/content and rationale; approval fields cannot activate it');
   const rel = primitivePath(input.type, input.name);
@@ -99,12 +103,13 @@ export function proposeResource({ workspace, copilotHome, input, dryRun = false 
     if (!/^[a-f0-9]{64}$/.test(input.candidatePacket || '')) throw fail('Candidate requires a frozen candidate packet');
     const packet = readReviewRecord(workspace, `.harness/proposals/candidates/${input.candidatePacket}.json`);
     if (!packet || reviewHash(packet) !== input.candidatePacket) throw fail('Candidate packet is absent or damaged');
-    const candidate = [...packet.candidates, ...packet.globalTagClustering].find(e => e.id === input.candidate);
+    const candidate = [...packet.candidates, ...packet.globalTagClustering, ...(packet.resourceUseRecurrence || [])].find(e => e.id === input.candidate);
     if (!candidate) throw fail('Candidate identity is absent from the packet');
     evidence.push(...candidate.evidence);
   }
   for (const ref of evidence) {
-    const root = ref.source === 'copilot' ? copilotHome : workspace;
+    const root = ref.source === 'copilot' ? copilotHome : ref.source === 'user' ? solutionsScanRoots(workspace, { home }).find(root => root.kind === 'user' && root.base === ref.base)?.base : workspace;
+    if (!root) throw fail('Proposal episode source no longer belongs to the selected project store');
     if (source(root, ref.path)?.sha256 !== ref.sha256) throw fail('Proposal evidence changed; prepare again');
   }
   const value = { version: 1, input, evidence, activated: false, approvalPolicy: 'skills/references/human-approval-policy.md' }, id = reviewHash(value);

@@ -8,9 +8,9 @@ import { parseImpactedFiles } from './plan-scope.mjs';
 import { isPrimitivePath } from './primitive-governance.mjs';
 import { projectAuthorityFile } from './project-authority.mjs';
 import { isProjectTrusted } from './trust.mjs';
+import { capabilityInventory } from './capability-catalog.mjs';
 import {
   ID_RE,
-  collectIds,
   loadRoutingPolicy,
   parseRoutingPolicy,
   ruleMatches,
@@ -22,7 +22,10 @@ const RELATIVE = Object.freeze({
   agents: (id) => path.join('agents', `${id}.agent.md`),
 });
 
-export function discoverInventory(roots) {
+export function discoverInventory(roots, options = {}) {
+  const selected = options.copilotHome || roots.find(Boolean);
+  const governed = selected ? capabilityInventory({ ...options, copilotHome: selected }) : null;
+  if (governed) return governed;
   const inventory = { skills: new Map(), instructions: new Map(), agents: new Map() };
   for (const root of roots.filter(Boolean)) {
     if (!fs.existsSync(root)) continue;
@@ -82,22 +85,27 @@ export function evaluateRouting({ policyText, policy, impacted = [], risk = 'gre
   if (loaded.missing) return { ok: true, errors: [], snapshot: emptySnapshot('missing policy') };
   if (loaded.errors.length || !loaded.policy) return { ok: false, errors: loaded.errors, snapshot: null };
 
-  const ids = collectIds(loaded.policy);
+  const input = { impacted, risk, domains, primitive, planLock };
+  const matching = Object.fromEntries(['skills', 'instructions', 'specialists'].map(kind => [kind, (loaded.policy[kind] || []).filter(rule => ruleMatches(rule, input))]));
+  const ids = { skills: matching.skills.map(rule => rule.skill), instructions: matching.instructions.map(rule => rule.instruction), agents: matching.specialists.map(rule => rule.agent) };
   const errors = [];
+  const missingCapabilities = [];
   for (const [kind, values] of Object.entries(ids)) {
     for (const id of values) {
-      if (!inventory?.[kind]?.has(id)) errors.push(`unknown ${kind.replace(/s$/, '')} id: ${id}`);
+      if (!inventory?.[kind]?.has(id)) {
+        errors.push(`unknown ${kind.replace(/s$/, '')} id: ${id}`);
+        missingCapabilities.push({ kind: kind.replace(/s$/, ''), id, resolution: 'Refresh consented sources, then acquire the required capability through create-primitive' });
+      }
     }
   }
-  if (errors.length) return { ok: false, errors, snapshot: null };
+  if (errors.length) return { ok: false, errors, missingCapabilities, snapshot: null };
 
-  const input = { impacted, risk, domains, primitive, planLock };
   const skills = [];
   const instructions = [];
   const specialists = [];
-  for (const rule of loaded.policy.skills || []) if (ruleMatches(rule, input)) pushUnique(skills, rule.skill);
-  for (const rule of loaded.policy.instructions || []) if (ruleMatches(rule, input)) pushUnique(instructions, rule.instruction);
-  for (const rule of loaded.policy.specialists || []) if (ruleMatches(rule, input)) pushUnique(specialists, rule.agent);
+  for (const rule of matching.skills) pushUnique(skills, rule.skill);
+  for (const rule of matching.instructions) pushUnique(instructions, rule.instruction);
+  for (const rule of matching.specialists) pushUnique(specialists, rule.agent);
 
   if (skills.length + instructions.length + specialists.length === 0) {
     return { ok: true, errors: [], snapshot: emptySnapshot('no matching rule') };
@@ -191,7 +199,7 @@ export function routeWorkspace({ workspace, impacted, risk, domains, primitive, 
   const loaded = loadRoutingPolicy(workspace);
   if (loaded.missing) return { ok: true, errors: [], snapshot: emptySnapshot('missing policy') };
   if (loaded.errors.length) return { ok: false, errors: loaded.errors, snapshot: null };
-  const inventory = discoverInventory(roots || primitiveReadRoots(copilotHome));
+  const inventory = discoverInventory(roots || primitiveReadRoots(copilotHome), { workspace, copilotHome, home: process.env.HARNESS_HOME });
   return evaluateRouting({
     policy: loaded.policy,
     impacted,

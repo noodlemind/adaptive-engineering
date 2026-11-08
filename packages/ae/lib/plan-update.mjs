@@ -359,7 +359,7 @@ function structuredPlanUpdate({ workspace, full, input, flags, dryRun, domainCon
     const capturedIntent = validateObservedIntent({ workspace, input });
     if (input.action === 'complete' && inspectHostIntent({ workspace, planPath: plan.path, revision: current }).state === 'pending') throw usage('reconcile the current observed intent before completion');
     const recordedAt = existing?.value.recordedAt || new Date().toISOString();
-    const decision = existing ? { text: existing.value.text, amendments: existing.value.amendments, authority: existing.value.authority } : applyPlanDecision(workspace, plan, input, { applyUpdate: applyPlanUpdate, recordedAt, copilotHome });
+    const decision = existing ? { text: existing.value.text, amendments: existing.value.amendments, authority: existing.value.authority } : applyPlanDecision(workspace, plan, input, { applyUpdate: applyPlanUpdate, recordedAt, copilotHome, home: planHome(workspace, plan) });
     const proposed = planWithText(plan, decision.text);
     const schema = validatePlanSchema(proposed);
     const missing = schema.checks.filter(check => !check.pass).map(check => check.message);

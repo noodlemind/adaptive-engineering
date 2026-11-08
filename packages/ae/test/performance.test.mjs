@@ -14,8 +14,11 @@ const NOW = Date.parse('2026-10-15T12:00:00.000Z');
 const hash = value => createHash('sha256').update(value).digest('hex');
 
 function git(root, ...args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 4000 });
-  assert.equal(result.status, 0, result.stderr);
+  // Allow process startup variance in parallel Windows CI fixture setup.
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 15_000 });
+  assert.equal(result.status, 0, JSON.stringify({ command: ['git', ...args], cwd: root,
+    error: result.error ? { code: result.error.code, message: result.error.message } : null,
+    signal: result.signal, stdout: result.stdout?.slice(-4096), stderr: result.stderr?.slice(-4096) }));
   return result.stdout.trim();
 }
 

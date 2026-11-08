@@ -18,6 +18,7 @@ import { inspectHostIntent } from './lib/host-intent.mjs';
 import { loadHookPolicy, projectTrustIsCurrent } from './lib/policy.mjs';
 import { checkConfigurationRecoveryControl, harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
 import { parseImpactedText } from './lib/impacted-files.mjs';
+import { decisionInputStaging, decisionInputTarget } from './lib/decision-staging.mjs';
 
 const startedAt = Date.now();
 let payload = {};
@@ -345,6 +346,15 @@ try {
 try {
   normalized = normalizeToolPayload(payload);
 } catch (error) { deny('invalid-runtime-configuration', error.message, 'invalid'); }
+const decisionTarget = normalized.targets.some(target => {
+  const relative = path.relative(normalized.workspace, path.resolve(normalized.workspace, target)).replaceAll('\\', '/');
+  return relative === '.harness/decisions' || relative.startsWith('.harness/decisions/');
+});
+if (decisionTarget && !decisionInputTarget(payload, normalized)) deny('unsafe-decision-input', 'Decision authoring requires one direct regular JSON input with no symlink, hardlink or traversal alias', 'invalid');
+if (decisionInputStaging(payload, normalized)) {
+  output({ continue: true });
+  process.exit(0);
+}
 try { syncSessionIdentity(normalized.workspace, normalized.sessionId); }
 catch (error) { deny('invalid-session-identity', error.message, 'invalid'); }
 if (normalized.command) {
