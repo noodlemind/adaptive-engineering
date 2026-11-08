@@ -45,4 +45,23 @@ test('the Windows workflow gate rejects failed or unavailable suite and probe ve
     assert.match(result.stdout, /Harness test suite \(Windows\)/);
     assert.match(result.stdout, expected === 0 ? /full test suite and both gating probes passed/ : /GATE FAILED/);
   }
+  for (const [suite, expected] of [['success', 0], ['failure', 1], ['skipped', 1], ['', 1]]) {
+    const result = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', gate], {
+      encoding: 'utf8',
+      timeout: 20_000,
+      env: {
+        ...process.env,
+        SUITE_OUTCOME: suite,
+        SUITE_SCOPE: 'subset',
+        INVENTORY_OUTCOME: 'success',
+        REDACTION_RESULT: 'pass',
+        REDACTION_REASON: 'fixture redaction verdict',
+        CANCELLATION_RESULT: 'pass',
+        CANCELLATION_REASON: 'fixture cancellation verdict',
+        GITHUB_STEP_SUMMARY: '',
+      },
+    });
+    assert.equal(result.status, expected, JSON.stringify({ suite, stdout: result.stdout, stderr: result.stderr }));
+    assert.match(result.stdout, expected === 0 ? /Windows-sensitive test subset and both gating probes passed/ : /Windows-sensitive subset outcome/);
+  }
 });

@@ -76,8 +76,11 @@ jobs:
           name: ae-candidate-${{ matrix.os }}-node${{ matrix.node }}-${{ github.sha }}
           path: artifacts/
 
-  # The same nine source regressions still run on every supported OS/runtime.
-  # They no longer delay archive feedback and Windows runs three bounded batches.
+  # The nine Git integration regressions run on both Linux runtimes and on
+  # Windows with Node 24 in three bounded batches. Windows Node 20 is not
+  # repeated here: it would add three billed Windows jobs per revision for the
+  # same files, which the complete Windows suite (harness-windows.yml, Node 22)
+  # also covers. The Windows Node 20 archive install below still runs.
   git-regressions:
     strategy:
       fail-fast: false
@@ -85,9 +88,6 @@ jobs:
         include:
           - { os: ubuntu-latest, node: '20', shard: 1, shards: 1 }
           - { os: ubuntu-latest, node: '24', shard: 1, shards: 1 }
-          - { os: windows-latest, node: '20', shard: 1, shards: 3 }
-          - { os: windows-latest, node: '20', shard: 2, shards: 3 }
-          - { os: windows-latest, node: '20', shard: 3, shards: 3 }
           - { os: windows-latest, node: '24', shard: 1, shards: 3 }
           - { os: windows-latest, node: '24', shard: 2, shards: 3 }
           - { os: windows-latest, node: '24', shard: 3, shards: 3 }
@@ -116,7 +116,9 @@ jobs:
             git-regressions.log
 
   # Preserve the existing required package check names. A green archive alone
-  # cannot satisfy them: all same-revision Git batches and their inventory must pass.
+  # cannot satisfy them: all same-revision Git batches and their inventory must
+  # pass. `shards: 0` marks the one entry with no Git batches of its own
+  # (Windows Node 20); it still requires its archive and every Git job to pass.
   package:
     name: package (${{ matrix.os }}, ${{ matrix.node }})
     needs: [archive, git-regressions]
@@ -127,7 +129,7 @@ jobs:
         include:
           - { os: ubuntu-latest, node: '20', shards: 1, platform: linux }
           - { os: ubuntu-latest, node: '24', shards: 1, platform: linux }
-          - { os: windows-latest, node: '20', shards: 3, platform: win32 }
+          - { os: windows-latest, node: '20', shards: 0, platform: win32 }
           - { os: windows-latest, node: '24', shards: 3, platform: win32 }
     runs-on: ubuntu-latest
     steps:
@@ -138,10 +140,12 @@ jobs:
         with:
           node-version: '22'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: matrix.shards > 0
         with:
           pattern: git-regressions-${{ matrix.os }}-node${{ matrix.node }}-*
           path: git-shards
       - name: Require complete same-revision Git inventory
+        if: matrix.shards > 0
         run: node scripts/ci-tests.mjs --verify-manifests git-shards --suite git --shards ${{ matrix.shards }} --platform ${{ matrix.platform }} --node-major ${{ matrix.node }}
       - name: Require archive and Git regression success
         if: always()
