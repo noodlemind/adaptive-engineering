@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024; // 2 MiB
+export const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024; // 2 Mi UTF-16 code units (string length), not bytes
 export const DEFAULT_KILL_GRACE_MS = 2000;
 export const DEFAULT_GROUP_REAP_TIMEOUT_MS = 5000;
 const GROUP_REAP_POLL_MS = 50;
@@ -16,7 +16,8 @@ function createBoundedSink(maxBuffer) {
       buffer += chunk;
       if (buffer.length > maxBuffer) {
         const cut = buffer.lastIndexOf('\n', maxBuffer);
-                buffer = buffer.slice(0, cut === -1 ? maxBuffer : cut + 1);
+        // A hard cut must not leave a lone high surrogate at the end.
+        buffer = cut === -1 ? buffer.slice(0, maxBuffer).replace(/[\uD800-\uDBFF]$/, '') : buffer.slice(0, cut + 1);
         truncated = true;
       }
     },

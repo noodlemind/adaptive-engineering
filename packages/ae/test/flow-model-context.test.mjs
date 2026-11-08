@@ -8,6 +8,7 @@ import { writeChecks, writeVersionedPlan } from './helpers/cli-fixtures.mjs';
 import { approveProject } from '../lib/trust.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
 import { harnessControlCommand, normalizeToolPayload } from '../corpus/hooks/lib/tool-payload.mjs';
+import { NEEDS_NO_LAZY_FETCH } from './helpers/git-features.mjs';
 
 test('optional flow context yields pack space to accepted intent', () => {
   const options = { recall: [], plans: [], intentSources: [], gatePreview: { pass: true },
@@ -54,7 +55,7 @@ function publish(f) {
   return input;
 }
 
-test('flows CLI is read-only when cold, validates inputs, and loads only relevant context', t => {
+test('flows CLI is read-only when cold, validates inputs, and loads only relevant context', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   assert.equal(f.ok('flows', 'status').state, 'absent');
   assert.equal(fs.existsSync(f.home), false);
@@ -77,7 +78,7 @@ test('flows CLI is read-only when cold, validates inputs, and loads only relevan
   assert.equal(f.ok('flows', 'show').model.flows[0].id, 'checkout');
 });
 
-test('verified compound advises regeneration after relevant default advance without changing intent authority', t => {
+test('verified compound advises regeneration after relevant default advance without changing intent authority', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   const plan = writeVersionedPlan(f.workspace);
   writeChecks(f.workspace, { 'unit-tests': { command: [process.execPath, '-e', 'process.exit(0)'] } });
@@ -99,7 +100,7 @@ test('verified compound advises regeneration after relevant default advance with
   assert.equal(f.ok('compound', '--plan', plan, '--learning-decision', decision, '--dry-run').flowMaintenance, undefined);
 });
 
-test('canonical flow controls remain available through real hooks before and after a failed gate', t => {
+test('canonical flow controls remain available through real hooks before and after a failed gate', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   const hook = (command, payload = {}) => {
     const result = spawnSync(process.execPath, [path.resolve(path.dirname(binPath), '../corpus/hooks/require-plan-gate.mjs')], {

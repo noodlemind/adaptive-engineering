@@ -1,5 +1,9 @@
 const PATTERNS = [
-  { id: 'aws-access-key', re: /\bAKIA[0-9A-Z]{16}\b/ },
+  { id: 'aws-access-key', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { id: 'npm-token', re: /\bnpm_[A-Za-z0-9]{36}\b/ },
+  { id: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{20,}\b/ },
+  { id: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { id: 'basic-auth', re: /\bAuthorization["']?\s*[:=]\s*["']?Basic\s+[A-Za-z0-9+/]{8,}={0,2}/i },
   {
     id: 'github-token',
     re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b/,
@@ -11,7 +15,7 @@ const PATTERNS = [
   { id: 'slack-token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
   {
     id: 'generic-api-key',
-    re: /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token)\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
+    re: /\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|access[_-]?token)["']?\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
   },
 ];
 

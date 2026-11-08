@@ -14,7 +14,7 @@ Skills = workflows. Agents = isolated judgment. Instructions = file-pattern rule
 
 - Product **`~/.ae/projects/<repo-id>/plans/`** — new per-issue context packs (`status`, `plan_lock`, `phase`, `## Memory Cards`); existing **`.harness/plans/`** and **`docs/plans/`** remain readable legacy locations. Use CLI-returned plan paths and decision files for managed updates.
 - New repo-private episodes **`~/.ae/projects/<repo-id>/docs/solutions/`**; committed `docs/solutions/` remains readable.
-- Team **`packages/ae/corpus/knowledge/solutions/`** — cross-repo learnings (hydrated to `~/.copilot/knowledge/`).
+- Team **`~/.copilot/knowledge/`** — hydrated cross-repo learnings.
 - Lookup order: `<copilot-home>/skills/references/knowledge-locations.md` (the home defaults to `~/.copilot`).
 
 **`@engineer` only:** task modes, delivery lifecycle, capture gate, and checklist live in `engineer.agent.md`. They are not duplicated here.

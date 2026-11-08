@@ -24,38 +24,57 @@ const DEFAULT_PATTERNS = [
     mask: (_match, scheme) => `${scheme}${mask('url-credentials')}@`,
   },
   {
-        kind: 'github-token',
+    kind: 'github-token',
     re: /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,255}\b|github_pat_[A-Za-z0-9_]{20,255}\b/,
   },
   {
-        kind: 'api-key',
+    kind: 'api-key',
     re: /\bsk-[A-Za-z0-9_-]{16,255}\b/,
   },
   {
     // Slack bot/user tokens.
     kind: 'slack-token',
-        re: /xox[abprs]-[A-Za-z0-9-]{10,255}\b/,
+    re: /xox[abprs]-[A-Za-z0-9-]{10,255}\b/,
   },
   {
+    // Long-lived (AKIA) and temporary STS (ASIA) access key IDs. No leading `\b`,
+    // so a key glued to a preceding word character is still caught.
     kind: 'aws-access-key',
-    // No leading `\b` — same P3D1 reasoning.
-    re: /AKIA[0-9A-Z]{16}\b/,
+    re: /(?:AKIA|ASIA)[0-9A-Z]{16}\b/,
   },
   {
-        kind: 'jwt',
+    kind: 'npm-token',
+    re: /\bnpm_[A-Za-z0-9]{36}\b/,
+  },
+  {
+    kind: 'gitlab-token',
+    re: /\bglpat-[A-Za-z0-9_-]{20,255}\b/,
+  },
+  {
+    kind: 'google-api-key',
+    re: /\bAIza[0-9A-Za-z_-]{35}\b/,
+  },
+  {
+    kind: 'jwt',
     re: /\beyJ[A-Za-z0-9_-]{8,20000}\.[A-Za-z0-9_-]{8,20000}\.[A-Za-z0-9_-]{4,2000}/,
   },
   {
-        kind: 'private-key',
+    kind: 'private-key',
     re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[^]{0,4096}?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/,
   },
   {
-        kind: 'bearer-token',
+    kind: 'bearer-token',
     re: /(?<=\bBearer\s)[A-Za-z0-9._~+/=-]{8,255}/i,
   },
   {
-        kind: 'kv-secret',
-    re: /\b(password|token)(\s*=\s*)[^\s&"']{1,500}/i,
+    kind: 'basic-auth',
+    re: /(?<=\bAuthorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/]{8,1000}={0,2}/i,
+  },
+  {
+    // `key=value`, `key: value` and JSON `"key": "value"` for secret-named keys,
+    // including prefixed names such as DB_PASSWORD or aws_secret_access_key.
+    kind: 'kv-secret',
+    re: /\b((?:[A-Za-z0-9]+[_-])*(?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«)[^\s&"',;}]{1,500}/i,
     mask: (_match, key, sep) => `${key}${sep}${mask('kv-secret')}`,
   },
 ];

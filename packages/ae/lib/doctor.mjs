@@ -640,6 +640,7 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
   try { git = spawnSync(resolveGit(), ['--version'], { encoding: 'utf8', timeout: 5_000 }); }
   catch (error) { git = { error }; }
   const gitOk = !git.error && git.status === 0 && Boolean(String(git.stdout || '').trim());
+  const noLazyFetch = gitOk ? gitSupportsNoLazyFetch({ resolveGit }) : false;
   return [
     {
       id: 'R1',
@@ -653,7 +654,28 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
       pass: gitOk,
       hint: gitOk ? String(git.stdout).trim() : git.error?.code === 'E_GIT_EXECUTABLE' ? git.error.message : 'git is not installed or not on PATH',
     },
+    {
+      id: 'R3',
+      name: `git ${MIN_GIT_NO_LAZY_FETCH}+ (--no-lazy-fetch)`,
+      pass: noLazyFetch,
+      optional: true,
+      hint: noLazyFetch
+        ? 'flow models and formal verification can read Git metadata without automatic fetches'
+        : `flow models and formal verification stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
+    },
   ];
+}
+
+export const MIN_GIT_NO_LAZY_FETCH = '2.45';
+
+/** True when Git accepts the global --no-lazy-fetch option that flow models and formal checks require. */
+export function gitSupportsNoLazyFetch({ resolveGit = gitExecutable } = {}) {
+  try {
+    const probe = spawnSync(resolveGit(), ['--no-lazy-fetch', 'version'], { encoding: 'utf8', timeout: 5_000 });
+    return !probe.error && probe.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** The adaptive bootstrap needs four eligible procedures; richer automation is acquired on demand. */

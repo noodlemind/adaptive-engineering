@@ -164,7 +164,12 @@ try {
   const agents = filesBelow(path.join(copilotHome, 'agents')).filter(file => file.endsWith('.agent.md'));
   const instructions = filesBelow(path.join(copilotHome, 'instructions')).filter(file => file.endsWith('.instructions.md'));
   const publicSkills = skills.filter(file => !/^user-invocable: false\s*$/m.test(fs.readFileSync(file, 'utf8'))).map(file => path.basename(path.dirname(file))).sort();
-  assert.equal(skills.length, 28); assert.equal(agents.length, 22); assert.equal(instructions.length, 5);
+  // Compare against the source corpus so adding a primitive cannot silently break this proof.
+  const corpus = path.join(packageDirectory, 'corpus');
+  const sourceSkills = fs.readdirSync(path.join(corpus, 'skills'), { withFileTypes: true }).filter(entry => entry.isDirectory() && fs.existsSync(path.join(corpus, 'skills', entry.name, 'SKILL.md'))).length;
+  const sourceAgents = fs.readdirSync(path.join(corpus, 'agents')).filter(name => name.endsWith('.agent.md')).length;
+  const sourceInstructions = fs.readdirSync(path.join(corpus, 'instructions')).filter(name => name.endsWith('.instructions.md')).length;
+  assert.equal(skills.length, sourceSkills); assert.equal(agents.length, sourceAgents); assert.equal(instructions.length, sourceInstructions);
   assert.deepEqual(publicSkills, ['engineer', 'harness-doctor', 'project-readme', 'triage-issues']);
   assert.equal(agents.filter(file => !/^user-invocable: false\s*$/m.test(fs.readFileSync(file, 'utf8'))).length, 1);
   const installedHooks = json(path.join(copilotHome, 'hooks/hooks.json'));

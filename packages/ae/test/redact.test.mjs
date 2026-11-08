@@ -98,6 +98,38 @@ test('kv-secret: masks password=/token= values, preserving the key name', () => 
   assert.equal(redactText('Token = abcdef1234567890'), 'Token = «redacted:kv-secret»');
 });
 
+test('kv-secret: masks colon, JSON and prefixed secret keys without touching look-alikes', () => {
+  const { redactText } = redactor();
+  const masked = [
+    ['password: hunter2hunter2', 'password: «redacted:kv-secret»'],
+    ['{"password": "hunter2hunter2"}', '{"password": "«redacted:kv-secret»"}'],
+    ['api_key=abcd1234efgh5678', 'api_key=«redacted:kv-secret»'],
+    ['secret=abcd1234efgh5678', 'secret=«redacted:kv-secret»'],
+    ['DB_PASSWORD=x1', 'DB_PASSWORD=«redacted:kv-secret»'],
+    ['aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'aws_secret_access_key = «redacted:kv-secret»'],
+    ['client_secret: abc123', 'client_secret: «redacted:kv-secret»'],
+  ];
+  for (const [input, expected] of masked) assert.equal(redactText(input), expected, input);
+  for (const clean of ['tokens: 1200', 'TOKEN_BUDGET=5', 'secrets are never committed']) assert.equal(redactText(clean), clean);
+});
+
+test('provider token shapes are masked by kind', () => {
+  const { redactText } = redactor();
+  const cases = [
+    ['ASIAABCDEFGHIJKLMNOP', 'aws-access-key'],
+    ['npm_' + 'a'.repeat(36), 'npm-token'],
+    ['glpat-' + 'a'.repeat(20), 'gitlab-token'],
+    ['AIza' + 'a'.repeat(35), 'google-api-key'],
+  ];
+  for (const [token, kind] of cases) assert.equal(redactText(`value ${token} end`), `value «redacted:${kind}» end`, kind);
+});
+
+test('basic-auth: masks Authorization Basic credentials but not the English word', () => {
+  const { redactText } = redactor();
+  assert.equal(redactText('Authorization: Basic dXNlcjpwYXNzd29yZA=='), 'Authorization: Basic «redacted:basic-auth»');
+  assert.equal(redactText('Basic configuration works'), 'Basic configuration works');
+});
+
 test('clean text with no secret shapes passes through unchanged', () => {
   const { redactText } = redactor();
   const text = '# Fix\n\nUse two-step backfill for NOT NULL columns.';
