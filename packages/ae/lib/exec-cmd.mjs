@@ -135,7 +135,7 @@ function emitAudit(ctx, mode, p, result) {
   const events = ctx?.events;
   const sink = typeof events?.withCommand === 'function' ? events.withCommand(mode) : events;
   sink?.emit?.(mode, {
-        result: result.status === 'ok' ? 'pass' : 'fail',
+    result: result.status === 'ok' ? 'pass' : 'fail',
     status: result.status,
     exitCode: result.exitCode,
     durationMs: result.durationMs,

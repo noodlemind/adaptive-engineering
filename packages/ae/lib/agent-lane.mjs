@@ -71,7 +71,7 @@ function buildItems(data, inert) {
       value.forEach((el, i) => items.push(`${key}[${i}] ${formatCompact(el, inert)}`));
       continue;
     }
-        const entries = Object.entries(value);
+    const entries = Object.entries(value);
     if (!entries.length) {
       items.push(`${key} {}`);
       continue;

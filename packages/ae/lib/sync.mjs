@@ -34,8 +34,8 @@ export function findStaleOrphans(copilotHome, assetsRoot, retiredList = [], lock
       const rel = `${top}/${f}`;
       if (current.has(rel)) continue; // still shipped
       if (retiredCovered(rel)) continue; // explicitly retired — upgrade removes it
-            if (lockFiles && !lockFiles.has(rel)) continue;
-            if (/(^|\/)\.harness\//.test(rel)) continue;
+      if (lockFiles && !lockFiles.has(rel)) continue;
+      if (/(^|\/)\.harness\//.test(rel)) continue;
       orphans.push(rel);
     }
   }

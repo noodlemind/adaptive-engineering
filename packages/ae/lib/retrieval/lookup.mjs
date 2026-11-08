@@ -117,7 +117,7 @@ function symbolEntity({ workspace, identifier, home }) {
   }
   const matches = (index.symbols || []).filter((s) => s.name === identifier);
   if (!matches.length) {
-        const near = (index.symbols || [])
+    const near = (index.symbols || [])
       .filter((s) => typeof s.name === 'string' && s.name.toLowerCase().includes(identifier.toLowerCase()))
       .slice(0, 5)
       .map((s) => ({ kind: 'symbol', id: s.name, location: s.file }));

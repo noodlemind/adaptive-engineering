@@ -60,7 +60,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
 
   function clipToBytes(text, cap) {
     if (Buffer.byteLength(text, 'utf8') <= cap) return text;
-        let bytes = 0;
+    let bytes = 0;
     let end = 0;
     for (const ch of text) {
       const chBytes = Buffer.byteLength(ch, 'utf8');
@@ -103,7 +103,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
     const s = state[stream];
     const alreadyMasked = s.blockMasked;
     resetBlock(s);
-        if (!alreadyMasked) emitPrivateKeyMask(stream);
+    if (!alreadyMasked) emitPrivateKeyMask(stream);
   }
 
   // One complete line (newline already stripped) through the PEM state machine.
@@ -112,7 +112,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
     const s = state[stream];
     if (!s.blockOpen) {
       if (PEM_BEGIN_RE.test(line)) {
-                if (PEM_END_RE.test(line)) {
+        if (PEM_END_RE.test(line)) {
           emitPrivateKeyMask(stream);
           return;
         }
@@ -133,7 +133,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
       return;
     }
     if (s.blockBytes > STREAM_BLOCK_MAX_BYTES && !s.blockMasked) {
-            emitPrivateKeyMask(stream);
+      emitPrivateKeyMask(stream);
       s.blockLines = [];
       s.blockMasked = true;
     }
@@ -146,7 +146,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
     let idx;
     while ((idx = s.carry.indexOf('\n')) !== -1) {
       let line = s.carry.slice(0, idx);
-            if (line.endsWith('\r')) line = line.slice(0, -1);
+      if (line.endsWith('\r')) line = line.slice(0, -1);
       s.carry = s.carry.slice(idx + 1);
       feedLine(stream, line);
       if (truncated) {
@@ -169,7 +169,7 @@ export function createCheckOutputStreamer({ check, onEvent, redactText, maxBytes
         s.carry = '';
         feedLine(stream, line);
       }
-            if (s.blockOpen) closeBlock(stream);
+      if (s.blockOpen) closeBlock(stream);
     }
   }
 
@@ -246,7 +246,7 @@ function applyCheckSeverities(checks, policy, planGated) {
     if (severity !== 'advisory' && checkSeverityFor(policy, check.id, fallback) === 'advisory') {
       refusedSeverityDowngrades.push({ id: check.id, requested: 'advisory', effective: severity });
     }
-        return severity === 'advisory' ? { ...check, severity, optional: true } : { ...check, severity };
+    return severity === 'advisory' ? { ...check, severity, optional: true } : { ...check, severity };
   });
   return { checks: applied, refusedSeverityDowngrades };
 }

@@ -118,7 +118,7 @@ function compileRegex(pattern) {
     );
   }
   try {
-        return new RegExp(pattern, 'i');
+    return new RegExp(pattern, 'i');
   } catch (error) {
     throw usageError(`invalid regex: ${error.message}`, 'escape regex metacharacters, or use --match literal');
   }
@@ -419,7 +419,7 @@ function knowledgeSource({ mode, query, workspace, copilotHome, home, explain, c
   for (const entry of entries) {
     const id = knowledgeId(entry);
     if (!id) continue;
-        let score = 0;
+    let score = 0;
     let firstField = null;
     let firstText = '';
     for (const { name, text } of knowledgeFields(entry)) {
@@ -491,7 +491,7 @@ function learningsSource({ mode, query, workspace, home, explain, queryTokens })
   const repository = repoId(workspace);
   const results = [];
   for (const learning of learnings) {
-        if (retrievalExclusion(learning, excluded)) continue;
+    if (retrievalExclusion(learning, excluded)) continue;
     const text = `${learning.fm?.trigger || ''}\n${learning.body || ''}`;
     const { hits, firstText } = scanText(text, match);
     if (!hits) continue;
@@ -673,7 +673,7 @@ export function runSearch({
     const collections = collection ? loadCollections(copilotHome, workspace) : {};
   if (collection && !collections[collection]) {
     const known = Object.keys(collections);
-        throw usageError(
+    throw usageError(
       `unknown collection: ${collection}`,
       known.length ? `one of ${known.join(', ')}` : 'no collections are defined in knowledge/collections.yaml',
     );
@@ -707,7 +707,7 @@ export function runSearch({
         }),
       );
     } catch (error) {
-            entries.push(failed(source, error?.message || String(error)));
+      entries.push(failed(source, error?.message || String(error)));
     }
   }
 

@@ -104,7 +104,7 @@ export function writeEvent(workspace, flags, payload) {
   if (payload.blockedReason) event.blockedReason = payload.blockedReason;
   if (payload.usage) event.usage = payload.usage;
   for (const field of [
-        'exitCode',
+    'exitCode',
     'tool',
     'mutation',
     'targets',
@@ -174,7 +174,7 @@ export function readEvents(workspace, options = 20) {
     .filter(Boolean);
   const filtered = events.filter((event) => {
     if (config.session && event.session !== config.session) return false;
-        if (config.failures
+    if (config.failures
       && event.result !== 'fail'
       && event.decision !== 'block'
       && !event.blockedReason

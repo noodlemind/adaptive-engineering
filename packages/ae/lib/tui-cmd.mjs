@@ -134,7 +134,7 @@ export async function runLedger({
     if (word.startsWith('--')) return 'flag';
     if (['exit', 'quit', 'help', 'clear', 'walkthrough', 'tour'].includes(word)) return 'session';
     if (first) return hasCommand(word) ? 'command' : null;
-        if (!head || !hasCommand(head)) return null;
+    if (!head || !hasCommand(head)) return null;
     return (getCommand(head)?.verbs || []).some((v) => v.verb === word) ? 'verb' : null;
   }
 
@@ -253,7 +253,7 @@ export async function runLedger({
       plan: planOf() ? path.basename(planOf()) : null,
       gate: gateOf(),
     });
-        const gate = gateOf();
+    const gate = gateOf();
     if (gate && gate !== 'pass' && gate !== 'ok') {
       rows.push(ui.line({
         state: 'warn',
@@ -290,7 +290,7 @@ export async function runLedger({
   }
 
   if (startup.has('shortcuts')) {
-        session.commit([
+    session.commit([
       ui.paint('muted', '  / for commands · ! for bash'),
       ui.paint('muted', '  ? for shortcuts'),
       ...separator(),
@@ -345,19 +345,19 @@ export async function runLedger({
       return block;
     }
 
-        const block = ledger.open({ command: display ?? rawArgv.join(' '), argv: rawArgv });
-        if (name === 'agent') block.keepTail = true;
-        const listing = new Set(['config', 'model']);
+    const block = ledger.open({ command: display ?? rawArgv.join(' '), argv: rawArgv });
+    if (name === 'agent') block.keepTail = true;
+    const listing = new Set(['config', 'model']);
     if (listing.has(name) && !rest.some((a) => a === 'set' || a === 'clear')) block.folded = false;
     activeController = new AbortController();
     session.beginLive(block);
 
-        const outerContext = currentRunContext();
+    const outerContext = currentRunContext();
     setRunContext({ run: block.run, actor: detectActor() });
     const events = block.run ? createProcessEventRegistry(commandArgv, block.run) : undefined;
     let reportedStatus = null;
 
-        let lastPaint = 0;
+    let lastPaint = 0;
     const capture = session.capture((line) => {
       ledger.append(block, line);
       const t = Date.now();
@@ -395,7 +395,7 @@ export async function runLedger({
       setRunContext(outerContext);
     }
 
-        cancelled = cancelled || exitCode === EXIT.cancelled;
+    cancelled = cancelled || exitCode === EXIT.cancelled;
     const status = runStatusFromReported(reportedStatus)
       ?? statusForExit(exitCode, { cancelled, timedOut: timedOut && !cancelled });
     ledger.close(block, {
@@ -415,7 +415,7 @@ export async function runLedger({
     if (cancelled) return `cancelled · ${rows} line${rows === 1 ? '' : 's'} · journal entry appended`;
     if (exitCode !== 0) return `${rows} line${rows === 1 ? '' : 's'} ${ui.arrow} exit ${exitCode}`;
     const fold = foldState(block);
-        const found = block.selection?.items?.length ?? 0;
+    const found = block.selection?.items?.length ?? 0;
     if (found) {
       const shown = fold.folded ? `${rows} lines · ${fold.hidden} folded · ` : '';
       return `${shown}${found} to open ${ui.arrow} results`;
@@ -472,7 +472,7 @@ export async function runLedger({
   };
 
   const openPaletteOverlay = (query = '') => {
-        const overlay = createOverlay({
+    const overlay = createOverlay({
       title: '',
       query,
       rows: paletteRows(query),
@@ -520,7 +520,7 @@ export async function runLedger({
       unavailable: it.unavailable,
             valueChoice: it.value,
     }));
-        if (!prompt.required) rows.push({ label: 'skip', note: 'leave this unset', valueChoice: SKIP_VALUE });
+    if (!prompt.required) rows.push({ label: 'skip', note: 'leave this unset', valueChoice: SKIP_VALUE });
 
     const hint = resolved.free ? 'type to filter or to enter your own' : 'type to filter';
     const overlay = createOverlay({
@@ -551,7 +551,7 @@ export async function runLedger({
     const prompt = pending.queue[pending.index];
     if (value !== SKIP_VALUE && value !== undefined) pending.values[prompt.key] = value;
 
-        if (pending.untilResolves) {
+    if (pending.untilResolves) {
       const attempt = resolveSelection(pending.row, pending.values);
       if (attempt.argv && !attempt.invalid && !(attempt.missing?.length)) {
         const { row, values } = pending;
@@ -677,7 +677,7 @@ export async function runLedger({
 
   const beginSelection = async (choice, prefill = {}) => {
     if (choice?.unavailable) {
-            say(ui.line({ state: 'warn', key: 'blocked', value: choice.label, note: choice.unavailable }));
+      say(ui.line({ state: 'warn', key: 'blocked', value: choice.label, note: choice.unavailable }));
       return;
     }
     if (choice?.argvTokens?.[0]?.value === 'tui' || choice?.noun === 'tui') {
@@ -690,9 +690,9 @@ export async function runLedger({
       say(ui.line({ state: 'warn', key: 'needs', value: choice.label, note: plan.invalid || 'nothing to run' }));
       return;
     }
-        if (interactive && !Object.keys(prefill).length) {
+    if (interactive && !Object.keys(prefill).length) {
       const tokens = choice.argvTokens || [];
-            const inlineSafe = tokens.every((t) => t.kind !== 'flag')
+      const inlineSafe = tokens.every((t) => t.kind !== 'flag')
         && plan.queue.every((q) => !q.choices)
         && plan.queue.every((q) => tokens.some((t) => t.kind === 'value' && t.positional === q.key));
       if (inlineSafe) {
@@ -849,7 +849,7 @@ export async function runLedger({
     }
     const items = target.selection.items;
     const rows = items.map((item) => ({ label: item.label, note: item.note, openArgv: item.argv }));
-        if (!interactive) {
+    if (!interactive) {
       pipedPalette = rows.slice(0, PALETTE_PAGE);
       pipedPalette.forEach((row, i) => say(ui.line({
         key: String(i + 1),
@@ -887,12 +887,12 @@ export async function runLedger({
   const openRunTree = (runId = null) => {
     let runs;
     try { runs = foldRuns(readJournal(workspace)); } catch { runs = []; }
-        const named = runs.filter((r) => r.command);
+    const named = runs.filter((r) => r.command);
     const target = runId
       ? named.find((r) => r.run === runId || String(r.run).startsWith(runId))
       : named.at(-1);
     if (!target) {
-            say(ui.line({
+      say(ui.line({
         state: 'warn',
         key: 'run tree',
         value: runId ? String(runId).slice(0, 12) : 'latest',
@@ -929,14 +929,14 @@ export async function runLedger({
       say(ui.line({ state: 'warn', key: 'ask', value: `${status.provider} is not connected`, note: status.reason || 'model to choose a provider' }));
       return;
     }
-        await runArgv(['agent', text], { display: text });
+    await runArgv(['agent', text], { display: text });
   };
 
   /** Re-run a block: same argv, fresh record. Never edits the one it replays —
    * the journal is append-only and history is not a draft. */
   const rerun = async (block) => {
     if (!block?.command) { say(ui.line({ state: 'warn', key: 'rerun', value: 'nothing to re-run' })); return; }
-        let argv = block.argv?.length ? [...block.argv] : null;
+    let argv = block.argv?.length ? [...block.argv] : null;
     if (!argv) {
       try { argv = tokenize(block.command); } catch { argv = null; }
     }
@@ -966,7 +966,7 @@ export async function runLedger({
       if (event.intent === 'escape') {
         if (activeController) { activeController.abort(); continue; }
         const t = Date.now();
-                if (t - lastEscape < 600) { lastEscape = 0; openRunTree(); } else lastEscape = t;
+        if (t - lastEscape < 600) { lastEscape = 0; openRunTree(); } else lastEscape = t;
         continue;
       }
 
@@ -997,7 +997,7 @@ export async function runLedger({
         continue;
       }
 
-            if (event.intent === 'complete-row') {
+      if (event.intent === 'complete-row') {
         const row = event.row;
         const words = (row?.argvTokens || [])
           .filter((t) => t.kind === 'command' || t.kind === 'subcommand')
@@ -1013,7 +1013,7 @@ export async function runLedger({
         continue;
       }
 
-            if (event.intent === 'close') {
+      if (event.intent === 'close') {
         if (valuePicker) {
           valuePicker = null;
           if (pending) { pending = null; clearPrompt(); say(ui.paint('muted', 'cancelled')); }
@@ -1027,7 +1027,7 @@ export async function runLedger({
         session.closeOverlay();
         const row = event.row;
 
-                if (picker) {
+        if (picker) {
           if (row && row.valueChoice !== undefined) {
             if (row.unavailable) {
               say(ui.line({ state: 'warn', key: 'blocked', value: row.label, note: row.unavailable }));
@@ -1039,7 +1039,7 @@ export async function runLedger({
           }
           const typed = String(event.query ?? '').trim();
           if (picker.free && typed) { await answerPending(typed); continue; }
-                    if (pending) { pending = null; clearPrompt(); say(ui.paint('muted', 'cancelled')); }
+          if (pending) { pending = null; clearPrompt(); say(ui.paint('muted', 'cancelled')); }
           continue;
         }
 
@@ -1065,7 +1065,7 @@ export async function runLedger({
           continue;
         }
         if (row.enableAgent !== undefined) {
-                    await runArgv(['config', 'set', 'agent.enabled', row.enableAgent ? 'true' : 'false', '--scope', 'user'], {
+          await runArgv(['config', 'set', 'agent.enabled', row.enableAgent ? 'true' : 'false', '--scope', 'user'], {
             display: row.enableAgent ? 'agent mode on' : 'agent mode off',
           });
           readActiveModel();
@@ -1079,7 +1079,7 @@ export async function runLedger({
           continue;
         }
         if (row.provider && row.model) {
-                    await runArgv(['model', 'set', row.provider, row.model]);
+          await runArgv(['model', 'set', row.provider, row.model]);
           readActiveModel();
           refreshStatus();
           continue;
@@ -1108,7 +1108,7 @@ export async function runLedger({
         }
         if (event.action === 'copy' && block) {
           session.closeOverlay();
-                    say(ui.line({ key: 'copy', value: block.command, note: 'select with the terminal — scrollback is intact' }));
+          say(ui.line({ key: 'copy', value: block.command, note: 'select with the terminal — scrollback is intact' }));
           continue;
         }
         if (event.action === 'open' && block) { session.closeOverlay(); openResults(block); continue; }
@@ -1121,12 +1121,12 @@ export async function runLedger({
       const line = stripControl(String(event.line ?? ''));
       if (inlineHint) { clearPrompt(); inlineHint = false; }
 
-            if (event.bash && line.trim()) {
+      if (event.bash && line.trim()) {
         await runArgv(['bash', '--', line.trim()], { display: `! ${line.trim()}` });
         continue;
       }
 
-            if (pending) {
+      if (pending) {
         const trimmed = line.trim();
         if (trimmed === 'exit' || trimmed === 'quit') { clearPrompt(); say(ui.paint('muted', 'cancelled')); pending = null; continue; }
         const prompt = pending.queue[pending.index];
@@ -1145,7 +1145,7 @@ export async function runLedger({
             askPrompt(prompt, pending.row.label);
             continue;
           }
-                    await answerPending(['y', 'yes', 'true', '1'].includes(t));
+          await answerPending(['y', 'yes', 'true', '1'].includes(t));
           continue;
         }
         await answerPending(trimmed);
@@ -1164,17 +1164,17 @@ export async function runLedger({
 
       const parsed = interpretLine(line);
       if (parsed.kind === 'empty') {
-                if (pipedPalette) say(ui.paint('muted', `type 1–${pipedPalette.length} to pick a row, /text to refilter, or a command`));
+        if (pipedPalette) say(ui.paint('muted', `type 1–${pipedPalette.length} to pick a row, /text to refilter, or a command`));
         continue;
       }
       if (parsed.kind === 'exit') break;
 
       if (parsed.kind === 'palette') {
         if (interactive) { openPaletteOverlay(parsed.query); continue; }
-                const rows = paletteRows(parsed.query).slice(0, PALETTE_PAGE);
+        const rows = paletteRows(parsed.query).slice(0, PALETTE_PAGE);
         if (!rows.length) { say(ui.line({ state: 'warn', key: 'palette', value: `nothing matches ${JSON.stringify(parsed.query)}` })); continue; }
         rows.forEach((row, i) => say(ui.line({
-                    state: row.sideEffect === 'read' ? 'ok' : row.sideEffect === 'mutate' ? 'warn' : row.sideEffect ? 'error' : undefined,
+          state: row.sideEffect === 'read' ? 'ok' : row.sideEffect === 'mutate' ? 'warn' : row.sideEffect ? 'error' : undefined,
           key: String(i + 1),
           value: row.label,
           note: [row.sideEffect, row.note].filter(Boolean).join(' · '),
@@ -1252,7 +1252,7 @@ export async function runLedger({
         if (!hits.length) say(ui.line({ state: 'warn', key: 'file', value: parsed.target, note: 'no match in this workspace' }));
         else hits.forEach((h) => say(ui.line({ state: 'pending', key: h.kind, value: h.path })));
       } else if (parsed.argv?.[0] === 'tui') {
-                say(ui.line({ state: 'warn', key: 'tui', value: 'already open', note: 'the session ledger is this surface' }));
+        say(ui.line({ state: 'warn', key: 'tui', value: 'already open', note: 'the session ledger is this surface' }));
       } else if (parsed.argv?.length === 1 && parsed.argv[0] === 'bash') {
         session.composer.setBashMode(true);
         say(ui.paint('muted', '  bash mode · type a shell command · esc leaves'));
@@ -1269,9 +1269,9 @@ export async function runLedger({
         }
         await askAgent(line);
       } else if (parsed.argv?.length > 1 && !hasCommand(parsed.argv[0])) {
-                say(ui.line({ state: 'warn', key: 'ask', value: 'agent mode is off', note: 'shift+tab cycles modes · ! shell · / commands' }));
+        say(ui.line({ state: 'warn', key: 'ask', value: 'agent mode is off', note: 'shift+tab cycles modes · ! shell · / commands' }));
       } else {
-                const routed = interactive ? routeTypedLine(parsed.argv, { workspace, index: indexForRouting() }) : null;
+        const routed = interactive ? routeTypedLine(parsed.argv, { workspace, index: indexForRouting() }) : null;
         if (routed?.picker) openPicker(routed.picker, routed.row);
         else if (routed) await beginSelection(routed.row, routed.values);
         else if (parsed.argv?.length === 1 && parsed.argv[0] === 'config') openConfigPicker();

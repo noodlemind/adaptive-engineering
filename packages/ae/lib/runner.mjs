@@ -154,20 +154,20 @@ export function runProcess({
     let killGraceTimer = null;
     let groupReapTimer = null;
     let settleDeadlineTimer = null;
-        let outcomeStatus = null;
+    let outcomeStatus = null;
 
-        const groupAlive = groupAliveFn || (killFn === defaultKill ? defaultGroupAlive : null);
+    const groupAlive = groupAliveFn || (killFn === defaultKill ? defaultGroupAlive : null);
     const watchGroupDeath = platform !== 'win32' && typeof groupAlive === 'function';
 
     function cleanup() {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (signal) signal.removeEventListener('abort', onAbort);
-            if (killGraceTimer) clearTimeout(killGraceTimer);
+      if (killGraceTimer) clearTimeout(killGraceTimer);
       if (groupReapTimer) clearTimeout(groupReapTimer);
       if (settleDeadlineTimer) clearTimeout(settleDeadlineTimer);
     }
 
-        function settleAfterGroupDeath(partial) {
+    function settleAfterGroupDeath(partial) {
       const deadline = now() + groupReapTimeoutMs;
       const poll = () => {
         if (settled) return;
@@ -232,7 +232,7 @@ export function runProcess({
       return;
     }
 
-        function safeKill(sig) {
+    function safeKill(sig) {
       if (!Number.isInteger(child.pid) || child.pid <= 0) return;
       try {
         const termination = killFn(child.pid, sig, platform);
@@ -257,12 +257,12 @@ export function runProcess({
       }
       if (cooperative) killGraceTimer = setTimeout(() => safeKill('SIGTERM'), killGraceMs);
       else safeKill('SIGTERM');
-            settleDeadlineTimer = setTimeout(() => {
+      settleDeadlineTimer = setTimeout(() => {
         finish({ status, exitCode: null, signalName: null });
       }, killGraceMs + groupReapTimeoutMs);
       if (platform === 'win32') return; // taskkill /F is already unconditional
       if (!Number.isInteger(child.pid) || child.pid <= 0) return; // nothing to escalate against
-            killGraceTimer = setTimeout(() => {
+      killGraceTimer = setTimeout(() => {
         safeKill('SIGKILL');
       }, killGraceMs);
     }
@@ -284,7 +284,7 @@ export function runProcess({
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
 
-        child.stdout?.on('data', (chunk) => {
+    child.stdout?.on('data', (chunk) => {
       stdoutSink.push(chunk);
       if (onStdout) {
         try {
@@ -307,7 +307,7 @@ export function runProcess({
 
     child.on('close', (exitCode, signalName) => {
       childClosed = true;
-            if (settleDeadlineTimer) {
+      if (settleDeadlineTimer) {
         clearTimeout(settleDeadlineTimer);
         settleDeadlineTimer = null;
       }
@@ -316,7 +316,7 @@ export function runProcess({
         exitCode,
         signalName,
       };
-            if (outcomeStatus && watchGroupDeath && Number.isInteger(child.pid) && child.pid > 0) {
+      if (outcomeStatus && watchGroupDeath && Number.isInteger(child.pid) && child.pid > 0) {
         settleAfterGroupDeath(partial);
       } else {
         finish(partial);

@@ -165,7 +165,7 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
     const episodes = collectEpisodes({ workspace, copilotHome, home: flags?.home });
     if (episodes.length > 0) {
       if (flags.dryRun) {
-                const { consumed } = splitLedger(readLedger(storeDir(workspace, { home: flags?.home })));
+        const { consumed } = splitLedger(readLedger(storeDir(workspace, { home: flags?.home })));
         const debt = episodes.filter((e) => !consumed.has(`${e.path}@${e.sha256}`)).length;
         if (debt > 0) {
           log(`armed ${debt} existing solution doc(s) as consolidation debt — drains at first session start`);

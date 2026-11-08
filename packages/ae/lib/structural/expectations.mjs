@@ -60,7 +60,7 @@ function diffChangedFiles({ workspace, index, changedFiles }) {
       notEvaluated.set(file, `no baseline entry and ${ext || 'no extension'} is not a language this check reads`);
       continue;
     }
-        const tier =
+    const tier =
       typeof fileEntry?.tier === 'string'
         ? fileEntry.tier
         : typeof index.meta?.extractorTier === 'string'
@@ -71,7 +71,7 @@ function diffChangedFiles({ workspace, index, changedFiles }) {
       continue;
     }
 
-        let current = [];
+    let current = [];
     let currentExported = [];
     const content = readFileSafe(workspace, file);
     if (content) {
@@ -160,7 +160,7 @@ function evaluateExpectations(plan, diffs, tierSkipped = new Map(), notEvaluated
       informational.push({ type: 'malformed-expectation', entry, message: 'expected {file, symbol, change: added|removed|modified}' });
       continue;
     }
-        if (tierSkipped.has(entry.file)) {
+    if (tierSkipped.has(entry.file)) {
       informational.push({
         type: 'tier-mismatch-skipped',
         file: entry.file,
@@ -170,7 +170,7 @@ function evaluateExpectations(plan, diffs, tierSkipped = new Map(), notEvaluated
       });
       continue;
     }
-        if (notEvaluated.has(entry.file)) {
+    if (notEvaluated.has(entry.file)) {
       informational.push({
         type: 'expectation-not-evaluated',
         file: entry.file,
@@ -182,7 +182,7 @@ function evaluateExpectations(plan, diffs, tierSkipped = new Map(), notEvaluated
     }
     if (expectationObserved(entry, diffs)) continue;
     const description = { type: 'unmet-expectation', file: entry.file, symbol: entry.symbol, change: entry.change };
-        if (entry.required === true) findings.push({ ...description, type: 'unmet-required-expectation' });
+    if (entry.required === true) findings.push({ ...description, type: 'unmet-required-expectation' });
     else informational.push(description);
   }
   return { findings, informational };
@@ -213,7 +213,7 @@ export function runStructuralExpectations({ workspace, plan, changedFiles, home 
     const changedSet = new Set(changed);
     const allowed = parseImpactedFiles(plan);
     const { diffs, tierSkipped, notEvaluated } = diffChangedFiles({ workspace, index, changedFiles: changed });
-        const tierNotes = [...tierSkipped].map(([file, tier]) => ({
+    const tierNotes = [...tierSkipped].map(([file, tier]) => ({
       type: 'tier-mismatch-skipped',
       file,
       tier,
@@ -225,7 +225,7 @@ export function runStructuralExpectations({ workspace, plan, changedFiles, home 
       message: `${file} not compared: ${reason}`,
     }));
 
-        const truncated = [
+    const truncated = [
       index.meta?.symbolsTruncated ? 'symbol table' : null,
       index.meta?.callEdgesTruncated ? 'call edges' : null,
     ].filter(Boolean);
@@ -242,7 +242,7 @@ export function runStructuralExpectations({ workspace, plan, changedFiles, home 
         findings.push(finding);
       }
     };
-        let callers = null;
+    let callers = null;
     for (const [file, diff] of diffs) {
       const symbolChanges = [...diff.addedExported, ...diff.removedExported];
       if (symbolChanges.length && !matchesScope(file, allowed)) {
@@ -283,7 +283,7 @@ export function runStructuralExpectations({ workspace, plan, changedFiles, home 
         baseline,
       };
     }
-        const skippedFiles = tierSkipped.size + notEvaluated.size;
+    const skippedFiles = tierSkipped.size + notEvaluated.size;
     if (diffs.size === 0) {
       return {
         status: 'skipped',

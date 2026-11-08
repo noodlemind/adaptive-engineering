@@ -69,7 +69,7 @@ export async function cmdLookup(argv) {
 
   if (result.preview) {
     console.log('');
-        console.log(result.preview.split('\n').map(inertLine).join('\n'));
+    console.log(result.preview.split('\n').map(inertLine).join('\n'));
   }
 
   if (result.related?.length) {

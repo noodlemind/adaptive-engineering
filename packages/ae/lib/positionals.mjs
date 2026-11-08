@@ -34,7 +34,7 @@ export function positionalsOf(argv, { limit = Infinity, extra = null } = {}) {
     if (token === '--') break;
     if (typeof token !== 'string') continue;
     if (token.startsWith('-') && token !== '-') {
-            if (isValueFlag(token, widen) && argv[i + 1] !== undefined && argv[i + 1] !== '--') i += 1;
+      if (isValueFlag(token, widen) && argv[i + 1] !== undefined && argv[i + 1] !== '--') i += 1;
       continue;
     }
     out.push(token);

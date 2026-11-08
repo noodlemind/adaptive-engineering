@@ -61,7 +61,7 @@ export function listingView({ workspace, copilotHome, domain, home }) {
     .map((l) => {
       const { verified, plans } = verifiedAndPlans(l.fm);
       return {
-                id: inertLine(l.id),
+        id: inertLine(l.id),
         status: effectiveStatus(l.fm),
         source: allowed(SOURCE_VALUES, l.fm.source || 'auto', 'unknown'),
                 trigger: inertLine(redactSecrets(l.fm.trigger || '')),

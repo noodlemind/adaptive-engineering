@@ -31,7 +31,7 @@ export function readPlacements(copilotHome) {
     if (!bundles || typeof bundles !== 'object' || Array.isArray(bundles)) {
       return { version: PLACEMENTS_SCHEMA, bundles: {}, unreadable: true };
     }
-        for (const record of Object.values(bundles)) {
+    for (const record of Object.values(bundles)) {
       if (!record || !Array.isArray(record.files)) continue;
       if (!record.files.every((f) => isContainedPlacement(typeof f === 'string' ? f : f?.path))) {
         return { version: PLACEMENTS_SCHEMA, bundles: {}, unreadable: true };
@@ -39,7 +39,7 @@ export function readPlacements(copilotHome) {
     }
     return { version: doc.version || PLACEMENTS_SCHEMA, bundles };
   } catch {
-        return { version: PLACEMENTS_SCHEMA, bundles: {}, unreadable: true };
+    return { version: PLACEMENTS_SCHEMA, bundles: {}, unreadable: true };
   }
 }
 
@@ -92,7 +92,7 @@ export function syncBundles({ copilotHome, shippedFiles = new Set(), trustedName
   const nextBundles = {};
 
   for (const row of winners) {
-        const bundle = byId.get(row.winnerId) || byId.get(row.winner);
+    const bundle = byId.get(row.winnerId) || byId.get(row.winner);
     if (!bundle) continue;
     const { source, target } = placementFor(row.kind, row.path);
 
@@ -114,14 +114,14 @@ export function syncBundles({ copilotHome, shippedFiles = new Set(), trustedName
       continue;
     }
     if (!dryRun) {
-            const written = writeFileContained(copilotHome, target, bytes);
+      const written = writeFileContained(copilotHome, target, bytes);
       if (!written) {
         refused.push({ bundle: row.winner, target, reason: 'refused by path containment' });
         continue;
       }
     }
     placed.push({ bundle: row.winner, target });
-        (nextBundles[row.winner] ||= { version: bundle.manifest?.version ?? null, files: [] })
+    (nextBundles[row.winner] ||= { version: bundle.manifest?.version ?? null, files: [] })
       .files.push({ path: target, digest: digestOf(bytes) });
     for (const loser of row.shadowed) shadowed.push({ bundle: loser, target, winner: row.winner });
   }
@@ -137,7 +137,7 @@ export function syncBundles({ copilotHome, shippedFiles = new Set(), trustedName
         const recordedDigest = typeof entry === 'string' ? null : entry.digest;
         if (stillPlaced.has(rel)) continue;
 
-                if (shippedFiles.has(rel)) {
+        if (shippedFiles.has(rel)) {
           retained.push({ bundle: name, target: rel, reason: 'the harness now ships this path' });
           continue;
         }
@@ -154,7 +154,7 @@ export function syncBundles({ copilotHome, shippedFiles = new Set(), trustedName
           retained.push({ bundle: name, target: rel, reason: 'not a regular file' });
           continue;
         }
-                if (!recordedDigest) {
+        if (!recordedDigest) {
           retained.push({ bundle: name, target: rel, reason: 'placed before placements recorded content; remove it by hand' });
           continue;
         }
@@ -167,7 +167,7 @@ export function syncBundles({ copilotHome, shippedFiles = new Set(), trustedName
           fs.rmSync(full);
           withdrawn.push(rel);
         } catch (error) {
-                    if (error.code === 'ENOENT') { withdrawn.push(rel); continue; }
+          if (error.code === 'ENOENT') { withdrawn.push(rel); continue; }
           retained.push({ bundle: name, target: rel, reason: `could not remove (${error.code || error.message})` });
           (nextBundles[name] ||= { version: record?.version ?? null, files: [] }).files.push(entry);
         }

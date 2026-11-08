@@ -9,7 +9,7 @@ export function resolveCopilotHome(override) {
   if (process.env.COPILOT_HOME) return path.resolve(process.env.COPILOT_HOME);
   if (process.env.XDG_CONFIG_HOME) {
     const xdg = path.join(process.env.XDG_CONFIG_HOME, 'copilot');
-        if (fs.existsSync(xdg)) return xdg;
+    if (fs.existsSync(xdg)) return xdg;
   }
   return path.join(os.homedir(), '.copilot');
 }

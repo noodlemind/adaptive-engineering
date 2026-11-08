@@ -120,7 +120,7 @@ export function loadGrammarsLock({ lockPath = DEFAULT_LOCK_PATH } = {}) {
   try {
     const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
     if (!lock || typeof lock !== 'object' || !lock.grammars) return null;
-        const rt = lock.runtime;
+    const rt = lock.runtime;
     if (!rt || typeof rt !== 'object' || typeof rt.package !== 'string' || typeof rt.file !== 'string') return null;
     if (!rt.loader || typeof rt.loader.file !== 'string' || typeof rt.loader.sha256 !== 'string') return null;
     return lock;

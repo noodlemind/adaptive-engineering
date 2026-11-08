@@ -149,7 +149,7 @@ export async function runResultOf(argv, ctx = {}) {
   const all = readRuns(workspace, verb === 'list' ? filters : {});
 
   if (verb === 'list') {
-        const rawLimit = readValueFlag(argv, '--limit');
+    const rawLimit = readValueFlag(argv, '--limit');
     const parsedLimit = rawLimit === null ? NaN : Number(rawLimit);
     if (rawLimit !== null && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
       throw usageError(`--limit must be a positive integer (got ${JSON.stringify(rawLimit)})`);

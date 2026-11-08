@@ -21,7 +21,7 @@ export function appendGuarded(file, line, { retries = 20, waitMs = 5, fsImpl = f
       held = fsImpl.openSync(lockPath, 'wx');
       break;
     } catch {
-            const until = Date.now() + waitMs;
+      const until = Date.now() + waitMs;
       while (Date.now() < until) { /* spin */ }
     }
   }
@@ -105,11 +105,11 @@ export function pruneJournalFile(file, {
   try {
     lockFd = fs.openSync(lockPath, 'wx');
   } catch {
-        return { removed: 0, kept: 0, skipped: true };
+    return { removed: 0, kept: 0, skipped: true };
   }
 
   try {
-        const snapshot = fs.statSync(file);
+    const snapshot = fs.statSync(file);
     const currentLines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
     const finalLines = currentLines.filter((line) => !dropped.has(line));
     if (markerFor) finalLines.push(JSON.stringify(markerFor({ removed, cutoff })));
@@ -117,7 +117,7 @@ export function pruneJournalFile(file, {
     const tmp = path.join(path.dirname(file), `.${path.basename(file)}.prune-${process.pid}`);
     fs.writeFileSync(tmp, finalLines.length ? `${finalLines.join('\n')}\n` : '', 'utf8');
 
-        const now = fs.statSync(file);
+    const now = fs.statSync(file);
     if (now.size !== snapshot.size || now.mtimeMs !== snapshot.mtimeMs) {
       try { fs.unlinkSync(tmp); } catch { /* best effort */ }
       return { removed: 0, kept: 0, skipped: true, abandoned: 'the journal changed while pruning' };

@@ -19,7 +19,7 @@ function listDir(root, relDir) {
   try {
     full = relDir ? safeResolveUnderRoot(root, relDir) : root;
   } catch {
-        return [];
+    return [];
   }
   try {
     return fs.readdirSync(full, { withFileTypes: true });

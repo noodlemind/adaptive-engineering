@@ -554,10 +554,10 @@ function knowledgeChecks({ workspace, copilotHome }) {
 export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots(), lockPath } = {}) {
   const checks = [];
   try {
-        const disk = grammarStatus({ grammarRoots, lockPath });
+    const disk = grammarStatus({ grammarRoots, lockPath });
     const index = readStructuralIndex(workspace);
     const recorded = index?.meta?.integrityFailures || [];
-        const stale = recorded.filter((f) => disk.grammars?.[f.language]?.ok === true);
+    const stale = recorded.filter((f) => disk.grammars?.[f.language]?.ok === true);
     const live = recorded.filter((f) => !stale.includes(f));
     const mismatches = [...disk.integrityFailures, ...live];
     if (mismatches.length) {
@@ -588,7 +588,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
       const languages = [...new Set(stale.map((f) => f.language))].join(', ');
       issues.push(`index meta still records a grammar integrity mismatch (${languages}) that the current wasm no longer has — re-run: ae index --structural`);
     }
-        if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
+    if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
     const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
     const headSha = head.status === 0 ? head.stdout.trim() : null;
     if (index.meta.sha && headSha && index.meta.sha !== headSha) {
@@ -597,7 +597,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
     const filesIndexed = Math.max(index.meta.filesIndexed || Object.keys(index.files).length, 1);
     const failRate = (index.meta.parseFailures || 0) / filesIndexed;
     if (failRate > 0.2) issues.push(`parse-failure rate ${(failRate * 100).toFixed(0)}% — inspect grammar installation`);
-        let orphans = 0;
+    let orphans = 0;
     for (const rel of Object.keys(index.files).slice(0, 500)) {
       const full = assertNoSymlinkAncestors(workspace, rel);
       if (!full || !fs.existsSync(full)) orphans += 1;

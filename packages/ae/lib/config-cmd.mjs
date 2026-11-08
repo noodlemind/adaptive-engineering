@@ -130,7 +130,7 @@ export async function configResultOf(argv, ctx = {}) {
   }
 
   if (verb === 'validate') {
-        return {
+    return {
       schema: 1,
       verb,
       status: resolved.errors.length ? 'failed' : 'ok',

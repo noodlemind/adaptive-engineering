@@ -34,7 +34,7 @@ export function toWireMessages(messages) {
   const out = [];
   for (const message of messages || []) {
     if (message.role === 'assistant') {
-            const raw = Array.isArray(message.blocks) && message.blocks[0] && message.blocks[0].role === 'assistant'
+      const raw = Array.isArray(message.blocks) && message.blocks[0] && message.blocks[0].role === 'assistant'
         ? message.blocks[0]
         : { role: 'assistant', content: String(message.text ?? '') };
       out.push(raw);
@@ -361,7 +361,7 @@ export function streamCompletion({ url, headers, transport, payload, providerId,
         });
         res.on('end', () => {
           if (res.statusCode < 200 || res.statusCode >= 300) {
-                        let detail = body.slice(0, 500);
+            let detail = body.slice(0, 500);
             try {
               const parsed = JSON.parse(body);
               detail = parsed?.error?.message ?? parsed?.error ?? detail;
@@ -453,7 +453,7 @@ async function handle(message) {
     return;
   }
   try {
-        const response = await callModel(message.params || {}, {
+    const response = await callModel(message.params || {}, {
       onDelta: (text) => send({ type: 'chunk', id: message.id, text }),
     });
     send({ type: 'result', id: message.id, result: shapeResult(response) });
@@ -477,7 +477,7 @@ process.stdin.on('data', (chunk) => {
     try {
       handle(JSON.parse(line));
     } catch {
-          }
+      }
   }
 });
 }

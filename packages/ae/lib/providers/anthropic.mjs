@@ -163,7 +163,7 @@ function callModel({ apiKey, model, system, messages, tools, maxTokens, temperat
         });
         res.on('end', () => {
           if (res.statusCode < 200 || res.statusCode >= 300) {
-                        let detail = body.slice(0, 500);
+            let detail = body.slice(0, 500);
             try {
               detail = JSON.parse(body)?.error?.message ?? detail;
             } catch { /* keep the raw prefix */ }
@@ -256,7 +256,7 @@ process.stdin.on('data', (chunk) => {
     try {
       handle(JSON.parse(line));
     } catch {
-          }
+      }
   }
 });
 }

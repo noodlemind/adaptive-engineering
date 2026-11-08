@@ -339,7 +339,7 @@ function ensureStoreGitignore(dir) {
   if (!missing.length) return;
   const header = existing ? (existing.endsWith('\n') ? '' : '\n') : '# ae knowledge store — never staged, never swept by `git clean -fd`\n';
   try {
-        writeStoreFile(gitignore, existing + header + missing.join('\n') + '\n');
+    writeStoreFile(gitignore, existing + header + missing.join('\n') + '\n');
   } catch {
     // writeFileContained mkdirs the parent, which can throw on a hand-built store
   }
@@ -357,7 +357,7 @@ export function ensureStore(workspace, { home, dryRun = false } = {}) {
     gitOk = spawnGitSync(['init', '-q'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() }).status === 0;
   }
   if (gitOk) {
-        spawnGitSync(['config', 'core.autocrlf', 'false'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
+    spawnGitSync(['config', 'core.autocrlf', 'false'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
     spawnGitSync(['config', 'core.eol', 'lf'], { cwd: dir, encoding: 'utf8', env: gitMetadataEnvironment() });
   }
     const seed = (file, content) => {
@@ -396,14 +396,14 @@ export function writeStoreConfig(workspace, { home, mode, commit } = {}) {
     const current = readStoreConfig(workspace, { home });
     const nextMode = mode !== undefined ? mode : current.mode;
     const nextCommit = commit !== undefined ? commit : current.commit;
-        let raw = {};
+    let raw = {};
     try {
       const parsed = JSON.parse(readStoreFile(path.join(dir, 'config.json')));
       if (parsed && typeof parsed === 'object') raw = parsed;
     } catch {
       // absent/corrupt — nothing extra to preserve
     }
-        if (!writeStoreFile(path.join(dir, 'config.json'), JSON.stringify({ ...raw, mode: nextMode, commit: nextCommit }) + '\n')) {
+    if (!writeStoreFile(path.join(dir, 'config.json'), JSON.stringify({ ...raw, mode: nextMode, commit: nextCommit }) + '\n')) {
       throw new Error('refused to write config.json — the path does not resolve safely inside the knowledge store');
     }
     const message = mode !== undefined ? `knowledge: mode ${nextMode}` : `knowledge: commit ${nextCommit}`;

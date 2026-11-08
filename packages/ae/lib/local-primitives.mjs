@@ -124,7 +124,7 @@ function readRegistry(copilotHome) {
     const doc = YAML.parse(fs.readFileSync(file, 'utf8'), { maxAliasCount: 50 });
     const primitives = doc?.primitives;
     if (!primitives || typeof primitives !== 'object' || Array.isArray(primitives)) {
-            return { version: REGISTRY_SCHEMA, primitives: {}, unreadable: true };
+      return { version: REGISTRY_SCHEMA, primitives: {}, unreadable: true };
     }
     return { version: doc.version || REGISTRY_SCHEMA, primitives };
   } catch {
@@ -305,7 +305,7 @@ export function registerPrimitive({ copilotHome, rel, now = new Date().toISOStri
   }
   const validation = validatePrimitive(copilotHome, rel, snapshot);
   if (!validation.valid) {
-        throw Object.assign(new Error(`refusing to register an invalid primitive: ${validation.errors[0]}`), {
+    throw Object.assign(new Error(`refusing to register an invalid primitive: ${validation.errors[0]}`), {
       code: 'E_USAGE',
       exit: 2,
       hint: `fix it, then: ae resources register ${rel}`,
