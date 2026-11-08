@@ -79,13 +79,24 @@ export function nativeDecisionInputStaging(payload, normalized) {
   return Boolean(input && nativeInput(input.value, input.bytes));
 }
 
+function observedIntentInput(value) {
+  const observed = value.observedIntent;
+  if (observed === undefined) return true;
+  if (!observed || typeof observed !== 'object' || Array.isArray(observed) || !only(observed, ['id', 'disposition', 'rationale'])
+    || !/^[a-f0-9]{32}\.[a-f0-9]{64}$/.test(observed.id || '') || !['amend', 'unchanged'].includes(observed.disposition)
+    || typeof observed.rationale !== 'string' || !observed.rationale.trim() || observed.rationale.length > 1000 || /[\u0000-\u001f\u007f]/.test(observed.rationale)
+    || !['start', 'amend', 'progress', 'finding', 'gap'].includes(value.action)) return false;
+  return observed.disposition !== 'amend' || value.action === 'amend' && Boolean(Object.keys(value.changes || {}).length || value.intentSources?.length || value.intentSelection || value.migrateIntent);
+}
+
 function lifecycleInput(value) {
   if (value.version === 1 && ['full', 'short'].includes(value.format)) return only(value, ['version', 'format', 'slug', 'type', 'title', 'goal', 'acceptance', 'constraints', 'scope', 'check', 'intentSources', 'risk', 'status', 'notes', 'phases', 'outputs', 'skillsUsed', 'verificationRecipe', 'playbook', 'experiment'])
     && line(value.goal) && Array.isArray(value.acceptance) && value.acceptance.length > 0 && value.acceptance.every(nonempty);
   if (value.version === 1 && ['start', 'amend', 'progress', 'finding', 'gap', 'complete', 'convert'].includes(value.action)) {
     const authority = value.authority;
-    return only(value, ['version', 'id', 'action', 'expect', 'rationale', 'authority', 'changes', 'intentSources', 'intentSelection', 'finding', 'gap', 'migrateIntent', 'progress'])
+    return only(value, ['version', 'id', 'action', 'expect', 'rationale', 'authority', 'changes', 'intentSources', 'intentSelection', 'finding', 'gap', 'migrateIntent', 'progress', 'observedIntent'])
       && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value.id || '') && digest(value.expect)
+      && observedIntentInput(value)
       && (authority === undefined || authority && typeof authority === 'object' && !Array.isArray(authority) && only(authority, ['scope', 'basis']) && ['plan-intent', 'domain-intent', 'experiment-intent'].includes(authority.scope) && line(authority.basis));
   }
   if (['publish', 'no-learning'].includes(value.decision)) return only(value, ['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim'])

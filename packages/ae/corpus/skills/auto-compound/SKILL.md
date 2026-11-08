@@ -11,7 +11,7 @@ user-invocable: false
 **Should trigger:**
 
 - "Verification passed; classify what this task taught us."
-- "Route the durable learning from this completed plan."
+- "Route the durable learning from this verified plan."
 - "Record post-success learning and decide whether promotion is warranted."
 
 **Should not trigger:**
@@ -36,6 +36,8 @@ ae status --validate-evidence --plan <path> --workspace . --json
 ```
 
 Do not run on `failed` or `inconclusive`, with open hard gaps, or before required review is satisfied.
+
+An `in-progress` or `review` plan can pass this gate. Learning precedes completion. For merged changes, missing worktrees or outdated knowledge, read `<copilot-home>/skills/compound-learnings/references/post-merge-recovery.md` and recover the existing plan before classifying the result as an insight.
 
 ## Classify the learning
 
@@ -88,7 +90,7 @@ Pass the JSON decision file to the writer:
 ae compound --plan <path> --learning-decision <file> --workspace . --json
 ```
 
-The command validates current proof, publishes through the existing writer, and reports the persisted destination and index or dormant proposal result. Never edit learning frontmatter before publication or rerun tests for bookkeeping. Report actual evidence and publication outcomes.
+The command validates current proof, publishes through the existing writer, and reports the persisted destination and index or dormant proposal result. Never edit learning frontmatter before publication. Reuse valid proof; refresh verification and required review when the checkout, HEAD or evidence binding changed or records are missing. Report actual evidence and publication outcomes.
 
 When a successful compound result includes `flowMaintenance`, treat it as advisory context maintenance. It identifies an existing shared model made stale by watched changes on the observed default branch. Read `<copilot-home>/skills/codebase-context/references/flow-models.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/codebase-context/references/flow-models.md --json` prints the same file. Inspect the bound committed sources, and regenerate explicitly through `/codebase-context` within authorized scope. Compound neither merges the default branch nor invokes an agent, rewrites the model, or creates a missing one. Flow maintenance does not replace the learning decision or change delivery completion authority.
 

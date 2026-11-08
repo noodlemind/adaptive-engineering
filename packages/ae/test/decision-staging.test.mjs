@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { decisionInputStaging, nativeDecisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
 import { normalizeToolPayload } from '../corpus/hooks/lib/tool-payload.mjs';
 import { guardDecisionTool } from '../lib/decision-agent.mjs';
+import { observeHostIntent, inspectHostIntent, validateObservedIntent } from '../lib/host-intent.mjs';
 
 const hooks = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../corpus/hooks');
 function fixture(t) {
@@ -84,6 +85,53 @@ test('closed resource input authoring cannot smuggle new grants, receipt provena
     assert.equal(f.allowed(payload), false);
     assert.equal(guardDecisionTool({ workspace: f.workspace, home: `${f.workspace}-state`, policy: { enabled: true, revision: 'staging-consent', tools: [] }, payload }).permissionDecision, 'deny');
   }
+});
+
+test('Write and Add File can author closed host-intent reconciliations while the actual observation stays pending', t => {
+  const f = fixture(t), options = { workspace: f.workspace, sessionId: 'stage-session' };
+  const observed = observeHostIntent({ ...options, prompt: 'Continue the accepted task.', eventId: 'user-turn-1', host: 'copilot' });
+  for (const action of ['start', 'progress', 'amend']) {
+    const decision = { version: 1, id: `reconcile-${action}`, action, expect: 'a'.repeat(64),
+      observedIntent: { id: observed.id, disposition: action === 'amend' ? 'amend' : 'unchanged', rationale: 'The current user request is covered by this authored plan decision.' },
+      ...(action === 'amend' ? { rationale: 'Reflect the user request.', changes: { goal: 'Preserve the updated service contract.' } } : {}) };
+    const patch = `*** Begin Patch\n*** Add File: .harness/decisions/reconcile-${action}.json\n+${JSON.stringify(decision)}\n*** End Patch\n`;
+    for (const payload of [f.payload(decision), { workspace: f.workspace, session_id: 'stage-session', tool_name: 'apply_patch', tool_input: { input: patch } }]) {
+      assert.equal(f.allowed(payload), true);
+      assert.equal(nativeDecisionInputStaging(payload, normalizeToolPayload(payload)), false);
+      const guarded = guardDecisionTool({ workspace: f.workspace, home: `${f.workspace}-state`, policy: { enabled: true, revision: 'staging-consent', tools: [] }, payload });
+      assert.equal(guarded.mediation, 'bounded-decision-input-staging');
+      assert.equal(guarded.permissionDecision, undefined, 'authoring data grants no execution or acceptance authority');
+      for (const script of ['guard-critical-files.mjs', 'require-plan-gate.mjs']) {
+        const result = spawnSync(process.execPath, [path.join(hooks, script)], { cwd: f.workspace, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, input: JSON.stringify(payload), encoding: 'utf8', timeout: 15000 });
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout.trim().split('\n').at(-1)).continue, true, `${script}: ${result.stdout}`);
+      }
+      assert.equal(inspectHostIntent(options).state, 'pending');
+    }
+    const stale = { ...decision, observedIntent: { ...decision.observedIntent, id: `${'b'.repeat(32)}.${'c'.repeat(64)}` } };
+    assert.equal(f.allowed(f.payload(stale)), true, 'staging validates shape; the consumer owns observation identity checks');
+    assert.throws(() => validateObservedIntent({ ...options, input: stale }), /stale/);
+    assert.equal(inspectHostIntent(options).state, 'pending');
+  }
+});
+
+test('host-intent input staging rejects malformed reconciliation data and extra authority', t => {
+  const f = fixture(t), observedIntent = { id: `${'a'.repeat(32)}.${'b'.repeat(64)}`, disposition: 'unchanged', rationale: 'Continue within the accepted task.' };
+  const decision = { version: 1, id: 'reconcile-work', action: 'progress', expect: 'a'.repeat(64), observedIntent };
+  const malformed = [null, [], { ...observedIntent, approved: true }, { ...observedIntent, authority: { tools: ['execute'] } },
+    { ...observedIntent, id: 'claimed-observation' }, { ...observedIntent, id: 'a'.repeat(129) }, { ...observedIntent, id: `${'A'.repeat(32)}.${'b'.repeat(64)}` },
+    { ...observedIntent, disposition: 'allow' }, { ...observedIntent, rationale: '' }, { ...observedIntent, rationale: 'x'.repeat(1001) },
+    { ...observedIntent, rationale: 'Untrusted\nsecond line.' }, { ...observedIntent, rationale: 'Hidden\tcontrol.' }];
+  const invalid = [...malformed.map(value => ({ ...decision, observedIntent: value })), { ...decision, action: 'complete' }, { ...decision, action: 'convert' },
+    { ...decision, observedIntent: { ...observedIntent, disposition: 'amend' } },
+    { ...decision, action: 'amend', rationale: 'No actual amendment.', observedIntent: { ...observedIntent, disposition: 'amend' } },
+    { ...decision, authority: { scope: 'tool-permissions', basis: 'Self approval.' } },
+    { ...decision, action: 'amend', changes: { notes: { context: 'x'.repeat(1024 * 1024) } } }];
+  for (const input of invalid) {
+    const patch = `*** Begin Patch\n*** Add File: .harness/decisions/reconcile.json\n+${JSON.stringify(input)}\n*** End Patch\n`;
+    for (const payload of [f.payload(input), { workspace: f.workspace, session_id: 'stage-session', tool_name: 'apply_patch', tool_input: { input: patch } }]) assert.equal(f.allowed(payload), false);
+  }
+  assert.equal(fs.existsSync(path.join(f.workspace, '.harness')), false, 'rejection cannot create an observation or receipt');
 });
 
 test('a well-formed native judgment input cannot bypass either gate through hardlinked lifecycle state', t => {

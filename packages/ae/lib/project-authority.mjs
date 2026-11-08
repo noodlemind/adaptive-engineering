@@ -3,6 +3,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors, writeFileContainedExclusive
 import { withPlanUpdateLock } from './plan-update.mjs';
 import path from 'node:path';
 import { projectStoreDir } from './project-layout.mjs';
+import { linkedPrimaryCheckout } from './knowledge/store.mjs';
 import { harnessGlobalHome } from './paths.mjs';
 import { selectProjectAuthority, PROJECT_AUTHORITY_FILES, assertExternalStateHome } from '../corpus/hooks/lib/project-authority.mjs';
 
@@ -14,7 +15,25 @@ export function resolveProjectAuthority(workspace, { home = harnessGlobalHome(),
   // Alias routing and competing local/shared files stay live even within an
   // identity read phase; only the underlying Git identity may be reused.
   const project = projectStoreDir(root, { home });
-  return selectProjectAuthority(root, project, { home, mode });
+  const authority = selectProjectAuthority(root, project, { home, mode });
+  if (authority.mode !== 'local') return authority;
+  let checkout = root;
+  while (!fs.lstatSync(path.join(checkout, '.git'), { throwIfNoEntry: false })) {
+    const parent = path.dirname(checkout);
+    if (parent === checkout) return authority;
+    checkout = parent;
+  }
+  const primary = linkedPrimaryCheckout(checkout);
+  if (primary) {
+    const primaryAuthority = selectProjectAuthority(primary, projectStoreDir(primary, { home }), { home });
+    if (primaryAuthority.mode === 'shared') {
+      throw Object.assign(new Error(`Workspace ${root} belongs to linked checkout ${checkout} without the shared project authority selected by primary ${primary}: ${primaryAuthority.directory}`), {
+        code: 'E_PROJECT_AUTHORITY', exit: 1,
+        hint: 'Inspect the complete primary shared configuration and establish the intended branch policy before preparing local authority; implicit local setup would conflict with the primary.',
+      });
+    }
+  }
+  return authority;
 }
 
 export function projectAuthorityFile(workspace, name, options) {
@@ -50,7 +69,7 @@ export function promoteProjectAuthority(workspace, { home = harnessGlobalHome(),
   };
   const inspect = () => {
     const sources = readSet(home, local, true);
-    const published = sources.size ? readSet(workspace, shared) : new Map();
+    const published = readSet(workspace, shared);
     for (const [name, bytes] of published) if (sources.size && (!sources.has(name) || !sources.get(name).equals(bytes))) fail(`shared source differs or conflicts: ${path.join(shared, name)}`);
     return { sources, published };
   };

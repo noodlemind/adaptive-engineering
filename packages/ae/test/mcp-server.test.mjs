@@ -4,8 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { MCP_PROTOCOL_VERSIONS, describeMcpTools } from '../lib/hosts/mcp-server.mjs';
+import { writeVersionedPlan } from './helpers/cli-fixtures.mjs';
+import { writeSessionState } from '../corpus/hooks/lib/session-state.mjs';
+import { inspectHostIntent } from '../lib/host-intent.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const moduleUrl = pathToFileURL(path.join(packageRoot, 'lib/hosts/mcp-server.mjs')).href;
@@ -117,6 +121,141 @@ test('stdio lifecycle negotiates explicit legacy versions and lists bounded type
   assert.ok(!tools.some(tool => /exec|shell|trust|install/.test(tool.name)));
   assert.equal(tools.find(tool => tool.name === 'ae_verify').annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === 'ae_verify').annotations.openWorldHint, true, 'trusted named checks may have external effects');
+  assert.ok(initialized.result.instructions.includes(JSON.stringify(fs.realpathSync(f.workspace))), 'the client must see the actual workspace binding');
+});
+
+test('plan tools advertise creation formats and action-specific decision shapes', () => {
+  const tools = describeMcpTools();
+  const creation = tools.find(tool => tool.name === 'ae_plan_new').inputSchema.properties.decision;
+  assert.deepEqual(creation.oneOf.map(shape => shape.properties.format.const), ['full', 'short']);
+  for (const shape of creation.oneOf) {
+    assert.deepEqual(shape.required, ['version', 'format', 'goal', 'acceptance']);
+    assert.equal(shape.additionalProperties, false);
+  }
+  assert.equal(creation.oneOf[1].properties.experiment, undefined);
+  const update = tools.find(tool => tool.name === 'ae_plan_update').inputSchema.properties.decision;
+  assert.deepEqual(update.oneOf.map(shape => shape.properties.action.const), ['start', 'amend', 'progress', 'finding', 'gap', 'complete', 'convert']);
+  const action = name => update.oneOf.find(shape => shape.properties.action.const === name);
+  assert.ok(action('amend').properties.changes.properties.scope);
+  assert.ok(action('amend').properties.changes.properties.intentSources === undefined);
+  assert.ok(action('amend').properties.intentSelection);
+  assert.ok(action('progress').properties.progress.properties.tasks);
+  assert.equal(action('progress').properties.changes, undefined);
+  assert.equal(action('complete').properties.progress, undefined);
+  assert.equal(action('complete').properties.observedIntent, undefined);
+  assert.deepEqual(action('amend').properties.observedIntent.properties.disposition.enum, ['amend', 'unchanged']);
+  assert.equal(action('progress').properties.observedIntent.properties.disposition.const, 'unchanged');
+  assert.ok(action('convert').properties.changes.properties.domain_child);
+  assert.equal(action('convert').properties.changes.properties.domainChild, undefined);
+});
+
+test('invalid plan operation envelopes are refused without spawning a CLI', async t => {
+  const f = fixture(t), observed = path.join(f.root, 'spawns.jsonl'), c = client(t, f, { observeSpawns: observed });
+  await c.init();
+  const base = { version: 1, id: 'update-1', action: 'progress', expect: 'a'.repeat(64) };
+  for (const decision of [
+    { ...base, changes: { scope: ['hello.txt'] } },
+    { ...base, action: 'unknown' },
+    { ...base, expect: 'guessed' },
+    { ...base, workspace: os.tmpdir() },
+  ]) {
+    const response = await c.request('tools/call', { name: 'ae_plan_update', arguments: { plan: 'existing-plan.md', decision } }).response;
+    assert.equal(response.error?.code, -32602, JSON.stringify(response));
+  }
+  assert.equal(fs.existsSync(observed), false);
+});
+
+test('authored amendment and progress objects reach CLI stdin without shell serialization', async t => {
+  const f = fixture(t), fakePackage = path.join(f.root, 'fake');
+  fs.mkdirSync(path.join(fakePackage, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(fakePackage, 'package.json'), '{"version":"0.0.0"}');
+  fs.writeFileSync(path.join(fakePackage, 'bin/ae.mjs'), 'import fs from "node:fs"; console.log(JSON.stringify({argv:process.argv.slice(2),decision:JSON.parse(fs.readFileSync(0,"utf8"))}));');
+  const c = client(t, { ...f, packageRoot: fakePackage }); await c.init();
+  for (const input of [
+    { action: 'amend', rationale: 'Accept the added context.', changes: { notes: { context: 'Preserve quotes: " and $() and newlines.\nAnother line.' }, scope: ['hello.txt'] } },
+    { action: 'progress', progress: { tasks: ['P1T1'], criteria: ['AC1'], phase: 1 } },
+    { action: 'convert', rationale: 'Accept the experiment.', authority: { scope: 'experiment-intent', basis: 'Accepted fixture.' }, changes: { experiment: {} } },
+  ]) {
+    const decision = { version: 1, id: `${input.action}-decision`, expect: 'a'.repeat(64), ...input };
+    const response = await c.request('tools/call', { name: 'ae_plan_update', arguments: { plan: 'existing-plan.md', decision } }).response;
+    assert.equal(response.result?.isError, false, JSON.stringify(response));
+    const value = JSON.parse(response.result.content[0].text);
+    assert.deepEqual(value.decision, decision);
+    assert.deepEqual(value.argv.slice(0, 5), ['plan-update', '--plan', 'existing-plan.md', '--file', '-']);
+    assert.equal(value.argv[value.argv.indexOf('--workspace') + 1], fs.realpathSync(f.workspace));
+  }
+  assert.deepEqual(fs.readdirSync(f.workspace).sort(), ['.git', 'hello.txt']);
+});
+
+test('MCP updates a real plan through amendments, progress and revision-bound replay', async t => {
+  const f = fixture(t), plan = writeVersionedPlan(f.workspace, { impacted: ['hello.txt'], taskChecked: false });
+  const full = path.join(f.workspace, plan), hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  const c = client(t, f); await c.init();
+  const call = decision => c.request('tools/call', { name: 'ae_plan_update', arguments: { plan, decision } }).response;
+  const before = fs.readFileSync(full);
+  const amend = { version: 1, id: 'accepted-context', action: 'amend', expect: hash(before), rationale: 'Accept the clarified behavior.', changes: { notes: { context: 'Preserve the greeting exactly.' } } };
+  const amended = await call(amend);
+  assert.equal(amended.result?.isError, false, JSON.stringify(amended));
+  const amendment = JSON.parse(amended.result.content[0].text);
+  assert.equal(amendment.revision, hash(fs.readFileSync(full)));
+  assert.match(fs.readFileSync(full, 'utf8'), /Preserve the greeting exactly\./);
+  const progress = { version: 1, id: 'record-task', action: 'progress', expect: amendment.revision, progress: { tasks: ['T1'] } };
+  const advanced = await call(progress);
+  assert.equal(advanced.result?.isError, false, JSON.stringify(advanced));
+  assert.match(fs.readFileSync(full, 'utf8'), /- \[x\] Implement the example\./);
+  const accepted = fs.readFileSync(full);
+  const replayed = await call(progress);
+  assert.equal(JSON.parse(replayed.result.content[0].text).replayed, true);
+  assert.deepEqual(fs.readFileSync(full), accepted);
+  const stale = await call({ ...amend, id: 'stale-context' });
+  assert.equal(stale.result?.isError, true, JSON.stringify(stale));
+  assert.deepEqual(fs.readFileSync(full), accepted);
+  assert.equal(fs.readFileSync(path.join(f.workspace, 'hello.txt'), 'utf8'), 'hello\n');
+});
+
+test('host prompt ingress and MCP decisions reconcile intent without replay accepting a later turn', async t => {
+  const f = fixture(t), plan = writeVersionedPlan(f.workspace, { impacted: ['hello.txt'], taskChecked: false });
+  const sessionId = 'mcp-host-intent-session', full = path.join(f.workspace, plan);
+  writeSessionState(f.workspace, { sessionId, activePlan: plan });
+  const observe = (timestamp, prompt) => {
+    const result = spawnSync(process.execPath, [path.join(packageRoot, 'corpus/hooks/observe-user-intent.mjs')], {
+      cwd: f.workspace, input: JSON.stringify({ cwd: f.workspace, sessionId, timestamp, prompt }),
+      env: { ...process.env, AE_BIN: path.join(packageRoot, 'bin/ae.mjs'), AE_HOST: 'copilot' }, encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return inspectHostIntent({ workspace: f.workspace, sessionId, planPath: plan, revision: createHash('sha256').update(fs.readFileSync(full)).digest('hex') });
+  };
+  const first = observe(1000, 'Preserve the public greeting API.');
+  const c = client(t, f); await c.init();
+  const call = (name, args = {}) => c.request('tools/call', { name, arguments: args }).response;
+  const data = response => { assert.equal(response.result?.isError, false, JSON.stringify(response)); return JSON.parse(response.result.content[0].text); };
+  const initial = data(await call('ae_orient'));
+  assert.equal(initial.workflow.observedIntent.id, first.id);
+  assert.equal(initial.workflow.observedIntent.state, 'pending');
+  assert.equal(initial.workflow.plan.path, plan);
+  const amend = { version: 1, id: 'accept-observed-api', action: 'amend', expect: initial.workflow.plan.revision,
+    rationale: 'Accept the additional API constraint.', changes: { constraints: ['Preserve the public greeting API.'] },
+    observedIntent: { id: first.id, disposition: 'amend', rationale: 'The user added an API constraint to the current plan.' },
+  };
+  const accepted = data(await call('ae_plan_update', { plan, decision: amend }));
+  assert.equal(accepted.workflow.observedIntent.state, 'accepted');
+  assert.equal(accepted.workflow.observedIntent.revision, accepted.revision);
+  const progressed = data(await call('ae_plan_update', { plan, decision: { version: 1, id: 'record-observed-task', action: 'progress', expect: accepted.revision, progress: { tasks: ['T1'] } } }));
+  assert.equal(progressed.workflow.observedIntent.state, 'accepted');
+  const second = observe(2000, 'Also preserve whitespace in the output.');
+  assert.notEqual(second.id, first.id);
+  const replay = data(await call('ae_plan_update', { plan, decision: amend }));
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.current, false);
+  assert.equal(replay.workflow.observedIntent.id, second.id);
+  assert.equal(replay.workflow.observedIntent.state, 'pending');
+  const beforeCompletion = fs.readFileSync(full);
+  const completion = await call('ae_plan_update', { plan, decision: { version: 1, id: 'complete-pending-intent', action: 'complete', expect: replay.workflow.plan.revision } });
+  assert.equal(completion.result?.isError, true, JSON.stringify(completion));
+  assert.match(JSON.stringify(completion), /reconcile.*observed intent/i);
+  assert.deepEqual(fs.readFileSync(full), beforeCompletion);
+  assert.equal(inspectHostIntent({ workspace: f.workspace, sessionId }).state, 'pending');
+  assert.equal(fs.readFileSync(path.join(f.workspace, 'hello.txt'), 'utf8'), 'hello\n');
 });
 
 test('tool calls use the same CLI and cannot replace startup workspace or inject flags', async t => {

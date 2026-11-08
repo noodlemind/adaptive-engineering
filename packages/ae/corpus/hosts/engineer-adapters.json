@@ -8,6 +8,7 @@
         "description": "Accountable full-cycle engineer for investigation, implementation, and verification.",
         "tools": [
           "agent",
+          "ae/*",
           "search/codebase",
           "search",
           "read",

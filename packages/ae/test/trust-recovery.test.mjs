@@ -246,12 +246,15 @@ test('uncommitted primary policy missing from a child requires engineer alignmen
   const linked = addIsolatedWorktree({ workspace: s.workspace, slug: 'missing-policy', from: 'HEAD' });
   t.after(() => fs.rmSync(linked.path, { recursive: true, force: true }));
   const result = trustStatus({ ...s, workspace: linked.path });
-  assert.equal(result.trusted, false); assert.equal(result.cause, 'policy-mismatch');
-  assert.equal(result.authority.mode, 'local'); assert.equal(result.primary.authority.mode, 'shared');
+  assert.equal(result.trusted, false); assert.equal(result.cause, 'authority-unavailable');
+  assert.equal(result.authority.mode, 'unavailable'); assert.equal(result.primary, null);
+  assert.equal(result.recovery.kind, 'inspect-authority');
+  assert.ok(result.recovery.message.includes(path.join(s.workspace, '.github', 'harness')));
   assert.equal(result.recovery.afterInspection, undefined);
   assert.doesNotMatch(formatTrustRecovery(result.recovery), /trust.*approve/);
-  assert.deepEqual(result.primary.differs, ['policy.yaml']);
   assert.equal(result.recovery.owner, 'engineer'); assert.equal(result.recovery.command, null);
+  assert.equal(trustStatus(s).trusted, true);
+  assert.equal(fs.existsSync(path.join(linked.path, '.github/harness/policy.yaml')), false);
 });
 
 test('read-only diagnosis reads legacy approvals without migrating the store', t => {

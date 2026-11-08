@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import YAML from 'yaml';
 import { planContractText } from '../lib/evidence.mjs';
 import { publishGateSession } from '../lib/gate.mjs';
+import { observeHostIntent, publishObservedIntent, validateObservedIntent } from '../lib/host-intent.mjs';
 import { externalPlansDir } from '../corpus/hooks/lib/external-plans.mjs';
 import { PROOF_AUTHORITY_TIMEOUT_MS, callProofAuthority } from '../corpus/hooks/lib/proof-authority.mjs';
 import {
@@ -652,17 +653,18 @@ test('heredoc prose is not parsed as additional shell mutation targets', () => {
   ]);
 });
 
-test('creating the plan directory and plan file is exempt before the implement gate', () => {
+test('direct plan creation requires the AE writer before the implement gate', () => {
   const workspace = tempWorkspace();
   const result = runHook('require-plan-gate.mjs', workspace, {
     tool_name: 'run_in_terminal',
     tool_input: { command: 'mkdir -p docs/plans && printf plan > docs/plans/2026-07-21-feat-example-plan.md' },
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.notEqual(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny');
+  assert.equal(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny');
+  assert.match(outputJson(result).hookSpecificOutput.permissionDecisionReason, /managed-plan-write/);
 });
 
-test('plan bootstrap cannot batch validation or the implement gate', () => {
+test('direct plan writes cannot batch validation or the implement gate', () => {
   const workspace = tempWorkspace();
   const result = runHook('require-plan-gate.mjs', workspace, {
     tool_name: 'run_in_terminal',
@@ -673,8 +675,8 @@ test('plan bootstrap cannot batch validation or the implement gate', () => {
   assert.equal(result.status, 0, result.stderr);
   const output = outputJson(result).hookSpecificOutput;
   assert.equal(output.permissionDecision, 'deny');
-  assert.match(output.permissionDecisionReason, /mixed-plan-command/i);
-  assert.match(output.permissionDecisionReason, /separate non-mutating tool calls/i);
+  assert.match(output.permissionDecisionReason, /managed-plan-write/i);
+  assert.match(output.permissionDecisionReason, /ae plan-new.*ae plan-update/i);
 });
 
 test('new plan shortcut path is denied before the implement gate', () => {
@@ -686,8 +688,137 @@ test('new plan shortcut path is denied before the implement gate', () => {
   assert.equal(result.status, 0, result.stderr);
   const output = outputJson(result).hookSpecificOutput;
   assert.equal(output.permissionDecision, 'deny');
-  assert.match(output.permissionDecisionReason, /invalid-plan-path/i);
-  assert.match(output.permissionDecisionReason, /YYYY-MM-DD-<type>-<slug>-plan\.md/);
+  assert.match(output.permissionDecisionReason, /managed-plan-write/i);
+});
+
+test('managed plan edits are denied through native, shell, and mixed writes with or without a gate', t => {
+  const workspace = tempWorkspace();
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const plan = writePlan(workspace);
+  const legacy = '.harness/plans/existing.hplan';
+  fs.mkdirSync(path.join(workspace, '.harness/plans'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, legacy), 'existing');
+  const original = fs.readFileSync(path.join(workspace, plan), 'utf8');
+  const payloads = [
+    { tool_name: 'replace_string_in_file', tool_input: { filePath: plan, oldString: 'Fixture', newString: 'Changed' } },
+    { tool_name: 'create_file', tool_input: { filePath: 'docs/plans/2026-11-04-fix-new-plan.md', content: 'new' } },
+    { tool_name: 'apply_patch', tool_input: { patch: `*** Begin Patch\n*** Update File: ${legacy}\n@@\n-existing\n+changed\n*** End Patch` } },
+    { tool_name: 'multi_replace_string_in_file', tool_input: { files: [{ filePath: 'src/schema.json' }, { filePath: plan }] } },
+    ...[`set-content -LiteralPath '${plan}' -Value changed`, `Set-Content -LiteralPath '${plan}' -Value changed`, `printf changed > ${plan}`, `printf changed > ${plan} && printf changed > src/schema.json`]
+      .map(command => ({ tool_name: 'run_in_terminal', tool_input: { command } })),
+  ];
+  for (const gated of [false, true]) {
+    if (gated) writePassedGate(workspace, plan);
+    for (const payload of payloads) {
+      const result = runHook('require-plan-gate.mjs', workspace, payload);
+      assert.equal(result.status, 0, result.stderr);
+      const output = outputJson(result).hookSpecificOutput;
+      assert.equal(output?.permissionDecision, 'deny', JSON.stringify({ gated, payload, output }));
+      assert.match(output.permissionDecisionReason, /managed-plan-write/, JSON.stringify(payload));
+    }
+  }
+  assert.equal(fs.readFileSync(path.join(workspace, plan), 'utf8'), original);
+});
+
+test('plan inspection and standalone canonical plan decisions remain available without a gate', t => {
+  const workspace = tempWorkspace();
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const plan = writePlan(workspace);
+  for (const payload of [
+    { tool_name: 'read_file', tool_input: { filePath: plan } },
+    { tool_name: 'run_in_terminal', tool_input: { command: `Get-Content -LiteralPath '${plan}'` } },
+    ...[`"${process.execPath}" "${binPath}" plan-new --workspace "${workspace}" --file - --json`, `"${process.execPath}" "${binPath}" plan-update --workspace "${workspace}" --plan "${plan}" --file - --json`]
+      .map(command => ({ tool_name: 'run_in_terminal', tool_input: { command } })),
+  ]) {
+    const result = runHook('require-plan-gate.mjs', workspace, payload);
+    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny', result.stdout + result.stderr);
+  }
+});
+
+test('plan protection follows in-workspace aliases and blocks replacing plan ancestors', t => {
+  const workspace = tempWorkspace();
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const plan = writePlan(workspace);
+  const full = path.join(workspace, plan);
+  fs.writeFileSync(full, fs.readFileSync(full, 'utf8').replace('- `src/schema.json`', '- `src/schema.json`\n- `docs`\n- `docs/`\n- `saved-docs`\n- `saved-plan.md`'));
+  writePassedGate(workspace, plan);
+  const targets = [
+    { tool_name: 'run_in_terminal', tool_input: { command: 'mv docs saved-docs' } },
+    { tool_name: 'run_in_terminal', tool_input: { command: `mv ${plan} saved-plan.md` } },
+    { tool_name: 'create_file', tool_input: { filePath: 'docs/plans/..backup/plan.md', content: 'changed' } },
+  ];
+  if (process.platform !== 'win32') {
+    fs.symlinkSync(path.join(workspace, 'docs/plans'), path.join(workspace, 'plan-link'), 'dir');
+    targets.push({ tool_name: 'replace_string_in_file', tool_input: { filePath: 'plan-link/hook-fixture-plan.md' } });
+    targets.push({ tool_name: 'create_file', tool_input: { filePath: 'plan-link/new.hplan', content: 'new' } });
+  }
+  for (const payload of targets) {
+    const result = runHook('require-plan-gate.mjs', workspace, payload);
+    assert.equal(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny', result.stdout + result.stderr);
+    assert.match(outputJson(result).hookSpecificOutput.permissionDecisionReason, /managed-plan-write/);
+  }
+  for (const payload of [
+    { tool_name: 'create_file', tool_input: { filePath: 'docs/guide.md', content: 'guide' } },
+    { tool_name: 'run_in_terminal', tool_input: { command: 'mkdir -p docs' } },
+  ]) {
+    const result = runHook('require-plan-gate.mjs', workspace, payload);
+    assert.notEqual(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny', result.stdout + result.stderr);
+  }
+});
+
+test('external plan roots inside the workspace remain CLI-owned', t => {
+  const workspace = tempWorkspace();
+  const previous = process.env.HARNESS_HOME;
+  process.env.HARNESS_HOME = path.join(workspace, 'ae-state');
+  t.after(() => {
+    if (previous === undefined) delete process.env.HARNESS_HOME;
+    else process.env.HARNESS_HOME = previous;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  });
+  const root = externalPlansDir(workspace);
+  fs.mkdirSync(root, { recursive: true });
+  const plan = path.join(root, 'managed.hplan');
+  fs.writeFileSync(plan, 'existing');
+  for (const target of [plan, path.join(root, 'new.md')]) {
+    const result = runHook('require-plan-gate.mjs', workspace, { tool_name: 'create_file', tool_input: { filePath: target, content: 'changed' } });
+    assert.equal(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny', result.stdout + result.stderr);
+    assert.match(outputJson(result).hookSpecificOutput.permissionDecisionReason, /managed-plan-write/);
+  }
+});
+
+test('a hardlinked product target cannot mutate a managed plan through its alias', t => {
+  const workspace = tempWorkspace();
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const plan = writePlan(workspace);
+  fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  fs.linkSync(path.join(workspace, plan), path.join(workspace, 'src/schema.json'));
+  writePassedGate(workspace, plan);
+  const result = runHook('require-plan-gate.mjs', workspace, {
+    tool_name: 'replace_string_in_file', tool_input: { filePath: 'src/schema.json' },
+  });
+  assert.equal(outputJson(result).hookSpecificOutput?.permissionDecision, 'deny', result.stdout + result.stderr);
+  assert.match(outputJson(result).hookSpecificOutput.permissionDecisionReason, /hardlink|shared.*target/i);
+});
+
+test('new host intent blocks a gated edit until a current plan decision accepts it', t => {
+  const workspace = tempWorkspace();
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const plan = writePlan(workspace);
+  writePassedGate(workspace, plan);
+  const options = { workspace, sessionId: 'vscode-session', planPath: plan };
+  const first = observeHostIntent({ ...options, prompt: 'Continue the scoped change.', eventId: 'turn-1', host: 'copilot' });
+  const payload = { tool_name: 'replace_string_in_file', tool_input: { filePath: 'src/schema.json' } };
+  const probe = () => outputJson(runHook('require-plan-gate.mjs', workspace, payload));
+  assert.match(probe().hookSpecificOutput?.permissionDecisionReason || '', /unreconciled-host-intent/);
+  const revision = crypto.createHash('sha256').update(fs.readFileSync(path.join(workspace, plan))).digest('hex');
+  const input = { action: 'progress', observedIntent: { id: first.id, disposition: 'unchanged', rationale: 'The current scope covers this request.' } };
+  const captured = validateObservedIntent({ ...options, input });
+  assert.equal(publishObservedIntent({ ...options, captured, input, beforeRevision: revision, afterRevision: revision, operationId: 'accept-turn-1' }), true);
+  assert.notEqual(probe().hookSpecificOutput?.permissionDecision, 'deny');
+  observeHostIntent({ ...options, prompt: 'Also change the parser behavior.', eventId: 'turn-2', host: 'copilot' });
+  assert.equal(publishObservedIntent({ ...options, captured, input, beforeRevision: revision, afterRevision: revision, operationId: 'accept-turn-1' }), false);
+  assert.match(probe().hookSpecificOutput?.permissionDecisionReason || '', /unreconciled-host-intent/);
 });
 
 test('passed gate allows scoped mutation and primitive target requires current-session create-primitive activation', () => {

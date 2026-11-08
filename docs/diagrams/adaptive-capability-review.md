@@ -27,6 +27,14 @@ flowchart TD
 
 This is a source-backed descriptive view. It is not an explored TLA+ state graph or proof of native host enforcement. Host hooks, effective permissions and loaded model/role versions remain separate qualification surfaces.
 
+## Workflow ownership at the capability boundary
+
+The reconciled change preserves the workflow ownership and recovery behavior already on `main`. A newly observed user turn stays pending until a successful revision-bound plan decision reconciles it. An exact native action approval cannot accept that turn, write a managed plan directly, or replace verification. Native hooks retain both prompt observation and specialist/decision completion observation.
+
+Engineer can author a closed `observedIntent` description in its bounded JSON input before the product gate. That is data preparation: the plan consumer still validates the actual observation, current plan revision and permitted disposition. Source inclusion, tool approval, intent acceptance and readiness remain separate evidence.
+
+For this boundary, read [host-intent.mjs](../../packages/ae/lib/host-intent.mjs), [decision-staging.mjs](../../packages/ae/corpus/hooks/lib/decision-staging.mjs), [plan-decisions.mjs](../../packages/ae/lib/plan-decisions.mjs) and [native-hook.mjs](../../packages/ae/lib/hosts/native-hook.mjs). Existing linked-worktree authority and post-merge compounding recovery also remain in place; recovering an old plan does not manufacture current independent review or native loading proof.
+
 ## Read the change in behavior order
 
 1. [capability-catalog.mjs](../../packages/ae/lib/capability-catalog.mjs): `configureDiscovery`, `discoverCapabilities`, `adoptCreatedCapability`. Review user-only state, inclusion versus ongoing refresh, source/version guards, excluded roots, permission expansion, inherited host authority, bounded negative refresh and revocation. [Catalog tests](../../packages/ae/test/capability-catalog.test.mjs).

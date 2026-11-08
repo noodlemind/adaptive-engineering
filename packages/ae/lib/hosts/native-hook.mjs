@@ -8,9 +8,10 @@ import { FILE_MUTATION_TOOLS, READ_ONLY_TOOLS, TERMINAL_TOOLS } from '../../corp
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HOSTS = new Set(['claude-code', 'codex', 'cursor']);
-const EVENTS = new Set(['start', 'pre', 'post', 'stop', 'compact', 'agent-stop']);
+const EVENTS = new Set(['start', 'prompt', 'pre', 'post', 'stop', 'compact', 'agent-stop']);
 const scripts = {
   start: ['load-context.mjs'],
+  prompt: ['observe-user-intent.mjs'],
   pre: ['guard-decision.mjs', 'guard-critical-files.mjs', 'block-destructive-commands.mjs', 'require-plan-gate.mjs'],
   post: ['record-successful-edit.mjs'],
   stop: ['require-verification.mjs'],
@@ -50,6 +51,7 @@ export function nativeHookConfig({ host, configHome, skillsHome, home, packageRo
   }
   const hooks = {};
   const mapping = { SessionStart: 'start', PreToolUse: 'pre', PostToolUse: 'post', SubagentStop: 'agent-stop', Stop: 'stop', PreCompact: 'compact' };
+  if (host === 'claude-code') mapping.UserPromptSubmit = 'prompt';
   if (host === 'claude-code') mapping.PostToolUseFailure = 'post';
   for (const [name, event] of Object.entries(mapping)) {
     hooks[name] = [{ ...(['pre', 'post'].includes(event) ? { matcher: '*' } : {}), hooks: [{ type: 'command', command: invoke(event), timeout: event === 'stop' ? 90 : 60 }] }];
@@ -66,6 +68,7 @@ function options(argv) {
   }
   assertHost(out['--host']);
   if (!EVENTS.has(out['--event'])) throw new Error('Unsupported native hook event');
+  if (out['--event'] === 'prompt' && out['--host'] !== 'claude-code') throw new Error('Native prompt observation is unavailable for this host');
   for (const key of ['--config-home', '--skills-home', '--ae-home']) if (!path.isAbsolute(out[key] || '')) throw new Error('Native hook roots must be absolute paths');
   return { host: out['--host'], event: out['--event'], configHome: out['--config-home'], skillsHome: out['--skills-home'], home: out['--ae-home'] };
 }

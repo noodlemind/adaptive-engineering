@@ -1,7 +1,7 @@
 ---
 name: compound-learnings
-description: Document a recently solved problem as a reusable solution. Use after completing work to capture problem, root cause, fix, and prevention. Not for planning or implementation — use after the fix is verified.
-argument-hint: "[path to completed issue or description of solved problem]"
+description: Document verified work as a reusable solution before plan completion. Capture problem, root cause, fix, and prevention after verification and required review. Not for planning or implementation.
+argument-hint: "[path to verified plan or description of solved problem]"
 user-invocable: false
 ---
 
@@ -9,13 +9,15 @@ user-invocable: false
 
 Use the verified work and its investigation notes to explain the problem, root cause, correction, prevention, and limits of applicability. Read `assets/solution-template.md` for content prompts when useful. Distinguish demonstrated lessons from hypotheses and recommendations.
 
+The plan can still be `in-progress` or `review`. Current verification and required review permit publication; the learning decision is a prerequisite of plan completion. Reuse that plan. For merged or backported changes, removed worktrees, missing proof, or outdated learning, read `<copilot-home>/skills/compound-learnings/references/post-merge-recovery.md` with the host read tool before proposing another plan or an insight.
+
 ## Publication decision
 
 Choose whether a durable lesson exists, its category and useful search tags, and the approved destination. `private` stays with this product; `global` persists in this machine's shared knowledge; `ship-set-proposal` creates a dormant proposal for a future Harness release. A proposal never activates or modifies the shipped corpus. Check the applicable approval boundary before choosing a wider destination.
 
 Use the structured publication contract. Read `<copilot-home>/skills/references/learning-operations.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/references/learning-operations.md --json` prints the same file. With a plan, `ae compound --plan <path> --learning-decision <file> --json` consumes current passed proof and owns the episode path, dates, provenance, publication, index and replay record. Choose `no-learning` with a rationale when the task yielded no reusable lesson. Report the actual returned path and indexing or proposal state.
 
-Without current passed work, capture an investigation through `ae compound --insight --title <title> --body-file <file> --json`. It remains an insight; never label it a verified fix.
+For an unverified investigation, use `ae compound --insight --title <title> --body-file <file> --json`. Recover an existing delivery's missing or stale proof before choosing this lane. An insight does not replace verified delivery learning or satisfy its completion.
 
 ## Curation judgment
 

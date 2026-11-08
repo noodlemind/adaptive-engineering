@@ -9,11 +9,12 @@ import { selectProjectAuthority } from './lib/project-authority.mjs';
 import { readPolicySource } from './lib/policy-snapshot.mjs';
 import { readProductDiff } from './lib/product-diff.mjs';
 import { callProofAuthority } from './lib/proof-authority.mjs';
-import { resolveAcceptedPlan, projectStoreDir, harnessHome } from './lib/external-plans.mjs';
+import { resolveAcceptedPlan, externalPlansDir, projectStoreDir, harnessHome } from './lib/external-plans.mjs';
 import { writeHookEvent } from './lib/events.mjs';
 import { syncSessionIdentity } from './lib/session-state.mjs';
 import { skillActivationSourceCurrent } from './lib/skill-activation.mjs';
 import { preToolDenyOutput } from './lib/hook-output.mjs';
+import { inspectHostIntent } from './lib/host-intent.mjs';
 import { loadHookPolicy, projectTrustIsCurrent } from './lib/policy.mjs';
 import { checkConfigurationRecoveryControl, harnessControlCommand, isPersonalWritePath, isPrimitivePath, normalizeToolPayload, planUsesCreatePrimitive, unwrapShellSegments } from './lib/tool-payload.mjs';
 import { parseImpactedText } from './lib/impacted-files.mjs';
@@ -25,15 +26,9 @@ let normalized = null;
 let policy = { enforcement: 'enforce', ttl: 30 };
 let policyObserved = false;
 const RECOVER_MISSING_GATE = 'Read <copilot-home>/skills/ensure-plan/SKILL.md with the host read tool. A not-truncated read of that SKILL.md is activation. Create or amend only the canonical plan, then submit a standalone ae plan-update --file start decision. Harness binds state and the implement gate. Wait for explicit success before retrying the product mutation in a later tool call';
-const NEW_PLAN_PATH = /^(?:docs|\.harness)\/plans\/\d{4}-\d{2}-\d{2}-(?:feat|fix|docs|refactor|chore)-[a-z0-9]+(?:-[a-z0-9]+)*-plan\.md$/;
 
 function output(value) {
   console.log(JSON.stringify(value));
-}
-
-function isPlanRelative(relative) {
-  return relative === 'docs/plans' || relative.startsWith('docs/plans/')
-    || relative === '.harness/plans' || relative.startsWith('.harness/plans/');
 }
 
 function resolvePlanFile(workspace, rel) {
@@ -128,6 +123,24 @@ function existingAncestor(target) {
   } catch {
     return null;
   }
+}
+
+function containsPath(root, target) {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function managedPlanWrite() {
+  const roots = [path.join(normalized.workspace, 'docs/plans'), path.join(normalized.workspace, '.harness/plans'), externalPlansDir(normalized.workspace)]
+    .flatMap(root => [...new Set([root, existingAncestor(root)].filter(Boolean))].map(full => ({ full, exists: fs.existsSync(root) })));
+  const mkdirTargets = new Set(normalized.mkdirTargets.map(target => path.resolve(normalized.workspace, target)));
+  return normalized.targets.find(target => {
+    const full = path.resolve(normalized.workspace, target);
+    const candidates = [...new Set([full, existingAncestor(full)].filter(Boolean))];
+    const ancestorMutation = !mkdirTargets.has(full) && fs.existsSync(full) && fs.statSync(full).isDirectory();
+    return candidates.some(candidate => roots.some(root => containsPath(root.full, candidate)
+      || ancestorMutation && root.exists && containsPath(candidate, root.full)));
+  });
 }
 
 function exclusiveFiles(session, workspace) {
@@ -398,26 +411,14 @@ const relatives = normalized.targets.map((target) => {
   }
   return relative;
 });
-for (const relative of relatives) {
-  if (relative === 'docs/plans' || relative === '.harness/plans') continue;
-  if (!relative.startsWith('docs/plans/') && !relative.startsWith('.harness/plans/')) continue;
-  if (fs.existsSync(path.join(normalized.workspace, relative))) continue;
-  if (!NEW_PLAN_PATH.test(relative)) {
-    deny(
-      'invalid-plan-path',
-      'New plans must use docs/plans/ or .harness/plans/YYYY-MM-DD-<type>-<slug>-plan.md with type feat|fix|docs|refactor|chore; read <copilot-home>/skills/ensure-plan/SKILL.md with the host read tool and do not create an undated shortcut',
-      'invalid'
-    );
+try {
+  const target = managedPlanWrite();
+  if (target) deny('managed-plan-write', `Managed plans are written only by ae plan-new or ae plan-update decisions, not direct edits: ${target}. Submit the authored decision through the bound AE tool or standalone canonical command`, 'invalid');
+  for (const target of normalized.targets) {
+    const stat = fs.statSync(path.resolve(normalized.workspace, target), { throwIfNoEntry: false });
+    if (stat?.isFile() && stat.nlink > 1) deny('shared-mutation-target', `Mutation target has multiple hardlinks and could change managed state through an alias: ${target}. Use an unshared product file`, 'invalid');
   }
-}
-const mutatesPlan = relatives.some((relative) => isPlanRelative(relative));
-if (mutatesPlan && /\b(?:ae|harness)\s+(?:validate-plan|gate)\b/.test(normalized.command || '')) {
-  deny(
-    'mixed-plan-command',
-    'Create or lock only the canonical plan in this mutation. After it succeeds, run validate-plan and the implement gate as separate non-mutating tool calls',
-    'invalid'
-  );
-}
+} catch (error) { deny('invalid-runtime-configuration', error.message, 'invalid'); }
 const governed = relatives.filter((relative) =>
   relative !== 'docs/plans'
   && !relative.startsWith('docs/plans/')
@@ -456,6 +457,11 @@ const planPath = resolveAcceptedPlan(normalized.workspace, session.gatedPlan);
 if (!planPath) deny('invalid-implement-gate', 'Gated plan is missing or outside the plan directories; next: rerun `ae gate --phase implement --plan <plan> --workspace . --json`', 'invalid');
 
 const planText = fs.readFileSync(planPath, 'utf8');
+try {
+  const observation = inspectHostIntent({ workspace: normalized.workspace, sessionId: normalized.sessionId,
+    planPath, revision: crypto.createHash('sha256').update(planText).digest('hex') });
+  if (observation.state === 'pending') deny('unreconciled-host-intent', `A new host-observed request needs an explicit disposition in the current plan decision. Read orient's workflow.observedIntent and submit observedIntent with a current start, amendment or progress decision before retrying the product mutation`, 'invalid');
+} catch (error) { deny('invalid-host-intent', error.message, 'invalid'); }
 // Digest the Activity-stripped contract text so routine session logging does
 // not invalidate the gate; this must match the evidence-binding digest rule.
 const planAuthority = callProofAuthority(normalized.workspace, ['--contract-digest', '--plan', session.gatedPlan]);

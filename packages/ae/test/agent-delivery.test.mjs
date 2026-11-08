@@ -216,7 +216,8 @@ test('native todo keeps legacy commands and rejects malformed scope fields', asy
 test('Deliver retains the engineer completion rules and exposes lifecycle commands', () => {
   const system = buildSystemPrompt({ persona, profile: DELIVER_PROFILE });
   assert.match(system, /For changed work, run/);
-  assert.match(system, /fresh Harness proof before completion/);
+  assert.match(system, /current AE proof/);
+  assert.match(system, /require passed `ae verify`/);
   assert.match(system, /--query/);
   assert.ok(DELIVER_AGENT_TOOLS.some(tool => tool.name === 'harness'));
 });

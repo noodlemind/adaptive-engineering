@@ -38,7 +38,7 @@ test('both native exports contain exactly the canonical behavior with only skill
 
 test('Copilot authority and handoffs are preserved; Claude gets native metadata without permission escalation', () => {
   const copilot = metadata(renderEngineerExport(root, 'copilot'));
-  assert.deepEqual(copilot.tools, ['agent', 'search/codebase', 'search', 'read', 'edit', 'search/changes', 'execute', 'read/terminalLastCommand', 'execute/getTerminalOutput', 'read/problems', 'search/usages', 'web/fetch', 'githubRepo']);
+  assert.deepEqual(copilot.tools, ['agent', 'ae/*', 'search/codebase', 'search', 'read', 'edit', 'search/changes', 'execute', 'read/terminalLastCommand', 'execute/getTerminalOutput', 'read/problems', 'search/usages', 'web/fetch', 'githubRepo']);
   const registry = YAML.parse(fs.readFileSync(path.join(root, 'corpus/knowledge/capability-registry.yaml'), 'utf8'));
   assert.deepEqual([...copilot.agents].sort(), [...registry.engineer_allowlist].sort());
   assert.equal(copilot.handoffs.find(item => item.label === 'Capture for Later').send, false);

@@ -170,6 +170,13 @@ test('engineer agent is frozen, thin, and leaves the delivery checklist to the h
   assert.match(engineer, /For changed work/i);
   assert.match(engineer, /code-review[\s\S]{0,80}require passed `ae verify`/);
   assert.match(engineer, /ae plan-update/);
+  assert.match(engineer, /Use orient's `workflow` and bound AE plan tools/);
+  assert.match(engineer, /Reconcile pending `workflow\.observedIntent`/);
+  assert.match(engineer, /Check readiness apart from trust/);
+  assert.match(engineer, /Compound before completion\/cleanup/);
+  assert.match(engineer, /after commit\/merge revalidate final HEAD/);
+  assert.match(engineer, /adaptive-lifecycle\.md/);
+  assert.match(engineer, /source-linked visual tour/);
   assert.match(engineer, /architect\/SKILL\.md/);
   assert.match(engineer, /do not edit the CLI's state store in the editor/i);
 
@@ -559,6 +566,7 @@ test('corpus hooks are the only hook tree and their cwd token is hooks', () => {
   assert.ok(commandsByEvent.PreToolUse.includes('node guard-decision.mjs'));
   assert.ok(commandsByEvent.PostToolUse.includes('node record-successful-edit.mjs'));
   assert.deepEqual(commandsByEvent.SubagentStop, ['node observe-decision.mjs']);
+  assert.ok(commandsByEvent.UserPromptSubmit.includes('node observe-user-intent.mjs'));
 });
 
 test('prompt-library retains at most one non-terminal PR plan and documents cleanup', () => {
@@ -693,7 +701,7 @@ test('single-entry: retired primitives carry registry tombstones', () => {
 
 test('agent tool identifiers are pinned to the current VS Code taxonomy', () => {
   const canonical = new Set([
-    'agent', 'agent/runSubagent',
+    'agent', 'agent/runSubagent', 'ae/*',
     'edit', 'edit/createDirectory', 'edit/createFile', 'edit/editFiles', 'edit/editNotebook',
     'execute', 'execute/createAndRunTask', 'execute/getTerminalOutput', 'execute/runInTerminal',
     'execute/runNotebookCell', 'execute/testFailure',

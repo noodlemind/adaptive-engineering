@@ -10,6 +10,7 @@ import { redactSecrets } from './secret-scan.mjs';
 import { policyDigest } from './trust.mjs';
 import { captureWorkingSources } from './repo-map/working-sources.mjs';
 import { DEFAULT_MAX_BYTES } from './fs-safe.mjs';
+import { planWorkflow, compactPlanWorkflow } from './plan-decisions.mjs';
 
 export function validateContextSnapshot({ workspace, snapshot, targets, home }) {
   if (snapshot?.version !== 2) return { pass: true };
@@ -62,6 +63,7 @@ export function buildTaskHandoff({ workspace, task = '', domainPlan = null, home
     taskInput: oversized ? null : redactSecrets(task),
     taskInputDigest: createHash('sha256').update(task).digest('hex'),
     plan: plan ? { path: plan.path, status: plan.status, locked: plan.plan_lock, phase: plan.phase } : null,
+    workflow: planWorkflow(plan, { workspace }),
     contractDigest: plan ? planDigest(plan.text) : null,
     contract: oversized ? null : JSON.parse(JSON.stringify(contract, (_key, value) => typeof value === 'string' ? redactSecrets(value) : value)),
     notes: oversized ? null : redactSecrets(notes),
@@ -79,6 +81,6 @@ export function buildTaskHandoff({ workspace, task = '', domainPlan = null, home
     result.evidenceOmitted++;
     result.requiresRead = true;
   }
-  if (Buffer.byteLength(JSON.stringify(result)) > 8000) return { schema: 1, taskInput: null, contract: null, requiresRead: true, reason: 'Handoff exceeds the budget; reload the source records.', next: result.next };
+  if (Buffer.byteLength(JSON.stringify(result)) > 8000) return { schema: 1, taskInput: null, contract: null, workflow: compactPlanWorkflow(result.workflow), requiresRead: true, reason: 'Handoff exceeds the budget; reload the source records.', next: result.next };
   return result;
 }
