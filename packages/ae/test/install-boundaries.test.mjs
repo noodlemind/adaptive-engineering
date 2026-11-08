@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { installGlobalHarnessShim } from '../lib/global-bin.mjs';
 import { installHarnessBin } from '../lib/install-harness-bin.mjs';
 import { mergeIntelliJInstructions, seedProfile, syncAssetsToTarget } from '../lib/sync.mjs';
@@ -225,4 +226,13 @@ test('runtime retirement dry-run preserves files and unowned runtime files are n
   write(home, '.harness-lock.json', JSON.stringify({ package: 'unrelated', files: [stale] }));
   installHarnessBin(pkg, home, {}, () => {});
   assert.equal(fs.readFileSync(path.join(home, stale), 'utf8'), 'old runtime');
+}));
+
+test('runtime install keeps only the D2 build the renderer loads', () => fixture(root => {
+  const pkg = fileURLToPath(new URL('..', import.meta.url));
+  const { files } = installHarnessBin(pkg, path.join(root, 'home'), { dryRun: true }, () => {});
+  const d2 = files.filter(rel => rel.startsWith('.ae-bin/node_modules/@d2lang/d2/'));
+  assert.ok(d2.includes('.ae-bin/node_modules/@d2lang/d2/dist/node-esm/d2.wasm'));
+  assert.ok(d2.includes('.ae-bin/node_modules/@d2lang/d2/package.json'));
+  assert.deepEqual(d2.filter(rel => /\/dist\/(?:node-cjs|browser)\//.test(rel)), []);
 }));
