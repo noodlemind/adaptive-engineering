@@ -4,6 +4,7 @@
   "property": "Governed product edits need accepted intent; verified-delivery learning needs current intent/source-bound proof; recovery controls do not authorize product mutation.",
   "intentSources": [
     "docs/adaptive-engineering.md",
+    "docs/reference/plans-and-proof.md",
     "packages/ae/corpus/skills/references/harness-tool-contract.md",
     "packages/ae/corpus/skills/references/workflow-invariants.md"
   ],

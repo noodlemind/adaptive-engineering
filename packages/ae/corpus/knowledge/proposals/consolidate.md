@@ -4,7 +4,7 @@ Read `<copilot-home>/skills/references/capability-gap-proposal.md` with the host
 
 ## Summary
 
-- **Requested outcome:** Drain accumulated learning-episode debt into the T2 learnings store on a governed schedule, per `docs/adaptive-engineer-harness.md`.
+- **Requested outcome:** Drain accumulated learning-episode debt into the T2 learnings store on a governed schedule, per `docs/adaptive-engineering.md`.
 - **Observed gap:** The knowledge layer shipped the deterministic half of the consolidation loop as CLI commands (`ae consolidate --status | --candidates | --apply`), but the model half — reading the work packet, deciding one `ADD`/`STRENGTHEN`/`SUPERSEDE`/`MERGE`/`NOOP` op per episode cluster, writing the ops JSON, and honoring the mode gate — had no invocable primitive.
 - **Why existing capabilities are insufficient:** `/auto-compound` and `compound --insight` capture episodes but never cluster them; `/compound-learnings` publishes solution docs; `/index-memory` rebuilds the BM25 manifest over solution docs and does not touch the learnings store; `/harness-doctor` diagnoses without writing. No surviving skill produces consolidation ops.
 - **User impact if not addressed:** Episode debt accumulates unconsolidated; `orient` cannot inject condensed learnings, and the `due: true` drain signal from `ae consolidate --status` has no responder.
@@ -72,6 +72,6 @@ Direct ask: a human requests "run the knowledge consolidation loop now."
 ## Human Decision
 
 - **Decision:** Approved
-- **Reviewer:** Krish (repo owner)
+- **Reviewer:** repository owner
 - **Date:** 2026-07-30
 - **Conditions or required edits:** Approval recorded via the owner's directed milestone review of the knowledge-layer delivery (PR #37). Skill stays engineer-internal (`user-invocable: false`); `ae consolidate --apply` remains the sole writer of learning content; trigger evals at `evals/skill-trigger-evals.yaml#consolidate` stay current with the skill.

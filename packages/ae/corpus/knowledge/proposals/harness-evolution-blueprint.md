@@ -5,15 +5,15 @@ The `## Human Decision` section records approval on 2026-08-06; its listed condi
 remain binding on every implementation phase (per Decision Handling semantics in
 `<copilot-home>/skills/references/capability-gap-proposal.md`, read with the host read tool. Outside the enforce hook, `ae get --reference skills/references/capability-gap-proposal.md --json` prints the same file).
 This document is the approved design, not a behavior reference — current behavior is
-documented in `docs/adaptive-engineer-harness.md` and the harness tool contract as each phase ships.
+documented in `docs/adaptive-engineering.md` and the harness tool contract as each phase ships.
 
 This blueprint adapts nine externally supplied proposals — a two-layer golden/branch-local
 knowledge model, deterministic retrieval, structural codebase indexing, layer-aware
 compounding, structurally enriched plans and verification, knowledge lifecycle commands,
 multi-project/worktree hardening, local token budgeting, and provenance governance — onto
-the existing Adaptive Engineer Harness architecture. It maps each proposal to what already
+the existing Adaptive Engineering architecture. It maps each proposal to what already
 exists, what is genuinely new, and how the new parts compose with the contracts pinned by
-`docs/adaptive-engineer-harness.md`, `docs/adaptive-engineer-harness.md`, and the harness test
+`docs/adaptive-engineering.md` and the harness test
 suite. Two proposals arrive largely satisfied and are marked verify-and-document.
 
 ## 1. Fixed decisions
@@ -51,7 +51,7 @@ every section below. Alternatives are not reconsidered.
 | Events | `events.mjs` | `EVENT_TYPES` allow-list (known latent gap: `init_repo`/`recall`/`validate_plan`/`index` writes are silently dropped; `knowledge`-type events already flow) |
 | Doctor | `doctor.mjs` | H1–H17, K1–K4, V1–V9 |
 | Capability governance | Read `<copilot-home>/knowledge/capability-registry.yaml` and `<copilot-home>/skills/references/capability-gap-proposal.md` with the host read tool. Outside the enforce hook, `ae get --reference knowledge/capability-registry.yaml --json` and `ae get --reference skills/references/capability-gap-proposal.md --json` print the same files. | Lifecycle + registry mutation rules |
-| Memory model + threat model | `docs/adaptive-engineer-harness.md` | Three tiers, one writer each; day-granular episode dates are load-bearing |
+| Memory model + threat model | `docs/adaptive-engineering.md` | Three tiers, one writer each; day-granular episode dates are load-bearing |
 
 ## 3. Per-proposal mapping
 
@@ -426,7 +426,7 @@ conforming citizens of them.
 ## Human Decision
 
 - **Decision:** Approved
-- **Reviewer:** Krish (repo owner)
+- **Reviewer:** repository owner
 - **Date:** 2026-08-06
 - **Conditions or required edits:** The §4 protected-shadow and governance-binding gates,
   the §5 promotion-lane mechanics and `absorb-branch` replay rule, and the §5a

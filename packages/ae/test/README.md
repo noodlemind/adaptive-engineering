@@ -45,7 +45,7 @@
 
 Import from `./helpers/index.mjs` (or a specific file).
 
-## Layers (scripts land in Phase 4 of the hygiene plan)
+## Layers
 
 | Layer | Rule of thumb | Today |
 |-------|----------------|-------|
@@ -54,23 +54,3 @@ Import from `./helpers/index.mjs` (or a specific file).
 | integration | temp workspace + `runHarness` / git | full suite |
 
 `npm test` always means the full suite (CI default).
-
-## Souvenir inventory — retired
-
-All `*findings*`, `codex-*`, `coderabbit-*`, `*-hardening*`, `*-round*`, and `*adversarial*` test **filenames** under `test/` have been removed.
-
-| Former souvenir | Module home now |
-|-----------------|-----------------|
-| `coderabbit-review-findings.test.mjs` | `flag-value-guards`, `trust`, `checks-command`, `config-command`, `policy`, `bundle-sync`, `doctor-structural`, `retention` |
-| `codex-review-findings.test.mjs` | `trust`, `controls`, `exec-command`, `config-command`, `checks-command` |
-| `codex-phase5-findings.test.mjs` | `bundle-sync`, `plugin-host`, `agent-loop`, `local-primitives`, `provider-adapters`, `tui` |
-| `knowledge-adversarial-fixes.test.mjs` + `knowledge-path-safety-round2.test.mjs` | **`knowledge-path-safety.test.mjs`** |
-| `knowledge-boundary-hardening.test.mjs` | **`knowledge-governance-boundary.test.mjs`** |
-| `knowledge-recall-hardening.test.mjs` | **`context-pack.test.mjs`** |
-| `knowledge-store-io-hardening.test.mjs` | **`knowledge-store-io.test.mjs`** |
-| `knowledge-structural-hardening.test.mjs` | **`knowledge-store-transaction.test.mjs`** |
-| `verify-severity-hardening.test.mjs` | **`verify-severity.test.mjs`** |
-
-**Keep (not souvenirs):** `tui-design.test.mjs` (product design contracts), other module-named knowledge/gate/verify tests.
-
-Headers in folded files may still mention the former name for archaeology; **do not** reintroduce souvenir filenames.

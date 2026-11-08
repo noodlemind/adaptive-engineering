@@ -142,7 +142,7 @@ test('shipped investigation guidance selects repositories by task relevance', ()
     assert.match(text, /task|dependency/);
     assert.match(text, /Plans stay on the bound repo/);
   }
-  const doc = fs.readFileSync(path.join(repoRoot, 'docs/workspace-layout-detection.md'), 'utf8');
+  const doc = fs.readFileSync(path.join(repoRoot, 'docs/reference/workspace-layout-detection.md'), 'utf8');
   assert.match(doc, /does not\s+discover saved workspaces/i);
   assert.match(doc, /projectStore/);
 });

@@ -6,7 +6,7 @@ Optional company registry. Install copies this folder to `~/.copilot/enterprise/
 
 | Layer | Examples | Hydrated to |
 |-------|----------|-------------|
-| **Prompt library (base)** | java and aws skills, `@aws-reviewer` | `~/.copilot/` |
+| **AE corpus (base)** | java and aws skills, `@aws-reviewer` | `~/.copilot/` |
 | **Enterprise (this folder)** | company registry, corp logging rules | `~/.copilot/enterprise/` (via `ae install`) |
 
 `@engineer` reads the enterprise registry next to the base registry. Routing loads skills, agents, and instructions from `~/.copilot/skills`, `~/.copilot/agents`, `~/.copilot/instructions`, and the same three directories under `packages/ae/corpus/`.

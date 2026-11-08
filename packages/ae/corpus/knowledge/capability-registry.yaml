@@ -53,7 +53,7 @@ capabilities:
     triggers: [accepted Deliver playbook, resume scoped worklist, continue established plan]
     usage_count: 0
     eval_suite: packages/ae/test/caffeinated.test.mjs
-    promotion_evidence: [docs/adaptive-engineering.md#caffeinated-delivery-continuation]
+    promotion_evidence: [docs/reference/plans-and-proof.md#caffeinated-delivery-continuation]
   code-review:
     type: skill
     status: active

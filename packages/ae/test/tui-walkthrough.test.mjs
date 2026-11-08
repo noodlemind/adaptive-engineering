@@ -50,7 +50,7 @@ async function ledger(lines, { workspace, copilotHome, dispatcher, argv = ['--no
 
 test('walkthrough has three approved beats', () => {
   assert.equal(WALKTHROUGH_BEATS.length, 3);
-  assert.equal(WALKTHROUGH_BEATS[0].title, 'Adaptive Engineer Harness');
+  assert.equal(WALKTHROUGH_BEATS[0].title, 'Adaptive Engineering');
   assert.equal(WALKTHROUGH_BEATS[1].title, 'The loop that compounds');
   assert.equal(WALKTHROUGH_BEATS[2].title, 'Almost none of this is yours to run');
   assert.match(WALKTHROUGH_BEATS[1].body.join('\n'), /orient → lock intent → gate → work → verify → compound → index/);
@@ -126,7 +126,7 @@ test('walkthrough overlay replaces the composer and does not blink a caret in th
   const pending = session.next();
   session.openOverlay(attachWalkthroughOverlay(createWalkthrough({ hydrated: true })));
 
-  assert.ok(output.lines.some((l) => l.includes('Adaptive Engineer Harness')));
+  assert.ok(output.lines.some((l) => l.includes('Adaptive Engineering')));
   assert.ok(output.lines.some((l) => l.includes('1/3')));
   assert.equal(output.lines.filter((l) => l.includes('❯')).length, 0, 'the tour is not a prompt');
   assert.equal(output.lines.some((l) => l.includes('undefined')), false);
@@ -145,7 +145,7 @@ test('walkthrough overlay replaces the composer and does not blink a caret in th
 test('linear walkthrough lines carry all three beats', () => {
   const lines = walkthroughLines({ hydrated: false });
   const text = lines.join('\n');
-  assert.match(text, /Adaptive Engineer Harness/);
+  assert.match(text, /Adaptive Engineering/);
   assert.match(text, /The loop that compounds/);
   assert.match(text, /Almost none of this is yours to run/);
   assert.match(text, /@engineer/);
@@ -176,14 +176,14 @@ test('? help lists the keymap and exactly one walkthrough line', async () => {
 
 test('typed walkthrough emits the three beats as ledger lines when not interactive', async () => {
   const { text } = await ledger(['walkthrough', 'exit']);
-  assert.match(text, /Adaptive Engineer Harness/);
+  assert.match(text, /Adaptive Engineering/);
   assert.match(text, /orient → lock intent → gate → work → verify → compound → index/);
   assert.match(text, /@engineer/);
 });
 
 test('non-TTY first launch does not dump the walkthrough unasked', async () => {
   const { text } = await ledger(['exit']);
-  assert.doesNotMatch(text, /Adaptive Engineer Harness/);
+  assert.doesNotMatch(text, /Adaptive Engineering/);
   assert.doesNotMatch(text, /The loop that compounds/);
 });
 
