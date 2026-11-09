@@ -175,6 +175,22 @@ test('an insight evidence quote with a secret split across lines is refused', ()
   assert.equal(split.result.pass, false);
   assert.match(split.result.blockedReason, /secret/);
   assert.deepEqual(split.written, []);
+  // A credential wrapped mid-token reassembles only with the break removed.
+  for (const quote of ['postgres://reader:pw\r\n@db.invalid', `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`, `ghp_${'A'.repeat(18)}  \r\n  ${'A'.repeat(18)} rejected`]) {
+    const wrapped = captureInsight({ evidenceQuote: quote });
+    assert.equal(wrapped.result.pass, false, JSON.stringify(quote));
+    assert.match(wrapped.result.blockedReason, /secret split across lines/);
+    assert.ok(!wrapped.result.blockedReason.includes('pw') && !wrapped.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
+    assert.deepEqual(wrapped.written, []);
+  }
+  assert.equal(captureInsight({ evidenceQuote: 'expected 1\nreceived 2' }).result.pass, true, 'ordinary multi-line output still passes');
+});
+
+test('an insight evidence quote with a bare colour-code remnant against a secret is refused', () => {
+  const remnant = captureInsight({ evidenceQuote: `error: [33mghp_${'A'.repeat(36)}[0m rejected` });
+  assert.equal(remnant.result.pass, false);
+  assert.match(remnant.result.blockedReason, /secret \(github-token\)/);
+  assert.deepEqual(remnant.written, []);
 });
 
 test('ae compound --insight takes an --evidence-quote that starts with a diff header', () => {
@@ -214,14 +230,16 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   assert.equal(equalsForm.status, 0, equalsForm.stdout + equalsForm.stderr);
   const captured = JSON.parse(equalsForm.stdout);
   assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, captured.path), 'utf8')), '--dry-run', 'the = form keeps a flag-like value as the quote');
-  // The space form also catches a swallowed --flag=value or one-letter alias.
-  for (const value of ['--category=logic', '-h']) {
+  // The space form also catches a swallowed flag of this command: its own or a
+  // global flag, alone or with =value, an alias, or -h/--help.
+  for (const value of ['--category=logic', '--tags', '--workspace=/x', '-v', '-h', '--help']) {
     const swallowedValue = ae('--insight', '--title', `swallowed ${value}`, '--body', 'body', '--evidence-quote', value);
     assert.equal(swallowedValue.status, 2, swallowedValue.stdout + swallowedValue.stderr);
     assert.match(swallowedValue.stdout + swallowedValue.stderr, new RegExp(`needs a value but got the flag ${value}`));
   }
-  // Diff lines are still quotes in the space form.
-  for (const value of ['--- a/src/retry.mjs', '-  removed line']) {
+  // Diff lines, and dash-led text that is not a flag of this command, are
+  // still quotes in the space form.
+  for (const value of ['--- a/src/retry.mjs', '-  removed line', '--max-old-space-size=4096', '-x', '--foo=bar', '--insightful']) {
     const diff = ae('--insight', '--title', `diff ${value.length}`, '--body', 'body', '--evidence-quote', value);
     assert.equal(diff.status, 0, diff.stdout + diff.stderr);
     assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, JSON.parse(diff.stdout).path), 'utf8')), value);

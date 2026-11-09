@@ -8,7 +8,7 @@ import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning, inertLine } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { inertEvidenceQuote, EVIDENCE_QUOTE_CAP } from '../lib/knowledge/evidence-quote.mjs';
@@ -281,6 +281,58 @@ test('a hand-edited quote whose secret is wrapped in terminal codes is redacted 
   const rendered = inertEvidenceQuote(quote);
   assert.ok(!rendered.includes('pw'), rendered);
   assert.match(rendered, /\[redacted: connection-string\]/);
+});
+
+test('a hand-edited quote whose token sits inside colour codes is redacted, and escape sequences are removed whole', () => {
+  const cases = [
+    [`error: \x1b[33mghp_${'A'.repeat(36)}\x1b[0m rejected`, 'github-token', 'ghp_'],
+    [`key \x1b[1;31m${AWS}\x1b[0m`, 'aws-access-key', AWS],
+    ['\x1b[32meyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJl\x1b[0m', 'jwt', 'eyJ'],
+    ['\x1b[33mBearer abcdefghijklmnopqrstuvwxyz012345\x1b[0m', 'bearer-token', 'abcdefghijklmnop'],
+    ['\u009b33mghp_' + 'B'.repeat(36) + '\u009b0m', 'github-token', 'ghp_'],
+    // A bare remnant with no ESC left in front of it.
+    [`error: [33mghp_${'C'.repeat(36)}[0m rejected`, 'github-token', 'ghp_'],
+  ];
+  for (const [quote, id, leak] of cases) {
+    const rendered = inertEvidenceQuote(quote);
+    assert.ok(!rendered.includes(leak), `${JSON.stringify(quote)} leaked: ${rendered}`);
+    assert.equal(rendered, `[redacted: ${id}]`);
+  }
+  assert.equal(inertEvidenceQuote('\x1b[31mFAIL\x1b[0m retry.test.mjs \x1b]0;title\x07done'), 'FAIL retry.test.mjs done', 'CSI and OSC sequences leave no [31m remnant');
+});
+
+test('a hand-edited quote whose secret is split mid-token across a line break is withheld whole', () => {
+  for (const quote of ['postgres://reader:pw\r\n@db.invalid', 'postgres://reader:pw\n@db.invalid', `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`, `token ghp_${'A'.repeat(18)} \r\n\t${'A'.repeat(18)} rejected`]) {
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
+  }
+  assert.equal(inertEvidenceQuote('expected 1\r\nreceived 2'), 'expected 1  received 2', 'ordinary multi-line output is only joined');
+});
+
+test('a frontmatter-only episode whose closing fence has no trailing newline keeps its frontmatter out of the excerpt and manifest', () => {
+  for (const [name, text] of [['crlf-only.md', '---\r\ntitle: "orders timeout fmonly crlf"\r\nkind: insight\r\ndate: 2026-11-01\r\nevidence_quote: "QUOTE_MARKER crlf"\r\n---'], ['lf-only.md', '---\ntitle: "orders timeout fmonly lf"\nkind: insight\ndate: 2026-11-01\nevidence_quote: "QUOTE_MARKER lf"\n---']]) {
+    const workspace = tmp('quote-fmonly-ws-');
+    const copilotHome = tmp('quote-fmonly-ch-');
+    const harnessHome = tmp('quote-fmonly-hh-');
+    const dir = path.join(copilotHome, 'knowledge', 'solutions', 'perf');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), text);
+    ensureStore(workspace, { home: harnessHome });
+    const [entry] = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+    assert.equal(entry.excerpt, '', `${name}: the excerpt holds no frontmatter`);
+    assert.match(entry.evidence_quote, /QUOTE_MARKER/, `${name}: the quote still reads as its own field`);
+    runIndexKnowledge({ workspace, copilotHome, flags: {}, log: () => {}, home: harnessHome });
+    const manifest = fs.readFileSync(path.join(copilotHome, 'knowledge', 'manifest.yaml'), 'utf8');
+    assert.ok(manifest.includes(name), `${name}: the episode is indexed`);
+    assert.equal(manifest.includes('QUOTE_MARKER'), false, `${name}: the manifest summary and excerpt skip the frontmatter`);
+  }
+});
+
+test('stripFrontmatter ends the block only at a whole-line closing fence', () => {
+  assert.equal(stripFrontmatter('---\ntitle: a---\nnote: ---x\n---\nbody\n---\nmore'), 'body\n---\nmore', 'a --- inside a value does not close the block');
+  assert.equal(stripFrontmatter('---\r\ntitle: x\r\n---\r\n\r\nbody'), '\r\nbody');
+  assert.equal(stripFrontmatter('---\ntitle: x\n---'), '');
+  assert.equal(stripFrontmatter('---\n---\nbody\n---\nmore'), 'body\n---\nmore', 'an empty block ends at its own fence');
+  assert.equal(stripFrontmatter('no frontmatter\n---\nx'), 'no frontmatter\n---\nx');
 });
 
 test('a consolidation packet entry for an episode without a quote has no evidence_quote key', () => {

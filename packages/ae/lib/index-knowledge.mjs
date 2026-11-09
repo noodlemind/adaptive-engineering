@@ -7,7 +7,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors, writeFileContained } from '
 import { solutionsScanRoots } from './project-layout.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
 import YAML from 'yaml';
-import { repoId } from './knowledge/store.mjs';
+import { repoId, stripFrontmatter } from './knowledge/store.mjs';
 import { manifestCorpusContent, projectManifestContent, PROJECT_MANIFEST_FILE } from './knowledge-manifest.mjs';
 
 function parseFrontmatter(text) {
@@ -25,8 +25,7 @@ function summaryFromBody(text) {
   const prob = text.match(/## Problem\s*\n+([^\n#]+)/i);
   if (prob) return prob[1].trim().slice(0, 200);
   return (
-    text
-      .replace(/^---[\s\S]*?---\r?\n/, '')
+    stripFrontmatter(text)
       .trim()
       .split('\n')
       .find((l) => l.trim())
@@ -35,7 +34,7 @@ function summaryFromBody(text) {
 }
 
 function excerptFromBody(text) {
-  const body = text.replace(/^---[\s\S]*?---\r?\n/, '').trim();
+  const body = stripFrontmatter(text).trim();
   const prob = body.match(/## Problem\s*\n+([\s\S]*?)(?=\n## |\n# |$)/i);
   const source = prob ? prob[1].trim() : body;
   return source.replace(/\s+/g, ' ').slice(0, 400);

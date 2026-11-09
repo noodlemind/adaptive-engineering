@@ -554,6 +554,17 @@ export function rewriteGovernance(dir, keepPredicate) {
   }
 }
 
+// A leading frontmatter block: the opening fence, then the closing fence as a
+// whole line, followed by a line break or the end of the input. A `---` inside
+// a value does not close the block, and a file that ends on its closing fence
+// with no trailing newline still loses the whole block.
+const FRONTMATTER_BLOCK = /^---\r?\n(?:---|[\s\S]*?\r?\n---)(?:\r?\n|$)/;
+
+/** The text after its leading frontmatter block, or the text unchanged when it has none. */
+export function stripFrontmatter(text) {
+  return String(text ?? '').replace(FRONTMATTER_BLOCK, '');
+}
+
 export function parseLearningFrontmatter(text) {
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return { fm: {}, body: text.trim() };

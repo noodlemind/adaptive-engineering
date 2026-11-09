@@ -464,6 +464,14 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   }));
 }
 
+// The flag names `ae compound` accepts, read from its registry definition.
+// Imported on use: the registry imports this module through commands.mjs.
+async function compoundFlagNames() {
+  const { getCommand, GLOBAL_FLAGS } = await import('./registry.mjs');
+  const defs = [...(getCommand('compound')?.args?.flags || []), ...GLOBAL_FLAGS];
+  return new Set(['-h', '--help', ...defs.flatMap(def => [def.name, ...(def.aliases || [])])]);
+}
+
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
   if (flags.evidenceQuote != null) {
     const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
@@ -471,9 +479,10 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     // The value is taken literally, so a forgotten value swallows the next flag.
     // Only the space form can swallow a flag; --evidence-quote=--dry-run is a deliberate value.
     if (flags.evidenceQuoteForm === 'missing') throw usage('--evidence-quote needs a value', 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
-    // A long flag, a long flag with =value, or a one-letter alias such as -h.
-    // Diff text such as `--- a/x` or `-  removed line` does not match.
-    if (flags.evidenceQuoteForm === 'space' && /^(?:--[a-z][a-z0-9-]*(?:=.*)?|-[a-zA-Z])$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    // Only a real flag of this command counts: its own or a global flag name or
+    // alias, alone or with =value, or -h/--help. Other dash-led text, such as
+    // `--- a/x`, `-  removed line`, `-x` or `--max-old-space-size=4096`, is a quote.
+    if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

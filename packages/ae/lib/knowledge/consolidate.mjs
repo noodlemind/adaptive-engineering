@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, inertLine } from './store.mjs';
+import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, inertLine, stripFrontmatter } from './store.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
@@ -51,7 +51,7 @@ function capTags(tags, totalCap) {
 }
 
 function excerpt(text) {
-  const body = text.replace(/^---[\s\S]*?---\r?\n/, '').trim();
+  const body = stripFrontmatter(text).trim();
   // inertLine (store.mjs) runs AFTER the \s+ collapse: \s only covers
   // whitespace control chars (tab/newline/CR/FF/VT) — a NUL byte or another
   // non-whitespace C0 control char embedded in the body would otherwise
