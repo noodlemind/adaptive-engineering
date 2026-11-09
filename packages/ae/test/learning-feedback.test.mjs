@@ -19,6 +19,7 @@ import { branchKeyFor } from '../lib/git-context.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
+import { learningRendered } from '../lib/context-pack.mjs';
 
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const PLAN = 'docs/plans/2026-11-09-feat-feedback-plan.md';
@@ -306,4 +307,89 @@ test('review 3: a protected golden learning and its branch twin give one status 
   // Branch-layer exposure is not credited to the golden learning.
   publishReviewRecord(ws, `.harness/learning/exposures/plan-${recordHash('docs/plans/q.md')}.json`, { version: 1, plan: 'docs/plans/q.md', entries: [{ id: 'sql/dup', layer: 'branch', count: 9, lastExposedAt: '2026-11-01T00:00:00.000Z' }] });
   assert.equal(knowledgeFeedbackStatus({ workspace: ws, home }).learnings[0].exposed, 5);
+});
+
+// Second review pass regressions (PR #123).
+
+function twins(t) {
+  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  const ws = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-twin2-ws-')));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-twin2-home-'));
+  t.after(() => { fs.rmSync(ws, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  git(ws, ['init', '-q', '-b', 'feature/x']); git(ws, ['config', 'user.email', 'a@b.c']); git(ws, ['config', 'user.name', 'T']);
+  fs.writeFileSync(path.join(ws, 'seed.txt'), 's\n'); git(ws, ['add', '.']); git(ws, ['commit', '-qm', 's']);
+  const head = git(ws, ['rev-parse', 'HEAD']).stdout.trim();
+  const { dir } = ensureStore(ws, { home });
+  const write = (root, source) => {
+    fs.mkdirSync(path.join(root, 'learnings', 'sql'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'learnings', 'sql', 'dup.md'), `---\nschema: 1\ntrigger: "t dup"\nstatus: active\nsource: ${source}\nepisodes:\nanchors: []\nsuperseded_by: null\nlast_confirmed: null\norigin: test\n---\n\nBody ${source}.\n`);
+  };
+  write(dir, 'human');
+  const key = branchKeyFor('feature/x');
+  const bucket = path.join(dir, 'branches', key);
+  fs.mkdirSync(path.join(bucket, 'learnings'), { recursive: true });
+  fs.writeFileSync(path.join(bucket, 'meta.json'), JSON.stringify({ branch: 'feature/x', branchKey: key, baseSha: head, createdAt: new Date().toISOString(), promotable: true }));
+  write(bucket, 'auto');
+  const [golden, twin] = loadLayeredLearnings({ workspace: ws, home }).learnings;
+  assert.equal(Boolean(twin?.subordinate), true, 'precondition: golden plus subordinate twin');
+  return { ws, home, golden, twin };
+}
+
+test('second pass 1: exposure is kept per layer, so a twin-only delivery does not move the golden count', t => {
+  const c = twins(t);
+  for (let i = 0; i < 5; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.golden, c.twin] });
+  recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.twin] });
+  const layers = exposureTotals(c.ws).get('sql/dup').layers;
+  assert.deepEqual([layers.golden.exposed, layers.branch.exposed], [5, 1]);
+  assert.deepEqual(readExposure(c.ws, PLAN).entries.map(e => [e.id, e.layer, e.count]), [['sql/dup', 'branch', 1], ['sql/dup', 'golden', 5]]);
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  assert.deepEqual(knowledgeFeedbackStatus({ workspace: c.ws, home: c.home }).learnings.map(r => [r.id, r.exposed]), [['sql/dup', 5]]);
+  assert.deepEqual(feedbackPruningCheck({ workspace: c.ws, home: c.home }).pruningCandidates, ['sql/dup']);
+  // An older entry without per-layer keying still reads as its single layer.
+  publishReviewRecord(c.ws, `.harness/learning/exposures/plan-${recordHash('docs/plans/old.md')}.json`, { version: 1, plan: 'docs/plans/old.md', entries: [{ id: 'sql/dup', count: 2, lastExposedAt: '2026-11-01T00:00:00.000Z' }] });
+  assert.equal(exposureTotals(c.ws).get('sql/dup').layers.golden.exposed, 7);
+});
+
+test('second pass 2: the golden entry carries the golden version, so a wrong verdict on it reaches review_required', t => {
+  const c = twins(t);
+  recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.golden, c.twin] });
+  const entry = readExposure(c.ws, PLAN).entries.find(e => e.layer === 'golden');
+  assert.equal(entry.version, learningVersion(c.golden));
+  assert.notEqual(entry.version, learningVersion(c.twin));
+  const fields = validateFeedbackFields({ operation: 'x', decision: 'no-learning', rationale: 'r', recalled: [{ id: 'sql/dup', verdict: 'wrong' }] }, { recordRoot: c.ws, planPath: PLAN });
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('golden-wrong'), planPath: PLAN, captureDate: '2026-11-09', feedback: fields });
+  assert.deepEqual(feedbackSummary({ workspace: c.ws, home: c.home, learnings: [c.golden] }).review_required, ['sql/dup']);
+});
+
+test('second pass 3: review_required reads the full feedback history, not the first 512 records', t => {
+  const c = seeded(t);
+  const base = projectStoreDir(c.ws, { home: c.home });
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: 'f'.repeat(64), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'wrong', version: learningVersion(c.learnings[0]) }] } });
+  for (let i = 0; i < 512; i++) {
+    const op = '0' + sha(`op-${i}`).slice(1);
+    fs.writeFileSync(path.join(base, 'feedback', `${op}.json`), JSON.stringify({ version: 1, operation: op, plan: `docs/plans/o${i}.md`, recalled: [{ id: 'logic/other', verdict: 'irrelevant' }] }));
+  }
+  assert.deepEqual(feedbackSummary({ workspace: c.ws, home: c.home, learnings: c.learnings }).review_required, [c.id]);
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'on' });
+  assert.equal(consolidateStatus({ workspace: c.ws, home: c.home }).due, true);
+});
+
+test('second pass 4: an exposure file above the 32 KiB record cap is skipped', t => {
+  const c = seeded(t);
+  const plan = 'docs/plans/big.md';
+  const filler = Array.from({ length: 400 }, (_, i) => ({ id: `logic/filler-${String(i).padStart(4, '0')}-${'x'.repeat(40)}`, count: 1, lastExposedAt: '2026-11-01T00:00:00.000Z' }));
+  publishReviewRecord(c.ws, `.harness/learning/exposures/plan-${recordHash(plan)}.json`, { version: 1, plan, entries: [{ id: c.id, count: 9, lastExposedAt: '2026-11-01T00:00:00.000Z' }, ...filler] });
+  assert.ok(fs.statSync(path.join(c.ws, `.harness/learning/exposures/plan-${recordHash(plan)}.json`)).size > 32 * 1024);
+  assert.equal(exposureTotals(c.ws).get(c.id), undefined);
+});
+
+test('second pass 6: delivery detection matches the layer mark, so a twin-only line does not credit the golden', () => {
+  const golden = { id: 'sql/dup' };
+  const twin = { id: 'sql/dup', layer: 'branch', subordinate: true };
+  const twinOnly = '## Learnings (memory)\n- [sql/dup] [branch-local, subordinate] t → c\n';
+  assert.equal(learningRendered(twinOnly, golden), false);
+  assert.equal(learningRendered(twinOnly, twin), true);
+  const goldenOnly = '- [sql/dup] [applicability: current; source bindings only] t → c\n';
+  assert.equal(learningRendered(goldenOnly, golden), true);
+  assert.equal(learningRendered(goldenOnly, twin), false);
 });

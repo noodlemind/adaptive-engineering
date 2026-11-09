@@ -33,7 +33,8 @@ export const learningVersion = learning => recordHash({ fm: learning.fm, body: l
 
 function learningVersions({ workspace, home }) {
   try {
-    return new Map(loadLayeredLearnings({ workspace, home }).learnings.map(learning => [learning.id, learningVersion(learning)]));
+    // A subordinate branch twin shares its protected golden's ID; key it apart so each layer keeps its own version.
+    return new Map(loadLayeredLearnings({ workspace, home }).learnings.map(learning => [learning.subordinate ? `${learning.id}#branch` : learning.id, learningVersion(learning)]));
   } catch {
     return new Map();
   }
@@ -65,31 +66,39 @@ export function recordExposure({ recordRoot, workspace, home, planPath, delivere
   const versions = learningVersions({ workspace, home });
   const at = now.toISOString();
   const prior = readExposure(recordRoot, planPath);
-  const entries = new Map((prior?.entries || []).map(entry => [entry.id, entry]));
-  // One exposure per learning ID per pack: a protected golden learning and its
-  // subordinate branch twin share an ID, and the golden entry wins.
-  const unique = new Map();
+  // One entry per learning ID and layer, so a golden learning and a branch
+  // learning with the same ID keep separate counts. Older entries carry their
+  // single layer and read the same way.
+  const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
+  const entries = new Map((prior?.entries || []).map(entry => [entryKey(entry), entry]));
+  // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
+  const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
+  const seen = new Set();
   for (const item of delivered) {
-    const key = typeof item === 'string' ? item : item?.id;
-    if (!unique.has(key) || (unique.get(key)?.subordinate && !item?.subordinate)) unique.set(key, item);
-  }
-  for (const item of unique.values()) {
     const id = typeof item === 'string' ? item : item?.id;
     if (typeof id !== 'string' || !LEARNING_ID.test(id)) continue;
-    const before = entries.get(id);
-    const version = versions.get(id) || null;
-    entries.set(id, {
+    if (item?.subordinate && goldenDelivered.has(id)) continue;
+    const layer = item?.layer === 'branch' ? 'branch' : 'golden';
+    const key = entryKey({ id, layer });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const before = entries.get(key);
+    // The version of the layer actually credited: a subordinate twin keeps its own.
+    const version = versions.get(item?.subordinate ? `${id}#branch` : id) || null;
+    entries.set(key, {
       id,
-      layer: item?.layer === 'branch' ? 'branch' : 'golden',
+      layer,
       ...(version ? { version } : {}),
       firstExposedAt: before?.firstExposedAt || at,
       lastExposedAt: at,
       count: (before?.count || 0) + 1,
     });
   }
-  let kept = [...entries.values()].sort((a, b) => b.lastExposedAt.localeCompare(a.lastExposedAt) || a.id.localeCompare(b.id)).slice(0, EXPOSURE_ENTRY_CAP);
-  const serialize = list => ({ version: 1, plan: planPath, entries: list.toSorted((a, b) => a.id.localeCompare(b.id)) });
-  while (kept.length > 1 && Buffer.byteLength(JSON.stringify(serialize(kept), null, 2)) > EXPOSURE_BYTE_CAP) kept = kept.slice(0, -1);
+  const byIdLayer = (a, b) => a.id.localeCompare(b.id) || String(a.layer).localeCompare(String(b.layer));
+  let kept = [...entries.values()].sort((a, b) => b.lastExposedAt.localeCompare(a.lastExposedAt) || byIdLayer(a, b)).slice(0, EXPOSURE_ENTRY_CAP);
+  const serialize = list => ({ version: 1, plan: planPath, entries: list.toSorted(byIdLayer) });
+  // +1 for the trailing newline publishReviewRecord appends.
+  while (kept.length > 1 && Buffer.byteLength(JSON.stringify(serialize(kept), null, 2)) + 1 > EXPOSURE_BYTE_CAP) kept = kept.slice(0, -1);
   const record = serialize(kept);
   publishReviewRecord(recordRoot, exposureRel(planPath), record);
   return record;
@@ -162,7 +171,12 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
   if (hasRecalled) {
     checkEntries(decision.recalled, { field: 'recalled', cap: EXPOSURE_ENTRY_CAP, keys: ['id', 'verdict', 'note'], choiceKey: 'verdict', choices: RECALLED_VERDICTS });
     const exposure = readExposure(recordRoot, planPath);
-    const exposed = new Map((exposure?.entries || []).map(entry => [entry.id, entry]));
+    // A learning ID can have one entry per layer; the verdict binds the most recently delivered version.
+    const exposed = new Map();
+    for (const entry of exposure?.entries || []) {
+      const prior = exposed.get(entry.id);
+      if (!prior || String(entry.lastExposedAt || '') > String(prior.lastExposedAt || '')) exposed.set(entry.id, entry);
+    }
     const unknown = decision.recalled.filter(entry => !exposed.has(entry.id)).map(entry => entry.id);
     if (unknown.length) throw new Error(`recalled lists learnings this plan's context packs never delivered: ${unknown.join(', ')}`);
     out.recalled = decision.recalled.map(entry => ({ id: entry.id, verdict: entry.verdict, ...(exposed.get(entry.id).version ? { version: exposed.get(entry.id).version } : {}), ...(entry.note ? { note: entry.note } : {}) }));
@@ -219,7 +233,8 @@ export function readFeedbackRecords({ workspace, home, cap = FEEDBACK_RECORD_SCA
  * Counts never activate, retire or dispute anything.
  */
 export function feedbackSummary({ workspace, home, learnings }) {
-  const { records, omitted } = readFeedbackRecords({ workspace, home });
+  // The full history decides review_required and due; only displayed rows are capped.
+  const { records, omitted } = readFeedbackRecords({ workspace, home, cap: Infinity });
   const current = new Map((learnings || []).map(learning => [learning.id, learningVersion(learning)]));
   const perLearning = new Map(), perReviewer = new Map();
   for (const record of records) {
@@ -265,10 +280,12 @@ const later = (a, b) => typeof b === 'string' && (!a || b > a) ? b : a;
 
 /**
  * Per-learning exposure totals summed over every plan's exposure record under
- * this record root, with a per-layer split. Every record is read (each one is
- * capped at 32 KiB). Counts are lower bounds: a record keeps at most 64
+ * this record root, with a per-layer split. Every record is read; each is
+ * read with a 32 KiB limit. Counts are lower bounds: a record keeps at most 64
  * entries per plan and an evicted entry restarts at 1. Exposure records live
  * in each worktree, so another worktree's exposures are not visible here.
+ * Branch-layer exposure is not scoped to a bucket: after a branch switch, a
+ * same-ID branch learning on the new branch inherits the old branch's count.
  */
 export function exposureTotals(recordRoot) {
   const totals = new Map();
@@ -277,7 +294,10 @@ export function exposureTotals(recordRoot) {
   try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return totals; }
   for (const name of names) {
     const rel = `${EXPOSURE_DIR_REL}/${name}`;
-    const record = readReviewRecord(recordRoot, rel);
+    // Records are written under EXPOSURE_BYTE_CAP; a larger file is not ours and is skipped.
+    const text = readFileNoFollow(path.join(recordRoot, rel), { root: recordRoot, maxBytes: EXPOSURE_BYTE_CAP });
+    let record = null;
+    try { record = text === null ? null : JSON.parse(text); } catch { record = null; }
     if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
     for (const entry of record.entries) {
       if (typeof entry?.id !== 'string' || !LEARNING_ID.test(entry.id) || !Number.isInteger(entry.count) || entry.count < 1) continue;
