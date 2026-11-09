@@ -19,16 +19,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Pull requests install the exact archive on Node 24 on both operating systems.
-# Manual qualification (workflow_dispatch) adds Node 20 and the Git integration
-# regressions. On pull requests those regressions would only repeat files the
-# full Linux suite runs on every PR and the complete Windows suite runs nightly.
+# Pull requests install the exact archive on Linux with Node 24; the Windows
+# `windows` job in harness-windows.yml covers install targets and locks on
+# win32. Manual qualification (workflow_dispatch) installs on both systems with
+# Node 20 and 24 and adds the Git integration regressions. On pull requests those regressions would only repeat files of
+# the complete suite, which runs locally before the PR (scripts/full-suite.mjs).
 jobs:
   archive:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
         node: ${{ fromJSON(github.event_name == 'pull_request' && '["24"]' || '["20", "24"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
@@ -122,7 +123,7 @@ jobs:
 
   # Preserve the existing required package check names. A green archive alone
   # cannot satisfy them: all same-revision Git batches and their inventory must
-  # pass. On pull requests only the Node 24 archives and no Git batches run, so
+  # pass. On pull requests only the Linux Node 24 archive and no Git batches run, so
   # the gate requires the archive job and skips the Git inventory; a skipped Git
   # job outside pull requests still fails it.
   package:

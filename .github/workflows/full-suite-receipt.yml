@@ -1,0 +1,39 @@
+# Reports whether the PR description quotes a passing full-suite receipt for
+# the PR's head commit (printed by `node scripts/full-suite.mjs`). It warns but
+# never fails: the receipt is the author's attestation, not CI evidence.
+name: Full suite receipt
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  receipt:
+    name: full-suite-receipt
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Look for a receipt matching the head commit
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          short="${HEAD_SHA:0:12}"
+          if printf '%s' "$PR_BODY" | grep -Eq "Full suite: PASS .*${short}"; then
+            line=$(printf '%s' "$PR_BODY" | grep -Eo "Full suite: PASS [^\`]*${short}[^\`]*" | head -1)
+            echo "## Full suite receipt" >> "$GITHUB_STEP_SUMMARY"
+            echo "Found: \`$line\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "Receipt found for $short"
+          else
+            msg="No passing full-suite receipt for head commit $short in the PR description. Run 'node scripts/full-suite.mjs' at that commit and paste the line it prints."
+            echo "::warning title=Full suite not proven::$msg"
+            echo "## Full suite receipt" >> "$GITHUB_STEP_SUMMARY"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi

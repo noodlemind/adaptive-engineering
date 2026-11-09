@@ -1,33 +1,42 @@
 # Continuous integration
 
-Every pull request runs the complete source suite on Linux, which discovers
-every top-level `packages/ae/test/*.test.mjs` file. The CLI's trusted named
-checks remain unchanged.
+Pull-request CI is a fast tier that aims for about 10 job-minutes in total.
+The complete suite runs on the machine that opens the PR, before every push
+that is ready for review:
 
-Windows minutes bill at twice the Linux rate and the complete Windows suite
-costs about two runner-hours per revision, so Windows is scoped:
+```
+node scripts/full-suite.mjs              # every test file; prints a receipt
+node scripts/full-suite.mjs --check      # does a passing receipt match HEAD?
+git config core.hooksPath .githooks      # opt in: pre-push runs --check
+```
 
-| Trigger | Windows work |
-| --- | --- |
-| Pull request touching `packages/ae/`, the Windows workflow, `.github/ci/`, the CI test scripts or `.npmrc` | One `windows` job: a Windows-sensitive test subset (hooks, install, runner, paths, trust, redaction, Git and shell boundaries) plus the native probes, about 4 to 5 minutes |
-| Pull request touching nothing above | No Windows job runs; the skipped `windows` check still satisfies branch protection |
-| Nightly schedule on `main` | The complete twelve-shard suite, only when Windows-relevant files changed in the last day |
-| Manual dispatch | The complete twelve-shard suite on any branch. Use it before merging a change that is risky on Windows beyond the subset |
+The receipt is written to `ci-test-results/full-suite-receipt.json` and printed
+as one line, for example
+`Full suite: PASS · 4120 tests in 346 files · win32 Node 22.11.0 · 0123456789ab · 38 min`.
+Paste it into the PR description (the template has a slot). The
+`full-suite-receipt` check warns, without failing, when the description has no
+passing receipt for the PR's head commit. A receipt is the author's attestation,
+not CI evidence. Run it on Windows when you can: that is the primary platform.
 
-The subset lives in `WINDOWS_SUBSET` in `harness-windows.yml`. Its inventory
-step fails if a listed file disappears. Branch pushes do not start a second
-copy. New revisions cancel older runs of the same workflow and ref, including
-package candidate runs.
+| Trigger | Linux | Windows |
+| --- | --- | --- |
+| Pull request | One job: the fast tier (`--suite fast`, every file recorded at 30 s or less on Windows plus every unmeasured file), about two thirds of the files | Touching `packages/ae/`, the Windows workflow, `.github/ci/`, the CI test scripts or `.npmrc`: one `windows` job with a Windows-sensitive subset (hooks, install, runner, paths, trust, redaction, Git and shell boundaries) plus the native probes. Otherwise skipped, which still satisfies branch protection |
+| Manual dispatch | The complete suite in four shards | The complete suite in twelve shards |
+
+The Windows subset lives in `WINDOWS_SUBSET` in `harness-windows.yml`; its
+inventory step fails if a listed file disappears. Pushes to `main` start no
+copy. New revisions cancel older runs of the same workflow and ref.
 
 ## Checks and evidence
 
 | Work | Why it runs | Evidence |
 | --- | --- | --- |
-| Full Linux suite | Source behavior and prompt contracts on Node 22 | Console log and installed-delivery transcripts |
+| Linux fast tier (pull requests) | Most source behavior and prompt contracts on Node 22 | Console log, file inventory and installed-delivery transcripts |
+| Complete suite (author's machine; CI on dispatch) | Every test file before review | Receipt line in the PR description; full manifests on dispatch |
 | Windows-sensitive subset (pull requests) | Win32 behavior users hit first, on every relevant revision | Subset console log and file-presence inventory |
-| Twelve Windows test shards (nightly, manual) | Complete source behavior on the primary platform, with each file assigned once | Selected inventory, exact file timings, counts, console logs, transcripts and process diagnostics |
+| Twelve Windows test shards (manual) | Complete source behavior on the primary platform, with each file assigned once | Selected inventory, exact file timings, counts, console logs, transcripts and process diagnostics |
 | Windows final gate | The subset or all shards passed; the inventory is complete; native CLI, redaction and descendant termination work | Combined inventory verdict and native probe output |
-| Package installation on Linux and Windows | The exact Node 24 archive installs offline and hydrates a runnable `ae` | Archive, checksum and source metadata |
+| Package installation (Linux on PRs; Linux and Windows on dispatch) | The exact archive installs offline and hydrates a runnable `ae` | Archive, checksum and source metadata |
 | Documentation | Canonical pages build with Jekyll | Pages artifact |
 
 The former delivery and adaptive jobs and separate Linux prompt-contract step
@@ -68,8 +77,8 @@ useful job count while every test file still executes once per platform.
 
 Package candidates run for changes inside `packages/ae/`, the package workflow,
 root npm configuration or license files. Both operating systems install their
-exact archive. Pull requests install on Node 24 only. Manual qualification
-(workflow dispatch) adds Node 20 on both systems and the Git integration
+exact archive. Pull requests install on Linux with Node 24 only. Manual
+qualification (workflow dispatch) installs on both systems with Node 20 and 24 and the Git integration
 regressions on every OS/runtime; run it before a release. On pull requests
 those regressions would repeat files that the full Linux suite runs on every PR
 and the complete Windows suite runs nightly.
