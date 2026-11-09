@@ -138,7 +138,7 @@ function acquireLock(workspace, relPath) {
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {
-        return { held: false, degraded: 'no lock directory', release: () => {} };
+    return { held: false, degraded: 'no lock directory', release: () => {} };
   }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -149,7 +149,7 @@ function acquireLock(workspace, relPath) {
       try {
         age = Date.now() - fs.statSync(file).mtimeMs;
       } catch {
-                continue;
+        continue;
       }
       if (age < LOCK_STALE_MS) {
         return { held: false, degraded: null, busy: true, release: () => {} };
@@ -224,7 +224,7 @@ export function readUndoStack(workspace) {
     try {
       parsed = JSON.parse(line);
     } catch {
-            continue;
+      continue;
     }
     if (parsed?.type === 'undone' && parsed.ref) undone.add(parsed.ref);
     else if (parsed?.type === 'mutation' && parsed.id) entries.push(parsed);
@@ -257,7 +257,7 @@ export function runEdit({ workspace, path: relPath, old, next, dryRun = false })
       return failed('edit', relPath, 'binary', `${relPath} contains NUL bytes, so it is not editable as text`, null);
     }
 
-        let matches = 0;
+    let matches = 0;
     let at = target.content.indexOf(old);
     const first = at;
     while (at !== -1) {
@@ -273,13 +273,13 @@ export function runEdit({ workspace, path: relPath, old, next, dryRun = false })
     }
 
     const before = target.content;
-        const lineNumber = before.slice(0, first).split(/\r?\n/).length;
+    const lineNumber = before.slice(0, first).split(/\r?\n/).length;
     const after = before.slice(0, first) + next + before.slice(first + old.length);
     const syntaxError = syntaxCheckContent(relPath, after);
     if (syntaxError) {
       return failed('edit', relPath, 'syntax', `refusing to write invalid syntax to ${relPath}`, syntaxError);
     }
-        if (dryRun) {
+    if (dryRun) {
       return {
         ...dryRunResult('edit', relPath, before, after),
         matches: 1,
@@ -367,7 +367,7 @@ export function runWrite({ workspace, path: relPath, content, expect = null, all
         );
       }
     } else if (expected !== null) {
-            return failed(
+      return failed(
         'write',
         relPath,
         'stale',
@@ -505,7 +505,7 @@ export function runUndo({ workspace, dryRun = false }) {
       }
       restored = { bytes: Buffer.byteLength(previous, 'utf8'), removed: false, sha256: sha256(previous) };
     } else {
-            try {
+      try {
         fs.unlinkSync(full);
       } catch (error) {
         return failed('undo', entry.path, 'write-refused', `removing ${entry.path} was refused: ${error.message}`, null);

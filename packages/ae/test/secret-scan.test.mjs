@@ -50,3 +50,9 @@ test('redactSecrets (sweep P3): replaces a secret-shaped field with a pattern-na
   assert.equal(redactSecrets(''), '');
   assert.equal(redactSecrets(null), '');
 });
+
+test('scanSecrets flags temporary AWS, npm, GitLab, Google and Basic auth credentials', () => {
+  const lines = ['ASIAABCDEFGHIJKLMNOP', 'npm_' + 'a'.repeat(36), 'glpat-' + 'a'.repeat(20), 'AIza' + 'a'.repeat(35), 'Authorization: Basic dXNlcjpwYXNzd29yZA==', 'aws_secret_access_key = ' + 'A'.repeat(40)];
+  const ids = scanSecrets(lines.join('\n')).map(hit => hit.id);
+  assert.deepEqual(ids, ['aws-access-key', 'npm-token', 'gitlab-token', 'google-api-key', 'basic-auth', 'generic-api-key']);
+});

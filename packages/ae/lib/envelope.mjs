@@ -92,7 +92,7 @@ export function createJsonlStream(stream, { schema = ENVELOPE_SCHEMA_VERSION, re
     if (event === 'result' && fields.status !== undefined) {
       assertKnownStatus(fields.status, 'createJsonlStream result row');
     }
-        lastWriteOk = stream.write(`${redactedJson({ schema, event, ...fields }, { redactor: activeRedactor })}\n`) !== false;
+    lastWriteOk = stream.write(`${redactedJson({ schema, event, ...fields }, { redactor: activeRedactor })}\n`) !== false;
   }
 
   /** Resolve once the stream is writable again after backpressure — or
@@ -100,7 +100,7 @@ export function createJsonlStream(stream, { schema = ENVELOPE_SCHEMA_VERSION, re
    * has no event interface (a plain in-memory test sink). */
   function drained() {
     if (lastWriteOk || typeof stream.once !== 'function') return Promise.resolve();
-        return new Promise((resolve) => stream.once('drain', () => {
+    return new Promise((resolve) => stream.once('drain', () => {
       lastWriteOk = true;
       resolve();
     }));

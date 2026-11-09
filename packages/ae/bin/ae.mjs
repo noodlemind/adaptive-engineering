@@ -177,7 +177,7 @@ export async function main() {
       else if (args[i].startsWith('--skills-home=')) { args.splice(i, 1); i--; }
       else if (!args[i].includes('=') && valuedFlags.has(args[i])) i++;
     }
-        if (command === '--version' || command === '-V') {
+    if (command === '--version' || command === '-V') {
       console.log(readPkgVersion());
     } else if (command === 'help' || command === '--help' || command === '-h') {
       const topic = args.find((a) => !a.startsWith('-'));
@@ -198,7 +198,7 @@ export async function main() {
         console.log(renderHelp());
       }
     } else if (command === 'palette') {
-            const flags = parseFlags(args);
+      const flags = parseFlags(args);
       console.log(redactedJson(commandIndexEnvelope({
         workspace: path.resolve(flags.workspace),
         copilotHome: resolveCopilotHome(flags.copilotHome),
@@ -215,10 +215,10 @@ export async function main() {
       const journaling = (getCommand(command)?.workspaceJournal !== false || domainContext !== null) && !shouldSkipRunJournal(runFlags);
       runId = newRunId();
       runStartedAt = Date.now();
-            setRunContext({ run: runId, actor: detectActor() });
+      setRunContext({ run: runId, actor: detectActor() });
       runWorkspacePath = runWorkspace;
       runJournalFlags = runFlags;
-            const openRun = () => {
+      const openRun = () => {
         if (!journaling || runOpened) return;
         if (domainContext) validateDomainContext(domainContext, executionWorkspace);
         runOpened = true;
@@ -234,9 +234,9 @@ export async function main() {
           flags: runFlags,
         });
       };
-            const events = createProcessEventRegistry(args, runId, { recordWorkspace: runWorkspace });
-            let signal;
-            if (['verify', 'exec', 'bash', 'checks', 'agent', 'domain', 'experiment'].includes(command)) {
+      const events = createProcessEventRegistry(args, runId, { recordWorkspace: runWorkspace });
+      let signal;
+      if (['verify', 'exec', 'bash', 'checks', 'agent', 'domain', 'experiment'].includes(command)) {
         const controller = new AbortController();
         process.once('SIGINT', () => controller.abort());
         if (command === 'experiment') process.once('SIGTERM', () => controller.abort());
@@ -264,7 +264,7 @@ export async function main() {
   } catch (err) {
     const exit = Number.isInteger(err.exit) ? err.exit : 1;
     emitError({ code: err.code || 'E_UNEXPECTED', message: err.message, fix: err.hint, exit });
-        if (process.env.HARNESS_DEBUG) {
+    if (process.env.HARNESS_DEBUG) {
       const { redactText } = createRedactor();
       console.error(redactText(inspect(err)));
     }
@@ -310,7 +310,7 @@ function flushStream(stream) {
       finish();
       return;
     }
-        const t = setTimeout(finish, 2000);
+    const t = setTimeout(finish, 2000);
     t.unref?.();
   });
 }

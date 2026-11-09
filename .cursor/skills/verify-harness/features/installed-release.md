@@ -6,7 +6,7 @@ The packed checkout must install and upgrade into a matching CLI, hooks, schemas
 
 - `release-fresh` installs the locally built archive into isolated homes and checks its version and schema 4.
 - `release-upgrade` upgrades the exact pre-experiment 0.10.0 source-package fixture into the current package version.
-- `release-corpus` checks the hydrated 28 skills, 22 agents, five instructions, four public skills, one public agent, and relocatable hooks.
+- `release-corpus` checks that the hydrated skills, agents and instructions match the source corpus counts, with four public skills, one public agent, and relocatable hooks.
 - `release-experiment` measures four charged score/guard pairs, refuses an incorrect keep, restores the last kept candidate, and reaches the accepted target.
 - `release-preserve` preserves unrelated staged work, the user index, and HEAD through measurement and rollback.
 - `release-complete` produces current evidence version 7 and a completed plan through the installed runtime.

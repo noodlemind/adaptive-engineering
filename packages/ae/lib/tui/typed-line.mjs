@@ -57,7 +57,7 @@ export function routeTypedLine(argv, { workspace = process.cwd(), index = null }
   for (let i = 0; i < supplied.length; i += 1) {
     const slot = slots[i];
     if (!slot) return null;
-        const allowed = slot.choices?.literal;
+    const allowed = slot.choices?.literal;
     if (Array.isArray(allowed) && allowed.length && !allowed.includes(supplied[i])) return null;
     values[slot.flag ?? slot.positional] = supplied[i];
   }

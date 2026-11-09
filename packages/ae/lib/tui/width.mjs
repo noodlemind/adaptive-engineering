@@ -80,9 +80,9 @@ export function clusterWidth(cluster) {
     const cp = ch.codePointAt(0);
     if (cp === undefined) continue;
     if (isZeroWidthCodePoint(cp)) continue;
-        if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) continue;
+    if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) continue;
     const w = isWideCodePoint(cp) ? 2 : 1;
-        if (sawBase) width = Math.max(width, w);
+    if (sawBase) width = Math.max(width, w);
     else { width = w; sawBase = true; }
   }
   return width;
@@ -111,11 +111,11 @@ function* tokens(text) {
         i += sgr[0].length;
         continue;
       }
-            const esc = ESCAPE_RE.exec(s.slice(i));
+      const esc = ESCAPE_RE.exec(s.slice(i));
       i += esc ? esc[0].length : 1;
       continue;
     }
-        let j = i;
+    let j = i;
     while (j < s.length && s[j] !== '\x1b') j += 1;
     for (const g of graphemes(s.slice(i, j))) yield { cluster: g, width: clusterWidth(g) };
     i = j;
@@ -130,7 +130,7 @@ export function clipTo(text, width) {
   let dropped = false;
   for (const t of tokens(text)) {
     if (t.ansi) {
-            if (!dropped) { out += t.ansi; sawAnsi = true; }
+      if (!dropped) { out += t.ansi; sawAnsi = true; }
       continue;
     }
     if (used + t.width > width) { dropped = true; break; }
@@ -157,7 +157,7 @@ export function wrapCells(line, width) {
 
   for (const t of tokens(line)) {
     if (t.ansi) {
-            open = /^\x1b\[(0|39|49)?m$/.test(t.ansi) ? '' : `${open}${t.ansi}`;
+      open = /^\x1b\[(0|39|49)?m$/.test(t.ansi) ? '' : `${open}${t.ansi}`;
       current += t.ansi;
       openInRow = openInRow || Boolean(open);
       continue;

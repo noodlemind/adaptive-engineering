@@ -65,7 +65,7 @@ export function startPlugin({
 
   const receiveLine = (line) => {
       if (!line.trim()) return;
-            if (line.length > maxLineBytes) {
+      if (line.length > maxLineBytes) {
         pushLog({ level: 'warn', text: `discarded a ${line.length}-byte frame from plugin (cap ${maxLineBytes})` });
         return;
       }
@@ -73,7 +73,7 @@ export function startPlugin({
       try {
         message = JSON.parse(line);
       } catch {
-                pushLog({ level: 'warn', text: `unparseable line from plugin: ${line.slice(0, 200)}` });
+        pushLog({ level: 'warn', text: `unparseable line from plugin: ${line.slice(0, 200)}` });
         return;
       }
       if (!PLUGIN_MESSAGES.includes(message?.type)) {
@@ -90,7 +90,7 @@ export function startPlugin({
         return;
       }
       if (message.type === 'hello') {
-                if (message.protocol !== undefined && message.protocol !== PROTOCOL_VERSION) {
+        if (message.protocol !== undefined && message.protocol !== PROTOCOL_VERSION) {
           pushLog({ level: 'warn', text: `plugin answered the handshake with protocol ${String(message.protocol).slice(0, 20)}, expected ${PROTOCOL_VERSION}` });
         }
         return;
@@ -198,7 +198,7 @@ export function startPlugin({
       });
     },
     close({ graceMs = 2000 } = {}) {
-            if (exited) return;
+      if (exited) return;
       try {
         send({ type: 'shutdown' });
       } catch {
@@ -206,7 +206,7 @@ export function startPlugin({
       }
       child.kill();
       closed = true;
-            settleAll(Object.assign(new Error('plugin closed with requests in flight'), { code: 'E_PLUGIN_CRASH' }));
+      settleAll(Object.assign(new Error('plugin closed with requests in flight'), { code: 'E_PLUGIN_CRASH' }));
       const escalate = setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* already gone */ }
       }, graceMs);

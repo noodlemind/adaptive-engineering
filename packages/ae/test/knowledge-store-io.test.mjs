@@ -677,7 +677,7 @@ test('R6: a present-but-unreadable .gitignore is never clobbered', () => {
   assert.equal(fs.statSync(path.join(dir, '.gitignore')).size, huge.length, 'an unexplained read failure must never become a rewrite');
 });
 
-test('R6: a crash recovery whose rollback cannot clean the tree refuses to run', () => {
+test('R6: a crash recovery whose rollback cannot clean the tree refuses to run', { skip: process.getuid?.() === 0 ? 'root ignores the read-only directory mode this test relies on' : false }, () => {
   const c = ctx();
   seedLearning(c, 'recovery-anchor');
   const { dir } = ensureStore(c.ws, { home: c.harnessHome });

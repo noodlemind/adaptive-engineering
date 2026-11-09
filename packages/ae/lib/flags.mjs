@@ -263,13 +263,13 @@ export function parseFlags(argv) {
       flags.harnessHome = next;
       flags.home = next;
     }
-        else if (a.startsWith('--target=')) {
+    else if (a.startsWith('--target=')) {
       const value = a.slice('--target='.length);
       if (!value) invalidFlag('--target', value, 'requires a comma-separated target list');
       assignTargets(flags, value);
     } else if (a === '--target') {
       const next = scan[++i];
-            if (next === undefined || next === '' || next.startsWith('--')) invalidFlag('--target', next, 'requires a comma-separated target list');
+      if (next === undefined || next === '' || next.startsWith('--')) invalidFlag('--target', next, 'requires a comma-separated target list');
       assignTargets(flags, next);
     } else if (a.startsWith('--plan=')) flags.plan = a.split('=').slice(1).join('=');
     else if (a === '--plan') flags.plan = scan[++i];
@@ -279,13 +279,13 @@ export function parseFlags(argv) {
     else if (a === '--enforcement') flags.enforcement = scan[++i];
     else if (a.startsWith('--learnings=')) flags.learnings = a.split('=').slice(1).join('=');
     else if (a === '--learnings') flags.learnings = scan[++i];
-        else if (a.startsWith('--workspace=')) {
+    else if (a.startsWith('--workspace=')) {
       const value = a.split('=').slice(1).join('=');
       if (!value) invalidFlag('--workspace', value, 'requires a workspace path');
       flags.workspace = value;
     } else if (a === '--workspace') {
       const next = scan[++i];
-            if (next === undefined || next === '' || next.startsWith('--')) invalidFlag('--workspace', next, 'requires a workspace path');
+      if (next === undefined || next === '' || next.startsWith('--')) invalidFlag('--workspace', next, 'requires a workspace path');
       flags.workspace = next;
     }
     else if (a === '-c' || a === '--collection') flags.collection = scan[++i];
@@ -337,7 +337,7 @@ export function parseFlags(argv) {
     else if (a === '--to') flags.to = scan[++i];
     else if (a.startsWith('--why=')) flags.why = a.split('=').slice(1).join('=');
     else if (a === '--why') {
-            const next = scan[i + 1];
+      const next = scan[i + 1];
       if (next !== undefined && !next.startsWith('--')) flags.why = scan[++i];
     }
     else if (a.startsWith('--applies=')) flags.applies = a.split('=').slice(1).join('=');
@@ -372,7 +372,7 @@ export function parseFlags(argv) {
     else if (a === '--yes') flags.yes = true;
     else if (a.startsWith('--layer=')) flags.layer = parseLayer(a.split('=')[1]);
     else if (a === '--layer') flags.layer = parseLayer(scan[++i]);
-        else if (a.startsWith('--branch=')) {
+    else if (a.startsWith('--branch=')) {
       const value = a.split('=').slice(1).join('=');
       if (!value) invalidFlag('--branch', value, 'requires a bucket key value');
       flags.branch = value;

@@ -145,7 +145,7 @@ function buildTree({ rootName, rows, depth, maxNodes }) {
     let level = 0;
     for (const part of dirs) {
       level += 1;
-            if (level > depth) break;
+      if (level > depth) break;
       prefix = prefix ? `${prefix}/${part.name}` : part.name;
       let node = index.get(prefix);
       if (!node) {
@@ -155,7 +155,7 @@ function buildTree({ rootName, rows, depth, maxNodes }) {
       }
       parent = node;
     }
-        if (dirs.length + 1 <= depth) {
+    if (dirs.length + 1 <= depth) {
       parent.children.push(makeNode({ ...row.parts[row.parts.length - 1], type: 'file' }));
     }
   }
@@ -182,7 +182,7 @@ function workspaceTree({ workspace, target, depth, maxNodes }) {
   let scope = '';
   if (target) {
     const rel = normalizeRelative(target);
-        if (rel === null || (rel !== '' && !safeResolveUnderRoot(root, rel))) {
+    if (rel === null || (rel !== '' && !safeResolveUnderRoot(root, rel))) {
       throw usageError(`path escapes the workspace: ${target}`, 'tree workspace <workspace-relative-path>');
     }
     scope = rel;
@@ -232,7 +232,7 @@ function knowledgeTree({ workspace, copilotHome, home, target, depth, maxNodes }
   const collections = loadCollections(copilotHome, workspace) || {};
   const names = Object.keys(collections).sort();
   if (target && !collections[target]) {
-        throw notFoundError(
+    throw notFoundError(
       `unknown knowledge collection: ${target}`,
       names.length
         ? `collections defined here: ${names.join(', ')}`
@@ -250,7 +250,7 @@ function knowledgeTree({ workspace, copilotHome, home, target, depth, maxNodes }
     if (!id) continue;
     rows.push({
       parts: [
-                { name: String(entry.scope || 'unscoped'), kind: 'scope' },
+        { name: String(entry.scope || 'unscoped'), kind: 'scope' },
         { name: clean(entry.category) || 'uncategorized', kind: 'category' },
         { name: id, kind: 'document', title: clean(entry.title), location: clean(entry.path) },
       ],

@@ -135,15 +135,15 @@ export function renderBlock(block, {
   };
     const pushStyled = (content) => {
     const visible = displayWidth(content);
-        if (visible > inner && !content.includes('\x1b')) {
-            const indent = /^\s*/.exec(content)[0];
+    if (visible > inner && !content.includes('\x1b')) {
+      const indent = /^\s*/.exec(content)[0];
       for (const piece of wrapCells(content.slice(indent.length), Math.max(8, inner - indent.length))) {
         rows.push(ui.tintRow(tintState, padTo(`${gutter}${indent}${piece}`, width)));
       }
       return;
     }
     const body = visible <= inner ? content : `${clipTo(ui.stripAnsi(content), inner - 1)}…`;
-        const pad = ' '.repeat(Math.max(0, inner - displayWidth(body)));
+    const pad = ' '.repeat(Math.max(0, inner - displayWidth(body)));
     rows.push(ui.tintRow(tintState, `${gutter}${body}${pad}`));
   };
 

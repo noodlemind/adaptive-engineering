@@ -197,7 +197,7 @@ export function readFileNoFollow(full, { maxBytes = DEFAULT_MAX_BYTES, root = nu
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.size > maxBytes) return null;
-        try {
+    try {
       if (fs.lstatSync(full).isSymbolicLink()) return null;
     } catch {
       return null;
@@ -261,7 +261,7 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
   };
   const refuse = () => {
     close();
-        if (!existedBefore) {
+    if (!existedBefore) {
       try {
         fs.unlinkSync(full);
       } catch {
@@ -273,7 +273,7 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return refuse();
-        if (O_NOFOLLOW === null) {
+    if (O_NOFOLLOW === null) {
       try {
         if (fs.lstatSync(full).isSymbolicLink()) return refuse();
       } catch {
@@ -287,7 +287,7 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
       fs.readSync(fd, last, 0, 1, stat.size - 1);
       if (last.toString('utf8') !== '\n') prefix = '\n';
     }
-        const buf = Buffer.from(prefix + content, 'utf8');
+    const buf = Buffer.from(prefix + content, 'utf8');
     let written = 0;
     while (written < buf.length) {
       const n = fs.writeSync(fd, buf, written, buf.length - written);
@@ -311,7 +311,7 @@ export function writeFileContained(root, rel, content, { exclusive = false, mode
   const tmp = path.join(parent, `.tmp-${path.basename(full)}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   let fd;
   try {
-        fd = mode === undefined ? fs.openSync(tmp, 'wx') : fs.openSync(tmp, 'wx', mode);
+    fd = mode === undefined ? fs.openSync(tmp, 'wx') : fs.openSync(tmp, 'wx', mode);
   } catch {
     return null;
   }

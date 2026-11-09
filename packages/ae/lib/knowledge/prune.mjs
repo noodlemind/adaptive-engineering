@@ -118,7 +118,7 @@ export function pruneBuckets({ workspace, home, branchKey = null, merged = false
       return { kind: 'reject', exitCode: 2, blockedReason: 'no buckets match the given selectors — nothing pruned' };
     }
 
-        const preview = [...selected.values()].map(bucketPreview).sort((a, b) => a.key.localeCompare(b.key));
+    const preview = [...selected.values()].map(bucketPreview).sort((a, b) => a.key.localeCompare(b.key));
     for (const p of preview) {
       log(
         `prune preview ${p.key}${p.branch ? ` (${p.branch})` : ''}: ${p.active ?? '?'} active · ${p.promoted ?? '?'} promoted · ${p.total ?? '?'} total`
@@ -137,7 +137,7 @@ export function pruneBuckets({ workspace, home, branchKey = null, merged = false
     }
 
     const keys = [...selected.keys()].sort();
-        const targets = [];
+    const targets = [];
     for (const b of selected.values()) {
       const contained = assertRealpathContained(txDir, path.join('branches', b.key));
       if (!contained) {

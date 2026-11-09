@@ -138,7 +138,7 @@ export function createOverlay({
         return { intent: 'choose', row: items[index], changed: true };
       }
       if (actions) {
-                if (name === 'backspace') return { intent: 'close', changed: true };
+        if (name === 'backspace') return { intent: 'close', changed: true };
         const pressed = typeof str === 'string' ? str.toLowerCase() : null;
         if (!ctrl && !key.meta && pressed && Object.hasOwn(actions, pressed)) {
           return { intent: 'action', action: actions[pressed], row: items[index] ?? null, changed: true };
@@ -228,13 +228,13 @@ export function renderOverlay(overlay, { ui, width = 80, maxWidth = null } = {})
   for (const [i, row] of overlay.visible.entries()) {
     const chosen = overlay.offset + i === overlay.index;
     const disabled = Boolean(row.unavailable || row.disabled);
-        const effect = row.sideEffect
+    const effect = row.sideEffect
       ? ui.paint(row.sideEffect === 'read' ? 'ok' : row.sideEffect === 'mutate' ? 'warn' : 'error', row.sideEffect)
       : '';
         const splitLabel = () => {
       if (disabled) return ui.paint('muted', row.label);
       if (overlay.kind !== 'palette') return row.label;
-            const at = String(row.label).indexOf(' ');
+      const at = String(row.label).indexOf(' ');
       const noun = at > 0 ? row.label.slice(0, at) : '';
       const rest = at > 0 ? row.label.slice(at + 1) : row.label;
       const pad = ' '.repeat(Math.max(0, nounWidth - noun.length));
@@ -243,23 +243,23 @@ export function renderOverlay(overlay, { ui, width = 80, maxWidth = null } = {})
         : `${' '.repeat(nounWidth ? nounWidth + 2 : 0)}${rest}`;
     };
     const label = splitLabel();
-        const headRoom = Math.max(4, inner - effectFloor(row, ui) - 3);
+    const headRoom = Math.max(4, inner - effectFloor(row, ui) - 3);
     const head = ` ${displayWidth(label) > headRoom ? clipTo(label, headRoom - 1).concat(ui.paint('muted', '…')) : label}`;
-        const effectCells = effect ? displayWidth(effect) + 1 : 0;
+    const effectCells = effect ? displayWidth(effect) + 1 : 0;
     const room = inner - displayWidth(head) - effectCells - 3;
-        const source = row.section
+    const source = row.section
       ? (row.note || '')
       : disabled
         ? (row.reason || row.unavailable || 'unavailable')
         : (row.note || row.summary || '');
     const plainNote = ui.stripAnsi(String(source));
     const clipped = room > 4 ? clipTo(plainNote, room) : '';
-        const shownNote = clipped && clipped.length < plainNote.length
+    const shownNote = clipped && clipped.length < plainNote.length
       ? `${clipTo(plainNote, room - 1)}…`
       : clipped;
     const paintedNote = shownNote ? ui.paint('muted', shownNote) : '';
     const tail = `${paintedNote}${paintedNote && effect ? ui.paint('muted', ' · ') : ''}${effect}${effect || paintedNote ? ' ' : ''}`;
-        let gap = inner - displayWidth(head) - displayWidth(tail);
+    let gap = inner - displayWidth(head) - displayWidth(tail);
     let body = `${head}${' '.repeat(Math.max(0, gap))}${tail}`;
     if (gap < 1) {
       const spill = 1 - gap;

@@ -139,7 +139,7 @@ export function createStyle({
   function line({ state, key, value = '', note, next, keyWidth = 10 }) {
     let out = state ? glyphGutter(state) : '';
     out += `${String(key).padEnd(keyWidth)}  `;
-        out += value;
+    out += value;
     if (note) out += paint('muted', ` · ${note}`);
     if (next) out += paint('muted', ` ${arrow} ${next}`);
     return scrub(out.trimEnd());
@@ -155,7 +155,7 @@ export function createStyle({
 
   /** Error & recovery block: code, plain message, one fix, optional docs. */
   function errorBlock({ code, message, fix, docs, exit = 1 }) {
-        const lines = [`${glyph('error')} ${paint('error', code)}`];
+    const lines = [`${glyph('error')} ${paint('error', code)}`];
     if (message) lines.push(`  ${scrub(String(message))}`);
     if (fix) lines.push(paint('muted', `  ${arrow} fix   ${fix}`));
     if (docs) lines.push(paint('muted', `  ${arrow} docs  ${docs}`));

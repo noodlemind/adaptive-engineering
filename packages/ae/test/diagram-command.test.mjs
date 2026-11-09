@@ -10,6 +10,7 @@ import { diagramsResultOf, parseDiagramArguments } from '../lib/diagram-cmd.mjs'
 import { diagramArtifactPaths } from '../lib/diagram.mjs';
 import { prepareFlowModel, publishFlowModel } from '../lib/flow-model.mjs';
 import { queryGraph } from '../lib/graph.mjs';
+import { NEEDS_NO_LAZY_FETCH } from './helpers/git-features.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(packageRoot, 'bin/ae.mjs');
@@ -186,7 +187,7 @@ test('authored diagram cannot render different bytes from its captured hash duri
   assert.equal(fs.existsSync(path.join(workspace, '.harness/diagrams')), false);
 });
 
-test('real CLI flow preserves committed scope, source bindings and currentness despite dirty worktree bytes', t => {
+test('real CLI flow preserves committed scope, source bindings and currentness despite dirty worktree bytes', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = flowFixture(t);
   fs.writeFileSync(path.join(f.workspace, 'src/input.mjs'), 'dirty worktree bytes\n');
   const run = spawnSync(process.execPath, [cli, 'diagrams', 'flow', '--flow', 'checkout', '--workspace', f.workspace, '--ae-home', f.home, '--no-events', '--json'], { encoding: 'utf8', timeout: 30000 });
@@ -200,7 +201,7 @@ test('real CLI flow preserves committed scope, source bindings and currentness d
   assert.match(fs.readFileSync(path.join(f.workspace, result.artifacts.source), 'utf8'), /status current/);
 });
 
-test('a previously stale flow remains renderable and visibly stale without changing its authored generation', async t => {
+test('a previously stale flow remains renderable and visibly stale without changing its authored generation', { skip: NEEDS_NO_LAZY_FETCH }, async t => {
   const f = flowFixture(t);
   fs.writeFileSync(path.join(f.workspace, 'src/input.mjs'), 'export const value = 2;\n'); f.commit();
   const result = await f.render(), receipt = JSON.parse(fs.readFileSync(path.join(f.workspace, result.artifacts.receipt), 'utf8'));
@@ -211,7 +212,7 @@ test('a previously stale flow remains renderable and visibly stale without chang
   assert.equal((await f.status(result.artifacts.receipt)).state, 'stale');
 });
 
-for (const alreadyStale of [false, true]) test(`flow source/status changes during render refuse publication (initially ${alreadyStale ? 'stale' : 'current'})`, async t => {
+for (const alreadyStale of [false, true]) test(`flow source/status changes during render refuse publication (initially ${alreadyStale ? 'stale' : 'current'})`, { skip: NEEDS_NO_LAZY_FETCH }, async t => {
   const f = flowFixture(t);
   if (alreadyStale) { fs.writeFileSync(path.join(f.workspace, 'src/input.mjs'), 'export const value = 2;\n'); f.commit(); }
   const pending = f.render();

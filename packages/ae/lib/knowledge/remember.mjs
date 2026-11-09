@@ -166,13 +166,13 @@ export function runRemember({ workspace, copilotHome, flags, argv, log = () => {
   fs.writeFileSync(opsPath, JSON.stringify(ops), 'utf8');
   let applied;
   try {
-        applied = applyOps({ workspace, opsPath, dryRun: flags.dryRun, home, approve: true, log, copilotHome, humanPresent: true });
+    applied = applyOps({ workspace, opsPath, dryRun: flags.dryRun, home, approve: true, log, copilotHome, humanPresent: true });
   } finally {
     fs.rmSync(opsPath, { force: true });
   }
   if (applied.exitCode !== 0) {
-        fs.rmSync(episodeFull, { force: true });
-        try {
+    fs.rmSync(episodeFull, { force: true });
+    try {
       withStoreTransaction(workspace, { home, label: `remember: clear failure bookkeeping for ${episode.path}` }, ({ dir, recordCheckpoint }) => {
         try {
           absorbOrAbort({ workspace, home, log, recordCheckpoint });
@@ -192,7 +192,7 @@ export function runRemember({ workspace, copilotHome, flags, argv, log = () => {
     } catch {
       // best effort — a ledger-cleanup failure must never mask the original rejection.
     }
-        try {
+    try {
       const knowledgeRoot = fs.existsSync(path.join(copilotHome, 'knowledge'))
         ? path.join(copilotHome, 'knowledge')
         : null;
@@ -200,9 +200,9 @@ export function runRemember({ workspace, copilotHome, flags, argv, log = () => {
     } catch {
       // advisory reindex — the rollback itself already succeeded
     }
-        const rejectedCode = applied.rejected?.[0]?.code;
+    const rejectedCode = applied.rejected?.[0]?.code;
     const rejectedReason = applied.rejected?.[0]?.reason;
-        const isTriggerControlChar = rejectedCode === 'E_SCHEMA' && /trigger must not contain control characters/.test(rejectedReason || '');
+    const isTriggerControlChar = rejectedCode === 'E_SCHEMA' && /trigger must not contain control characters/.test(rejectedReason || '');
     return {
       pass: false,
       exitCode: applied.exitCode,

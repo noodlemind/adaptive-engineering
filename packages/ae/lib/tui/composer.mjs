@@ -97,12 +97,12 @@ export function createComposer({
     if (!value) return { changed: true };
     past.push(value);
     while (past.length > historyLimit) past.shift();
-        return { submitted: value, bash: bashMode, changed: true };
+    return { submitted: value, bash: bashMode, changed: true };
   }
 
   function activeReference() {
     const clusters = lines[row];
-        if (col === 0) return null;
+    if (col === 0) return null;
     let start = col - 1;
     while (start >= 0 && !/\s/.test(clusters[start])) start -= 1;
     start += 1;
@@ -134,11 +134,11 @@ export function createComposer({
     const meta = Boolean(key.meta);
     const shift = Boolean(key.shift);
 
-        if (matchesPaletteChord(name, ctrl, meta)) return { intent: 'palette', changed: false };
+    if (matchesPaletteChord(name, ctrl, meta)) return { intent: 'palette', changed: false };
     if (meta && name === 'k') return { intent: 'palette', changed: false };
     // The mock's chord, honoured only with an empty line — see `paletteChord`.
     if (ctrl && name === 'k' && !dispatchValue()) return { intent: 'palette', changed: false };
-        if (ctrl && name === 'up') return { intent: 'navigate', changed: false };
+    if (ctrl && name === 'up') return { intent: 'navigate', changed: false };
     if (ctrl && name === 'c') {
       const had = Boolean(dispatchValue());
       lines = [[]]; row = 0; col = 0; historyIndex = null; completion = null;
@@ -153,7 +153,7 @@ export function createComposer({
     if (ctrl && name === 'u') { lines[row] = lines[row].slice(col); col = 0; return { changed: true }; }
     if (ctrl && name === 'k') { lines[row] = lines[row].slice(0, col); return { changed: true }; }
     if (ctrl && name === 'o') return { intent: 'fold', changed: false };
-        if (ctrl && name === 'l') return { intent: 'clear', changed: false };
+    if (ctrl && name === 'l') return { intent: 'clear', changed: false };
     if (ctrl && name === 'j') {
       const rest = lines[row].slice(col);
       lines[row] = lines[row].slice(0, col);
@@ -168,10 +168,10 @@ export function createComposer({
     }
 
     if (name === 'escape') {
-            return { intent: 'escape', changed: false };
+      return { intent: 'escape', changed: false };
     }
 
-        if (completion?.items?.length) {
+    if (completion?.items?.length) {
       if (name === 'up') { completion.index = (completion.index - 1 + completion.items.length) % completion.items.length; return { changed: true }; }
       if (name === 'down') { completion.index = (completion.index + 1) % completion.items.length; return { changed: true }; }
       if (name === 'tab' || name === 'return' || name === 'enter') {
@@ -179,7 +179,7 @@ export function createComposer({
         if (chosen && applyCompletion(chosen.path ?? chosen)) return { changed: true };
       }
     }
-        if (name === 'tab' && shift) return { intent: 'agent-mode', changed: false };
+    if (name === 'tab' && shift) return { intent: 'agent-mode', changed: false };
     if (name === 'tab') {
       const ref = activeReference();
       if (ref) return { intent: 'complete', prefix: ref.prefix, changed: false };
@@ -188,7 +188,7 @@ export function createComposer({
     switch (name) {
       case 'return':
       case 'enter': {
-                if (shift || meta || asText(lines[row]).endsWith('\\')) {
+        if (shift || meta || asText(lines[row]).endsWith('\\')) {
           const rest = lines[row].slice(col);
           lines[row] = lines[row].slice(0, col);
           lines.splice(row + 1, 0, rest);
@@ -226,7 +226,7 @@ export function createComposer({
     }
 
     if (!ctrl && !meta && isPrintable(str)) {
-            const atStartOfEmptyLine = row === 0 && col === 0 && lines.length === 1 && lines[0].length === 0;
+      const atStartOfEmptyLine = row === 0 && col === 0 && lines.length === 1 && lines[0].length === 0;
       if (str === '/' && atStartOfEmptyLine && !bashMode) {
         return { intent: 'palette', changed: false };
       }
@@ -237,11 +237,11 @@ export function createComposer({
       }
       insert(str);
       completion = null;
-            const ref = activeReference();
+      const ref = activeReference();
       if (ref) return { intent: 'complete', prefix: ref.prefix, changed: true };
       return { changed: true };
     }
-        return { changed: false };
+    return { changed: false };
   }
 
   function render() {
@@ -250,7 +250,7 @@ export function createComposer({
     const inner = Math.max(8, width - caretCells);
     const token = GATE_TOKEN[gate] ?? 'muted';
     const rule = paint(token, glyphs.rule.repeat(Math.max(1, width)));
-        let topRule = rule;
+    let topRule = rule;
     if (ruleLabel) {
       const tail = ` ${ruleLabel} `;
       const lead = Math.max(1, width - displayWidth(tail) - 2);
@@ -272,14 +272,14 @@ export function createComposer({
         const wrapped = wrapCells(text, inner);
         wrapped.forEach((piece, j) => {
           const prefix = i === 0 && j === 0 ? caretOut : ' '.repeat(caretCells);
-                    const shown = i === 0 && wrapped.length === 1 ? highlight(piece) : piece;
+          const shown = i === 0 && wrapped.length === 1 ? highlight(piece) : piece;
           body.push(`${prefix}${shown}`);
         });
       });
     }
 
     const out = [topRule, ...body, rule];
-        if (completion?.items?.length) out.push(...renderCompletion());
+    if (completion?.items?.length) out.push(...renderCompletion());
     if (hint) out.push(hint);
     return out;
   }
@@ -287,11 +287,11 @@ export function createComposer({
   function highlight(text) {
     if (bashMode) return text; // the shell owns this grammar, not the registry
     if (!classify || !text) return text;
-        const sigil = /^(!!|!|@|\/)/.exec(text);
+    const sigil = /^(!!|!|@|\/)/.exec(text);
     if (sigil) {
       return `${paint('info', sigil[1])}${text.slice(sigil[1].length)}`;
     }
-        const head = (text.trim().split(/\s+/)[0] || '');
+    const head = (text.trim().split(/\s+/)[0] || '');
     let index = -1;
     return text.replace(/\S+/g, (word) => {
       index += 1;

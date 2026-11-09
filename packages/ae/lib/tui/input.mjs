@@ -82,10 +82,10 @@ export function createInput({
         rows.push(...renderOverlay(overlay, { ui, width: w }));
       }
     } else {
-            if (palette) rows.push(...renderPaletteRows(palette.overlay, { ui, width: w }));
+      if (palette) rows.push(...renderPaletteRows(palette.overlay, { ui, width: w }));
       composer.setWidth(w);
       composer.setHint(renderHint({ ui, width: w, ...hintState }));
-            if (composer.bashMode) {
+      if (composer.bashMode) {
         composer.setRuleLabel('bash');
         composer.setPlaceholder(null);
       } else if (prompt) {
@@ -149,7 +149,7 @@ export function createInput({
     erase();
     const lines = regionLines();
     let top = regionTop(lines.length);
-        const deficit = top + lines.length - 1 - height();
+    const deficit = top + lines.length - 1 - height();
     if (deficit > 0) {
       moveTo(height(), 1);
       emit('\n'.repeat(deficit));
@@ -157,7 +157,7 @@ export function createInput({
       top = regionTop(lines.length);
     }
     moveTo(top, 1);
-        emit(lines.join('\n'));
+    emit(lines.join('\n'));
     painted = lines.length;
     const { row, col, hide } = cursorInRegion();
     if (hide) {
@@ -165,7 +165,7 @@ export function createInput({
       return;
     }
     emit(`${ESC}[?25h`);
-        moveTo(top + Math.max(0, Math.min(row, painted - 1)), 1);
+    moveTo(top + Math.max(0, Math.min(row, painted - 1)), 1);
     if (col > 0) emit(`${ESC}[${col}C`);
   };
 
@@ -188,7 +188,7 @@ export function createInput({
   };
 
   const onResize = () => {
-        contentRow = Math.min(contentRow, Math.max(1, height()));
+    contentRow = Math.min(contentRow, Math.max(1, height()));
     frame(() => {
       moveTo(Math.min(contentRow, height()), 1);
       emit(`${ESC}[0J`);
@@ -213,19 +213,19 @@ export function createInput({
 
     if (overlay) {
       const owner = overlay.handleKey(str, key);
-            if (owner.intent === 'close') {
+      if (owner.intent === 'close') {
         overlay = null;
         frame(() => { erase(); paint(); });
         deliver({ intent: 'close' });
         return;
       }
-            if (owner.intent === 'choose') { deliver({ intent: 'choose', row: owner.row, query: overlay?.query ?? '' }); return; }
+      if (owner.intent === 'choose') { deliver({ intent: 'choose', row: owner.row, query: overlay?.query ?? '' }); return; }
       if (owner.intent === 'action') { deliver({ intent: 'action', action: owner.action, row: owner.row }); return; }
       if (owner.changed) frame(() => { erase(); paint(); });
       return;
     }
 
-        if (palette) {
+    if (palette) {
       const name = key.name;
       if (name === 'escape') { dropPalette(); frame(() => { erase(); paint(); }); return; }
       if (['up', 'down', 'pageup', 'pagedown'].includes(name)) {
@@ -233,7 +233,7 @@ export function createInput({
         if (r.changed) frame(() => { erase(); paint(); });
         return;
       }
-            if (name === 'tab') {
+      if (name === 'tab') {
         const chosen = palette.overlay.selected;
         if (chosen) { palette = null; deliver({ intent: 'complete-row', row: chosen }); return; }
         return;
@@ -283,7 +283,7 @@ export function createInput({
     input.on('keypress', onKeypress);
     output.on?.('resize', onResize);
     if (usingAltScreen) emit(`${ESC}[?1049h`);
-        frame(() => {
+    frame(() => {
       emit('\n'.repeat(Math.max(0, height() - 1)));
       moveTo(1, 1);
       emit(`${ESC}[0J`);
@@ -313,7 +313,7 @@ export function createInput({
     get overlay() { return overlay; },
 
     openPalette({ overlay: paletteOverlay, filter }) {
-            prompt = null;
+      prompt = null;
       palette = { overlay: paletteOverlay, filter };
       if (!composer.value.startsWith('/')) composer.setValue(`/${composer.value}`);
       if (interactive) frame(() => { erase(); paint(); });
@@ -379,7 +379,7 @@ export function createInput({
       closed = true;
       frame(() => {
         erase();
-                if (interactive) {
+        if (interactive) {
           emit(`${ESC}[?25h`);
           moveTo(Math.min(contentRow, height()), 1);
         }

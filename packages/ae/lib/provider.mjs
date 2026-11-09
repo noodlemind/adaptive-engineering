@@ -157,7 +157,7 @@ export function modelCatalog({ parentEnv = process.env, cache = {}, enabledIds =
   return providerReadiness({ parentEnv, enabledIds, copilotHome }).map((provider) => {
     const cached = cache?.[provider.id];
     if (cached?.models?.length) {
-            const models = cached.models.includes(AUTO_MODEL) ? cached.models : [AUTO_MODEL, ...cached.models];
+      const models = cached.models.includes(AUTO_MODEL) ? cached.models : [AUTO_MODEL, ...cached.models];
       const labels = { [AUTO_MODEL]: `provider default (${provider.defaultModel})`, ...(cached.labels ?? {}) };
       return { ...provider, models, labels, source: 'fetched', fetchedAt: cached.fetchedAt ?? null };
     }
@@ -271,7 +271,7 @@ export function providerEnv(provider, { parentEnv = process.env, copilotHome = n
 
   const key = parentEnv[provider.keyVar];
   if (!key) {
-        if (provider.keyRequired === false) return env;
+    if (provider.keyRequired === false) return env;
     throw usageError(
       `${provider.keyVar} is not set`,
       `the provider process reads it; harness core never does — export ${provider.keyVar} and re-run`,
@@ -401,7 +401,7 @@ export function startProvider({
       return plugin.logs;
     },
     complete(request, options = {}) {
-            return plugin.request('complete', { ...request, model: model || provider.defaultModel }, options);
+      return plugin.request('complete', { ...request, model: model || provider.defaultModel }, options);
     },
     /** Catalogue fetch. Providers may honor `{ verify: true }` with model probes. */
     models(params = {}, options = {}) {

@@ -557,10 +557,10 @@ export function absorbHandEdits({ workspace, home, log = () => {} }) {
   const ids = [...absorbed.map((a) => a.id), ...deleted].join(', ');
   const commitRes = commitStore(dir, `human edit: ${ids}`);
   if (!commitRes.ok) {
-        return { absorbed, deleted, committed: false, ok: false, stderr: commitRes.stderr };
+    return { absorbed, deleted, committed: false, ok: false, stderr: commitRes.stderr };
   }
   try {
-        mirrorLearnings({ workspace, home, log, retiredIds: deleted.filter((id) => !goldenIds.has(id)) });
+    mirrorLearnings({ workspace, home, log, retiredIds: deleted.filter((id) => !goldenIds.has(id)) });
   } catch {
     // best effort — a mirror failure must never block absorb.
   }
@@ -600,7 +600,7 @@ function refreshRecallAfterPurge({ workspace, copilotHome, target, log = () => {
   try {
     served = loadManifest(copilotHome || '', workspace, { home });
   } catch {
-        return { ok: true, refreshed: !rebuildError, reason: null };
+    return { ok: true, refreshed: !rebuildError, reason: null };
   }
   if ((served.entries || []).some((e) => e && e.path === posixTarget)) {
     return {
@@ -660,7 +660,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
 
   const existingIn = resolved.filter((r) => r.existsOnDisk);
   if (existingIn.length > 1) {
-        return {
+    return {
       pass: false,
       exitCode: 2,
       removed: null,
@@ -675,7 +675,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
     const storePath = storeDir(workspace, { home });
   if (!fs.existsSync(storePath)) {
     if (episodeExistsOnDisk) {
-            const safe = assertRealpathContained(episodeRoot, target);
+      const safe = assertRealpathContained(episodeRoot, target);
       if (!safe) {
         return {
           pass: false,
@@ -685,7 +685,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
         };
       }
       fs.rmSync(safe, { force: true });
-            const recall = refreshRecallAfterPurge({ workspace, copilotHome, target, log, home });
+      const recall = refreshRecallAfterPurge({ workspace, copilotHome, target, log, home });
       if (!recall.ok) {
         return {
           pass: false,
@@ -715,7 +715,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
   let stagedFrom = null;
   let stagedTemp = null;
   if (episodeExistsOnDisk) {
-        const safe = assertRealpathContained(episodeRoot, target);
+    const safe = assertRealpathContained(episodeRoot, target);
     if (!safe) {
       return {
         pass: false,
@@ -764,10 +764,10 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
     try {
       absorbOrAbort({ workspace, home, log, recordCheckpoint });
     } catch (err) {
-            if (err instanceof StoreTransactionAbort) throw err;
+      if (err instanceof StoreTransactionAbort) throw err;
     }
 
-        const roots = [dir, ...listBuckets(dir).map((b) => b.dir)];
+    const roots = [dir, ...listBuckets(dir).map((b) => b.dir)];
     const matchingByRoot = roots.map((root) => ({
       root,
       learnings: listLearnings(root).filter((l) => (l.fm.episodes || []).some((e) => e.path === target)),
@@ -776,7 +776,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
     const matchingLearnings = matchingByRoot.flatMap((m) => m.learnings);
     const ledgerHits = matchingByRoot.reduce((n, m) => n + m.ledger.filter((e) => e.path === target).length, 0);
 
-        if (!episodeExistsOnDisk && matchingLearnings.length === 0 && ledgerHits === 0 && debrisBefore.length === 0) {
+    if (!episodeExistsOnDisk && matchingLearnings.length === 0 && ledgerHits === 0 && debrisBefore.length === 0) {
       return {
         kind: 'reject',
         pass: false,
@@ -792,9 +792,9 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
     for (const m of matchingByRoot) {
       for (const l of m.learnings) {
         const episodes = l.fm.episodes || [];
-                const remaining = episodes.filter((e) => e.path !== target);
+        const remaining = episodes.filter((e) => e.path !== target);
         if (remaining.length === 0) {
-                    if (!removeLearningFile(l.file)) {
+          if (!removeLearningFile(l.file)) {
             throw new Error(`refused to delete ${l.id}: the learning path does not resolve safely inside the knowledge store`);
           }
           removedLearnings.push(l.id);
@@ -807,14 +807,14 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
       }
       const keptLedger = m.ledger.filter((e) => e.path !== target);
       if (keptLedger.length !== m.ledger.length) {
-                writeLedger(m.root, keptLedger);
+        writeLedger(m.root, keptLedger);
         ledgerRemoved += m.ledger.length - keptLedger.length;
       }
       if (m.learnings.length) rebuildIndex(m.root);
     }
     rebuildIndex(dir);
 
-        if (removedLearnings.length) {
+    if (removedLearnings.length) {
       const survivingIds = new Set(roots.flatMap((root) => listLearnings(root).map((l) => l.id)));
       const fullyGone = new Set(removedLearnings.filter((id) => !survivingIds.has(id)));
       if (fullyGone.size) rewriteGovernance(dir, (e) => !fullyGone.has(e.id));
@@ -830,7 +830,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
   });
 
   if (!tx.ok) {
-        const restoreNote = restoreStaged();
+    const restoreNote = restoreStaged();
     return {
       pass: false,
       exitCode: 1,
@@ -845,7 +845,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
 
   const inner = tx.result;
   if (inner.kind === 'reject') {
-        const restoreNote = restoreStaged();
+    const restoreNote = restoreStaged();
     return {
       pass: inner.pass,
       exitCode: inner.exitCode,
@@ -859,7 +859,7 @@ export function purgeEpisode({ workspace, target, copilotHome, home, log = () =>
     try {
       fs.rmSync(sibling, { force: true });
     } catch {
-          }
+      }
   }
   stagedTemp = null; // swept above (or attempted); no separate finalize owns it now
 
@@ -943,9 +943,9 @@ export function purgeAll({ workspace, home, log = () => {} }) {
     try {
       absorbOrAbort({ workspace, home, log, recordCheckpoint });
     } catch (err) {
-            if (err instanceof StoreTransactionAbort) throw err;
+      if (err instanceof StoreTransactionAbort) throw err;
     }
-        const idsBeforeReset = listLearnings(dir).map((l) => l.id);
+    const idsBeforeReset = listLearnings(dir).map((l) => l.id);
     const learningsDir = path.join(dir, 'learnings');
     let n = 0;
     if (fs.existsSync(learningsDir)) {
@@ -953,17 +953,17 @@ export function purgeAll({ workspace, home, log = () => {} }) {
         if (!domain.isDirectory()) continue;
         const dPath = path.join(learningsDir, domain.name);
         n += fs.readdirSync(dPath).filter((f) => f.endsWith('.md')).length;
-                const contained = assertRealpathContained(dir, path.join('learnings', domain.name));
+        const contained = assertRealpathContained(dir, path.join('learnings', domain.name));
         if (contained) fs.rmSync(contained, { recursive: true, force: true });
       }
     }
-        for (const bucket of listBuckets(dir)) {
+    for (const bucket of listBuckets(dir)) {
       n += listLearnings(bucket.dir).length;
     }
     const containedBranches = assertRealpathContained(dir, 'branches');
     if (containedBranches) fs.rmSync(containedBranches, { recursive: true, force: true });
-        wipe(path.join(dir, 'consolidated.jsonl'));
-        wipe(path.join(dir, 'governance.jsonl'));
+    wipe(path.join(dir, 'consolidated.jsonl'));
+    wipe(path.join(dir, 'governance.jsonl'));
     rebuildIndex(dir);
     return { kind: 'success', commitMessage: 'purge: --all (store reset)', removedCount: n, idsBeforeReset };
     }
@@ -1005,8 +1005,8 @@ export function rebuildStore({ workspace, home, yes, copilotHome, log = () => {}
   }
 
   if (!yes) {
-        const storePath = storeDir(workspace, { home });
-        const archivedPreview = fs.existsSync(storePath)
+    const storePath = storeDir(workspace, { home });
+    const archivedPreview = fs.existsSync(storePath)
       ? listLearnings(storePath).length + listBuckets(storePath).reduce((n, b) => n + listLearnings(b.dir).length, 0)
       : 0;
     return {
@@ -1033,9 +1033,9 @@ export function rebuildStore({ workspace, home, yes, copilotHome, log = () => {}
     try {
       absorbOrAbort({ workspace, home, log, recordCheckpoint });
     } catch (err) {
-            if (err instanceof StoreTransactionAbort) throw err;
+      if (err instanceof StoreTransactionAbort) throw err;
     }
-        const archivedLearnings = listLearnings(dir);
+    const archivedLearnings = listLearnings(dir);
 
     const learningsDir = path.join(dir, 'learnings');
     if (fs.existsSync(learningsDir)) {
@@ -1047,7 +1047,7 @@ export function rebuildStore({ workspace, home, yes, copilotHome, log = () => {}
       }
     }
     wipe(path.join(dir, 'consolidated.jsonl'));
-        let archivedBranch = 0;
+    let archivedBranch = 0;
     for (const bucket of listBuckets(dir)) {
       archivedBranch += listLearnings(bucket.dir).length;
       const containedBucketLearnings = assertRealpathContained(dir, path.join('branches', bucket.key, 'learnings'));

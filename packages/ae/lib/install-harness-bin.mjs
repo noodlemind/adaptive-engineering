@@ -8,6 +8,9 @@ import { readFileNoFollow, writeFileContained } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
 
 const require = createRequire(import.meta.url);
+// Dependency builds the runtime never loads. D2 ships the same 42 MB wasm for CommonJS and
+// ESM plus a browser bundle; lib/diagrams imports only dist/node-esm (see check-release).
+const RUNTIME_DEPENDENCY_SKIP = Object.freeze({ '@d2lang/d2': ['dist/node-cjs/', 'dist/browser/'] });
 const COPY_DIRS = ['bin', 'lib', 'config', 'corpus', 'vscode-extension'];
 const COPY_FILES = ['package.json', 'retired.json'];
 
@@ -43,7 +46,8 @@ function installRuntime(pkgRoot, copilotHome, flags, log) {
   const manifest = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
   for (const dependency of Object.keys(manifest.dependencies || {})) {
     const src = resolveDependencyRoot(dependency);
-    collectFiles(src, `node_modules/${dependency}`, sources);
+    const skip = RUNTIME_DEPENDENCY_SKIP[dependency] || [];
+    collectFiles(src, `node_modules/${dependency}`, sources, rel => skip.some(prefix => rel.startsWith(`node_modules/${dependency}/${prefix}`)));
   }
 
   // Refuse unsafe targets before replacing any part of the current runtime.
@@ -159,13 +163,14 @@ function resolveDependencyRoot(name) {
   }
 }
 
-function collectFiles(srcDir, relative, files) {
+function collectFiles(srcDir, relative, files, skip = () => false) {
   for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
     const src = path.join(srcDir, ent.name);
     const rel = `${relative}/${ent.name}`;
     if (ent.isDirectory()) {
-      collectFiles(src, rel, files);
-    } else {
+      if (skip(`${rel}/`)) continue;
+      collectFiles(src, rel, files, skip);
+    } else if (!skip(rel)) {
       files.push({ src, rel });
     }
   }
