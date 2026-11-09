@@ -220,7 +220,7 @@ If the field is absent, the stored decision bytes and digest are unchanged (inva
 
 **1c. Consolidation inputs.**
 - `ae consolidate --candidates` adds a `feedback` section: per-learning counts of `helped`, `irrelevant` and `wrong`, with plan references.
-- A learning with any `wrong` verdict since its last mutation is listed under `review_required`.
+- A learning whose *current version* has a `wrong` verdict is listed under `review_required`. The exposure record stores a content hash of each delivered learning, and the verdict carries it. Any later mutation, confirmation or supersession changes the hash and resolves the flag, while the verdict stays visible in the counts. (A date comparison was rejected: eval series run within a day, and same-day mutations would be ambiguous.)
 - The agent may propose SUPERSEDE or NOOP with that as evidence. A dispute still needs `ae learning dispute`, which the skill recommends to the human in `suggest` mode.
 - `helped` verdicts count as STRENGTHEN evidence only when cited by episode or plan reference. Counts never activate anything (invariant 1).
 
@@ -400,9 +400,9 @@ Phase 0 (eval) ──┬──────────────────�
 
 | PR | Contents | Depends on | Default behavior after merge |
 | --- | --- | --- | --- |
-| P1a | exposure record, `recalled`, review-finding `findings`, feedback records, `feedback` packet section, `knowledge.feedback` key, skill text | none (records only while `off`) | records written; feedback `off` |
+| P1a | exposure record, `recalled`, review-finding `findings`, feedback records, `feedback` packet and status section, debt weighting (1e), `knowledge.feedback` key, skill text | none (records only while `off`) | records written; feedback `off` |
 | P0 | `eval/memory/`, tests, README, including the `recall+feedback` arm | none | unchanged |
-| P1b | listing columns, doctor pruning hint, debt weighting (1d, 1e) | P1a; flipping past `off` needs P0 | feedback `off` |
+| P1b | listing columns, doctor pruning hint, exposure-weighted packet ordering (1d, rest of 1e) | P1a; flipping past `off` needs P0 | feedback `off` |
 | P2 | `--recheck`, clusters, `derived_from`, integrity checks | P0; uses P1 exposure if present | off |
 | P5 | `evidence_quote`, resume verification hint | none | additive or advisory |
 | P3 | variant fixtures, results, adopted skill edits | P0 (+P1/P2 for full arms) | only evidence-backed edits |
