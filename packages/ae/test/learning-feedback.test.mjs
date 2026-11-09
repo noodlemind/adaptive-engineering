@@ -86,7 +86,7 @@ test('consolidation output is byte-identical with feedback off and gains evidenc
   const baseStatus = JSON.stringify(consolidateStatus({ workspace: c.ws, home: c.home }));
   const basePacket = JSON.stringify(consolidateCandidates({ workspace: c.ws, home: c.home }));
   publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('one'), planPath: PLAN, captureDate: '2026-11-09',
-    feedback: { recalled: [{ id: c.id, verdict: 'wrong', version }], findings: [{ id: 'f'.repeat(64), disposition: 'fixed', reviewers: ['correctness'] }, { id: '1'.repeat(64), disposition: 'dismissed', reviewers: ['correctness'] }] } });
+    feedback: { recalled: [{ id: c.id, verdict: 'wrong', version }], findings: [{ id: 'f'.repeat(64), disposition: 'fixed', reviewers: ['correctness'], observed: 'still-reported' }, { id: '1'.repeat(64), disposition: 'dismissed', reviewers: ['correctness'], observed: 'still-reported' }] } });
   publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('two'), planPath: 'docs/plans/b.md', captureDate: '2026-11-09',
     feedback: { recalled: [{ id: c.id, verdict: 'helped', version }] } });
 
@@ -98,7 +98,7 @@ test('consolidation output is byte-identical with feedback off and gains evidenc
   assert.equal(suggested.feedback.state, 'suggest');
   assert.deepEqual(suggested.feedback.learnings, [{ id: c.id, helped: 1, irrelevant: 0, wrong: 1, plans: ['docs/plans/b.md', PLAN].sort() }]);
   assert.deepEqual(suggested.feedback.review_required, [c.id]);
-  assert.deepEqual(suggested.feedback.reviewers, [{ reviewer: 'correctness', fixed: 1, dismissed: 1, resolutionRate: 0.5 }]);
+  assert.deepEqual(suggested.feedback.reviewers, [{ reviewer: 'correctness', fixed: 1, dismissed: 1, contradicted: 1, resolutionRate: 0.5 }], 'a fixed claim the latest review still reports is counted as contradicted');
   const suggestStatus = consolidateStatus({ workspace: c.ws, home: c.home });
   assert.equal(suggestStatus.due, false, 'suggest never changes due');
   assert.deepEqual(suggestStatus.feedback.review_required, [c.id]);
@@ -130,4 +130,26 @@ test('feedback records are immutable per operation', t => {
   assert.equal(first.written, true);
   assert.equal(second.written, false);
   assert.equal(JSON.parse(fs.readFileSync(first.path, 'utf8')).recalled[0].verdict, 'helped');
+});
+
+test('feedback records cite the decision agent\'s latest readiness receipt for the plan', t => {
+  const c = seeded(t);
+  const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+  const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : stable(value)).digest('hex');
+  const workspace = fs.realpathSync.native(c.ws);
+  const requests = {}, receipts = {};
+  for (const [planPath, verdict, recordedAt] of [[PLAN, 'escalate', 1], [PLAN, 'ready', 2], ['docs/plans/other.md', 'ready', 3]]) {
+    const packet = { schema: 1, type: 'readiness', planPath, nonce: recordedAt };
+    const requestId = hash(packet);
+    requests[requestId] = { ...packet, requestId, createdAt: recordedAt };
+    const value = { schema: 1, requestId, type: 'readiness', verdict, authorized: verdict === 'ready', recordedAt, consumedAt: null };
+    receipts[requestId] = { ...value, id: hash(value) };
+  }
+  fs.mkdirSync(path.join(c.home, 'decisions'), { recursive: true });
+  fs.writeFileSync(path.join(c.home, 'decisions', `${hash(workspace)}.json`), JSON.stringify({ schema: 1, workspace, tasks: {}, requests, observations: {}, receipts }));
+  const written = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('ready'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } });
+  const readiness = JSON.parse(fs.readFileSync(written.path, 'utf8')).readiness;
+  assert.equal(readiness.verdict, 'ready');
+  assert.equal(readiness.recordedAt, 2, 'the newest receipt for this plan, not another plan\'s');
+  assert.match(readiness.id, /^[a-f0-9]{64}$/);
 });

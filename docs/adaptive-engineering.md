@@ -154,7 +154,7 @@ Knowledge has three tiers. Each tier has a single writer.
 
 ### Feedback on recall and review
 
-AE records which learnings each context pack delivered for a plan. When the work finishes, the learning decision can say whether each one `helped`, was `irrelevant` or was `wrong`, and whether each review finding was `fixed` or `dismissed`. Harness checks every ID against what the plan actually saw and writes the verdicts to an immutable record in `~/.ae/projects/<repo-id>/feedback/`, so verdicts from every worktree reach consolidation.
+AE records which learnings each context pack delivered for a plan. When the work finishes, the learning decision can say whether each one `helped`, was `irrelevant` or was `wrong`, and whether each review finding was `fixed` or `dismissed`. Harness checks every ID against what the plan actually saw and writes the verdicts to an immutable record in `~/.ae/projects/<repo-id>/feedback/`, so verdicts from every worktree reach consolidation. Each disposition carries Harness's own observation of whether the latest review still reports the finding, and the record cites the decision agent's latest readiness receipt for the plan, so outcomes can later measure how well that agent judged readiness.
 
 `ae knowledge feedback <off|suggest|on>` controls who reads those records. `off`, the default, only records them. `suggest` shows them to `/consolidate` as evidence, including learnings judged wrong in their current form and each reviewer's fixed and dismissed counts. `on` also lets an unresolved `wrong` verdict make consolidation due. No state grants authority: feedback never retires, disputes, confirms or promotes a learning. Knowledge modes `off`, `freeze` and `capture-only` read feedback as `off`.
 

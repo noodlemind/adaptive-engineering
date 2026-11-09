@@ -6,6 +6,7 @@ import { scanSecrets } from './secret-scan.mjs';
 import { projectStoreDir } from './project-layout.mjs';
 import { loadLayeredLearnings } from './knowledge/overlay.mjs';
 import { readFeedbackConfig, readStoreConfig } from './knowledge/store.mjs';
+import { latestReadinessReceipt } from './decision-agent.mjs';
 
 // Recall feedback loop (agent memory plan, Phase 1). Everything here is
 // Harness bookkeeping and evidence for judgment: nothing in this module
@@ -126,6 +127,22 @@ export function planReviewFindings(recordRoot, planPath) {
   return found;
 }
 
+/** Finding IDs in the plan's latest review record, or null when there is none. */
+export function latestReviewFindingIds(recordRoot, planPath) {
+  const pointer = readReviewRecord(recordRoot, `.harness/reviews/latest/${recordHash(planPath)}.json`);
+  if (!ID.test(pointer?.id || '')) return null;
+  const record = readReviewRecord(recordRoot, `.harness/reviews/records/${pointer.id}.json`);
+  if (!record || record.plan !== planPath || !Array.isArray(record.findings)) return null;
+  return new Set(record.findings.map(finding => finding?.id).filter(id => ID.test(id || '')));
+}
+
+/**
+ * Harness's own observation of a finding, recorded beside the agent's claimed
+ * disposition so a mismatch is visible: a finding claimed `fixed` that the
+ * latest review still reports is contradicted.
+ */
+const observedFinding = (latest, id) => latest === null ? 'no-latest-review' : latest.has(id) ? 'still-reported' : 'no-longer-reported';
+
 /**
  * Validate the optional `recalled` and `findings` fields of a learning
  * decision. Absent fields return null and change nothing, so existing
@@ -148,7 +165,8 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
     const known = planReviewFindings(recordRoot, planPath);
     const unknown = decision.findings.filter(entry => !known.has(entry.id)).map(entry => entry.id);
     if (unknown.length) throw new Error(`findings lists IDs that no review record of this plan contains: ${unknown.join(', ')}`);
-    out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), ...(entry.note ? { note: entry.note } : {}) }));
+    const latest = latestReviewFindingIds(recordRoot, planPath);
+    out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), observed: observedFinding(latest, entry.id), ...(entry.note ? { note: entry.note } : {}) }));
   }
   return out;
 }
@@ -160,7 +178,9 @@ export function publishFeedbackRecord({ workspace, home, operation, planPath, ca
   if (!feedback || !ID.test(operation || '')) return null;
   const base = projectStoreDir(workspace, { home });
   const rel = feedbackRecordRel(operation);
-  const record = { version: 1, operation, plan: planPath, captureDate, ...feedback };
+  // Cite the decision agent's latest readiness receipt so dispositions can measure its judgments later.
+  const readiness = latestReadinessReceipt({ workspace, home, planPath });
+  const record = { version: 1, operation, plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
   const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 });
   if (existing !== null) return { path: path.join(base, rel), written: false };
   if (!writeFileContained(base, rel, `${JSON.stringify(record, null, 2)}\n`, { exclusive: true })) {
@@ -207,8 +227,9 @@ export function feedbackSummary({ workspace, home, learnings }) {
     for (const entry of Array.isArray(record.findings) ? record.findings : []) {
       if (!FINDING_DISPOSITIONS.includes(entry?.disposition)) continue;
       for (const reviewer of Array.isArray(entry.reviewers) && entry.reviewers.length ? entry.reviewers : ['unknown']) {
-        const row = perReviewer.get(reviewer) || { reviewer, fixed: 0, dismissed: 0 };
+        const row = perReviewer.get(reviewer) || { reviewer, fixed: 0, dismissed: 0, contradicted: 0 };
         row[entry.disposition] += 1;
+        if (entry.disposition === 'fixed' && entry.observed === 'still-reported') row.contradicted += 1;
         perReviewer.set(reviewer, row);
       }
     }

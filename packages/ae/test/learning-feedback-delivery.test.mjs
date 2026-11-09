@@ -119,9 +119,17 @@ test('finding dispositions must name findings from this plan\'s review records',
   const secret = decide(f, { operation: 'secret-note', decision: 'no-learning', rationale: 'No lesson.', findings: [{ id, disposition: 'dismissed', note: 'token ghp_' + 'x'.repeat(36) }] });
   assert.notEqual(secret.status, 0);
   assert.match(secret.stdout + secret.stderr, /secret/);
-  const ok = decide(f, { operation: 'own-finding', decision: 'no-learning', rationale: 'No lesson.', findings: [{ id, disposition: 'dismissed', note: 'False positive: guarded upstream.' }] });
+  const fixedId = 'e'.repeat(64);
+  fs.writeFileSync(path.join(f.ws, '.harness/reviews/records', `${'f'.repeat(64)}.json`), JSON.stringify({ version: 2, plan: f.plan, findings: [{ id: fixedId, reviewers: ['tests'] }] }));
+  fs.mkdirSync(path.join(f.ws, '.harness/reviews/latest'), { recursive: true });
+  fs.writeFileSync(path.join(f.ws, '.harness/reviews/latest', `${sha(JSON.stringify(f.plan))}.json`), JSON.stringify({ version: 2, id: 'b'.repeat(64) }));
+  const ok = decide(f, { operation: 'own-finding', decision: 'no-learning', rationale: 'No lesson.', findings: [{ id, disposition: 'fixed', note: 'Guarded the null path.' }, { id: fixedId, disposition: 'fixed' }] });
   assert.equal(ok.status, 0, ok.stderr || ok.stdout);
   const record = JSON.parse(fs.readFileSync(JSON.parse(ok.stdout).feedbackRecord.path, 'utf8'));
-  assert.deepEqual(record.findings, [{ id, disposition: 'dismissed', reviewers: ['correctness'], note: 'False positive: guarded upstream.' }]);
+  assert.deepEqual(record.findings, [
+    { id, disposition: 'fixed', reviewers: ['correctness'], observed: 'still-reported', note: 'Guarded the null path.' },
+    { id: fixedId, disposition: 'fixed', reviewers: ['tests'], observed: 'no-longer-reported' },
+  ], 'Harness records its own observation beside each claimed disposition');
+  assert.equal(record.readiness, undefined, 'no readiness decision was recorded for this plan');
   assert.ok(fs.existsSync(path.join(f.ws, exposureRel(f.plan))));
 });
