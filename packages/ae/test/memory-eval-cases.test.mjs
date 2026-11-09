@@ -207,6 +207,19 @@ test('a synchronous check cannot be forged by hiding a promise\'s then', async t
   assert.equal(await passes(workspace, [checks[1]]), true);
 });
 
+test('error text with a lone surrogate or an emoji cut at the length limit still reaches the throws match', async t => {
+  const root = directory(t);
+  const workspace = materialize(root, { 'src/value.mjs': `export function straddle() { throw new Error('x'.repeat(1999) + '\\u{1F600} tail'); }
+export function lone() { throw new Error('bad \\uD800 input: specific'); }
+` });
+  const checks = [
+    { module: 'src/value.mjs', export: 'straddle', args: [], throws: 'xxxx' },
+    { module: 'src/value.mjs', export: 'lone', args: [], throws: 'input: specific' },
+  ];
+  const { verdicts, messages } = await checkCasesIsolated(workspace, checks);
+  assert.deepEqual(verdicts, [true, true], messages.filter(Boolean).join('; '));
+});
+
 test('a check that exits or hangs fails alone; the checks after it still get verdicts', t => {
   const checks = [
     { module: 'src/value.mjs', export: 'one', args: [], expected: 1 },

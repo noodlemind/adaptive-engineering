@@ -377,7 +377,7 @@ export function sweepStaleStudies(base = os.tmpdir()) {
       // An empty or malformed owner.pid is skipped: Number('') is 0, which would make a live folder look dead.
       let text;
       try { text = fs.readFileSync(path.join(base, name, 'owner.pid'), 'utf8'); } catch { continue; }
-      if (!/^\d+\s*$/.test(text)) continue;
+      if (!/^[1-9]\d{0,9}\s*$/.test(text)) continue;
       pid = Number(text);
     } else continue;
     let alive = false;

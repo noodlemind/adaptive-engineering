@@ -48,6 +48,7 @@ export const probeOf = check => ({ module: check.module, export: check.export, .
 async function probeMain(workspace) {
   const writeSync = fs.writeSync, stringify = JSON.stringify, apply = Reflect.apply, encodeText = encodeURIComponent;
   const base64Slice = Buffer.prototype.base64Slice, stringSlice = String.prototype.slice, toText = String, encode = serialize;
+  const wellFormed = String.prototype.toWellFormed;
   const isPromise = types.isPromise;
   const getPrototype = Reflect.getPrototypeOf, ownKeys = Reflect.ownKeys, isArray = Array.isArray, hasOwn = Object.hasOwn;
   const objectPrototype = Object.prototype, arrayPrototype = Array.prototype;
@@ -70,7 +71,8 @@ async function probeMain(workspace) {
     }
     return true;
   };
-  const message = error => { try { return encodeText(apply(stringSlice, toText(error?.message ?? error), [0, 2000])); } catch { return 'unprintable%20error'; } };
+  // toWellFormed after the slice repairs a lone surrogate or an emoji cut at the limit, which encodeURIComponent would reject.
+  const message = error => { try { return encodeText(apply(wellFormed, apply(stringSlice, toText(error?.message ?? error), [0, 2000]), [])); } catch { return 'unprintable%20error'; } };
   for (let index = 0; index < probes.length; index++) {
     const item = probes[index];
     let result;
