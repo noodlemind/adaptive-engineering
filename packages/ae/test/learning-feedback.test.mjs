@@ -11,6 +11,12 @@ import {
   EXPOSURE_ENTRY_CAP, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
 } from '../lib/learning-feedback.mjs';
 import { feedbackPruningCheck } from '../lib/doctor.mjs';
+import { publishReviewRecord, recordHash } from '../lib/review.mjs';
+import { projectStoreDir } from '../lib/project-layout.mjs';
+import { ensureStore } from '../lib/knowledge/store.mjs';
+import { knowledgeFeedbackStatus } from '../lib/knowledge/status.mjs';
+import { branchKeyFor } from '../lib/git-context.mjs';
+import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 
@@ -168,8 +174,10 @@ function addLearnings(t, c, slugs) {
   return loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings;
 }
 
+// Deliver the learning object the way orient does, so the exposure carries its layer.
 const expose = (c, planPath, id, times) => {
-  for (let i = 0; i < times; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath, delivered: [{ id }], now: new Date(Date.UTC(2026, 10, 1, i)) });
+  const learning = loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings.find(l => l.id === id && !l.subordinate) || { id };
+  for (let i = 0; i < times; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath, delivered: [learning], now: new Date(Date.UTC(2026, 10, 1, i)) });
 };
 
 test('exposure totals sum every plan record in the workspace and skip records whose plan does not match the file', t => {
@@ -178,7 +186,8 @@ test('exposure totals sum every plan record in the workspace and skip records wh
   expose(c, 'docs/plans/other.md', c.id, 1);
   const forged = path.join(c.ws, '.harness/learning/exposures', `plan-${'0'.repeat(64)}.json`);
   fs.writeFileSync(forged, JSON.stringify({ version: 1, plan: 'docs/plans/forged.md', entries: [{ id: c.id, count: 50, lastExposedAt: '2027-01-01T00:00:00.000Z' }] }));
-  assert.deepEqual(exposureTotals(c.ws).get(c.id), { exposed: 3, last_exposed: '2026-11-01T01:00:00.000Z' });
+  const layer = c.learnings[0].layer === 'branch' ? 'branch' : 'golden';
+  assert.deepEqual(exposureTotals(c.ws).get(c.id), { exposed: 3, last_exposed: '2026-11-01T01:00:00.000Z', layers: { [layer]: { exposed: 3, last_exposed: '2026-11-01T01:00:00.000Z' } } });
   assert.equal(exposureTotals(path.join(c.ws, 'missing')).size, 0);
 });
 
@@ -230,4 +239,71 @@ test('packet ordering uses exposure and feedback only under on; off and suggest 
 
   publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('current-wrong'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'wrong', version: learningVersion(c.learnings[0]) }] } });
   assert.deepEqual(order(), [c.id, alpha.id, zeta.id], 'on: review_required stays first');
+});
+
+// Independent review regressions (PR #123).
+
+test('review 1: verdicts beyond the 512-record display scan still count, so K8 never hints on a learning that helped', t => {
+  const c = seeded(t);
+  expose(c, PLAN, c.id, 5);
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: 'f'.repeat(64), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } });
+  const base = projectStoreDir(c.ws, { home: c.home });
+  for (let i = 0; i < 512; i++) {
+    const op = '0' + sha(`op-${i}`).slice(1);
+    fs.writeFileSync(path.join(base, 'feedback', `${op}.json`), JSON.stringify({ version: 1, operation: op, plan: `docs/plans/o${i}.md`, recalled: [{ id: 'logic/other', verdict: 'irrelevant' }] }));
+  }
+  const k8 = feedbackPruningCheck({ workspace: c.ws, home: c.home });
+  assert.equal(k8.pass, true, 'the helped verdict sorted past the scan cap still clears the hint');
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'on' });
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: 'e'.repeat(64), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'wrong', version: '0'.repeat(64) }] } });
+  assert.equal(knowledgeFeedbackStatus({ workspace: c.ws, home: c.home }).learnings[0].wrong, 1, 'a wrong verdict past the cap still reaches status and ordering');
+});
+
+test('review 2: every exposure record is read, so no plan vanishes past 512 records', t => {
+  const c = seeded(t);
+  let target = null;
+  for (let i = 0; !target; i++) { const p = `docs/plans/t${i}.md`; if (recordHash(p).startsWith('ff')) target = p; }
+  expose(c, target, c.id, 6);
+  let n = 0;
+  for (let i = 0; n < 512; i++) {
+    const p = `docs/plans/x${i}.md`;
+    if (recordHash(p) >= recordHash(target)) continue;
+    publishReviewRecord(c.ws, `.harness/learning/exposures/plan-${recordHash(p)}.json`, { version: 1, plan: p, entries: [{ id: 'logic/other', count: 1, lastExposedAt: '2026-11-01T00:00:00.000Z' }] });
+    n++;
+  }
+  assert.equal(exposureTotals(c.ws).get(c.id).exposed, 6);
+});
+
+test('review 3: a protected golden learning and its branch twin give one status row and one K8 candidate, and exposure stays in its layer', t => {
+  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-twin-ws-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-twin-home-'));
+  t.after(() => { fs.rmSync(ws, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  git(ws, ['init', '-q', '-b', 'feature/x']); git(ws, ['config', 'user.email', 'a@b.c']); git(ws, ['config', 'user.name', 'T']);
+  fs.writeFileSync(path.join(ws, 'seed.txt'), 's\n'); git(ws, ['add', '.']); git(ws, ['commit', '-qm', 's']);
+  const head = git(ws, ['rev-parse', 'HEAD']).stdout.trim();
+  const { dir } = ensureStore(ws, { home });
+  const write = (root, source) => {
+    fs.mkdirSync(path.join(root, 'learnings', 'sql'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'learnings', 'sql', 'dup.md'), `---\nschema: 1\ntrigger: "t dup"\nstatus: active\nsource: ${source}\nepisodes:\nanchors: []\nsuperseded_by: null\nlast_confirmed: null\norigin: test\n---\n\nBody ${source}.\n`);
+  };
+  write(dir, 'human');
+  const key = branchKeyFor('feature/x');
+  const bucket = path.join(dir, 'branches', key);
+  fs.mkdirSync(path.join(bucket, 'learnings'), { recursive: true });
+  fs.writeFileSync(path.join(bucket, 'meta.json'), JSON.stringify({ branch: 'feature/x', branchKey: key, baseSha: head, createdAt: new Date().toISOString(), promotable: true }));
+  write(bucket, 'auto');
+  const layered = loadLayeredLearnings({ workspace: ws, home }).learnings;
+  assert.deepEqual(layered.map(l => Boolean(l.subordinate)), [false, true], 'precondition: golden plus subordinate twin');
+  // Orient passes both twins; one pack delivers the ID once, credited to the golden layer.
+  for (let i = 0; i < 5; i++) recordExposure({ recordRoot: ws, workspace: ws, home, planPath: 'docs/plans/p.md', delivered: layered });
+  assert.deepEqual(exposureTotals(ws).get('sql/dup').layers, { golden: { exposed: 5, last_exposed: exposureTotals(ws).get('sql/dup').last_exposed } });
+  writeFeedbackConfig(ws, { home, feedback: 'suggest' });
+  const status = knowledgeFeedbackStatus({ workspace: ws, home });
+  assert.deepEqual(status.learnings.map(r => [r.id, r.exposed]), [['sql/dup', 5]]);
+  assert.deepEqual(feedbackPruningCheck({ workspace: ws, home }).pruningCandidates, ['sql/dup']);
+  // Branch-layer exposure is not credited to the golden learning.
+  publishReviewRecord(ws, `.harness/learning/exposures/plan-${recordHash('docs/plans/q.md')}.json`, { version: 1, plan: 'docs/plans/q.md', entries: [{ id: 'sql/dup', layer: 'branch', count: 9, lastExposedAt: '2026-11-01T00:00:00.000Z' }] });
+  assert.equal(knowledgeFeedbackStatus({ workspace: ws, home }).learnings[0].exposed, 5);
 });

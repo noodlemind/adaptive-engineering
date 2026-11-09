@@ -66,7 +66,14 @@ export function recordExposure({ recordRoot, workspace, home, planPath, delivere
   const at = now.toISOString();
   const prior = readExposure(recordRoot, planPath);
   const entries = new Map((prior?.entries || []).map(entry => [entry.id, entry]));
+  // One exposure per learning ID per pack: a protected golden learning and its
+  // subordinate branch twin share an ID, and the golden entry wins.
+  const unique = new Map();
   for (const item of delivered) {
+    const key = typeof item === 'string' ? item : item?.id;
+    if (!unique.has(key) || (unique.get(key)?.subordinate && !item?.subordinate)) unique.set(key, item);
+  }
+  for (const item of unique.values()) {
     const id = typeof item === 'string' ? item : item?.id;
     if (typeof id !== 'string' || !LEARNING_ID.test(id)) continue;
     const before = entries.get(id);
@@ -190,20 +197,20 @@ export function publishFeedbackRecord({ workspace, home, operation, planPath, ca
   return { path: path.join(base, rel), written: true };
 }
 
-export function readFeedbackRecords({ workspace, home }) {
+export function readFeedbackRecords({ workspace, home, cap = FEEDBACK_RECORD_SCAN_CAP }) {
   const base = projectStoreDir(workspace, { home });
   if (!assertNoSymlinkAncestors(base, feedbackDirRel)) return { records: [], omitted: 0 };
   let names = [];
   try { names = fs.readdirSync(path.join(base, feedbackDirRel)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return { records: [], omitted: 0 }; }
   const records = [];
-  for (const name of names.slice(0, FEEDBACK_RECORD_SCAN_CAP)) {
+  for (const name of names.slice(0, cap)) {
     const text = readFileNoFollow(path.join(base, feedbackDirRel, name), { root: base, maxBytes: 1024 * 1024 });
     try {
       const record = JSON.parse(text);
       if (record?.version === 1 && `${record.operation}.json` === name) records.push(record);
     } catch { /* unreadable records are skipped */ }
   }
-  return { records, omitted: Math.max(0, names.length - FEEDBACK_RECORD_SCAN_CAP) };
+  return { records, omitted: Math.max(0, names.length - cap) };
 }
 
 /**
@@ -253,28 +260,35 @@ export function feedbackSummary({ workspace, home, learnings }) {
 
 export const PRUNING_EXPOSURE_THRESHOLD = 5;
 const EXPOSURE_DIR_REL = '.harness/learning/exposures';
-const EXPOSURE_SCAN_CAP = 512;
+const layerOf = value => value === 'branch' ? 'branch' : 'golden';
+const later = (a, b) => typeof b === 'string' && (!a || b > a) ? b : a;
 
 /**
  * Per-learning exposure totals summed over every plan's exposure record under
- * this record root. Exposure records live in each worktree, so another
- * worktree's exposures are not visible here; verdicts are, because feedback
- * records live in the project store.
+ * this record root, with a per-layer split. Every record is read (each one is
+ * capped at 32 KiB). Counts are lower bounds: a record keeps at most 64
+ * entries per plan and an evicted entry restarts at 1. Exposure records live
+ * in each worktree, so another worktree's exposures are not visible here.
  */
 export function exposureTotals(recordRoot) {
   const totals = new Map();
   if (!recordRoot || !assertNoSymlinkAncestors(recordRoot, EXPOSURE_DIR_REL)) return totals;
   let names = [];
-  try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort().slice(0, EXPOSURE_SCAN_CAP); } catch { return totals; }
+  try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return totals; }
   for (const name of names) {
     const rel = `${EXPOSURE_DIR_REL}/${name}`;
     const record = readReviewRecord(recordRoot, rel);
     if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
     for (const entry of record.entries) {
       if (typeof entry?.id !== 'string' || !LEARNING_ID.test(entry.id) || !Number.isInteger(entry.count) || entry.count < 1) continue;
-      const row = totals.get(entry.id) || { exposed: 0, last_exposed: null };
+      const row = totals.get(entry.id) || { exposed: 0, last_exposed: null, layers: {} };
+      const key = layerOf(entry.layer);
+      const layer = row.layers[key] || { exposed: 0, last_exposed: null };
       row.exposed += entry.count;
-      if (typeof entry.lastExposedAt === 'string' && (!row.last_exposed || entry.lastExposedAt > row.last_exposed)) row.last_exposed = entry.lastExposedAt;
+      layer.exposed += entry.count;
+      row.last_exposed = later(row.last_exposed, entry.lastExposedAt);
+      layer.last_exposed = later(layer.last_exposed, entry.lastExposedAt);
+      row.layers[key] = layer;
       totals.set(entry.id, row);
     }
   }
@@ -283,40 +297,59 @@ export function exposureTotals(recordRoot) {
 
 export const emptyFeedbackColumns = () => ({ exposed: 0, helped: 0, wrong: 0, last_exposed: null });
 
-/** `exposed`, `helped`, `wrong` and `last_exposed` per learning ID that has any exposure or verdict. */
+/**
+ * Sources for the `exposed`, `helped`, `wrong` and `last_exposed` columns.
+ * Verdicts are tallied over the full feedback history, never a capped scan,
+ * because the pruning hint and ordering decide on them. Read one learning's
+ * row with `columnsFor`.
+ */
 export function feedbackColumns({ workspace, home, recordRoot = workspace }) {
-  const columns = new Map();
-  const row = id => {
-    if (!columns.has(id)) columns.set(id, emptyFeedbackColumns());
-    return columns.get(id);
-  };
+  let exposure = new Map();
   // Evidence only: an unreadable source degrades to zero counts, never a failure.
+  try { exposure = exposureTotals(recordRoot); } catch { exposure = new Map(); }
+  const verdicts = new Map();
   try {
-    for (const [id, total] of exposureTotals(recordRoot)) Object.assign(row(id), total);
-  } catch { /* exposure unreadable */ }
-  try {
-    for (const record of readFeedbackRecords({ workspace, home }).records) {
+    for (const record of readFeedbackRecords({ workspace, home, cap: Infinity }).records) {
       for (const entry of Array.isArray(record.recalled) ? record.recalled : []) {
         if (typeof entry?.id !== 'string' || !['helped', 'wrong'].includes(entry.verdict)) continue;
-        row(entry.id)[entry.verdict] += 1;
+        const row = verdicts.get(entry.id) || { helped: 0, wrong: 0 };
+        row[entry.verdict] += 1;
+        verdicts.set(entry.id, row);
       }
     }
   } catch { /* feedback records unreadable */ }
-  return columns;
+  return { exposure, verdicts };
 }
 
 /**
- * Status rows for learnings with any exposure or verdict; null when the
- * effective feedback state is `off`, so status output stays byte-identical.
+ * One learning's columns, or null when it has no exposure in its layer and no
+ * `helped` or `wrong` verdict. Exposure is credited to the layer the pack
+ * delivered; verdicts carry no layer and count for the ID.
+ */
+export function columnsFor(columns, id, layer = 'golden') {
+  const exposed = columns.exposure.get(id)?.layers[layerOf(layer)];
+  const verdict = columns.verdicts.get(id);
+  if (!exposed && !verdict) return null;
+  return { exposed: exposed?.exposed || 0, helped: verdict?.helped || 0, wrong: verdict?.wrong || 0, last_exposed: exposed?.last_exposed || null };
+}
+
+// A subordinate branch twin shares its protected golden learning's ID: one row per ID.
+const primary = learnings => (learnings || []).filter(learning => !learning.subordinate);
+
+/**
+ * Status rows for learnings with any exposure, `helped` or `wrong` verdict;
+ * null when the effective feedback state is `off`, so status output stays
+ * byte-identical.
  */
 export function feedbackStatusView({ workspace, home, learnings, recordRoot = workspace }) {
   let state = 'off';
   try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
   if (state === 'off') return null;
   const columns = feedbackColumns({ workspace, home, recordRoot });
-  const rows = (learnings || [])
-    .filter(learning => columns.has(learning.id))
-    .map(learning => ({ id: learning.id, ...columns.get(learning.id) }))
+  const rows = primary(learnings)
+    .map(learning => ({ id: learning.id, columns: columnsFor(columns, learning.id, learning.layer) }))
+    .filter(row => row.columns)
+    .map(row => ({ id: row.id, ...row.columns }))
     .sort((a, b) => b.exposed - a.exposed || b.wrong - a.wrong || a.id.localeCompare(b.id));
   return {
     state,
@@ -325,10 +358,13 @@ export function feedbackStatusView({ workspace, home, learnings, recordRoot = wo
   };
 }
 
-/** Advisory pruning hint: learnings exposed at least the threshold with no `helped` verdict. */
+/**
+ * Advisory pruning hint: learnings delivered in at least the threshold of
+ * context packs (orient runs, not distinct plans) with no `helped` verdict.
+ */
 export function pruningCandidates({ columns, learnings, threshold = PRUNING_EXPOSURE_THRESHOLD }) {
-  return (learnings || [])
-    .map(learning => ({ id: learning.id, ...(columns.get(learning.id) || emptyFeedbackColumns()) }))
+  return primary(learnings)
+    .map(learning => ({ id: learning.id, ...(columnsFor(columns, learning.id, learning.layer) || emptyFeedbackColumns()) }))
     .filter(row => row.exposed >= threshold && row.helped === 0)
     .sort((a, b) => b.exposed - a.exposed || a.id.localeCompare(b.id));
 }
@@ -336,12 +372,12 @@ export function pruningCandidates({ columns, learnings, threshold = PRUNING_EXPO
 /**
  * Packet ordering under `knowledge.feedback=on`: learnings whose current
  * version needs review first, then learnings with any `wrong` verdict, then
- * the most exposed. Ties keep the incoming order. Ordering only: nothing is
- * activated, disputed or retired.
+ * the most exposed in this layer. Ties keep the incoming order. Ordering
+ * only: nothing is activated, disputed or retired.
  */
-export function feedbackOrder(learnings, { columns, reviewRequired = [] }) {
+export function feedbackOrder(learnings, { columns, reviewRequired = [], layer = 'golden' }) {
   const review = new Set(reviewRequired);
-  const col = id => columns.get(id) || emptyFeedbackColumns();
+  const col = id => columnsFor(columns, id, layer) || emptyFeedbackColumns();
   return learnings.toSorted((a, b) =>
     Number(review.has(b.id)) - Number(review.has(a.id))
     || Number(col(b.id).wrong > 0) - Number(col(a.id).wrong > 0)

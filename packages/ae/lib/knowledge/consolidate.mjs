@@ -311,7 +311,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
   const feedback = feedbackView({ workspace, home, learnings: active });
   // Under `on` only: review_required first, then feedback-disputed, then most exposed.
-  const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home }), reviewRequired: feedback.review_required }) : active;
+  const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home }), reviewRequired: feedback.review_required, layer: view.layer }) : active;
   const learnings = ordered.map((l) => ({
     id: l.id,
         trigger: inertLine(l.fm.trigger || ''),

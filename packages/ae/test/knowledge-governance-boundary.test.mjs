@@ -595,6 +595,8 @@ test('rebuildIndex excludes branch→golden tombstones so INDEX.md agrees with r
 
 test('no recall feedback path reaches the promote, retire, dispute or learning-content writers', () => {
   // Static: the feedback module and its readers never import or call a writer.
+  // This is a regex check on source text, not a call-graph reachability proof;
+  // the behavioral half below covers what actually runs.
   const writers = /\b(setLearningStatus|appendGovernance|buildPromotionOps|applyOps|writeLearningFile|withStoreTransaction|appendLedger|writeStoreFile)\b|knowledge\/(lifecycle|promote|apply)\.mjs/;
   const feedbackSrc = fs.readFileSync(path.join(packageRoot, 'lib/learning-feedback.mjs'), 'utf8');
   assert.doesNotMatch(feedbackSrc, writers, 'lib/learning-feedback.mjs must stay a reader of learning state');

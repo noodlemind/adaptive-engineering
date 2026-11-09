@@ -4,7 +4,7 @@ import { redactSecrets } from '../secret-scan.mjs';
 import { readEvents, EVENTS_MAX_LIMIT } from '../events.mjs';
 import { verifiedAndPlans, isPromotionEligible, consolidateStatus } from './consolidate.mjs';
 import { APPLICABILITY_VERSION, learningApplicability } from './applicability.mjs';
-import { feedbackState, feedbackColumns, emptyFeedbackColumns } from '../learning-feedback.mjs';
+import { feedbackState, feedbackColumns, columnsFor, emptyFeedbackColumns } from '../learning-feedback.mjs';
 
 function failureCounts(workspace) {
   const counts = new Map();
@@ -75,7 +75,8 @@ export function listingView({ workspace, copilotHome, domain, home }) {
                 promotionEligible: l.fm.promoted_to ? false : isPromotionEligible(verified, plans),
         failures: failures.get(l.id) || 0,
         applicability: learningApplicability({ workspace, repository, cache: sourceCache, fm: l.fm }),
-        ...(columns ? columns.get(l.id) || emptyFeedbackColumns() : {}),
+        // The listing reads the golden store only, so only golden-layer exposure counts.
+        ...(columns ? columnsFor(columns, l.id, 'golden') || emptyFeedbackColumns() : {}),
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));

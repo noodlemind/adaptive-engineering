@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import { storeDir, listLearnings, readStoreConfig } from './store.mjs';
 import { isActiveFm, bucketCounts } from './consolidate.mjs';
-import { listBuckets, bucketAncestryOk, safeBranchName, isBucketBaseSha } from './overlay.mjs';
+import { listBuckets, bucketAncestryOk, safeBranchName, isBucketBaseSha, loadLayeredLearnings } from './overlay.mjs';
 import { deriveGitContext, isDetachedKey } from '../git-context.mjs';
 import { indexStatus } from '../index-status.mjs';
-import { loadLayeredLearnings } from './overlay.mjs';
 import { feedbackState, feedbackStatusView } from '../learning-feedback.mjs';
 
 export function knowledgeStatus({ workspace, copilotHome, home } = {}) {
