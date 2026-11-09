@@ -157,7 +157,7 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.match(candidate.concurrency.group, /github\.ref/);
   const job = candidate.jobs.archive;
   assert.deepEqual(job.strategy.matrix.os, ['ubuntu-latest', 'windows-latest']);
-  assert.deepEqual(job.strategy.matrix.node, ['20', '24']);
+  assert.equal(job.strategy.matrix.node, `\${{ fromJSON(github.event_name == 'pull_request' && '["24"]' || '["20", "24"]') }}`, 'PRs install on Node 24; manual qualification adds Node 20');
   const runtime = job.steps.find(step => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(runtime.with['node-version'], '${{ matrix.node }}');
   const release = job.steps.find(step => step.name === 'Validate release contracts');
@@ -177,10 +177,10 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.match(upload(job).with.name, /matrix\.node/);
   assert.equal(job.steps.some(step => step.name === 'Validate Git integration regressions'), false, 'archive feedback must not wait for unrelated source suites');
   const git = candidate.jobs['git-regressions'];
+  assert.equal(git.if, "github.event_name != 'pull_request'", 'Git regressions repeat full-suite files on PRs; they run on manual qualification');
   assert.equal(git.strategy['fail-fast'], false);
   const expected = [];
   for (const os of ['ubuntu-latest', 'windows-latest']) for (const node of ['20', '24']) {
-    if (os === 'windows-latest' && node === '20') continue;
     for (let shard = 1; shard <= (os === 'windows-latest' ? 3 : 1); shard++) expected.push({ os, node, shard, shards: os === 'windows-latest' ? 3 : 1 });
   }
   assert.deepEqual(git.strategy.matrix.include, expected);
@@ -193,7 +193,10 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.ok(gate.steps.some(step => /--verify-manifests git-shards.*--suite git/.test(step.run || '')));
   const result = gate.steps.find(step => step.name === 'Require archive and Git regression success');
   assert.equal(result.env.ARCHIVE_RESULT, '${{ needs.archive.result }}');
-  assert.equal(result.env.GIT_RESULT, "${{ needs['git-regressions'].result }}");
+  assert.equal(result.env.GIT_RESULT, "${{ github.event_name == 'pull_request' && 'success' || needs['git-regressions'].result }}");
+  for (const step of gate.steps.filter(item => item.uses?.startsWith('actions/download-artifact@') || item.name === 'Require complete same-revision Git inventory')) {
+    assert.equal(step.if, "github.event_name != 'pull_request'");
+  }
   assert.match(result.run, /success/);
 });
 

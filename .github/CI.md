@@ -9,7 +9,7 @@ costs about two runner-hours per revision, so Windows is scoped:
 
 | Trigger | Windows work |
 | --- | --- |
-| Pull request touching `packages/ae/`, the Windows workflow, `.github/ci/`, the CI test scripts or `.npmrc` | One `windows` job: a Windows-sensitive test subset (hooks, install, runner, paths, trust, redaction, Git and shell boundaries) plus the native probes, about 11 minutes |
+| Pull request touching `packages/ae/`, the Windows workflow, `.github/ci/`, the CI test scripts or `.npmrc` | One `windows` job: a Windows-sensitive test subset (hooks, install, runner, paths, trust, redaction, Git and shell boundaries) plus the native probes, about 4 to 5 minutes |
 | Pull request touching nothing above | No Windows job runs; the skipped `windows` check still satisfies branch protection |
 | Nightly schedule on `main` | The complete twelve-shard suite, only when Windows-relevant files changed in the last day |
 | Manual dispatch | The complete twelve-shard suite on any branch. Use it before merging a change that is risky on Windows beyond the subset |
@@ -68,9 +68,11 @@ useful job count while every test file still executes once per platform.
 
 Package candidates run for changes inside `packages/ae/`, the package workflow,
 root npm configuration or license files. Both operating systems install their
-exact archive on Node 20 and 24. The Git integration regressions run on both
-Linux runtimes and on Windows Node 24; Windows Node 20 does not repeat them.
-Manual execution remains available.
+exact archive. Pull requests install on Node 24 only. Manual qualification
+(workflow dispatch) adds Node 20 on both systems and the Git integration
+regressions on every OS/runtime; run it before a release. On pull requests
+those regressions would repeat files that the full Linux suite runs on every PR
+and the complete Windows suite runs nightly.
 
 Documentation runs when its workflow, renderer, site templates or one of its
 Markdown inputs changes. The input list follows

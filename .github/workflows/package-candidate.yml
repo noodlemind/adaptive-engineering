@@ -19,13 +19,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pull requests install the exact archive on Node 24 on both operating systems.
+# Manual qualification (workflow_dispatch) adds Node 20 and the Git integration
+# regressions. On pull requests those regressions would only repeat files the
+# full Linux suite runs on every PR and the complete Windows suite runs nightly.
 jobs:
   archive:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: ['20', '24']
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24"]' || '["20", "24"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -76,18 +80,19 @@ jobs:
           name: ae-candidate-${{ matrix.os }}-node${{ matrix.node }}-${{ github.sha }}
           path: artifacts/
 
-  # The nine Git integration regressions run on both Linux runtimes and on
-  # Windows with Node 24 in three bounded batches. Windows Node 20 is not
-  # repeated here: it would add three billed Windows jobs per revision for the
-  # same files, which the complete Windows suite (harness-windows.yml, Node 22)
-  # also covers. The Windows Node 20 archive install below still runs.
+  # The nine Git integration regressions on every supported OS/runtime, in
+  # three bounded batches on Windows. Manual qualification only (see above).
   git-regressions:
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-latest, node: '20', shard: 1, shards: 1 }
           - { os: ubuntu-latest, node: '24', shard: 1, shards: 1 }
+          - { os: windows-latest, node: '20', shard: 1, shards: 3 }
+          - { os: windows-latest, node: '20', shard: 2, shards: 3 }
+          - { os: windows-latest, node: '20', shard: 3, shards: 3 }
           - { os: windows-latest, node: '24', shard: 1, shards: 3 }
           - { os: windows-latest, node: '24', shard: 2, shards: 3 }
           - { os: windows-latest, node: '24', shard: 3, shards: 3 }
@@ -117,8 +122,9 @@ jobs:
 
   # Preserve the existing required package check names. A green archive alone
   # cannot satisfy them: all same-revision Git batches and their inventory must
-  # pass. `shards: 0` marks the one entry with no Git batches of its own
-  # (Windows Node 20); it still requires its archive and every Git job to pass.
+  # pass. On pull requests only the Node 24 archives and no Git batches run, so
+  # the gate requires the archive job and skips the Git inventory; a skipped Git
+  # job outside pull requests still fails it.
   package:
     name: package (${{ matrix.os }}, ${{ matrix.node }})
     needs: [archive, git-regressions]
@@ -129,7 +135,7 @@ jobs:
         include:
           - { os: ubuntu-latest, node: '20', shards: 1, platform: linux }
           - { os: ubuntu-latest, node: '24', shards: 1, platform: linux }
-          - { os: windows-latest, node: '20', shards: 0, platform: win32 }
+          - { os: windows-latest, node: '20', shards: 3, platform: win32 }
           - { os: windows-latest, node: '24', shards: 3, platform: win32 }
     runs-on: ubuntu-latest
     steps:
@@ -140,16 +146,16 @@ jobs:
         with:
           node-version: '22'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        if: matrix.shards > 0
+        if: github.event_name != 'pull_request'
         with:
           pattern: git-regressions-${{ matrix.os }}-node${{ matrix.node }}-*
           path: git-shards
       - name: Require complete same-revision Git inventory
-        if: matrix.shards > 0
+        if: github.event_name != 'pull_request'
         run: node scripts/ci-tests.mjs --verify-manifests git-shards --suite git --shards ${{ matrix.shards }} --platform ${{ matrix.platform }} --node-major ${{ matrix.node }}
       - name: Require archive and Git regression success
         if: always()
         env:
           ARCHIVE_RESULT: ${{ needs.archive.result }}
-          GIT_RESULT: ${{ needs['git-regressions'].result }}
+          GIT_RESULT: ${{ github.event_name == 'pull_request' && 'success' || needs['git-regressions'].result }}
         run: node --input-type=module -e "if (process.env.ARCHIVE_RESULT !== 'success' || process.env.GIT_RESULT !== 'success') process.exit(1)"

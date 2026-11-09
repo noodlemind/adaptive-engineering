@@ -152,21 +152,22 @@ jobs:
     env:
       FULL_SUITE: ${{ needs.scope.outputs.full == 'true' }}
       # Files whose behavior differs on win32 and that guard what users hit
-      # first: hook dispatch, install and upgrade, the process runner, path
-      # and home resolution, trust, redaction, and Git/shell boundaries.
-      # About 20 aggregate test-minutes, so one runner finishes in ~11 minutes.
+      # first: hook dispatch, install targets and locks, the process runner,
+      # path and home resolution, trust, redaction, and Git/shell boundaries.
+      # The exact archive install on Windows is proven by package-candidate.
+      # About 14 aggregate test-minutes; the job finishes in ~4-5 minutes.
       # The inventory step fails if a listed file disappears.
       WINDOWS_SUBSET: >-
-        ci-workflows.test.mjs cli-help.test.mjs cli-install-upgrade.test.mjs
-        cli-vscode-hooks.test.mjs emission-redaction.test.mjs exec-policy.test.mjs
+        ci-workflows.test.mjs cli-help.test.mjs
+        cli-vscode-hooks.test.mjs exec-policy.test.mjs
         fs-safe-toctou.test.mjs git-executable.test.mjs home-migration.test.mjs
         hook-policy-observation.test.mjs hook-runtime.test.mjs host-native-hooks.test.mjs
         host-setup.test.mjs install-boundaries.test.mjs install-lock-ownership.test.mjs
-        install-runtime-transaction.test.mjs install-targets.test.mjs installed-context.test.mjs
-        knowledge-path-safety.test.mjs knowledge-store-transaction.test.mjs listing-redaction.test.mjs
-        paths.test.mjs process-identity.test.mjs project-layout.test.mjs redact.test.mjs
+        install-runtime-transaction.test.mjs install-targets.test.mjs
+        knowledge-path-safety.test.mjs listing-redaction.test.mjs
+        paths.test.mjs process-identity.test.mjs redact.test.mjs
         runner-output.test.mjs runner-settlement.test.mjs runner.test.mjs
-        setup-git-hygiene.test.mjs setup-runtime.test.mjs stable-repo-id.test.mjs style.test.mjs
+        setup-git-hygiene.test.mjs style.test.mjs
         test-process-isolation.test.mjs trust-boundaries.test.mjs trust-recovery.test.mjs
         trust.test.mjs windows-authority.test.mjs windows-workflow.test.mjs
     steps:
