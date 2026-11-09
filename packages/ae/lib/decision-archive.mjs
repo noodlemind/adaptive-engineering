@@ -67,15 +67,19 @@ const MAX_KEPT_READINESS = 32;
 const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${hash(planPath)}.json`);
 const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.requestId, verdict: receipt.verdict, recordedAt: receipt.recordedAt });
 
-/** Keep the newest archived readiness receipt per plan so read-only citations survive compaction. True when the index holds it. */
+/**
+ * Keep the newest archived readiness receipt per plan so read-only citations survive compaction.
+ * Returns 'written' after an index write, 'current' when the index already holds a newer or equal
+ * receipt (nothing was written), and null when the receipt is not a readiness receipt.
+ */
 function retainLatestReadiness(loc, request, receipt) {
-  if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) return false;
+  if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) return null;
   const relative = readinessRelative(loc, request.planPath);
   let previous = null;
   try { previous = readRecord(loc, relative); } catch { previous = null; }
-  if (previous?.planPath === request.planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return true;
+  if (previous?.planPath === request.planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return 'current';
   writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath: request.planPath, receipt: readinessCitation(receipt) });
-  return true;
+  return 'written';
 }
 
 /** Read-only: the newest archived readiness citation for a plan, cross-checked against its retained request record. */
@@ -106,7 +110,8 @@ export function decisionTask(loc, state, key) {
 
 /**
  * Retire terminal/expired context while retaining immutable evidence and durable budgets. Returns best-effort warnings.
- * `report.indexRetained` is set when a readiness-index write succeeded in this pass.
+ * `report.indexRetained` is set only after a readiness-index write succeeded in this pass; an index
+ * that was already current proves nothing about the fault.
  */
 export function compactDecisions(loc, state, report = {}) {
   const warnings = [];
@@ -141,7 +146,7 @@ export function compactDecisions(loc, state, report = {}) {
     // leave the index naming an older receipt as latest: the plan's newest
     // readiness request stays live for a retry; older ones compact normally,
     // so live state stays bounded at one request per plan.
-    try { if (retainLatestReadiness(loc, request, receipt)) report.indexRetained = true; } catch (error) {
+    try { if (retainLatestReadiness(loc, request, receipt) === 'written') report.indexRetained = true; } catch (error) {
       const newest = newestReadiness.get(request.planPath), keep = newest === requestId;
       // An archived request's warning rides on the plan's newest live request, or
       // stays at state level when there is none; either lasts until an index write succeeds.

@@ -14,13 +14,33 @@ export const RECALL_DATA_PREAMBLE =
 
 const learningLayerMark = (l) => (l.layer === 'branch' ? (l.subordinate ? ' [branch-local, subordinate]' : ' [branch-local]') : '');
 
-/** Whether this learning's own line (layer mark included) is in the pack, so a twin's line never credits the other layer. */
+const TWIN_MARK = ' [branch-local, subordinate]';
+
+/** Lines of the pack's `## Learnings (memory)` section, up to the next section heading. */
+function learningsSectionLines(packBody) {
+  const lines = String(packBody || '').split('\n');
+  const start = lines.indexOf('## Learnings (memory)');
+  if (start === -1) return [];
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.startsWith('## '));
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/**
+ * Whether this learning's own line (layer mark included) starts a line of the
+ * pack's learnings section, so a twin's line never credits the other layer. A
+ * golden match is a twin line when the rest starts with ` [branch-local`, or is
+ * a nonempty prefix of the twin mark cut off by truncation.
+ */
 export function learningRendered(packBody, l) {
   const mark = learningLayerMark(l);
   const prefix = `- [${l.id}]${mark}`;
-  for (let i = packBody.indexOf(prefix); i !== -1; i = packBody.indexOf(prefix, i + 1)) {
-    // A twin line, even one truncated to `- [id] [b`, never credits the golden.
-    if (mark || !packBody.startsWith(' [b', i + prefix.length)) return true;
+  for (const line of learningsSectionLines(packBody)) {
+    if (!line.startsWith(prefix)) continue;
+    if (mark) return true;
+    const rest = line.slice(prefix.length);
+    if (rest.startsWith(' [branch-local') || (rest && TWIN_MARK.startsWith(rest))) continue;
+    return true;
   }
   return false;
 }

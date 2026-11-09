@@ -525,3 +525,37 @@ test('follow-up I: index-fault warnings clear on the next successful index write
   run2.prepare(1002);
   assert.equal(run2.stored().warnings, undefined);
 });
+
+// Fourth review pass regressions (PR #123).
+
+test('fourth pass 2: an index that is already current sets no indexRetained, so fault warnings stay while writes still fail', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const a = d.readiness('escalate', 1);
+  const first = {};
+  assert.deepEqual(compactDecisions(loc, d.state([a]), first), []);
+  assert.equal(first.indexRetained, true, 'precondition: indexing A was a real write');
+  const { openSync } = fs;
+  let attempts = 0;
+  fs.openSync = (file, flags, ...rest) => {
+    if (flags === 'wx' && String(file).includes(`${path.sep}readiness${path.sep}`)) { attempts += 1; throw new Error('index writes still fail'); }
+    return openSync(file, flags, ...rest);
+  };
+  try {
+    const hydrated = d.state([]);
+    hydrateArchivedDecision(loc, hydrated, a.requestId);
+    const report = {};
+    assert.deepEqual(compactDecisions(loc, hydrated, report), []);
+    assert.deepEqual(Object.keys(hydrated.requests), [], 'the hydrated request is retired again');
+    assert.equal(attempts, 0, 'the index already held A, so nothing was written');
+    assert.equal(report.indexRetained, undefined, 'a current index is not a successful write');
+    // A newer receipt does try to write, and the failure is reported, not counted as retained.
+    const b = d.readiness('blocked', 2);
+    const next = {};
+    const warnings = compactDecisions(loc, d.state([b]), next);
+    assert.equal(attempts > 0, true);
+    assert.equal(next.indexRetained, undefined);
+    assert.ok(warnings.some(item => item.fault === 'readiness-index'));
+  } finally { fs.openSync = openSync; }
+});

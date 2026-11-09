@@ -88,7 +88,9 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   // learning with the same ID keep separate counts. Older entries carry their
   // single layer and read the same way.
   const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
-  const entries = new Map((prior?.entries || []).map(entry => [entryKey(entry), entry]));
+  // Prior entries are read back from disk; a malformed one is dropped rather than carried forward.
+  const wellFormed = entry => entry && typeof entry.id === 'string' && typeof entry.lastExposedAt === 'string' && Number.isInteger(entry.count);
+  const entries = new Map((prior?.entries || []).filter(wellFormed).map(entry => [entryKey(entry), entry]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
   const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
   const seen = new Set();

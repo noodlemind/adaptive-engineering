@@ -389,7 +389,7 @@ test('second pass 6: delivery detection matches the layer mark, so a twin-only l
   const twinOnly = '## Learnings (memory)\n- [sql/dup] [branch-local, subordinate] t → c\n';
   assert.equal(learningRendered(twinOnly, golden), false);
   assert.equal(learningRendered(twinOnly, twin), true);
-  const goldenOnly = '- [sql/dup] [applicability: current; source bindings only] t → c\n';
+  const goldenOnly = '## Learnings (memory)\n- [sql/dup] [applicability: current; source bindings only] t → c\n';
   assert.equal(learningRendered(goldenOnly, golden), true);
   assert.equal(learningRendered(goldenOnly, twin), false);
 });
@@ -411,9 +411,41 @@ test('third pass A: a retired protected golden does not hide its active branch t
 
 test('third pass D: a twin line truncated after the layer mark opens does not credit the golden', () => {
   const golden = { id: 'sql/dup' };
-  assert.equal(learningRendered('## Learnings (memory)\n- [sql/dup] [b', golden), false);
-  assert.equal(learningRendered('- [sql/dup] [branch-local, sub', golden), false);
-  assert.equal(learningRendered('- [sql/dup] [unverified memory — advisory] t → c\n', golden), true, 'a golden fence is not a twin mark');
+  const pack = line => `# Harness Context Pack\n\n## Learnings (memory)\n${line}`;
+  assert.equal(learningRendered(pack('- [sql/dup] [b'), golden), false);
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-local, sub'), golden), false);
+  assert.equal(learningRendered(pack('- [sql/dup] [unverified memory — advisory] t → c\n'), golden), true, 'a golden fence is not a twin mark');
+});
+
+test('fourth pass 1: a golden trigger starting with [b is credited; a twin line cut to "- [id] " or "- [id] [" is not', () => {
+  const golden = { id: 'sql/dup' };
+  const pack = line => `# Harness Context Pack\n\n## Learnings (memory)\n${line}`;
+  assert.equal(learningRendered(pack('- [sql/dup] [bugfix] retry the lock → take it in order\n'), golden), true, 'a [bugfix] trigger is the golden line');
+  for (const cut of ['- [sql/dup] ', '- [sql/dup] [']) {
+    assert.equal(learningRendered(pack(cut), golden), false, `${JSON.stringify(cut)} at end of text`);
+    assert.equal(learningRendered(pack(`${cut}\n\n…(truncated to 2KB budget)\n`), golden), false, `${JSON.stringify(cut)} at end of line`);
+  }
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-local, subordinate] t → c\n'), golden), false);
+});
+
+test('fourth pass 3: delivery is matched at line starts inside the learnings section only', () => {
+  const golden = { id: 'sql/dup' };
+  assert.equal(learningRendered('## Intent\n- [sql/dup] t → c\n', golden), false, 'outside the learnings section');
+  assert.equal(learningRendered('## Learnings (memory)\nRetrieved learnings: x - [sql/dup] t\n', golden), false, 'not at a line start');
+  assert.equal(learningRendered('## Learnings (memory)\n- [other] t\n## Next tools\n- [sql/dup] t\n', golden), false, 'after the section ends');
+  assert.equal(learningRendered('## Learnings (memory)\n- [other] t\n- [sql/dup] t → c\n## Next tools\n', golden), true);
+});
+
+test('fourth pass 4: malformed prior exposure entries are dropped on the next merge', t => {
+  const c = seeded(t);
+  publishReviewRecord(c.ws, exposureRel(PLAN), { version: 1, plan: PLAN, entries: [
+    { id: 'logic/bad-count', count: '9', lastExposedAt: '2026-11-01T00:00:00.000Z' },
+    { id: 'logic/bad-time', count: 2, lastExposedAt: 7 },
+    { id: 7, count: 1, lastExposedAt: '2026-11-01T00:00:00.000Z' },
+    { id: 'logic/good', count: 2, lastExposedAt: '2026-11-01T00:00:00.000Z' },
+  ] });
+  recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.learnings[0]], now: new Date(Date.UTC(2026, 10, 2)) });
+  assert.deepEqual(readExposure(c.ws, PLAN).entries.map(e => [e.id, e.count]).sort(), [[c.id, 1], ['logic/good', 2]].sort());
 });
 
 test('third pass E: an exposure record of 32 KiB plus its trailing newline is still read', t => {
