@@ -59,6 +59,28 @@ export function hydrateArchivedDecision(loc, state, requestId) {
   return request;
 }
 
+const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${hash(planPath)}.json`);
+const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.requestId, verdict: receipt.verdict, recordedAt: receipt.recordedAt });
+
+/** Keep the newest archived readiness receipt per plan so read-only citations survive compaction. */
+function retainLatestReadiness(loc, request, receipt) {
+  if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) return;
+  const relative = readinessRelative(loc, request.planPath);
+  let previous = null;
+  try { previous = readRecord(loc, relative); } catch { previous = null; }
+  if (previous?.planPath === request.planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return;
+  writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath: request.planPath, receipt: readinessCitation(receipt) });
+}
+
+/** Read-only: the newest archived readiness citation for a plan, cross-checked against its retained request record. */
+export function latestArchivedReadiness(loc, planPath) {
+  const index = readRecord(loc, readinessRelative(loc, planPath));
+  if (!index || index.planPath !== planPath || !ID.test(index.receipt?.requestId || '')) return null;
+  const retained = readRecord(loc, path.join(root(loc), 'requests', `${index.receipt.requestId}.json`));
+  if (!retained || retained.request?.planPath !== planPath || retained.receipt?.id !== index.receipt.id) return null;
+  return readinessCitation(retained.receipt);
+}
+
 function validTask(value) {
   return object(value) && Number.isFinite(value.startedAt) && object(value.counts) && ['decisions', 'repairs', 'acquisitions'].every(key => Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0);
 }
@@ -76,10 +98,22 @@ export function decisionTask(loc, state, key) {
   return task;
 }
 
-/** Retire terminal/expired context while retaining immutable evidence and durable budgets. */
+/** Retire terminal/expired context while retaining immutable evidence and durable budgets. Returns best-effort warnings. */
 export function compactDecisions(loc, state) {
-  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return;
+  const warnings = [];
+  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return warnings;
   const now = loc.now ?? Date.now(), touched = new Set();
+  // The newest live readiness receipt per plan; only it is kept live when its
+  // index write is refused, so a lasting fault retains at most one request per
+  // plan (there is no cross-plan cap). A request hydrated from the archive is
+  // never a candidate: a newer receipt may already be archived.
+  const newestReadiness = new Map();
+  for (const [requestId, request] of Object.entries(state.requests)) {
+    const receipt = state.receipts[requestId];
+    if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !Number.isFinite(receipt.recordedAt) || state.archivedHydrated?.has(requestId)) continue;
+    const current = state.receipts[newestReadiness.get(request.planPath)];
+    if (!current || receipt.recordedAt > current.recordedAt) newestReadiness.set(request.planPath, requestId);
+  }
   for (const [requestId, request] of Object.entries(state.requests)) {
     const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
@@ -91,6 +125,16 @@ export function compactDecisions(loc, state) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
+    // A refused readiness-index write must not block compaction, and must not
+    // leave the index naming an older receipt as latest: the plan's newest
+    // readiness request stays live for a retry; older ones compact normally,
+    // so live state stays bounded at one request per plan.
+    try { retainLatestReadiness(loc, request, receipt); } catch (error) {
+      const newest = newestReadiness.get(request.planPath), keep = newest === requestId;
+      // A warning lives as long as its request; an archived request's warning rides on the plan's newest live one.
+      if (newest) warnings.push({ requestId: newest, message: keep ? `readiness index not retained; request stays live: ${error.message}` : `readiness index not retained for older request ${requestId}: ${error.message}` });
+      if (keep) continue;
+    }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
     for (const key of Object.keys(invocations)) delete state.invocations[key];
@@ -103,4 +147,5 @@ export function compactDecisions(loc, state) {
     writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task });
     delete state.tasks[key];
   }
+  return warnings;
 }

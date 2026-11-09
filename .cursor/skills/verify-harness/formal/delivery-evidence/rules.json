@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "actions": ["EnterDeliver", "Lock", "Edit", "Amend", "Review", "Verify", "Compound", "CaptureInsight"],
+  "required": ["EnterDeliver", "Lock", "Edit", "Review", "Verify", "Compound"],
+  "rules": [
+    { "id": "intent-before-edit", "kind": "requires", "action": "Edit", "requires": "Lock", "says": "Every edit comes after the intent is accepted and locked." },
+    { "id": "deliver-only-edits", "kind": "requires", "action": "Edit", "requires": "EnterDeliver", "says": "Only Deliver edits; answering, investigating and reviewing never change files." },
+    { "id": "current-evidence", "kind": "requires", "action": "Compound", "requires": "Verify", "resetBy": ["Edit", "Amend"], "says": "Learning is recorded only from a verification with no edit or amendment since." },
+    { "id": "insight-is-inert", "kind": "inert", "action": "CaptureInsight", "says": "Capturing an insight never changes where the delivery stands." },
+    { "id": "progress", "kind": "reachable", "action": "Compound", "after": "Review", "says": "After a review, recording the learning stays possible." }
+  ],
+  "negativeControls": [
+    { "id": "unguarded-compound", "expect": "current-evidence", "addEdges": [{ "from": "Reviewed", "to": "Compounded", "action": "Compound" }] },
+    { "id": "no-verify", "expect": "progress", "removeAction": "Verify" }
+  ],
+  "limits": "The diagram has no counters or data, so bounds such as edit counts are covered by the workflow-invariant behavior checks, not here."
+}

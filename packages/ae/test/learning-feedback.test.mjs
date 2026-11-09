@@ -99,7 +99,7 @@ test('consolidation output is byte-identical with feedback off and gains evidenc
   assert.deepEqual(suggested.feedback.learnings, [{ id: c.id, helped: 1, irrelevant: 0, wrong: 1, plans: ['docs/plans/b.md', PLAN].sort() }]);
   assert.deepEqual(suggested.feedback.review_required, [c.id]);
   assert.deepEqual(suggested.feedback.reviewers, [{ reviewer: 'correctness', fixed: 1, dismissed: 1, contradicted: 1, resolutionRate: 0.5 }], 'a fixed claim the latest review still reports is counted as contradicted');
-  const suggestStatus = consolidateStatus({ workspace: c.ws, home: c.home });
+  const suggestStatus = consolidateStatus({ workspace: c.ws, home: c.home, withFeedback: true });
   assert.equal(suggestStatus.due, false, 'suggest never changes due');
   assert.deepEqual(suggestStatus.feedback.review_required, [c.id]);
 

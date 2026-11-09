@@ -660,8 +660,8 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
       pass: noLazyFetch,
       optional: true,
       hint: noLazyFetch
-        ? 'flow models and formal verification can read Git metadata without automatic fetches'
-        : `flow models and formal verification stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
+        ? 'flow models can read Git metadata without automatic fetches'
+        : `flow models stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
     },
   ];
 }
