@@ -26,7 +26,7 @@ const edgeText = edge => `${edge.from} --> ${edge.to}${edge.action ? ` : ${edge.
 /**
  * Parse the supported stateDiagram subset: `A --> B` with an optional `: Action` label,
  * `state "Label" as A` for a reader-facing name, `[*]` for start and end, and `%%` comments.
- * A state whose only exits go to `[*]` is a correct end, not a dead end.
+ * A state that can end the run and otherwise only loops on an inert action is a legal end, not a dead end.
  */
 export function parseStateDiagram(text) {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('%%'));
@@ -96,6 +96,7 @@ export function checkModel(edges, spec, labels = {}) {
 
   const requires = spec.rules.filter(rule => rule.kind === 'requires');
   const inert = spec.rules.filter(rule => rule.kind === 'inert');
+  const inertActions = new Set(inert.map(rule => rule.action));
   const adjacency = new Map();
   for (const edge of edges) adjacency.set(edge.from, [...(adjacency.get(edge.from) || []), edge]);
   const outgoing = state => adjacency.get(state) || [];
@@ -160,7 +161,7 @@ export function checkModel(edges, spec, labels = {}) {
     for (const [state, node] of afterStates) {
       const exits = outgoing(state);
       // A legal end: every exit finishes the run or stays put (an inert self-loop such as capturing an insight).
-      if (canReach.has(state) || (exits.some(edge => edge.to === START) && exits.every(edge => edge.to === START || edge.to === state))) continue;
+      if (canReach.has(state) || (exits.some(edge => edge.to === START) && exits.every(edge => edge.to === START || (edge.to === state && inertActions.has(edge.action))))) continue;
       violations.push({ rule: rule.id, edge: null, detail: exits.length ? `${state} cannot reach ${rule.action}` : `${state} is a dead end`, state, path: pathTo(node, back) });
     }
   }
@@ -224,7 +225,7 @@ function report(receipt, spec) {
   for (const rule of spec.rules) {
     const broken = receipt.result.violations.filter(v => v.rule === rule.id);
     out.push(`- **${rule.id}**: ${rule.says} ${broken.length ? `Breaks (${broken.length}).` : 'Holds.'}`);
-    for (const violation of broken) out.push(`  - ${violation.detail}. Shortest path:`, ...violation.words.map(step => `    ${step}`));
+    for (const violation of broken) out.push(violation.words.length ? `  - ${violation.detail}. Shortest path:` : `  - ${violation.detail}.`, ...violation.words.map(step => `    ${step}`));
   }
   for (const violation of receipt.result.violations.filter(v => v.rule === 'well-formed')) out.push(`- **well-formed**: ${violation.detail}`);
   out.push('', '## Broken variants', '', ...receipt.negativeControls.map(c => `- ${c.id}: ${c.detected ? 'caught' : 'MISSED'} (expects ${c.expect})`));
@@ -238,9 +239,12 @@ export function run({ modelPath, rulesPath }) {
   const spec = validateRules(JSON.parse(rulesText));
   const { edges, labels } = parseStateDiagram(modelText);
   const result = checkModel(edges, spec, labels);
+  // A control must change the model: an added edge starts from a state the model has (it may lead to a new one),
+  // and a removed action must be one the model uses. Otherwise a typo or rename reads as a weak check.
   const states = new Set(edges.flatMap(edge => [edge.from, edge.to]));
-  for (const control of spec.negativeControls) for (const edge of control.addEdges || []) {
-    for (const state of [edge.from, edge.to]) if (!states.has(state)) throw fail(`negative control ${control.id} names state ${state}, which is not in the model`);
+  for (const control of spec.negativeControls) {
+    for (const edge of control.addEdges || []) if (!states.has(edge.from)) throw fail(`negative control ${control.id} adds an edge from ${edge.from}, which is not in the model`);
+    if (control.removeAction && !edges.some(edge => edge.action === control.removeAction)) throw fail(`negative control ${control.id} removes ${control.removeAction}, which no model edge uses`);
   }
   const negativeControls = spec.negativeControls.map(control => {
     const variant = checkModel(applyControl(edges, control), spec, labels);

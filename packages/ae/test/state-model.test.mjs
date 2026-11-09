@@ -234,9 +234,20 @@ test('a failure on an unreachable edge still marks the chart', () => {
   assert.ok(chart.includes('Orphan --> Other : Note #40;notes-are-inert, breaks#41;'), chart);
 });
 
-test('a negative control that names a state missing from the model is bad input', () => {
-  const rules = clone(RULES); rules.negativeControls[0].addEdges = [{ from: 'Renamed', to: 'Paid', action: 'Pay' }];
-  const dir = workspace(MODEL, rules);
-  assert.throws(() => run({ modelPath: path.join(dir, 'model.mmd'), rulesPath: path.join(dir, 'rules.json') }), /state Renamed, which is not in the model/);
-  fs.rmSync(dir, { recursive: true, force: true });
+test('a negative control must change the model; a dead-end control may add a new state', () => {
+  const runWith = rules => { const dir = workspace(MODEL, rules); try { return run({ modelPath: path.join(dir, 'model.mmd'), rulesPath: path.join(dir, 'rules.json') }); } finally { fs.rmSync(dir, { recursive: true, force: true }); } };
+  const renamed = clone(RULES); renamed.negativeControls[0].addEdges = [{ from: 'Renamed', to: 'Paid', action: 'Pay' }];
+  assert.throws(() => runWith(renamed), /from Renamed, which is not in the model/);
+  const typo = clone(RULES); typo.negativeControls = [{ id: 'no-note', expect: 'notes-are-inert', removeAction: 'Note' }]; typo.actions.push('Refund'); typo.negativeControls[0].removeAction = 'Refund';
+  assert.throws(() => runWith(typo), /removes Refund, which no model edge uses/);
+  const deadEnd = clone(RULES); deadEnd.negativeControls = [{ id: 'stuck', expect: 'can-pay', addEdges: [{ from: 'Approved', to: 'Abandoned', action: 'Note' }] }];
+  const result = runWith(deadEnd);
+  assert.deepEqual(result.receipt.negativeControls.map(c => [c.id, c.detected]), [['stuck', true]]);
+});
+
+test('only an inert self-loop keeps a legal end; any other self-loop is lost progress', () => {
+  const { edges, labels } = parsed();
+  const spec = clone(RULES); spec.actions.push('Edit');
+  const result = checkModel([...edges, { from: 'Approved', to: 'Parked', action: 'Note' }, { from: 'Parked', to: 'Parked', action: 'Edit' }, { from: 'Parked', to: '[*]', action: null }], spec, labels);
+  assert.ok(result.violations.some(v => v.rule === 'can-pay' && v.state === 'Parked'));
 });
