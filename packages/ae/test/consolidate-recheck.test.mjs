@@ -520,3 +520,36 @@ test('masking catches a connection string whose user part looks like another sec
   const excerpt = failureExcerpt({ stderr: `failed: postgres://AKIAABCDEFGHIJKLMNOP:${password}@db.internal/app` });
   assert.equal(excerpt.includes(password), false, excerpt);
 });
+
+test('every ANSI escape form and zero-width character between a keyword and its value is stripped before masking', () => {
+  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
+  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
+  const forms = {
+    'colon-separated SGR': '\x1b[38:5:196m',
+    'private-parameter CSI': '\x1b[>4;2m',
+    'tput sgr0 reset': '\x1b(B\x1b[m',
+    '8-bit CSI': '\x9b1m',
+    'OSC 8 hyperlink': '\x1b]8;;https://example.test/x\x07',
+    'OSC terminated by ST': '\x1b]0;title\x1b\\',
+    'zero-width space': '\u200b',
+    'zero-width joiner': '\u200d',
+    'word joiner': '\u2060',
+    'byte-order mark': '\ufeff',
+  };
+  for (const [name, seq] of Object.entries(forms)) {
+    const apiKey = failureExcerpt({ stderr: `failed: api_key=${seq}${key} done` });
+    assert.equal(apiKey.includes(key), false, `${name}: ${JSON.stringify(apiKey)}`);
+    const bearer = failureExcerpt({ stderr: `failed: Bearer ${seq}${token} done` });
+    assert.equal(bearer.includes(token), false, `${name}: ${JSON.stringify(bearer)}`);
+    assert.equal(/[\x1b\x9b\x9d\x07]/.test(apiKey + bearer), false, `${name}: no escape bytes reach the excerpt`);
+  }
+});
+
+test('escape stripping stays fast on 1 MiB of unterminated escape introducers', () => {
+  for (const long of ['\x1b['.repeat(512 * 1024), '\x1b]'.repeat(512 * 1024), `\x1b[${'1;'.repeat(512 * 1024)}`, `\x1b]${'x'.repeat(1024 * 1024)}`]) {
+    const started = performance.now();
+    const excerpt = failureExcerpt({ stderr: `${long} tail` });
+    assert.ok(performance.now() - started < 1000, 'stripping is bounded');
+    assert.ok(excerpt === null || excerpt.length <= RECHECK_EXCERPT_CAP);
+  }
+});
