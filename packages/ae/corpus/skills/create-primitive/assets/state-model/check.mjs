@@ -14,6 +14,7 @@ import { parseArgs } from 'node:util';
 
 const START = '[*]';
 const ID = /^[A-Za-z][A-Za-z0-9_]*$/;
+const RULE_ID = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const KINDS = new Set(['requires', 'inert', 'reachable']);
 const MAX_PRODUCT_STATES = 100000;
 
@@ -56,7 +57,7 @@ export function validateRules(spec) {
   if (!Array.isArray(spec.rules) || !spec.rules.length) throw fail('rules file needs at least one rule');
   const seen = new Set();
   for (const rule of spec.rules) {
-    if (!rule || !ID.test(String(rule.id).replaceAll('-', '_')) || seen.has(rule.id)) throw fail('each rule needs a unique id');
+    if (!rule || typeof rule.id !== 'string' || !RULE_ID.test(rule.id) || seen.has(rule.id)) throw fail('each rule needs a unique id');
     seen.add(rule.id);
     if (!KINDS.has(rule.kind)) throw fail(`rule ${rule.id} has unsupported kind ${rule.kind}`);
     if (typeof rule.says !== 'string' || !rule.says.trim()) throw fail(`rule ${rule.id} needs a plain-language "says" sentence`);
@@ -66,9 +67,14 @@ export function validateRules(spec) {
   }
   if (!Array.isArray(spec.negativeControls) || !spec.negativeControls.length) throw fail('rules file needs at least one negative control; a check never seen failing proves nothing');
   for (const control of spec.negativeControls) {
-    if (!control || typeof control.id !== 'string' || !seen.has(control.expect)) throw fail('each negative control needs an id and an expected rule id');
-    if (!control.removeAction && !Array.isArray(control.addEdges)) throw fail(`negative control ${control.id} must remove an action or add edges`);
+    if (!control || typeof control.id !== 'string' || !control.id || typeof control.expect !== 'string' || !seen.has(control.expect)) throw fail('each negative control needs an id and an expected rule id');
+    if (!control.removeAction && !(Array.isArray(control.addEdges) && control.addEdges.length)) throw fail(`negative control ${control.id} must remove an action or add edges`);
     if (control.removeAction) known(control.removeAction, `negative control ${control.id}`);
+    for (const edge of control.addEdges || []) {
+      const state = value => typeof value === 'string' && (value === START || ID.test(value));
+      if (!edge || !state(edge.from) || !state(edge.to)) throw fail(`negative control ${control.id} adds an edge without a valid from and to state`);
+      if (edge.action !== undefined && edge.action !== null) known(edge.action, `negative control ${control.id}`);
+    }
   }
   return spec;
 }
@@ -87,48 +93,72 @@ export function checkModel(edges, spec, labels = {}) {
   for (const name of spec.required || []) if (!edges.some(edge => edge.action === name)) violations.push({ rule: 'well-formed', edge: null, detail: `missing ${name} transition`, path: [] });
 
   const requires = spec.rules.filter(rule => rule.kind === 'requires');
-  for (const rule of spec.rules.filter(rule => rule.kind === 'inert')) {
-    for (const edge of edges) if (edge.action === rule.action && edge.from !== edge.to) violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} moves to another state`, path: [edge] });
-  }
+  const inert = spec.rules.filter(rule => rule.kind === 'inert');
   const outgoing = state => edges.filter(edge => edge.from === state);
   const keyOf = (state, flags) => `${state}|${flags.map(Number).join('')}`;
   const startNode = { state: START, flags: requires.map(() => false) };
   startNode.key = keyOf(START, startNode.flags);
   const nodes = new Map([[startNode.key, startNode]]), parents = new Map(), queue = [startNode];
-  const firstReach = new Map([[START, startNode]]);
+  const reachable = new Set(), movedInert = new Set();
   while (queue.length) {
     const node = queue.shift();
     for (const edge of outgoing(node.state)) {
       requires.forEach((rule, index) => {
         if (edge.action === rule.action && !node.flags[index]) violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} is reachable without ${rule.requires}${rule.resetBy?.length ? ` since the last ${rule.resetBy.join(' or ')}` : ''}`, path: [...pathTo(node, parents), edge] });
       });
+      for (const rule of inert) if (edge.action === rule.action && edge.from !== edge.to) {
+        movedInert.add(`${rule.id}|${edgeText(edge)}`);
+        violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} moves to another state`, path: [...pathTo(node, parents), edge] });
+      }
       if (edge.to === START) continue;
+      reachable.add(edge.to);
       const flags = requires.map((rule, index) => edge.action === rule.requires ? true : (rule.resetBy || []).includes(edge.action) ? false : node.flags[index]);
       const next = { state: edge.to, flags, key: keyOf(edge.to, flags) };
       if (nodes.has(next.key)) continue;
       if (nodes.size >= MAX_PRODUCT_STATES) throw fail(`model exceeds ${MAX_PRODUCT_STATES} explored states; make it smaller`);
       nodes.set(next.key, next); parents.set(next.key, { prev: node.key, edge }); queue.push(next);
-      if (!firstReach.has(edge.to)) firstReach.set(edge.to, next);
     }
   }
-  const reachable = new Set([...firstReach.keys()].filter(state => state !== START));
+  // An inert action that moves state breaks its rule even where no path reaches it yet.
+  for (const rule of inert) for (const edge of edges) {
+    if (edge.action === rule.action && edge.from !== edge.to && !movedInert.has(`${rule.id}|${edgeText(edge)}`)) violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} moves to another state (not reachable from the start)`, path: [] });
+  }
+
   for (const rule of spec.rules.filter(rule => rule.kind === 'reachable')) {
+    // States that can still perform the action. A finished run does not restart, so edges into [*] do not carry it backwards.
     const canReach = new Set();
     for (let changed = true; changed;) {
       changed = false;
-      for (const edge of edges) if (!canReach.has(edge.from) && (edge.action === rule.action || canReach.has(edge.to))) { canReach.add(edge.from); changed = true; }
+      for (const edge of edges) if (!canReach.has(edge.from) && (edge.action === rule.action || (edge.to !== START && canReach.has(edge.to)))) { canReach.add(edge.from); changed = true; }
     }
-    const after = new Set(edges.filter(edge => edge.action === rule.after && (edge.from === START || reachable.has(edge.from)) && edge.to !== START).map(edge => edge.to));
-    for (const pending = [...after]; pending.length;) for (const edge of outgoing(pending.shift())) if (edge.to !== START && !after.has(edge.to)) { after.add(edge.to); pending.push(edge.to); }
-    for (const state of after) {
+    // Shortest paths from the start that have performed `after`, so each witness shows the trigger.
+    const begin = { state: START, seen: false, key: `${START}|0` };
+    const visited = new Map([[begin.key, begin]]), back = new Map(), pending = [begin], afterStates = new Map();
+    while (pending.length) {
+      const node = pending.shift();
+      for (const edge of outgoing(node.state)) {
+        if (edge.to === START) continue;
+        const seen = node.seen || edge.action === rule.after;
+        const next = { state: edge.to, seen, key: `${edge.to}|${+seen}` };
+        if (visited.has(next.key)) continue;
+        visited.set(next.key, next); back.set(next.key, { prev: node.key, edge }); pending.push(next);
+        if (seen && !afterStates.has(edge.to)) afterStates.set(edge.to, next);
+      }
+    }
+    for (const [state, node] of afterStates) {
       const exits = outgoing(state);
       if (canReach.has(state) || (exits.length && exits.every(edge => edge.to === START))) continue;
-      const stuck = firstReach.get(state);
-      violations.push({ rule: rule.id, edge: null, detail: exits.length ? `${state} cannot reach ${rule.action}` : `${state} is a dead end`, state, path: stuck ? pathTo(stuck, parents) : [] });
+      violations.push({ rule: rule.id, edge: null, detail: exits.length ? `${state} cannot reach ${rule.action}` : `${state} is a dead end`, state, path: pathTo(node, back) });
     }
   }
-  const unique = [...new Map(violations.map(v => [`${v.rule}|${v.edge}|${v.state || ''}`, v])).values()];
-  return { passed: unique.length === 0, states: reachable.size, explored: nodes.size, violations: unique.map(v => ({ ...v, words: words(v, labels) })) };
+  const unique = new Map();
+  for (const violation of violations) {
+    const key = `${violation.rule}|${violation.edge}|${violation.state || ''}|${violation.detail}`;
+    const kept = unique.get(key);
+    if (!kept || violation.path.length < kept.path.length) unique.set(key, violation);
+  }
+  const result = [...unique.values()];
+  return { passed: result.length === 0, states: reachable.size, explored: nodes.size, violations: result.map(v => ({ ...v, words: words(v, labels) })) };
 }
 
 const nameOf = (state, labels) => state === START ? 'start' : labels[state] || state;

@@ -152,3 +152,40 @@ test('the CLI writes its artifacts and exits 0, 1 or 2', () => {
   assert.match(refused.stderr, /schema 1/);
   for (const dir of [good, bad, invalid]) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('malformed ids, expectations and added edges are refused rather than counted as caught', () => {
+  const noId = clone(RULES); delete noId.rules[1].id;
+  assert.throws(() => validateRules(noId), /unique id/);
+  const noExpect = clone(RULES); delete noExpect.negativeControls[0].expect;
+  assert.throws(() => validateRules(noExpect), /expected rule id/);
+  const noTo = clone(RULES); noTo.negativeControls[0].addEdges = [{ from: 'Approved', action: 'Note' }];
+  assert.throws(() => validateRules(noTo), /valid from and to/);
+  const badAction = clone(RULES); badAction.negativeControls[0].addEdges = [{ from: 'Approved', to: 'Paid', action: 'Refund' }];
+  assert.throws(() => validateRules(badAction), /unknown action Refund/);
+});
+
+test('a finished run does not restart, so ending is not a route to the action', () => {
+  const { edges, labels } = parsed();
+  const result = checkModel([...edges, { from: 'Approved', to: 'Parked', action: 'Note' }, { from: 'Parked', to: 'Parked', action: 'Note' }, { from: 'Parked', to: '[*]', action: null }], RULES, labels);
+  const stuck = result.violations.find(v => v.rule === 'can-pay');
+  assert.equal(stuck?.state, 'Parked');
+  assert.match(stuck.detail, /cannot reach Pay/);
+});
+
+test('every witness starts at the start, includes the trigger, and is the shortest one', () => {
+  const { edges, labels } = parsed();
+  const inert = checkModel([...edges, { from: 'Approved', to: 'Paid', action: 'Note' }], RULES, labels).violations.find(v => v.rule === 'notes-are-inert');
+  assert.deepEqual(inert.words, ['1. start -> Refund requested', '2. Refund requested -> Approved by a person (Approve)', '3. Approved by a person -> Money sent back (Note)']);
+
+  const frozen = checkModel([...edges, { from: 'Requested', to: 'Frozen', action: 'Note' }, { from: 'Approved', to: 'Frozen', action: 'Note' }], RULES, labels).violations.find(v => v.rule === 'can-pay');
+  assert.ok(frozen.path.some(edge => edge.action === 'Approve'), JSON.stringify(frozen.words));
+
+  const spec = clone(RULES); spec.actions.push('Edit'); spec.rules[0].resetBy = ['Edit'];
+  const looped = checkModel([...edges, { from: 'Approved', to: 'Approved', action: 'Edit' }, { from: 'Requested', to: 'Paid', action: 'Pay' }], spec, labels);
+  const direct = looped.violations.filter(v => v.rule === 'approval-first' && v.edge === 'Requested --> Paid : Pay');
+  assert.equal(direct.length, 1);
+  assert.equal(direct[0].path.length, 2);
+
+  const missing = checkModel(edges.filter(edge => !['Approve', 'Pay'].includes(edge.action)), RULES).violations.filter(v => v.rule === 'well-formed').map(v => v.detail);
+  assert.deepEqual(missing.sort(), ['missing Approve transition', 'missing Pay transition']);
+});
