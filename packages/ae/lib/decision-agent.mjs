@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -601,5 +601,10 @@ export function latestReadinessReceipt(options) {
     if (state.requests[receipt.requestId]?.planPath !== options.planPath) continue;
     if (!latest || receipt.recordedAt > latest.recordedAt) latest = receipt;
   }
-  return latest ? { id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
+  // Compaction moves terminal receipts out of live state; its retained index still names the newest one.
+  try {
+    const archived = latestArchivedReadiness(loc, options.planPath);
+    if (archived && (!latest || archived.recordedAt > latest.recordedAt)) latest = archived;
+  } catch { /* retained evidence unreadable: cite live state only */ }
+  return latest ?{ id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
 }

@@ -59,6 +59,28 @@ export function hydrateArchivedDecision(loc, state, requestId) {
   return request;
 }
 
+const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${hash(planPath)}.json`);
+const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.requestId, verdict: receipt.verdict, recordedAt: receipt.recordedAt });
+
+/** Keep the newest archived readiness receipt per plan so read-only citations survive compaction. */
+function retainLatestReadiness(loc, request, receipt) {
+  if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) return;
+  const relative = readinessRelative(loc, request.planPath);
+  let previous = null;
+  try { previous = readRecord(loc, relative); } catch { previous = null; }
+  if (previous?.planPath === request.planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return;
+  writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath: request.planPath, receipt: readinessCitation(receipt) });
+}
+
+/** Read-only: the newest archived readiness citation for a plan, cross-checked against its retained request record. */
+export function latestArchivedReadiness(loc, planPath) {
+  const index = readRecord(loc, readinessRelative(loc, planPath));
+  if (!index || index.planPath !== planPath || !ID.test(index.receipt?.requestId || '')) return null;
+  const retained = readRecord(loc, path.join(root(loc), 'requests', `${index.receipt.requestId}.json`));
+  if (!retained || retained.request?.planPath !== planPath || retained.receipt?.id !== index.receipt.id) return null;
+  return readinessCitation(retained.receipt);
+}
+
 function validTask(value) {
   return object(value) && Number.isFinite(value.startedAt) && object(value.counts) && ['decisions', 'repairs', 'acquisitions'].every(key => Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0);
 }
@@ -91,6 +113,7 @@ export function compactDecisions(loc, state) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
+    retainLatestReadiness(loc, request, receipt);
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
     for (const key of Object.keys(invocations)) delete state.invocations[key];

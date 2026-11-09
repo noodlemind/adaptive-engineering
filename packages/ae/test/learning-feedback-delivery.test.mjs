@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { approveProject } from '../lib/trust.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
-import { exposureRel, readExposure } from '../lib/learning-feedback.mjs';
+import { EXPOSURE_ENTRY_CAP, exposureRel, readExposure, recordExposure } from '../lib/learning-feedback.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
 
@@ -132,4 +132,25 @@ test('finding dispositions must name findings from this plan\'s review records',
   ], 'Harness records its own observation beside each claimed disposition');
   assert.equal(record.readiness, undefined, 'no readiness decision was recorded for this plan');
   assert.ok(fs.existsSync(path.join(f.ws, exposureRel(f.plan))));
+});
+
+test('an exact replay reuses the accepted feedback after the exposure cap evicts its learning', t => {
+  const f = feedbackFixture(t);
+  verifiedAfterOrient(f);
+  const value = { operation: 'judge-then-evict', decision: 'no-learning', rationale: 'No new lesson.', recalled: [{ id: 'logic/export-example-value', verdict: 'helped' }] };
+  const first = decide(f, value);
+  assert.equal(first.status, 0, first.stderr || first.stdout);
+  const accepted = JSON.parse(first.stdout).feedbackRecord;
+  assert.equal(accepted.written, true);
+  const later = Array.from({ length: EXPOSURE_ENTRY_CAP }, (_, i) => ({ id: `logic/later-${String(i).padStart(3, '0')}` }));
+  recordExposure({ recordRoot: f.ws, workspace: f.ws, home: f.home, planPath: f.plan, delivered: later, now: new Date(Date.now() + 60000) });
+  assert.equal(readExposure(f.ws, f.plan).entries.some(entry => entry.id === 'logic/export-example-value'), false, 'the judged learning was evicted');
+  const replay = decide(f, value);
+  assert.equal(replay.status, 0, replay.stderr || replay.stdout);
+  const out = JSON.parse(replay.stdout);
+  assert.equal(out.replayed, true);
+  assert.deepEqual(out.feedbackRecord, { path: accepted.path, written: false });
+  const fresh = decide(f, { ...value, operation: 'judge-evicted-new' });
+  assert.notEqual(fresh.status, 0, 'a new operation still validates against current exposure');
+  assert.match(fresh.stdout + fresh.stderr, /never delivered/);
 });

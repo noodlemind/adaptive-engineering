@@ -241,7 +241,7 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     learnings: { active: active.length, total: learnings.length },
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
-    ...(feedback ? { feedback: { state: feedback.state, records: feedback.records, review_required: feedback.review_required } } : {}),
+    ...(feedback ? { feedback } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),
