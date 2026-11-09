@@ -8,7 +8,7 @@ import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { inertEvidenceQuote, EVIDENCE_QUOTE_CAP } from '../lib/knowledge/evidence-quote.mjs';
@@ -244,8 +244,13 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   const split = inertEvidenceQuote(`request failed\nAuthorization: Bearer\n${token}`);
   assert.ok(!split.includes(token), 'a credential split across lines is redacted once joined');
   assert.match(split, /\[redacted:/);
-  const controls = inertEvidenceQuote('\u009b31mFAIL\u009b0m ok ‮evil⁦x⁩');
-  assert.ok(!/[\u0080-\u009f‪-‮⁦-⁩]/.test(controls), 'C1 and bidi controls are blanked');
+  const controls = inertEvidenceQuote('\u009b31mFAIL\u009b0m ok \u202eevil\u2066x\u2069');
+  assert.ok(!/[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/.test(controls), 'C1 and bidi controls are blanked');
+  for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c]) {
+    const ch = String.fromCodePoint(point);
+    assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
+    assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
+  }
   const euros = inertEvidenceQuote('€'.repeat(1000));
   assert.equal(Buffer.byteLength(euros), EVIDENCE_QUOTE_CAP);
   const emoji = inertEvidenceQuote(`a${'😀'.repeat(400)}`);

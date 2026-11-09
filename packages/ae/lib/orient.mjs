@@ -52,6 +52,16 @@ function jsonGitContext(gitContext) {
  * re-verifying cannot reveal leftover breakage and may first need trust or
  * check repair) and `expired` (only older than the evidence TTL).
  */
+const EVIDENCE_AGE_MESSAGE = 'Verification evidence is stale';
+// The fixed policy, trust and named-check messages from validateEvidence and loadNamedChecks.
+const CONFIG_MESSAGES = [
+  message => message === 'Policy or trust changed after verification; refresh trust and reverify',
+  message => message === 'Required named check is missing',
+  message => message.startsWith('Trusted check config not found: '),
+  message => message.startsWith('Invalid project checks'),
+  message => message.endsWith(' must declare version: 1 and checks'),
+];
+
 function resumeVerification({ workspace, copilotHome, flags, active }) {
   if (!active?.path) return null;
   try {
@@ -62,13 +72,18 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
     const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
     const fresh = validateEvidence({ workspace, plan: active, evidence, maxAgeHours, copilotHome });
     if (fresh.pass) return null;
-    // The age check runs before the binding checks, so look past it once to
-    // tell plain expiry from a real change.
-    const unbounded = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
-    if (unbounded.pass) return { state: 'expired', reason: reason(fresh.message) };
-    const message = unbounded.message || fresh.message;
-    const config = /policy|trust|named check|checks?\.yaml|playbook|intent source|gap/i.test(message || '');
-    return { state: config ? 'config' : 'changed', reason: reason(message) };
+    let message = fresh.message;
+    if (message === EVIDENCE_AGE_MESSAGE) {
+      // The age check runs before the binding checks, so look past it once to
+      // tell plain expiry from a real change.
+      const unbounded = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
+      if (unbounded.pass) return { state: 'expired', reason: reason(message) };
+      message = unbounded.message || message;
+    }
+    // Only policy, trust and named-check configuration count as `config`.
+    // Intent-source, gap and playbook messages describe plan contract changes
+    // and stay `changed`.
+    return { state: CONFIG_MESSAGES.some(test => test(message || '')) ? 'config' : 'changed', reason: reason(message) };
   } catch {
     return null;
   }
@@ -78,13 +93,13 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
 export function withResumeVerification(nextTools, check, { planPath, gatePass, isolationBlocked }) {
   if (!check || check.state === 'expired' || !gatePass || isolationBlocked) return nextTools;
   const hint = check.state === 'config'
-    ? `ae verify --plan ${planPath}  # prior verification no longer matches configuration: ${check.reason}; repair trust or checks first if needed`
+    ? `ae verify --plan ${planPath}  # prior verification no longer matches configuration: ${check.reason}; first use trust.recovery or repair checks if listed`
     : `ae verify --plan ${planPath}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
   const rest = nextTools.filter(tool => tool !== 'ae verify');
   if (check.state === 'config') {
-    // After any trust recovery step, otherwise where the plain verify step was.
-    const recovery = rest.findLastIndex(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
-    const at = recovery !== -1 ? recovery + 1 : nextTools.indexOf('ae verify');
+    // In the plain verify slot, so it stays ahead of compound and completion.
+    // Trust recovery steps listed later are named in the hint's own note.
+    const at = nextTools.indexOf('ae verify');
     return at === -1 ? [...rest, hint] : [...rest.slice(0, at), hint, ...rest.slice(at)];
   }
   const lead = rest.findIndex(tool => !tool.startsWith('Use checkReadiness.') && !tool.startsWith('ae worktree '));

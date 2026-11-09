@@ -11,15 +11,17 @@ import { inertLine } from './store.mjs';
 export const EVIDENCE_QUOTE_CAP = 600;
 
 // Tab, newline and carriage return are escaped on write. Every other C0 or C1
-// control and every bidirectional override or isolate is refused: they would
-// land raw in frontmatter or reorder what a reader or model sees.
-const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‪-‮⁦-⁩]/;
+// control, every bidirectional override, isolate or mark (U+200E, U+200F,
+// U+061C) and the Unicode line and paragraph separators (U+2028, U+2029) are
+// refused: they would land raw in frontmatter, break a line or reorder what a
+// reader or model sees.
+const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c]/;
 
 /** Returns null when the quote is acceptable, otherwise the reason it is not. */
 export function evidenceQuoteError(value) {
   if (typeof value !== 'string' || !value.trim()) return 'evidence_quote must be nonempty text';
   if (Buffer.byteLength(value, 'utf8') > EVIDENCE_QUOTE_CAP) return `evidence_quote must be at most ${EVIDENCE_QUOTE_CAP} bytes of verbatim error, test or diff text`;
-  if (DISALLOWED.test(value)) return 'evidence_quote may contain tabs, newlines and carriage returns but no other control or bidirectional formatting characters; strip terminal color codes';
+  if (DISALLOWED.test(value)) return 'evidence_quote may contain tabs, newlines and carriage returns but no other control, bidirectional formatting or line separator characters; strip terminal color codes';
   // Scan the line-joined form too: a credential split across lines must not
   // pass here and then reassemble when the quote is rendered as one line.
   const secrets = [...scanSecrets(value), ...scanSecrets(inertLine(value))];

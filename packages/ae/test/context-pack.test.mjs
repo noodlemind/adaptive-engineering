@@ -357,7 +357,7 @@ test('a short routing section survives when the repo map and tool list are the o
 });
 
 // Resume verification hint (memory plan phase 5b). ----------------------------
-function resumeFixture(t) {
+function resumeFixture(t, { enforcement = 'enforce' } = {}) {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-resume-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ws = path.join(dir, 'product'), home = path.join(dir, 'home'), copilot = path.join(dir, 'copilot');
@@ -366,7 +366,7 @@ function resumeFixture(t) {
   fs.writeFileSync(path.join(ws, '.gitignore'), '.harness/\n');
   fs.writeFileSync(path.join(ws, 'package.json'), '{"type":"module"}\n');
   writeChecks(ws, { behavior: { command: [process.execPath, '-e', "import('./src/example.js').then(m => { if (m.value !== 2) process.exit(1); })"] } });
-  fs.writeFileSync(path.join(ws, '.github/harness/policy.yaml'), 'version: 1\nenforcement: enforce\n');
+  fs.writeFileSync(path.join(ws, '.github/harness/policy.yaml'), `version: 1\nenforcement: ${enforcement}\n`);
   initGit(ws);
   approveProject({ workspace: ws, copilotHome: copilot, home });
   const env = { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilot, HARNESS_NO_EVENTS: '1', HARNESS_BIN: path.join(packageRoot, 'bin/ae.mjs') };
@@ -448,7 +448,27 @@ test('a policy change after verification blocks the gate, so no verify hint is o
   assert.ok(!out.nextTools.some(tool => tool.includes('prior verification')), 'a blocked gate comes first; verify would only fail and loop');
 });
 
-test('the resume hint follows isolation and readiness steps, follows trust recovery for configuration changes, and is omitted when blocked', () => {
+for (const enforcement of ['warn', 'observe']) {
+  test(`under ${enforcement} enforcement a configuration change puts the verify hint before compound`, t => {
+    const f = resumeFixture(t, { enforcement });
+    f.source('export const value = 2;\n');
+    assert.equal(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+    writeChecks(f.ws, {
+      behavior: { command: [process.execPath, '-e', "import('./src/example.js').then(m => { if (m.value !== 2) process.exit(1); })"] },
+      other: { command: [process.execPath, '-e', '0'] },
+    });
+    const out = f.orient().out;
+    assert.equal(out.resumeVerification.state, 'config');
+    assert.equal(out.gateStatus, 'pass', `${enforcement} lets the gate pass`);
+    const hint = out.nextTools.findIndex(tool => tool.includes('prior verification no longer matches configuration'));
+    const compound = out.nextTools.findIndex(tool => tool.startsWith('ae compound'));
+    assert.ok(hint !== -1 && compound !== -1 && hint < compound, JSON.stringify(out.nextTools));
+    assert.ok(!out.nextTools[hint].includes('leftover breakage'));
+    assert.equal(out.nextTools.filter(tool => tool.startsWith('ae verify')).length, 1);
+  });
+}
+
+test('the resume hint follows isolation and readiness steps, takes the verify slot for configuration changes, and is omitted when blocked', () => {
   const opts = { planPath: 'docs/plans/p.md', gatePass: true, isolationBlocked: false };
   const passing = ['ae gate --phase implement', 'read plan ## Impacted Files', 'ae review prepare --plan p', 'ae verify', 'ae compound'];
   const changed = { state: 'changed', reason: 'Workspace files changed after verification' };
@@ -460,9 +480,9 @@ test('the resume hint follows isolation and readiness steps, follows trust recov
   assert.deepEqual(withResumeVerification(passing, changed, { ...opts, isolationBlocked: true }), passing);
   assert.deepEqual(withResumeVerification(passing, { state: 'expired', reason: 'Verification evidence is stale' }, opts), passing);
   const config = withResumeVerification([...passing, 'Use trust.recovery'], { state: 'config', reason: 'Policy or trust changed after verification; refresh trust and reverify' }, opts);
-  assert.equal(config.at(-2), 'Use trust.recovery');
-  assert.match(config.at(-1), /# prior verification no longer matches configuration: Policy or trust changed/);
-  assert.ok(!config.at(-1).includes('leftover breakage'));
-  const configNoRecovery = withResumeVerification(passing, { state: 'config', reason: 'Required named check is missing' }, opts);
-  assert.match(configNoRecovery[3], /no longer matches configuration/, 'without trust recovery it takes the plain verify slot');
+  assert.match(config[3], /# prior verification no longer matches configuration: Policy or trust changed.*first use trust\.recovery/, 'a configuration hint takes the plain verify slot');
+  assert.ok(config.indexOf(config[3]) < config.indexOf('ae compound'), 'it stays ahead of compound');
+  assert.equal(config.at(-1), 'Use trust.recovery');
+  assert.ok(!config[3].includes('leftover breakage'));
+  assert.equal(config.length, passing.length + 1, 'the plain verify step is replaced, not repeated');
 });
