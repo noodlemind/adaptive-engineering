@@ -25,7 +25,7 @@ The check is a thin wrapper over the state-model starter that AE ships in create
 | `insight-is-inert` | `CaptureInsight` never changes the delivery state. |
 | `progress` | After a `Review`, `Compound` stays reachable. |
 
-It then builds two broken variants, one with an unguarded `Compound` and one with no `Verify`, and fails unless each is caught. Under `HARNESS_CHECK_ARTIFACT_DIR` it writes the receipt `state-model.json`, a `report.md` that tells each broken rule as its shortest numbered path from the start in the diagram's plain words, and a marked `chart.mmd`. The receipt is also printed to stdout.
+It then builds two broken variants, one with an unguarded `Compound` and one with no `Verify`, and fails unless each is caught. It writes the receipt `state-model.json` under `HARNESS_CHECK_ARTIFACT_DIR`, or under a private temporary directory it names on stderr for a manual run, together with a `report.md` that tells each broken rule as its shortest numbered path from the start in the diagram's plain words, and a marked `chart.mmd`. The receipt is also printed to stdout.
 
 Read every failure through its chart: render `chart.mmd` with `ae diagrams render --renderer pele` and give each broken rule as its numbered path from `report.md`. The chart is descriptive context; the receipt is the evidence.
 

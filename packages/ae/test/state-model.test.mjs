@@ -110,7 +110,7 @@ test('the marked chart numbers the bug path, marks the breaking state and render
   const result = checkModel(broken, RULES, labels);
   const chart = markedChart(broken, labels, result.violations);
   assert.match(chart, /state "Money sent back - BREAKS approval-first" as Paid/);
-  assert.ok(chart.includes("Requested --> Paid : Pay #40;step 2, breaks approval-first#41;"), chart);
+  assert.ok(chart.includes("Requested --> Paid : Pay #40;approval-first step 2, breaks#41;"), chart);
   assert.doesNotMatch(chart, /classDef|style /);
   const rendered = await renderDiagram({ source: chart, engine: 'pele' });
   assert.match(rendered.svg, /<svg/);
@@ -158,6 +158,8 @@ test('malformed ids, expectations and added edges are refused rather than counte
   assert.throws(() => validateRules(noId), /unique id/);
   const noExpect = clone(RULES); delete noExpect.negativeControls[0].expect;
   assert.throws(() => validateRules(noExpect), /expected rule id/);
+  const notList = clone(RULES); notList.negativeControls[0] = { id: 'n', expect: 'approval-first', removeAction: 'Approve', addEdges: { from: 'Paid' } };
+  assert.throws(() => validateRules(notList), /addEdges must be a list/);
   const noTo = clone(RULES); noTo.negativeControls[0].addEdges = [{ from: 'Approved', action: 'Note' }];
   assert.throws(() => validateRules(noTo), /valid from and to/);
   const badAction = clone(RULES); badAction.negativeControls[0].addEdges = [{ from: 'Approved', to: 'Paid', action: 'Refund' }];
@@ -188,4 +190,26 @@ test('every witness starts at the start, includes the trigger, and is the shorte
 
   const missing = checkModel(edges.filter(edge => !['Approve', 'Pay'].includes(edge.action)), RULES).violations.filter(v => v.rule === 'well-formed').map(v => v.detail);
   assert.deepEqual(missing.sort(), ['missing Approve transition', 'missing Pay transition']);
+});
+
+test('an edge on two bug paths keeps each rule and its own step number', () => {
+  const spec = clone(RULES);
+  spec.actions.push('Open');
+  spec.rules.push({ id: 'opened-first', kind: 'requires', action: 'Pay', requires: 'Open', says: 'Money is sent back only on an opened case.' });
+  const { edges, labels } = parsed();
+  const broken = [...edges, { from: 'Requested', to: 'Paid', action: 'Pay' }];
+  const chart = markedChart(broken, labels, checkModel(broken, spec, labels).violations);
+  assert.ok(chart.includes('Requested --> Paid : Pay #40;approval-first step 2, breaks; opened-first step 2, breaks#41;'), chart);
+  assert.match(chart, /BREAKS approval-first, opened-first/);
+});
+
+test('a manual run with no output directory still writes its artifacts and says where', () => {
+  const dir = workspace();
+  const env = { ...process.env }; delete env.HARNESS_CHECK_ARTIFACT_DIR;
+  const result = spawnSync(process.execPath, [script, '--model', path.join(dir, 'model.mmd'), '--rules', path.join(dir, 'rules.json')], { encoding: 'utf8', env });
+  assert.equal(result.status, 0, result.stderr);
+  const out = /artifacts: (.+)/.exec(result.stderr)?.[1];
+  assert.ok(out && fs.existsSync(path.join(out, 'chart.mmd')) && fs.existsSync(path.join(out, 'report.md')));
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
 });

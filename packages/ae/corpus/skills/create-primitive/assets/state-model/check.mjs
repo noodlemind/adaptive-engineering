@@ -4,9 +4,10 @@
 //
 //   node check.mjs --model <model.mmd> --rules <rules.json> [--out <dir>]
 //
-// Writes state-model.json, report.md and chart.mmd to --out, else to HARNESS_CHECK_ARTIFACT_DIR,
-// and prints the receipt. Exits 1 when a rule breaks or a broken variant is missed, 2 on bad input.
+// Writes state-model.json, report.md and chart.mmd to --out, else to HARNESS_CHECK_ARTIFACT_DIR, else to a
+// private temporary directory whose path goes to stderr, and prints the receipt. Exits 1 when a rule breaks or a broken variant is missed, 2 on bad input.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -70,6 +71,7 @@ export function validateRules(spec) {
     if (!control || typeof control.id !== 'string' || !control.id || typeof control.expect !== 'string' || !seen.has(control.expect)) throw fail('each negative control needs an id and an expected rule id');
     if (!control.removeAction && !(Array.isArray(control.addEdges) && control.addEdges.length)) throw fail(`negative control ${control.id} must remove an action or add edges`);
     if (control.removeAction) known(control.removeAction, `negative control ${control.id}`);
+    if (control.addEdges !== undefined && !Array.isArray(control.addEdges)) throw fail(`negative control ${control.id} addEdges must be a list`);
     for (const edge of control.addEdges || []) {
       const state = value => typeof value === 'string' && (value === START || ID.test(value));
       if (!edge || !state(edge.from) || !state(edge.to)) throw fail(`negative control ${control.id} adds an edge without a valid from and to state`);
@@ -94,21 +96,31 @@ export function checkModel(edges, spec, labels = {}) {
 
   const requires = spec.rules.filter(rule => rule.kind === 'requires');
   const inert = spec.rules.filter(rule => rule.kind === 'inert');
-  const outgoing = state => edges.filter(edge => edge.from === state);
+  const adjacency = new Map();
+  for (const edge of edges) adjacency.set(edge.from, [...(adjacency.get(edge.from) || []), edge]);
+  const outgoing = state => adjacency.get(state) || [];
   const keyOf = (state, flags) => `${state}|${flags.map(Number).join('')}`;
   const startNode = { state: START, flags: requires.map(() => false) };
   startNode.key = keyOf(START, startNode.flags);
   const nodes = new Map([[startNode.key, startNode]]), parents = new Map(), queue = [startNode];
   const reachable = new Set(), movedInert = new Set();
-  while (queue.length) {
-    const node = queue.shift();
+  const seenViolation = new Set();
+  // BFS reaches nodes in path-length order, so the first witness for a failure is a shortest one; later ones are skipped before building a path.
+  const reportOnce = (violation, node, edge) => {
+    const key = `${violation.rule}|${violation.edge}||${violation.detail}`;
+    if (seenViolation.has(key)) return;
+    seenViolation.add(key);
+    violations.push({ ...violation, path: [...pathTo(node, parents), edge] });
+  };
+  for (let head = 0; head < queue.length; head++) {
+    const node = queue[head];
     for (const edge of outgoing(node.state)) {
       requires.forEach((rule, index) => {
-        if (edge.action === rule.action && !node.flags[index]) violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} is reachable without ${rule.requires}${rule.resetBy?.length ? ` since the last ${rule.resetBy.join(' or ')}` : ''}`, path: [...pathTo(node, parents), edge] });
+        if (edge.action === rule.action && !node.flags[index]) reportOnce({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} is reachable without ${rule.requires}${rule.resetBy?.length ? ` since the last ${rule.resetBy.join(' or ')}` : ''}` }, node, edge);
       });
       for (const rule of inert) if (edge.action === rule.action && edge.from !== edge.to) {
         movedInert.add(`${rule.id}|${edgeText(edge)}`);
-        violations.push({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} moves to another state`, path: [...pathTo(node, parents), edge] });
+        reportOnce({ rule: rule.id, edge: edgeText(edge), detail: `${rule.action} moves to another state` }, node, edge);
       }
       if (edge.to === START) continue;
       reachable.add(edge.to);
@@ -134,8 +146,8 @@ export function checkModel(edges, spec, labels = {}) {
     // Shortest paths from the start that have performed `after`, so each witness shows the trigger.
     const begin = { state: START, seen: false, key: `${START}|0` };
     const visited = new Map([[begin.key, begin]]), back = new Map(), pending = [begin], afterStates = new Map();
-    while (pending.length) {
-      const node = pending.shift();
+    for (let head = 0; head < pending.length; head++) {
+      const node = pending[head];
       for (const edge of outgoing(node.state)) {
         if (edge.to === START) continue;
         const seen = node.seen || edge.action === rule.after;
@@ -175,24 +187,29 @@ function applyControl(edges, control) {
 
 /** A copy of the model whose labels mark where each rule breaks and number the bug path. */
 export function markedChart(edges, labels, violations) {
-  const encode = value => [...String(value)].map(ch => /^[A-Za-z0-9 _.,-]$/.test(ch) ? ch : `#${ch.codePointAt(0)};`).join('');
-  const breaks = new Map(), stepOf = new Map();
+  const encode = value => [...String(value)].map(ch => /^[A-Za-z0-9 _.,;-]$/.test(ch) ? ch : `#${ch.codePointAt(0)};`).join('');
+  const breaks = new Map(), marks = new Map();
   for (const violation of violations) {
     const last = violation.path.at(-1);
     const state = violation.state || (last && (last.to !== START ? last.to : last.from));
-    if (state && state !== START) breaks.set(state, [...(breaks.get(state) || []), violation.rule]);
-    violation.path.forEach((edge, index) => { const key = edgeText(edge); if (!stepOf.has(key)) stepOf.set(key, `step ${index + 1}${index === violation.path.length - 1 && violation.edge ? `, breaks ${violation.rule}` : ''}`); });
+    if (state && state !== START) breaks.set(state, new Set([...(breaks.get(state) || []), violation.rule]));
+    // Every path keeps its own numbering: an edge on several bug paths lists each rule's step.
+    violation.path.forEach((edge, index) => {
+      const key = edgeText(edge);
+      const mark = `${violation.rule} step ${index + 1}${index === violation.path.length - 1 && violation.edge ? ', breaks' : ''}`;
+      marks.set(key, new Set([...(marks.get(key) || []), mark]));
+    });
   }
   const states = [...new Set(edges.flatMap(edge => [edge.from, edge.to]).filter(state => state !== START))];
   const lines = ['stateDiagram-v2'];
   for (const state of states) {
     const rules = breaks.get(state);
-    const label = `${nameOf(state, labels)}${rules ? ` - BREAKS ${[...new Set(rules)].join(', ')}` : ''}`;
+    const label = `${nameOf(state, labels)}${rules ? ` - BREAKS ${[...rules].join(', ')}` : ''}`;
     if (labels[state] || rules) lines.push(`  state "${encode(label)}" as ${state}`);
   }
   for (const edge of edges) {
-    const step = stepOf.get(edgeText(edge));
-    const text = [edge.action, step && `(${step})`].filter(Boolean).join(' ');
+    const mark = marks.get(edgeText(edge));
+    const text = [edge.action, mark && `(${[...mark].join('; ')})`].filter(Boolean).join(' ');
     lines.push(`  ${edge.from} --> ${edge.to}${text ? ` : ${encode(text)}` : ''}`);
   }
   return `${lines.join('\n')}\n`;
@@ -227,6 +244,11 @@ export function run({ modelPath, rulesPath }) {
   return { receipt, chart: markedChart(edges, labels, result.violations), report: report(receipt, spec) };
 }
 
+/** Where artifacts go: --out, else HARNESS_CHECK_ARTIFACT_DIR, else a fresh private temporary directory. */
+export function artifactDir(out, env = process.env) {
+  return out || env.HARNESS_CHECK_ARTIFACT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'state-model-'));
+}
+
 export function writeArtifacts(dir, { receipt, chart, report: text }) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'state-model.json'), `${JSON.stringify(receipt, null, 2)}\n`);
@@ -239,8 +261,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process
     const { values } = parseArgs({ options: { model: { type: 'string' }, rules: { type: 'string' }, out: { type: 'string' } } });
     if (!values.model || !values.rules) throw fail('usage: check.mjs --model <model.mmd> --rules <rules.json> [--out <dir>]');
     const result = run({ modelPath: values.model, rulesPath: values.rules });
-    const dir = values.out || process.env.HARNESS_CHECK_ARTIFACT_DIR;
-    if (dir) writeArtifacts(dir, result);
+    const dir = artifactDir(values.out);
+    writeArtifacts(dir, result);
+    process.stderr.write(`artifacts: ${dir}\n`);
     process.stdout.write(`${JSON.stringify(result.receipt, null, 2)}\n`);
     if (!result.receipt.passed) process.exitCode = 1;
   } catch (error) {

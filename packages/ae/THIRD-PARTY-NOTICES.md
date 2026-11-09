@@ -32,4 +32,4 @@ that marks where a rule breaks, and plain-word state labels. AE does not bundle
 any pstack source, TLC runner, tool installer or view code.
 
 Upstream reference:
-<https://github.com/cursor/plugins/tree/main/pstack/skills/statechart>
+<https://github.com/cursor/plugins/tree/4dd1d05818d19792e7cd6e818f1667f95f7e1dbe/pstack/skills/statechart>

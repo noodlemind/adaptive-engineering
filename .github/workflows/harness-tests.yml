@@ -51,7 +51,7 @@ jobs:
         shell: bash
         env:
           HARNESS_PROOF_LOG: ${{ github.workspace }}/delivery-transcripts.jsonl
-          # Flow-model and formal tests skip on Git < 2.45; CI must run them.
+          # Flow-model tests skip on Git < 2.45; CI must run them.
           AE_REQUIRE_NO_LAZY_FETCH: '1'
         run: node scripts/ci-tests.mjs --suite ${{ matrix.suite }} --shard ${{ matrix.shard }} --shards ${{ matrix.shards }} 2>&1 | tee harness-tests.log
 

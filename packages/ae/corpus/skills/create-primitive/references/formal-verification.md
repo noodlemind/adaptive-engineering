@@ -27,7 +27,7 @@ The rules file is data, not code:
 | Field | Meaning |
 | --- | --- |
 | `schema`, `actions`, `required` | Schema `1`, every allowed action name, and actions the model must contain |
-| `rules[]` | Each has an `id`, a `kind`, and a `says` sentence in plain words. `requires`: every `action` follows `requires`, optionally since the last `resetBy` action. `inert`: `action` never changes state. `reachable`: after `after`, `action` stays reachable from every state |
+| `rules[]` | Each has an `id`, a `kind`, and a `says` sentence in plain words. `requires`: every `action` follows `requires`, optionally since the last `resetBy` action. `inert`: `action` never changes state. `reachable`: after `after`, `action` stays reachable from every state that has not ended. A state whose only exits go to `[*]` is a legal end, such as cancellation; a finished run never restarts |
 | `negativeControls[]` | Broken variants that must be caught: `removeAction` or `addEdges`, with the rule id it must `expect`. At least one is required |
 | `limits` | What the model leaves out |
 
@@ -39,7 +39,7 @@ Run it from the product root:
 node <property>/scripts/check.mjs --model <property>/model.mmd --rules <property>/rules.json
 ```
 
-It explores every path, reports each broken rule with its shortest path from the start, then checks each broken variant. It writes `state-model.json`, `report.md` and `chart.mmd` to `--out`, or to `HARNESS_CHECK_ARTIFACT_DIR` when Harness runs it. It exits `1` when a rule breaks or a variant is missed, and `2` on bad input. Register that argv as a named check through the existing trusted check configuration and accepted plan, and declare `state-model.json` in its artifacts.
+It explores every path, reports each broken rule with its shortest path from the start, then checks each broken variant. It writes `state-model.json`, `report.md` and `chart.mmd` to `--out`, to `HARNESS_CHECK_ARTIFACT_DIR` when Harness runs it, or otherwise to a private temporary directory whose path it prints to stderr. It exits `1` when a rule breaks or a variant is missed, and `2` on bad input. Register that argv as a named check through the existing trusted check configuration and accepted plan, and declare `state-model.json` in its artifacts.
 
 ## Generate a specialized verify skill
 
@@ -91,4 +91,4 @@ These cases are selection fixtures for the Engineer; they do not establish model
 | The check fails; mark it passed | Return the failure and preserve sync metadata |
 | Weaken the rule until current code passes | Preserve the finding; require accepted evidence for a changed promise |
 
-Background: [Lamport on abstractions](https://lamport.azurewebsites.net/tla/high-level-view.html) and [safety and liveness](https://lamport.azurewebsites.net/tla/tutorial/session9.html). Lauren Tan's pstack [create-formal-verification-skill](https://github.com/cursor/plugins/blob/main/pstack/skills/create-formal-verification-skill/SKILL.md) and [statechart](https://github.com/cursor/plugins/blob/main/pstack/skills/statechart/SKILL.md) skills informed this design; AE's implementation is its own and depends on neither.
+Background: [Lamport on abstractions](https://lamport.azurewebsites.net/tla/high-level-view.html) and [safety and liveness](https://lamport.azurewebsites.net/tla/tutorial/session9.html). Lauren Tan's pstack [create-formal-verification-skill](https://github.com/cursor/plugins/blob/4dd1d05818d19792e7cd6e818f1667f95f7e1dbe/pstack/skills/create-formal-verification-skill/SKILL.md) and [statechart](https://github.com/cursor/plugins/blob/4dd1d05818d19792e7cd6e818f1667f95f7e1dbe/pstack/skills/statechart/SKILL.md) skills informed this design; AE's implementation is its own and depends on neither.

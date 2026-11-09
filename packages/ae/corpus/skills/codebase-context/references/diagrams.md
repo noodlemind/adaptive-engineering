@@ -46,7 +46,7 @@ Flow views reuse the published model from [flow-models.md](flow-models.md); they
 
 ## Show a state-model check result
 
-The state-model checker from `create-primitive` writes `chart.mmd`, `report.md` and `state-model.json`. The chart labels each state where a rule breaks, such as `Verified - BREAKS current-evidence`, and numbers each step of the shortest path to it. Render it like any authored Mermaid file:
+The state-model checker from `create-primitive` writes `chart.mmd`, `report.md` and `state-model.json`. The chart labels the state that each breaking step reaches, such as `Learning recorded - BREAKS current-evidence`, and marks each edge on a bug path with the rule and its step number, such as `Compound (current-evidence step 4, breaks)`. Render it like any authored Mermaid file:
 
 ```bash
 ae diagrams render --file evidence/chart.mmd --sources docs/verification/checkout --renderer pele --json
