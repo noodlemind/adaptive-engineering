@@ -165,6 +165,8 @@ const stringify = JSON.stringify; JSON.stringify = (...args) => flip(stringify(.
 const from = Buffer.from; Buffer.from = (value, ...rest) => from(flip(value), ...rest);
 const writeSync = fs.writeSync; fs.writeSync = (fd, data, ...rest) => writeSync(fd, flip(String(data)), ...rest);
 const write = process.stdout.write.bind(process.stdout); process.stdout.write = (data, ...rest) => write(flip(String(data)), ...rest);
+const slice = Buffer.prototype.base64Slice;
+Buffer.prototype.base64Slice = function (...args) { const out = slice.apply(this, args); try { return Buffer.from(flip(Buffer.from(out, 'base64').toString('utf8'))).toString('base64'); } catch { return out; } };
 Object.defineProperty(Object.prototype, 'toJSON', { configurable: true, value() {
   const copy = { ...this };
   if ('present' in copy) copy.present = false;
@@ -182,6 +184,27 @@ export function fail() { throw new Error('boom'); }
   const result = runChecker(t, source, checks);
   assert.deepEqual(result.verdicts, [false, false, true, false, false]);
   assert.equal(result.completed, false);
+});
+
+test('a synchronous check cannot be forged by hiding a promise\'s then', async t => {
+  const checks = [
+    { module: 'src/value.mjs', export: 'hidden', args: [], synchronous: true, expected: 1 },
+    { module: 'src/value.mjs', export: 'honest', args: [], synchronous: true, expected: 1 },
+    // Last, because deleting Promise.prototype.then breaks the rest of the probe realm.
+    { module: 'src/plain.mjs', export: 'load', args: [], synchronous: true, expected: 1 },
+  ];
+  const root = directory(t);
+  const workspace = materialize(root, {
+    // An own `then: undefined` hides the promise from a typeof check.
+    'src/value.mjs': "export function hidden() { const p = Promise.resolve(1); Object.defineProperty(p, 'then', { value: undefined }); return p; }\nexport const honest = () => 1;\n",
+    // Deleting Promise.prototype.then hides every native promise, with no other pollution.
+    'src/plain.mjs': 'delete Promise.prototype.then;\nexport async function load() { return 1; }\n',
+  });
+  const { verdicts } = await checkCasesIsolated(workspace, checks);
+  assert.deepEqual(verdicts, [false, true, false]);
+  // checkCases (in this process, so only the own-property variant) agrees.
+  assert.equal(await passes(workspace, [checks[0]]), false);
+  assert.equal(await passes(workspace, [checks[1]]), true);
 });
 
 test('a check that exits or hangs fails alone; the checks after it still get verdicts', t => {

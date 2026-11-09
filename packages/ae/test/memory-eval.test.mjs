@@ -450,12 +450,15 @@ test('stale study parents from dead runners are swept; live, foreign and unremov
   const unnamed = fs.mkdtempSync(path.join(base, 'aem-study-'));
   const legacy = fs.mkdtempSync(path.join(base, 'aem-study-'));
   fs.writeFileSync(path.join(legacy, 'owner.pid'), String(dead));
+  const emptyOwner = fs.mkdtempSync(path.join(base, 'aem-study-'));
+  fs.writeFileSync(path.join(emptyOwner, 'owner.pid'), '');
   fs.writeFileSync(path.join(stale, 'leftover'), 'x');
   const swept = sweepStaleStudies(base);
   assert.deepEqual(swept.sort(), [stale, legacy].sort(), 'an earlier-format parent is swept when its owner.pid is dead');
   assert.equal(fs.existsSync(stale), false);
   assert.equal(fs.existsSync(live), true);
   assert.equal(fs.existsSync(unnamed), true, 'a folder without an owner PID in its name is never swept');
+  assert.equal(fs.existsSync(emptyOwner), true, 'an empty owner.pid is malformed, not a dead owner');
   // A stale parent this user cannot remove is skipped instead of aborting the sweep. Root ignores directory permissions,
   // so there the sub-check is skipped. Permissions are restored before the test ends, ahead of the directory cleanup hook.
   if (process.platform !== 'win32' && process.getuid?.() !== 0) {

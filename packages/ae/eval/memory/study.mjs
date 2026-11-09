@@ -374,7 +374,11 @@ export function sweepStaleStudies(base = os.tmpdir()) {
     let pid = null;
     if (match) pid = Number(match[1]);
     else if (LEGACY_STUDY_NAME.test(name)) {
-      try { pid = Number(fs.readFileSync(path.join(base, name, 'owner.pid'), 'utf8')); } catch { continue; }
+      // An empty or malformed owner.pid is skipped: Number('') is 0, which would make a live folder look dead.
+      let text;
+      try { text = fs.readFileSync(path.join(base, name, 'owner.pid'), 'utf8'); } catch { continue; }
+      if (!/^\d+\s*$/.test(text)) continue;
+      pid = Number(text);
     } else continue;
     let alive = false;
     if (Number.isSafeInteger(pid) && pid > 0) {

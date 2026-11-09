@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { deserialize, serialize } from 'node:v8';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { types } from 'node:util';
 
 const self = fileURLToPath(import.meta.url);
 
@@ -19,7 +20,7 @@ export async function checkCases(workspace, checks) {
       if (check.throws) await assert.rejects(async () => evaluate(), error => String(error.message).includes(check.throws));
       else {
         const result = evaluate();
-        if (check.synchronous) assert.equal(typeof result?.then, 'undefined', `${check.export} must remain synchronous`);
+        if (check.synchronous) assert.equal(types.isPromise(result) || typeof result?.then !== 'undefined', false, `${check.export} must remain synchronous`);
         assert.deepEqual(await result, check.expected);
       }
     }
@@ -28,31 +29,34 @@ export async function checkCases(workspace, checks) {
 
 /** Standalone public verifier for a workspace: the public checks and `checkCases`, with no path back to the AE checkout. */
 export function publicVerifierSource(checks) {
-  return `import assert from 'node:assert/strict';\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\n${checkCases.toString()}\nawait checkCases(process.cwd(), ${JSON.stringify(checks)});\n`;
+  return `import assert from 'node:assert/strict';\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nimport { types } from 'node:util';\n${checkCases.toString()}\nawait checkCases(process.cwd(), ${JSON.stringify(checks)});\n`;
 }
 
 /** What the probe child may know about a check: never the expected value or the expected error text. */
 export const probeOf = check => ({ module: check.module, export: check.export, ...(Object.hasOwn(check, 'args') ? { args: check.args } : {}), ...(check.absent ? { absent: true } : {}) });
 
 /**
- * Child side. The report's output functions are captured before the first workspace import, so checked code that wraps
- * process.stdout.write, fs.writeSync, JSON.stringify or Buffer.from cannot rewrite a report. Result objects have a null
- * prototype and hold only primitives, so an Object.prototype.toJSON planted by checked code is never consulted. Reports go to
- * fd 3, one line per finished check, prefixed with a nonce; a hang or exit loses only the checks not yet reported.
- * This is best effort against casual forgery. The capture is partial: the v8 serializer and Buffer internals still use
- * intrinsics checked code could patch, and checked code can read the nonce from /proc/self/mem. A separate user ID for the
- * checker would not close that gap, because the checked code runs in this same process.
+ * Child side. Threat model: this defends against casual or accidental fitting, such as reading files or argv, or simple
+ * monkey-patching of common globals. Checked code runs in the same JS realm as this reporter, so a deliberately adversarial
+ * module can always forge a report (prototype patches, /proc/self/mem). Real defence needs a separate process boundary with
+ * no shared realm, plus a sandbox.
+ * Within that model: the functions a report depends on are captured before the first workspace import; each report is an
+ * ASCII string written with the captured fs.writeSync to fd 3, with no Buffer in the path; result objects have a null prototype
+ * and hold only primitives, so a planted Object.prototype.toJSON is never consulted. One nonce-tagged line per finished check
+ * means a hang or exit loses only the checks not yet reported.
  */
 async function probeMain(workspace) {
-  const writeSync = fs.writeSync, stringify = JSON.stringify, bufferFrom = Buffer.from, apply = Reflect.apply;
-  const bufferToString = Buffer.prototype.toString, toText = String, encode = serialize;
+  const writeSync = fs.writeSync, stringify = JSON.stringify, apply = Reflect.apply, encodeText = encodeURIComponent;
+  const base64Slice = Buffer.prototype.base64Slice, stringSlice = String.prototype.slice, toText = String, encode = serialize;
+  const isPromise = types.isPromise;
   const getPrototype = Reflect.getPrototypeOf, ownKeys = Reflect.ownKeys, isArray = Array.isArray, hasOwn = Object.hasOwn;
   const objectPrototype = Object.prototype, arrayPrototype = Array.prototype;
   const { nonce, probes } = JSON.parse(fs.readFileSync(0, 'utf8'));
+  // Every field is ASCII (base64 values, URI-encoded error text), so bytes written equal characters written on a short write.
   const report = (index, result) => {
-    const bytes = bufferFrom(`\n${nonce}:${index}:${apply(bufferToString, bufferFrom(stringify(result)), ['base64'])}\n`);
-    for (let offset = 0; offset < bytes.length;) {
-      try { offset += writeSync(3, bytes, offset); } catch (error) { if (error?.code !== 'EAGAIN') throw error; }
+    const text = `\n${nonce}:${index}:${stringify(result)}\n`;
+    for (let offset = 0; offset < text.length;) {
+      try { offset += writeSync(3, offset ? apply(stringSlice, text, [offset]) : text); } catch (error) { if (error?.code !== 'EAGAIN') throw error; }
     }
   };
   // The v8 round trip keeps values but drops prototypes; this flag keeps the private judge as strict as deepStrictEqual on JSON data.
@@ -66,7 +70,7 @@ async function probeMain(workspace) {
     }
     return true;
   };
-  const message = error => { try { return toText(error?.message ?? error).slice(0, 2000); } catch { return 'unprintable error'; } };
+  const message = error => { try { return encodeText(apply(stringSlice, toText(error?.message ?? error), [0, 2000])); } catch { return 'unprintable%20error'; } };
   for (let index = 0; index < probes.length; index++) {
     const item = probes[index];
     let result;
@@ -77,11 +81,12 @@ async function probeMain(workspace) {
         let thenable = false;
         try {
           const value = hasOwn(item, 'args') ? module[item.export](...item.args) : module[item.export];
-          thenable = typeof value?.then !== 'undefined';
+          // A promise with an own `then: undefined`, or with Promise.prototype.then deleted, is still a promise.
+          thenable = isPromise(value) || typeof value?.then !== 'undefined';
           const settled = await value;
           let isPlain = false;
           try { isPlain = plain(settled, 0); } catch { isPlain = false; }
-          try { result = { __proto__: null, kind: 'value', thenable, plain: isPlain, value: apply(bufferToString, encode(settled), ['base64']) }; }
+          try { result = { __proto__: null, kind: 'value', thenable, plain: isPlain, value: apply(base64Slice, encode(settled), []) }; }
           catch { result = { __proto__: null, kind: 'unserializable', thenable }; }
         } catch (error) {
           result = { __proto__: null, kind: 'threw', thenable, error: message(error) };
@@ -128,8 +133,13 @@ function runProbe(workspace, probes, { timeoutMs, idleMs }) {
         buffer = buffer.slice(newline + 1);
         const prefix = `${nonce}:${results.length}:`;
         if (!line.startsWith(prefix)) continue;
-        try { results.push(JSON.parse(Buffer.from(line.slice(prefix.length), 'base64').toString('utf8'))); }
-        catch { return finish(); }
+        try {
+          const result = JSON.parse(line.slice(prefix.length));
+          if (typeof result.error === 'string') {
+            try { result.error = decodeURIComponent(result.error); } catch { /* keep the encoded text */ }
+          }
+          results.push(result);
+        } catch { return finish(); }
         arm();
         if (results.length === probes.length) return finish();
       }
