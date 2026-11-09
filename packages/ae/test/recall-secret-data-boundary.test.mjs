@@ -312,6 +312,11 @@ test('a URL ending one line and an email or @scope starting the next is ordinary
   for (const quote of [
     'Server listening on http://localhost:3000\nadmin@example.com logged in',
     'GET https://registry.npmjs.org:443\n@types/node 404 Not Found',
+    // A URL that starts its own line after a word: compacting glues that
+    // word onto the scheme, which is not a break in the credentials.
+    'Request failed\nhttp://localhost:8080\nadmin@example.com not authorized',
+    'GET\nhttp://registry.local:4873\n@types/node/-/node-1.0.0.tgz',
+    'listening http://10.0.0.5:9000\nops@corp.example.com',
     'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@acme%2fwidget - Not found\nnpm ERR! 404 \n@acme/widget@1.2.3 is not in this registry.',
     'Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n    at file:///srv/app/db.mjs:12:7\n    at async main (file:///srv/app/index.mjs:4:3)',
   ]) {
@@ -333,6 +338,14 @@ test('a connection string wrapped inside its credentials is still withheld as a 
     // address or an `@scope/` package on the next line is the benign shape.
     'postgres://admin:2024\nWinterPass@prod-db',
     'postgres://admin:2024\n@db.example',
+    // The same with a dotted host: the rest of the password then reads as an
+    // email address, so the user position must also look like a host.
+    'postgres://admin:2024\nWinterPass@prod-db.internal',
+    'mysql://root:1\nqaz2wsx@db.corp.example.com:3306',
+    'postgres://admin:2024\nWin\nterPass@prod.example.com',
+    // A benign match whose host part swallows the scheme of a credential
+    // that follows it must not hide that credential.
+    'proxy http://db.local:8080\nadmin@example.com,postgres://u:hunter2longpass\n@db.internal',
     `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`,
   ]) {
     assert.equal(evidenceQuoteError(quote)?.includes('split across lines'), true, JSON.stringify(quote));

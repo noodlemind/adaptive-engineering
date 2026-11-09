@@ -58,45 +58,61 @@ function compactLines(form) {
 // A split connection-string match counts as credentials unless it has the
 // one benign shape that compacting manufactures: a line ending in
 // `scheme://host:port` followed by a line that starts with an email address
-// (`admin@example.com`) or an `@scope` (`@types/node`). Compacted, that reads
-// as `scheme://host:port...@...`, with the port as the start of the password.
-// So the match is let through only when no break falls before the password,
-// the first break inside it (or right after its `@`) comes straight after a
-// 1-5 digit run that opens the password, and the text after that break is an
-// `@scope/` package name or a dotted email address. Every other split (a
-// break in the scheme or user, inside a password, or right after the `@`)
-// fails closed. The
-// remaining gap is a password of 1-5 digits wrapped before something that
-// reads as an email address or a scoped package name.
+// (`admin@example.com`) or an `@scope/` package (`@types/node`). Compacted,
+// that reads as `scheme://host:port...@...`, with the port as the start of
+// the password. The match is let through only when all of these hold:
+//   - no break falls between the `://` and the password (a break inside the
+//     scheme word only means the previous line ended in a word character;
+//     the scheme proper starts at that break);
+//   - what sits in the user position looks like a host: `localhost`, a dotted
+//     name or address, or a bracketed IPv6 address, not a bare user name;
+//   - the first break inside the password (or right after its `@`) comes
+//     straight after a 1-5 digit run that opens it;
+//   - the text after that break is an `@scope/` package or a dotted email.
+// Everything else fails closed. The remaining gap is a dotted user name with
+// a password that opens with 1-5 digits wrapped before an email-like rest.
 const SPLIT_SCOPE = /^@[A-Za-z0-9][\w.-]*\//;
 const SPLIT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])/;
-function splitConnectionCredentials(match, start, joins, text) {
-  const parts = match.match(/^(\w+:\/\/[^\s:@/]+:)([^\s@/]+)@/);
-  if (!parts) return true;
-  const passStart = start + parts[1].length;
-  const at = passStart + parts[2].length;
-  if (joins.some(j => j > start && j <= passStart)) return true;
+const HOST_LIKE = /^(?:localhost|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\[[0-9A-Fa-f:.]+\])$/;
+const CONNECTION_PARTS = /^(\w+):\/\/([^\s:@/]+):([^\s@/]+)@/;
+
+// Returns where the benign shape's `@` sits in the compacted text, so the
+// scan can look again just after it, or -1 when the match is credentials.
+function benignSplitConnection(match, start, joins, text) {
+  const parts = match.match(CONNECTION_PARTS);
+  if (!parts) return -1;
+  const schemeEnd = start + parts[1].length;
+  const userStart = schemeEnd + 3;
+  const passStart = userStart + parts[2].length + 1;
+  const at = passStart + parts[3].length;
+  if (joins.some(j => j >= schemeEnd && j <= passStart)) return -1;
+  if (!HOST_LIKE.test(parts[2])) return -1;
   const first = joins.find(j => j > passStart && j <= at + 1);
-  if (first === undefined) return true;
-  const port = parts[2].slice(0, first - passStart).match(/^\d{1,5}$/);
-  if (!port) return true;
+  if (first === undefined) return -1;
+  if (!/^\d{1,5}$/.test(text.slice(passStart, first))) return -1;
   const rest = text.slice(first);
-  return !(SPLIT_SCOPE.test(rest) || SPLIT_EMAIL.test(rest));
+  return SPLIT_SCOPE.test(rest) || SPLIT_EMAIL.test(rest) ? at : -1;
 }
 
-// Pattern ids that match a compacted form only across a join point.
+// Pattern ids that match a compacted form only across a join point. After a
+// benign connection-string match the scan resumes just past its `@`, because
+// that match's host part can swallow the scheme of a credential that follows.
 function splitIds(form) {
   const { text, joins } = compactLines(form);
   if (!joins.length) return [];
   const ids = [];
   for (const { id, re } of SECRET_PATTERNS) {
     const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
-    for (const m of text.matchAll(global)) {
+    let m;
+    while ((m = global.exec(text)) !== null) {
       const start = m.index;
       const end = start + m[0].length;
-      const spans = joins.some(j => j > start && j < end);
-      if (!spans) continue;
-      if (id === 'connection-string' && !splitConnectionCredentials(m[0], start, joins, text)) continue;
+      if (!m[0].length) { global.lastIndex = start + 1; continue; }
+      if (!joins.some(j => j > start && j < end)) continue;
+      if (id === 'connection-string') {
+        const at = benignSplitConnection(m[0], start, joins, text);
+        if (at >= 0) { global.lastIndex = at + 1; continue; }
+      }
       ids.push(id);
       break;
     }
