@@ -100,7 +100,7 @@ export function validateCatalog(catalog = CATALOG) {
       if (task.trap && !task.checks.some(check => check.trap)) throw new TypeError(`trap task ${task.id} needs a private trap check`);
       if (task.trap && !task.checks.some(check => !check.trap)) throw new TypeError(`trap task ${task.id} needs a non-trap private check, so an unsolved task is not scored as a recurrence`);
       if (task.publicChecks.some(check => check.trap)) throw new TypeError(`task ${task.id} must keep trap checks private`);
-      if (task.publicChecks.some(check => check.throws || check.absent || check.synchronous)) throw new TypeError(`task ${task.id} public checks must be plain value checks`);
+      if (task.publicChecks.some(check => check.throws != null || check.absent != null || check.synchronous != null)) throw new TypeError(`task ${task.id} public checks must be plain value checks`);
       for (const file of [...task.editable, ...task.seeds, ...Object.keys(task.files || {}), ...task.checks.map(check => check.module)]) safePath(file);
     }
   }
@@ -356,11 +356,14 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
 
 const STUDY_PREFIX = 'aem-study-';
 const STUDY_NAME = /^aem-study-(\d+)-[A-Za-z0-9]{6}$/;
+const LEGACY_STUDY_NAME = /^aem-study-[A-Za-z0-9]{6}$/;
 
 /**
  * Removes study parents left by runner processes that no longer exist (for example after SIGKILL). The owner PID is part of
  * the folder name, so there is no window in which a fresh parent lacks an owner. Folders that cannot be removed (for example
- * another user's) are skipped, never fatal.
+ * another user's) are skipped, never fatal. Parents in the earlier format (no PID in the name) are swept only when their
+ * owner.pid names a dead process. PIDs are checked in this PID namespace: runners in other containers that share this
+ * temporary directory look dead, so give each container its own temporary directory.
  */
 export function sweepStaleStudies(base = os.tmpdir()) {
   const swept = [];
@@ -368,8 +371,11 @@ export function sweepStaleStudies(base = os.tmpdir()) {
   try { names = fs.readdirSync(base); } catch { return swept; }
   for (const name of names) {
     const match = STUDY_NAME.exec(name);
-    if (!match) continue;
-    const pid = Number(match[1]);
+    let pid = null;
+    if (match) pid = Number(match[1]);
+    else if (LEGACY_STUDY_NAME.test(name)) {
+      try { pid = Number(fs.readFileSync(path.join(base, name, 'owner.pid'), 'utf8')); } catch { continue; }
+    } else continue;
     let alive = false;
     if (Number.isSafeInteger(pid) && pid > 0) {
       try { process.kill(pid, 0); alive = true; } catch (error) { alive = error.code === 'EPERM'; }
@@ -563,7 +569,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   } finally {
     study.close();
     // A crash still saves every finished attempt, marked partial; a normal end writes the full results below.
-    if (!finished && owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true });
+    // A failed partial write must never replace the error that ended the study.
+    if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } catch { /* keep the original error */ } }
   }
   return writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false });
 }

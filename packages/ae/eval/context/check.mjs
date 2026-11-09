@@ -35,9 +35,13 @@ export function publicVerifierSource(checks) {
 export const probeOf = check => ({ module: check.module, export: check.export, ...(Object.hasOwn(check, 'args') ? { args: check.args } : {}), ...(check.absent ? { absent: true } : {}) });
 
 /**
- * Child side. Everything the report depends on is captured before the first workspace import, so checked code that wraps
- * process.stdout.write, fs.writeSync, JSON.stringify or Buffer.from cannot rewrite a report. Reports go to fd 3, one line per
- * finished check, prefixed with a nonce the checked code never sees; a hang or exit loses only the checks not yet reported.
+ * Child side. The report's output functions are captured before the first workspace import, so checked code that wraps
+ * process.stdout.write, fs.writeSync, JSON.stringify or Buffer.from cannot rewrite a report. Result objects have a null
+ * prototype and hold only primitives, so an Object.prototype.toJSON planted by checked code is never consulted. Reports go to
+ * fd 3, one line per finished check, prefixed with a nonce; a hang or exit loses only the checks not yet reported.
+ * This is best effort against casual forgery. The capture is partial: the v8 serializer and Buffer internals still use
+ * intrinsics checked code could patch, and checked code can read the nonce from /proc/self/mem. A separate user ID for the
+ * checker would not close that gap, because the checked code runs in this same process.
  */
 async function probeMain(workspace) {
   const writeSync = fs.writeSync, stringify = JSON.stringify, bufferFrom = Buffer.from, apply = Reflect.apply;
@@ -68,7 +72,7 @@ async function probeMain(workspace) {
     let result;
     try {
       const module = await import(pathToFileURL(path.join(workspace, item.module)));
-      if (item.absent) result = { kind: 'presence', present: hasOwn(module, item.export) };
+      if (item.absent) result = { __proto__: null, kind: 'presence', present: hasOwn(module, item.export) };
       else {
         let thenable = false;
         try {
@@ -77,14 +81,14 @@ async function probeMain(workspace) {
           const settled = await value;
           let isPlain = false;
           try { isPlain = plain(settled, 0); } catch { isPlain = false; }
-          try { result = { kind: 'value', thenable, plain: isPlain, value: apply(bufferToString, encode(settled), ['base64']) }; }
-          catch { result = { kind: 'unserializable', thenable }; }
+          try { result = { __proto__: null, kind: 'value', thenable, plain: isPlain, value: apply(bufferToString, encode(settled), ['base64']) }; }
+          catch { result = { __proto__: null, kind: 'unserializable', thenable }; }
         } catch (error) {
-          result = { kind: 'threw', thenable, error: message(error) };
+          result = { __proto__: null, kind: 'threw', thenable, error: message(error) };
         }
       }
     } catch (error) {
-      result = { kind: 'import-failed', error: message(error) };
+      result = { __proto__: null, kind: 'import-failed', error: message(error) };
     }
     report(index, result);
   }

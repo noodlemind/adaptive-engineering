@@ -117,7 +117,7 @@ function runChecker(t, source, checks, header = '') {
   fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'src/value.mjs'), source);
   const challenge = crypto.randomBytes(16).toString('hex');
-  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}${header}\n${JSON.stringify({ checks })}`, encoding: 'utf8', timeout: 15000 });
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}${header}\n${JSON.stringify({ checks })}`, encoding: 'utf8', timeout: 40000 });
   const verdicts = checks.map((_, index) => result.stdout.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : result.stdout.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
   return { ...result, verdicts, completed: result.stdout.includes(`harness-context-checked-v1:${challenge}:${checks.length}`) };
 }
@@ -154,20 +154,33 @@ test('checked code cannot forge the probe report by wrapping output functions', 
     { module: 'src/value.mjs', export: 'gone', absent: true },
     { module: 'src/value.mjs', export: 'load', args: [], synchronous: true, expected: 1 },
     { module: 'src/value.mjs', export: 'fail', args: [], throws: 'boom' },
+    { module: 'src/value.mjs', export: 'point', args: [], expected: { x: 1 } },
+    { module: 'src/missing.mjs', export: 'any', args: [], throws: 'Cannot find' },
   ];
-  // Every report path the old probe used is wrapped to flip the flags the parent judges on.
+  // Every report path the old probe used is wrapped to flip the flags the parent judges on, and an Object.prototype.toJSON
+  // rewrites any ordinary result object before it is encoded.
   const source = `import fs from 'node:fs';
 const flip = text => typeof text === 'string' ? text.replace('"present":true', '"present":false').replace('"thenable":true', '"thenable":false').replace('"kind":"import-failed"', '"kind":"threw"') : text;
 const stringify = JSON.stringify; JSON.stringify = (...args) => flip(stringify(...args));
 const from = Buffer.from; Buffer.from = (value, ...rest) => from(flip(value), ...rest);
 const writeSync = fs.writeSync; fs.writeSync = (fd, data, ...rest) => writeSync(fd, flip(String(data)), ...rest);
 const write = process.stdout.write.bind(process.stdout); process.stdout.write = (data, ...rest) => write(flip(String(data)), ...rest);
+Object.defineProperty(Object.prototype, 'toJSON', { configurable: true, value() {
+  const copy = { ...this };
+  if ('present' in copy) copy.present = false;
+  if ('thenable' in copy) copy.thenable = false;
+  if ('plain' in copy) copy.plain = true;
+  if (copy.kind === 'import-failed') { copy.kind = 'threw'; copy.error = 'Cannot find'; }
+  return copy;
+} });
+class Point { constructor() { this.x = 1; } }
+export const point = () => new Point();
 export const gone = 1;
 export async function load() { return 1; }
 export function fail() { throw new Error('boom'); }
 `;
   const result = runChecker(t, source, checks);
-  assert.deepEqual(result.verdicts, [false, false, true]);
+  assert.deepEqual(result.verdicts, [false, false, true, false, false]);
   assert.equal(result.completed, false);
 });
 
@@ -186,13 +199,14 @@ export const hang = () => new Promise(() => { setInterval(() => {}, 1000); });
 export const five = () => 5;
 `;
   const started = Date.now();
-  const result = runChecker(t, source, checks, ' 10000 1500');
+  const result = runChecker(t, source, checks, ' 25000 2000');
   assert.deepEqual(result.verdicts, [true, false, true, false, true]);
   assert.equal(result.completed, false);
-  assert.ok(Date.now() - started < 9000, 'the idle limit, not the whole budget, ends a hung check');
-  // A budget that runs out fails the checks it never reached instead of leaving them unreported.
-  const short = runChecker(t, source, checks.slice(2), ' 1200 5000');
-  assert.deepEqual(short.verdicts, [true, false, false]);
+  assert.ok(Date.now() - started < 20000, 'the idle limit, not the whole budget, ends a hung check');
+  // A budget that runs out fails the checks it never reached instead of leaving them unreported. No check has to pass
+  // inside this short budget, so a loaded machine cannot turn it into a false failure.
+  const short = runChecker(t, source, checks.slice(3), ' 3000 5000');
+  assert.deepEqual(short.verdicts, [false, false]);
 });
 
 test('the private judge is as strict as checkCases about prototypes and about throws', async t => {

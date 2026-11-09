@@ -448,20 +448,31 @@ test('stale study parents from dead runners are swept; live, foreign and unremov
   const stale = fs.mkdtempSync(path.join(base, `aem-study-${dead}-`));
   const live = fs.mkdtempSync(path.join(base, `aem-study-${process.pid}-`));
   const unnamed = fs.mkdtempSync(path.join(base, 'aem-study-'));
+  const legacy = fs.mkdtempSync(path.join(base, 'aem-study-'));
+  fs.writeFileSync(path.join(legacy, 'owner.pid'), String(dead));
   fs.writeFileSync(path.join(stale, 'leftover'), 'x');
   const swept = sweepStaleStudies(base);
-  assert.deepEqual(swept, [stale]);
+  assert.deepEqual(swept.sort(), [stale, legacy].sort(), 'an earlier-format parent is swept when its owner.pid is dead');
   assert.equal(fs.existsSync(stale), false);
   assert.equal(fs.existsSync(live), true);
   assert.equal(fs.existsSync(unnamed), true, 'a folder without an owner PID in its name is never swept');
+  // A stale parent this user cannot remove is skipped instead of aborting the sweep. Root ignores directory permissions,
+  // so there the sub-check is skipped. Permissions are restored before the test ends, ahead of the directory cleanup hook.
   if (process.platform !== 'win32' && process.getuid?.() !== 0) {
-    // A stale parent this user cannot remove is skipped instead of aborting the sweep.
     const locked = fs.mkdtempSync(path.join(base, `aem-study-${dead}-`));
-    fs.mkdirSync(path.join(locked, 'inner'));
-    fs.writeFileSync(path.join(locked, 'inner', 'file'), 'x');
-    fs.chmodSync(path.join(locked, 'inner'), 0o500);
-    t.after(() => fs.chmodSync(path.join(locked, 'inner'), 0o700));
-    assert.doesNotThrow(() => sweepStaleStudies(base));
+    const inner = path.join(locked, 'inner');
+    fs.mkdirSync(inner);
+    fs.writeFileSync(path.join(inner, 'file'), 'x');
+    fs.chmodSync(inner, 0o500);
+    try {
+      let swept2;
+      assert.doesNotThrow(() => { swept2 = sweepStaleStudies(base); });
+      assert.equal(swept2.includes(locked), false, 'an unremovable parent is not reported as swept');
+      assert.equal(fs.existsSync(path.join(inner, 'file')), true);
+    } finally {
+      fs.chmodSync(inner, 0o755);
+      fs.chmodSync(locked, 0o755);
+    }
   }
 });
 
