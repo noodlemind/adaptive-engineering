@@ -98,9 +98,10 @@ export function decisionTask(loc, state, key) {
   return task;
 }
 
-/** Retire terminal/expired context while retaining immutable evidence and durable budgets. */
+/** Retire terminal/expired context while retaining immutable evidence and durable budgets. Returns best-effort warnings. */
 export function compactDecisions(loc, state) {
-  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return;
+  const warnings = [];
+  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return warnings;
   const now = loc.now ?? Date.now(), touched = new Set();
   for (const [requestId, request] of Object.entries(state.requests)) {
     const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
@@ -113,7 +114,8 @@ export function compactDecisions(loc, state) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
-    retainLatestReadiness(loc, request, receipt);
+    // The readiness index is a read-only convenience: its failure must not block compaction.
+    try { retainLatestReadiness(loc, request, receipt); } catch (error) { warnings.push(`readiness index not retained: ${error.message}`); }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
     for (const key of Object.keys(invocations)) delete state.invocations[key];
@@ -126,4 +128,5 @@ export function compactDecisions(loc, state) {
     writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task });
     delete state.tasks[key];
   }
+  return warnings;
 }

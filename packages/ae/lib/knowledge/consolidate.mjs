@@ -309,7 +309,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const active = activeLearnings(listLearnings(view.layerRoot));
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
-  const feedback = feedbackView({ workspace, home, learnings: active });
+  const feedback = status.feedback || null;
   const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
   const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
   const learnings = ordered.map((l) => ({

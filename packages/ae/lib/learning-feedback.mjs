@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readReviewRecord, publishReviewRecord, recordHash } from './review.mjs';
-import { readFileNoFollow, writeFileContained, assertNoSymlinkAncestors } from './fs-safe.mjs';
+import { readFileNoFollow, readPrefixNoFollow, writeFileContained, assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { acquireFileLock, releaseFileLock } from './file-lock.mjs';
 import { ensureHarnessDir } from './session.mjs';
 import { scanSecrets } from './secret-scan.mjs';
@@ -125,15 +125,29 @@ function checkEntries(value, { field, cap, keys, choiceKey, choices }) {
   }
 }
 
+// Review records are published as {"version": N, "plan": ..., ...}; anything else reads in full.
+const REVIEW_HEADER = /^\{\s*"version":\s*\d+,\s*"plan":\s*("(?:[^"\\]|\\.)*"|null)/;
+
+/** The plan named in a review record's header, or undefined when the header is not recognized. */
+function reviewHeaderPlan(full, root) {
+  const prefix = readPrefixNoFollow(full, { root });
+  const match = prefix && REVIEW_HEADER.exec(prefix.toString('utf8'));
+  if (!match) return undefined;
+  try { return JSON.parse(match[1]); } catch { return undefined; }
+}
+
 /** Findings from every review record bound to this plan; fixing a finding drops it from the next review. */
 export function planReviewFindings(recordRoot, planPath) {
   const dir = path.join(recordRoot, '.harness/reviews/records');
   const found = new Map();
   if (!assertNoSymlinkAncestors(recordRoot, '.harness/reviews/records')) return found;
   let names = [];
-  // Every record is read: a hash-ordered prefix could skip this plan's records and reject a real finding.
+  // Every record is considered: a hash-ordered prefix could skip this plan's records and reject a real finding.
+  // Review records carry no per-plan index, so another plan's record is skipped from its first 8 KiB header.
   try { names = fs.readdirSync(dir).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return found; }
   for (const name of names) {
+    const header = reviewHeaderPlan(path.join(dir, name), recordRoot);
+    if (header !== undefined && header !== planPath) continue;
     const record = readReviewRecord(recordRoot, `.harness/reviews/records/${name}`);
     if (!record || record.plan !== planPath || !Array.isArray(record.findings)) continue;
     for (const finding of record.findings) {
@@ -196,15 +210,33 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
 // operation key.
 const feedbackKey = ({ operation, plan, digest }) => digest ? recordHash({ operation, plan, digest }) : operation;
 const feedbackRecordRel = key => `${feedbackDirRel}/${key}.json`;
+// A full record (64 recalled + 128 findings with notes) stays near 110 KiB; larger files are refused.
+const FEEDBACK_RECORD_MAX_BYTES = 256 * 1024;
+
+function readFeedbackFile(base, rel) {
+  const text = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
+  try { return text === null ? null : JSON.parse(text); } catch { return null; }
+}
+
+/** A record accepted before keys carried the digest lives at `<operation>.json` and stays the accepted record for its plan. */
+function legacyAccepted(base, { operation, plan, digest }) {
+  if (!digest) return null;
+  const rel = feedbackRecordRel(operation);
+  const record = readFeedbackFile(base, rel);
+  return record?.version === 1 && record.operation === operation && record.plan === plan && record.digest === undefined ? path.join(base, rel) : null;
+}
 
 /** One immutable record per accepted learning decision, in the project store so every worktree's verdicts aggregate. */
 export function publishFeedbackRecord({ workspace, home, operation, digest, planPath, captureDate, feedback }) {
   if (!feedback || !ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
   const base = projectStoreDir(workspace, { home });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest });
+  if (legacy) return { path: legacy, written: false };
   const rel = feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest }));
   // Cite the decision agent's latest readiness receipt so dispositions can measure its judgments later.
   const readiness = latestReadinessReceipt({ workspace, home, planPath });
   const record = { version: 1, operation, ...(digest ? { digest } : {}), plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
+  if (Buffer.byteLength(JSON.stringify(record, null, 2)) + 1 > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`feedback record exceeds ${FEEDBACK_RECORD_MAX_BYTES} bytes`);
   const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 });
   if (existing !== null) return { path: path.join(base, rel), written: false };
   if (!writeFileContained(base, rel, `${JSON.stringify(record, null, 2)}\n`, { exclusive: true })) {
@@ -218,6 +250,8 @@ export function publishFeedbackRecord({ workspace, home, operation, digest, plan
 export function acceptedFeedbackRecord({ workspace, home, operation, digest, planPath }) {
   if (!ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
   const base = projectStoreDir(workspace, { home });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest });
+  if (legacy) return legacy;
   const full = path.join(base, feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest })));
   return readFileNoFollow(full, { root: base, maxBytes: 1024 * 1024 }) === null ? null : full;
 }
@@ -227,16 +261,16 @@ export function readFeedbackRecords({ workspace, home }) {
   if (!assertNoSymlinkAncestors(base, feedbackDirRel)) return { records: [] };
   let names = [];
   try { names = fs.readdirSync(path.join(base, feedbackDirRel)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return { records: [] }; }
-  // The full history decides review_required and due; only displayed rows are capped.
+  // The full history decides review_required and due; only displayed rows are
+  // capped. Callers read it only under `suggest` or `on`, and each file is small.
   const records = [];
   for (const name of names) {
-    const text = readFileNoFollow(path.join(base, feedbackDirRel, name), { root: base, maxBytes: 1024 * 1024 });
-    try {
-      const record = JSON.parse(text);
-      if (record?.version === 1 && (record.digest === undefined || ID.test(record.digest)) && `${feedbackKey(record)}.json` === name) records.push(record);
-    } catch { /* unreadable records are skipped */ }
+    const record = readFeedbackFile(base, `${feedbackDirRel}/${name}`);
+    if (record?.version === 1 && (record.digest === undefined || ID.test(record.digest)) && `${feedbackKey(record)}.json` === name) records.push(record);
   }
-  return { records };
+  // A legacy record is the accepted one for its operation and plan; a keyed duplicate is not counted again.
+  const legacy = new Set(records.filter(record => record.digest === undefined).map(record => JSON.stringify([record.operation, record.plan])));
+  return { records: records.filter(record => record.digest === undefined || !legacy.has(JSON.stringify([record.operation, record.plan]))) };
 }
 
 /**

@@ -13,8 +13,10 @@ import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { compactDecisions } from '../lib/decision-archive.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import {
-  feedbackSummary, learningVersion, planReviewFindings, publishFeedbackRecord, readExposure, readFeedbackRecords, recordExposure,
+  acceptedFeedbackRecord, feedbackSummary, learningVersion, planReviewFindings, publishFeedbackRecord, readExposure, readFeedbackRecords, recordExposure,
 } from '../lib/learning-feedback.mjs';
+import { projectStoreDir } from '../lib/project-layout.mjs';
+import { recordHash } from '../lib/review.mjs';
 import { initGit } from './helpers/cli-fixtures.mjs';
 
 // Regression tests for the review findings on the phase 1a recall feedback loop.
@@ -156,4 +158,81 @@ test('readiness receipts archived by decision compaction stay citable', t => {
   const readiness = JSON.parse(fs.readFileSync(written.path, 'utf8')).readiness;
   assert.equal(readiness?.verdict, 'blocked');
   assert.equal(readiness.recordedAt, 2);
+});
+
+/** Run fn while counting readdir calls on the project feedback directory and bytes read from disk. */
+function observed(c, fn) {
+  const feedbackDir = path.join(projectStoreDir(c.ws, { home: c.home }), 'feedback');
+  const { readdirSync, readSync } = fs;
+  let scans = 0, bytes = 0;
+  fs.readdirSync = (dir, ...rest) => { if (path.resolve(String(dir)) === feedbackDir) scans += 1; return readdirSync(dir, ...rest); };
+  fs.readSync = (...args) => { const n = readSync(...args); bytes += n; return n; };
+  try { return { value: fn(), scans: () => scans, bytes: () => bytes }; } finally { fs.readdirSync = readdirSync; fs.readSync = readSync; }
+}
+
+test('a record accepted before digest keys stays the accepted record and is counted once', t => {
+  const c = seeded(t);
+  const operation = sha('legacy-op'), digest = 'c'.repeat(64);
+  const feedback = { recalled: [{ id: c.id, verdict: 'helped', version: c.version }] };
+  const legacy = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, planPath: PLAN, captureDate: '2026-11-08', feedback });
+  assert.equal(path.basename(legacy.path), `${operation}.json`);
+  const replay = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, captureDate: '2026-11-09', feedback });
+  assert.deepEqual(replay, { path: legacy.path, written: false }, 'the replay reuses the legacy record');
+  assert.equal(acceptedFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN }), legacy.path);
+  // A keyed duplicate written before this fix is not counted twice.
+  const keyed = path.join(path.dirname(legacy.path), `${recordHash({ operation, plan: PLAN, digest })}.json`);
+  fs.writeFileSync(keyed, `${JSON.stringify({ version: 1, operation, digest, plan: PLAN, captureDate: '2026-11-09', ...feedback }, null, 2)}\n`);
+  assert.equal(readFeedbackRecords({ workspace: c.ws, home: c.home }).records.length, 1);
+  assert.equal(feedbackSummary({ workspace: c.ws, home: c.home, learnings: c.learnings }).learnings[0].helped, 1);
+  const otherPlan = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: 'docs/plans/other.md', captureDate: '2026-11-09', feedback });
+  assert.equal(otherPlan.written, true, 'a legacy record of another plan is not this decision');
+});
+
+test('feedback history is never scanned while feedback is off, once per status or packet otherwise, and oversized records are refused', t => {
+  const c = seeded(t);
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: sha('one'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'wrong', version: c.version }] } });
+  const off = observed(c, () => { consolidateStatus({ workspace: c.ws, home: c.home }); consolidateCandidates({ workspace: c.ws, home: c.home }); });
+  assert.equal(off.scans(), 0, 'off reads no feedback records');
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  assert.equal(observed(c, () => consolidateStatus({ workspace: c.ws, home: c.home })).scans(), 1);
+  const packet = observed(c, () => consolidateCandidates({ workspace: c.ws, home: c.home }));
+  assert.equal(packet.scans(), 1, 'the packet reuses the status feedback view');
+  assert.deepEqual(packet.value.feedback.review_required, [c.id]);
+  const big = path.join(projectStoreDir(c.ws, { home: c.home }), 'feedback', `${'e'.repeat(64)}.json`);
+  fs.writeFileSync(big, JSON.stringify({ version: 1, operation: 'e'.repeat(64), plan: PLAN, recalled: [{ id: c.id, verdict: 'helped', version: c.version, note: 'x'.repeat(300 * 1024) }] }));
+  assert.equal(readFeedbackRecords({ workspace: c.ws, home: c.home }).records.length, 1, 'a record above the per-file cap is refused');
+});
+
+test('finding lookup reads only the header of another plan\'s review record', t => {
+  const c = seeded(t);
+  const dir = path.join(c.ws, '.harness/reviews/records');
+  fs.mkdirSync(dir, { recursive: true });
+  const bulky = { version: 2, plan: 'docs/plans/other.md', findings: Array.from({ length: 400 }, (_, i) => ({ id: sha(`f-${i}`), reviewers: ['correctness'], summary: 'y'.repeat(200) })) };
+  for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(dir, `0${sha(`bulky-${i}`).slice(1)}.json`), `${JSON.stringify(bulky, null, 2)}\n`);
+  const finding = 'e'.repeat(64);
+  fs.writeFileSync(path.join(dir, `${'f'.repeat(64)}.json`), `${JSON.stringify({ version: 2, plan: PLAN, findings: [{ id: finding, reviewers: ['tests'] }] }, null, 2)}\n`);
+  const run = observed(c, () => planReviewFindings(c.ws, PLAN));
+  assert.deepEqual(run.value.get(finding), ['tests']);
+  assert.ok(run.bytes() < 20 * 8192 + 4096, `read ${run.bytes()} bytes; other plans' records are skipped from their header`);
+});
+
+test('a refused readiness index write does not block decision compaction', t => {
+  const c = seeded(t);
+  const workspace = fs.realpathSync.native(c.ws);
+  const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+  const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : stable(value)).digest('hex');
+  const archive = path.join(c.home, 'decision-archives', hash(workspace));
+  fs.mkdirSync(archive, { recursive: true });
+  fs.mkdirSync(path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(archive, 'readiness'), 'dir');
+  const packet = { schema: 1, type: 'readiness', planPath: PLAN, nonce: 1, padding: 'x'.repeat(600 * 1024) };
+  const requestId = hash(packet);
+  const value = { schema: 1, requestId, type: 'readiness', verdict: 'escalate', authorized: false, recordedAt: 1, consumedAt: null };
+  const state = { schema: 1, workspace, tasks: {}, requests: { [requestId]: { ...packet, requestId, createdAt: 1 } }, observations: {}, receipts: { [requestId]: { ...value, id: hash(value) } }, invocations: {}, nativeProbes: {} };
+  const warnings = compactDecisions({ home: c.home, workspace, now: 10 }, state);
+  assert.equal(Object.keys(state.requests).length, 0, 'live entries are still retired');
+  assert.ok(fs.existsSync(path.join(archive, 'requests', `${requestId}.json`)));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /readiness index not retained/);
+  assert.deepEqual(fs.readdirSync(path.join(c.dir, 'elsewhere')), [], 'nothing was written through the redirect');
 });
