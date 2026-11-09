@@ -62,7 +62,7 @@ The output directory must be new, its parent must exist, and its physical path m
 
 `--allow-auto` permits an explicit native GitHub Copilot Auto diagnostic. The agent preserves that selection through the editor bridge. Auto responses identify the routing alias. The resolved model identity remains unknown unless the provider reports it. Automatic selection remains ineligible for policy promotion, even with complete usage. Other providers keep their existing default-model behavior.
 
-Each arm starts in a fresh Git workspace. The autonomous agent receives public task tests through a fixed verifier command. Private acceptance checks stay outside the editable workspace and run again after the agent stops. Both baselines must fail before an attempt begins. Public tests use separate probes; they do not replace private preservation checks. Hash checks detect checker changes. File snapshots detect changes outside the allowed scope, including public verifier files and new files. Valid native edit undo receipts are recorded metadata. Unregistered undo files remain scope violations. This protects measurement integrity; it is not an operating-system sandbox.
+Each arm starts in a fresh Git workspace. The autonomous agent receives public task tests through a fixed verifier command. Private acceptance checks stay outside the editable workspace and run again after the agent stops. Both baselines must fail before an attempt begins. Public tests use separate probes; they do not replace private preservation checks. Hash checks detect checker changes. The checker binds its assertion functions before it imports any workspace module, so a checked module cannot disable them by replacing `assert` methods. File snapshots detect changes outside the allowed scope, including public verifier files and new files. Valid native edit undo receipts are recorded metadata. Unregistered undo files remain scope violations. This protects measurement integrity; it is not an operating-system sandbox.
 
 Each fixture supplies a private executable directory before the inherited `PATH`. Its wrapper pins the candidate Harness CLI and private homes even after governed execution filters the environment. The wrapper suppresses task telemetry. It does not broaden file-scope exclusions or alter installed user runtimes. Provenance records `candidate-cli-v1` isolation.
 
@@ -76,7 +76,13 @@ The pilot has insufficient held-out attempts for its promotion threshold. Missin
 
 `memory/` measures whether AE memory improves sequential coding work, per model. It reuses the context pilot's fixture preparation, private checker, provenance and output-directory rule.
 
-`memory/cases.json` holds two development and two held-out JavaScript task series. Each series has four ordered tasks on one small repository. Each series also plants one recurring trap, a repository gotcha such as case-insensitive display order or text that must be normalized before comparison. The obvious implementation of task 1 passes the public verifier but fails a private trap check. A later task repeats the trap in a different form. No held-out series shares a trap with a development series. Every task records its naive and reference implementations outside the workspace. `test/memory-eval-cases.test.mjs` uses them to prove that each baseline fails, that the naive fix is trapped and that a reference fix passes.
+`memory/cases.json` holds two development and two held-out JavaScript task series. Each series has four ordered tasks on one small repository, and each checkout contains the earlier tasks' reference solutions, as if their work had merged. Each series plants one recurring trap, a repository gotcha such as case-insensitive display order or names that must be NFKC-normalized before comparison. In task 1 the obvious implementation passes the public verifier but fails a private trap check. A later task repeats the trap in a different form. No held-out series shares a trap with a development series.
+
+Every trap task records its reference implementation, its naive implementation and a list of common alternative idioms, such as `localeCompare` or `Math.round(x * 100) / 100`. All of these stay outside the workspace. `test/memory-eval-cases.test.mjs` uses them to check four things:
+- each baseline fails
+- the reference passes
+- the naive implementation and every idiom pass the public and non-trap checks but fail the trap check
+- with all seeds in one store, each series's seed learning ranks first for that series's recurrence task
 
 `memory/protocol.json` fixes arms, repeats, budgets and the promotion rule:
 
@@ -95,20 +101,48 @@ node eval/memory/run.mjs --out /absolute/new/live/directory --live --provider <p
 node eval/memory/run.mjs --out /absolute/new/dir --split development --arms stateless,recall --repeats 1
 ```
 
-Each (series, arm, repeat) gets its own harness home, and that home is shared by the series's tasks. Each task still gets a fresh checkout of the series's next state. Before any `ae` command runs, every checkout sets `origin` to `https://eval.invalid/ae-memory/<series-id>.git`. That URL pins one repository identity, so every task resolves the same project store. Arms and repeats differ only in their harness home and knowledge mode. Each attempt records its `repoId`, store directory and knowledge mode. An attempt whose identity or mode drifts from the series's first task is invalid, not failed, and is left out of scoring. The private check also confirms that the agent left `origin` unchanged. Files under `docs/solutions/` are carried into the next checkout and committed there, as they would be in a real repository. Each attempt lists the files it inherited this way.
+**Homes and identity.** Each (series, arm, repeat) gets its own harness home, and that home is shared by the series's tasks. Each task gets a fresh checkout of the series's next state. Before any `ae` command runs, every checkout sets `origin` to `https://eval.invalid/ae-memory/<series-id>.git`. That URL pins one repository identity, so every task resolves the same project store. Arms and repeats differ only in their harness home and knowledge mode.
 
-Each attempt records private-check pass, trap recurrence (the primary metric), the `lib/repeat-mistake.mjs` verdict, turns, observed tokens, `learningsBytes`, injected learnings and episodes written. Injected learnings come from a dry `ae orient` for the task, computed before the agent runs. A dry run makes no model calls. It validates broken baselines, identity pinning, arm configuration and planned injection.
+**Configuration.** The runner sets the arm's knowledge mode and feedback state before every task. If the agent changes them during a task, for example by following a suggested `ae knowledge on`, that attempt fails and the next task starts reset.
 
-An arm is compared with its declared baseline on held-out attempts. It counts as an improvement only if all of these hold:
+**Invalid attempts.** An attempt whose repository identity drifts from the series's first task is invalid, not failed. Invalid attempts are left out of scoring, and any invalid attempt makes the batch inconclusive.
+
+**Origin.** The private check fails an attempt whose agent changed `origin`. The runner then restores `origin` and reads every after-state through the series identity.
+
+**Isolation.** This keeps the measurement honest; it is not an operating-system sandbox.
+- Each run's agent-facing files sit in a fresh temporary root outside the output directory: the checkout, an empty `HOME`, the CLI wrapper and the harness home.
+- Each task's checkout is deleted after its attempt, and the temporary root is deleted after the run.
+- Private checks live under `<out>/private/`, which is outside that root and outside `HOME`.
+
+**Memory channels.** Only arms that capture memory (`capture-only` and `recall*`) carry `docs/solutions/` notes into the next checkout and commit them there. Each attempt lists the files it inherited. In other arms, notes written under `docs/solutions/` are allowed, because compound may still write them, but they are discarded. Plans kept outside the checkout under the harness home are cleared before every task in every arm. Learnings and private episodes in the project store are the memory under test and persist.
+
+**Metrics.** Each attempt records:
+- private-check pass
+- trap recurrence, the primary metric
+- the `lib/repeat-mistake.mjs` verdict
+- turns and observed tokens
+- `learningsBytes` and injected learnings
+- episodes written (Markdown notes under `docs/solutions/`)
+
+A recurrence counts only when the task's non-trap private checks pass. An unsolved task is recorded as unscored, and each arm reports how many were unscored. Injected learnings come from a dry `ae orient` computed before the agent runs. A dry run makes no model calls and skips the post-run checks. It validates broken baselines, identity pinning, arm configuration and planned injection.
+
+**Promotion.** An arm is compared with its declared baseline on held-out attempts. It counts as an improvement only if all of these hold:
 - trap recurrence falls by at least 30% relative to the baseline
+- a one-sided Fisher exact test of that drop has p ≤ 0.05
+- each arm has at least 30 scored recurrence observations
 - the pass rate does not fall by more than 2 percentage points
-- episodes per series do not rise unless recurrence also falls
-- both arms have at least 30 held-out attempts in the same batch
+- episodes per series do not rise unless recurrence also falls. Only runs whose attempts were all valid and executed count.
+- both arms have at least 30 held-out attempts from the same batch
 - observed usage is complete
 
 An incremental arm must also pass against `stateless`. It cannot be promoted when its baseline fails against `stateless`.
 
-Limits. Each held-out series has one recurrence task, so an arm sees few recurrence observations even when it has enough held-out attempts. The live path uses the `deliver` profile so that compound can write episodes. Turning episodes into learnings still depends on the agent running consolidation, and this pilot has no recorded live run yet. Dry runs, scripted tests and Auto-routed models never qualify for promotion. A result applies only to the model and runtime that produced it.
+**Limits.**
+- Each held-out series has one recurrence task. The default 4 repeats give each arm 8 recurrence observations, so a batch that can promote needs at least 15 repeats on the held-out split.
+- With 32 held-out attempts, one attempt is about 3 percentage points. The 2-point margin therefore tolerates no additional failure.
+- The live path uses the `deliver` profile so that compound can write episodes. Turning episodes into learnings still depends on the agent running consolidation.
+- This pilot has no recorded live run yet.
+- Dry runs, scripted tests and Auto-routed models never qualify for promotion. A result applies only to the model and runtime that produced it.
 
 ## Mechanical extraction comparison
 

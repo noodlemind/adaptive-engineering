@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { checkCases } from '../eval/context/check.mjs';
-import { CATALOG, memoryPrompt, seedStore, seriesOrigin, seriesState, validateCatalog } from '../eval/memory/study.mjs';
+import { CATALOG, memoryPrompt, seriesOrigin, seriesState, validateCatalog } from '../eval/memory/study.mjs';
+import { applyOps } from '../lib/knowledge/apply.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { writeStoreConfig } from '../lib/knowledge/store.mjs';
 
@@ -63,28 +65,58 @@ test('every task has a failing baseline, the obvious fix falls into the trap, an
       assert.equal(await passes(reference, task.publicChecks), true, `${label} reference passes public checks`);
       if (!task.trap) continue;
       const trapChecks = task.checks.filter(check => check.trap);
+      const otherChecks = task.checks.filter(check => !check.trap);
       assert.equal(await passes(baseline, trapChecks), false, `${label} trap check fails at baseline`);
       assert.ok(task.naive, `${label} declares the obvious implementation`);
-      const naive = materialize(root, { ...state, ...task.naive });
-      assert.equal(await passes(naive, task.publicChecks), true, `${label} the public verifier cannot see the trap`);
-      assert.equal(await passes(naive, trapChecks), false, `${label} the obvious implementation is trapped`);
-      assert.equal(await passes(naive, task.checks.filter(check => !check.trap)), true, `${label} only the trap check separates naive from reference`);
+      assert.ok(task.idioms?.length, `${label} declares alternative idioms that must also be trapped`);
+      for (const [n, variant] of [task.naive, ...task.idioms].entries()) {
+        const name = n === 0 ? 'naive' : `idiom ${n}`;
+        const trapped = materialize(root, { ...state, ...variant });
+        assert.equal(await passes(trapped, task.publicChecks), true, `${label} ${name}: the public verifier cannot see the trap`);
+        assert.equal(await passes(trapped, otherChecks), true, `${label} ${name}: only the trap check separates it from the reference`);
+        assert.equal(await passes(trapped, trapChecks), false, `${label} ${name} is trapped`);
+      }
     }
   }
 });
 
-test('each series seed is retrievable for its recurrence task, so the trap is reachable through memory', async t => {
+test('each checkout contains earlier tasks as merged reference files', () => {
+  for (const series of CATALOG.series) {
+    const state = seriesState(series, 2);
+    for (const earlier of series.tasks.slice(0, 2)) for (const [file, content] of Object.entries(earlier.reference)) assert.equal(state[file], content, `${series.id}: ${file} is merged`);
+    for (const [file, content] of Object.entries(series.tasks[2].files)) assert.equal(state[file], content);
+  }
+});
+
+test('each seed is the top learning for its own recurrence task when all seeds share one store', async t => {
   const root = directory(t);
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'Memory Eval', GIT_AUTHOR_EMAIL: 'memory@example.test', GIT_COMMITTER_NAME: 'Memory Eval', GIT_COMMITTER_EMAIL: 'memory@example.test' };
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
+  const episodes = Object.fromEntries(CATALOG.series.map(series => [series.seed.episode.path, series.seed.episode.content]));
+  const workspace = materialize(root, { 'README.md': '# shared\n', ...episodes });
+  for (const args of [['init', '-q'], ['add', '.'], ['commit', '-qm', 'seeds'], ['remote', 'add', 'origin', seriesOrigin('all-seeds')]]) execFileSync('git', args, { cwd: workspace, env, stdio: 'pipe' });
+  assert.equal(writeStoreConfig(workspace, { home, mode: 'on' }).pass, true);
+  const ops = CATALOG.series.map(series => ({ op: 'ADD', ...series.seed.op,
+    episodes: [{ path: series.seed.episode.path, sha256: crypto.createHash('sha256').update(series.seed.episode.content).digest('hex'), kind: 'fix', plan: null }] }));
+  assert.equal(applyOps({ workspace, home, operations: { schema: 1, ops } }).applied.length, CATALOG.series.length);
   for (const series of CATALOG.series) {
-    const home = path.join(root, `${series.id}-home`);
-    fs.mkdirSync(home);
-    const workspace = materialize(root, { ...seriesState(series, 0), [series.seed.episode.path]: series.seed.episode.content });
-    for (const args of [['init', '-q'], ['add', '.'], ['commit', '-qm', 'seed'], ['remote', 'add', 'origin', seriesOrigin(series.id)]]) execFileSync('git', args, { cwd: workspace, env, stdio: 'pipe' });
-    const id = seedStore({ workspace, home, series });
-    assert.equal(writeStoreConfig(workspace, { home, mode: 'freeze' }).pass, true);
     const recurrence = series.tasks.find(task => task.trap === 'recurrence');
-    const ranked = rankLearnings({ workspace, home, query: memoryPrompt(recurrence), signals: recurrence.seeds });
-    assert.ok(ranked.some(row => row.id === id), `${series.id} seed ranks for ${recurrence.id}`);
+    const ranked = rankLearnings({ workspace, home, query: memoryPrompt(recurrence), signals: recurrence.seeds, limit: CATALOG.series.length });
+    assert.equal(ranked[0]?.id, `${series.seed.op.domain}/${series.seed.op.slug}`, `${series.id}: its own seed outranks the other series' seeds`);
+    if (ranked[1]) assert.ok(ranked[0].score > ranked[1].score, `${series.id}: the lead is not a tie`);
   }
+});
+
+test('a checked module cannot disable the private checker by replacing assert methods', t => {
+  const root = directory(t);
+  const workspace = path.join(root, 'workspace');
+  fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'src/value.mjs'), "import assert from 'node:assert/strict';\nassert.deepEqual = () => {};\nassert.equal = () => {};\nassert.rejects = async () => {};\nexport const value = 1;\n");
+  const checks = path.join(root, 'checks.json');
+  fs.writeFileSync(checks, JSON.stringify({ checks: [{ module: 'src/value.mjs', export: 'value', expected: 2 }] }));
+  const challenge = crypto.randomBytes(16).toString('hex');
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace, checks], { input: challenge, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(result.stdout, new RegExp(challenge));
 });

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolveStudyOutput, runChecks, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
@@ -8,7 +9,6 @@ import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readSto
 import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
 import { repeatEvidenceFromServed } from '../../lib/repeat-mistake.mjs';
-import { projectStoreDir } from '../../lib/project-layout.mjs';
 import { ensureHarnessDir } from '../../lib/session.mjs';
 
 export { resolveStudyOutput };
@@ -98,6 +98,7 @@ export function validateCatalog(catalog = CATALOG) {
       if (![null, 'first', 'recurrence'].includes(task.trap ?? null)) throw new TypeError(`task ${task.id} has invalid trap role`);
       if (!task.checks?.length || !task.publicChecks?.length) throw new TypeError(`task ${task.id} needs private and public checks`);
       if (task.trap && !task.checks.some(check => check.trap)) throw new TypeError(`trap task ${task.id} needs a private trap check`);
+      if (task.trap && !task.checks.some(check => !check.trap)) throw new TypeError(`trap task ${task.id} needs a non-trap private check, so an unsolved task is not scored as a recurrence`);
       if (task.publicChecks.some(check => check.trap)) throw new TypeError(`task ${task.id} must keep trap checks private`);
       for (const file of [...task.editable, ...task.seeds, ...Object.keys(task.files || {}), ...task.checks.map(check => check.module)]) safePath(file);
     }
@@ -107,9 +108,9 @@ export function validateCatalog(catalog = CATALOG) {
   return catalog;
 }
 
-/** Fixture state for task `index`: the series base plus every task overlay up to and including it. */
+/** Fixture state for task `index`: the series base, earlier tasks as merged (their overlays plus reference files), then this task's overlay. */
 export function seriesState(series, index) {
-  return Object.assign({}, series.files, ...series.tasks.slice(0, index + 1).map(task => task.files || {}));
+  return Object.assign({}, series.files, ...series.tasks.slice(0, index).flatMap(task => [task.files || {}, task.reference || {}]), series.tasks[index].files || {});
 }
 
 export function memoryPrompt(task) {
@@ -138,11 +139,18 @@ function writeCheckFile(file, checks) {
   return hash(text);
 }
 
-/** Fresh checkout of the series state for one task, with carried-forward episodes committed and origin pinned before any ae command. */
-export function prepareTask({ series, index, runDir, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
+/** Arms whose knowledge mode writes memory. Only they inherit earlier tasks' docs/solutions notes. */
+export const capturesMemory = arm => arm.mode === 'on' || arm.mode === 'suggest' || arm.mode === 'capture-only';
+
+/**
+ * Fresh checkout of the series state for one task, with carried-forward episodes committed and origin pinned before any ae command.
+ * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`; private checks live under `privateDir`,
+ * which is outside `runRoot` and outside the agent's HOME.
+ */
+export function prepareTask({ series, index, runRoot, privateDir, agentHome, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
   const task = series.tasks[index];
-  const trial = path.join(runDir, 'tasks', `${index + 1}-${task.id}`);
-  fs.mkdirSync(trial, { recursive: true });
+  const trial = path.join(runRoot, `t${index + 1}`);
+  fs.mkdirSync(trial);
   const workspace = path.join(trial, 'workspace');
   fs.mkdirSync(workspace);
   writeFiles(workspace, seriesState(series, index));
@@ -156,16 +164,20 @@ export function prepareTask({ series, index, runDir, carried = {}, extraFiles = 
   const control = path.join(workspace, '.harness');
   fs.writeFileSync(path.join(control, 'context-public-checks.json'), JSON.stringify({ checks: task.publicChecks }), { mode: 0o444 });
   fs.writeFileSync(path.join(control, 'context-verify.mjs'), `import fs from 'node:fs';\nimport { checkCases } from ${JSON.stringify(pathToFileURL(checker).href)};\nconst task = JSON.parse(fs.readFileSync(new URL('./context-public-checks.json', import.meta.url), 'utf8'));\nawait checkCases(process.cwd(), task.checks);\n`, { mode: 0o444 });
-  const checkFile = path.join(trial, 'checks.json');
-  const trapChecks = task.checks.filter(check => check.trap);
-  const trapFile = path.join(trial, 'trap-checks.json');
+  const checks = path.join(privateDir, `t${index + 1}`);
+  fs.mkdirSync(checks, { recursive: true });
   const checkerHash = hash(fs.readFileSync(checker));
+  const subset = (name, list) => list.length ? { workspace, task: { checks: list }, checkFile: path.join(checks, name), checkHash: writeCheckFile(path.join(checks, name), list), checkerHash } : null;
+  const env2 = trialEnvironment({ trial, copilotHome, harnessHome });
+  // The agent's own HOME is an empty directory; the ae wrapper keeps its pinned homes.
+  env2.HOME = agentHome; env2.USERPROFILE = agentHome;
+  const all = subset('checks.json', task.checks);
   const fixture = {
-    series, task, index, trial, workspace, copilotHome, harnessHome, origin,
-    env: trialEnvironment({ trial, copilotHome, harnessHome }),
+    series, task, index, trial, workspace, copilotHome, harnessHome, origin, env: env2,
     verifyCmd: `"${process.execPath}" .harness/context-verify.mjs`,
-    checkFile, checkHash: writeCheckFile(checkFile, task.checks), checkerHash,
-    trap: trapChecks.length ? { workspace, task: { checks: trapChecks }, checkFile: trapFile, checkHash: writeCheckFile(trapFile, trapChecks), checkerHash } : null,
+    checkFile: all.checkFile, checkHash: all.checkHash, checkerHash,
+    trap: subset('trap-checks.json', task.checks.filter(check => check.trap)),
+    rest: task.trap ? subset('other-checks.json', task.checks.filter(check => !check.trap)) : null,
     carriedForward: Object.keys(carried).sort(),
   };
   fixture.before = snapshot(workspace);
@@ -184,13 +196,28 @@ function listFiles(root, base = '') {
   return found;
 }
 
-function episodeHashes(fixture) {
-  const roots = { workspace: path.join(fixture.workspace, PROTOCOL.carryForward), project: path.join(projectStoreDir(fixture.workspace, { home: fixture.harnessHome }), 'docs', 'solutions') };
+/** Project-store directory for the series identity, independent of the workspace's current origin. */
+const projectDirFor = (home, identity) => path.join(home, 'projects', path.basename(identity.storeDir));
+
+/** Episode-shaped files (Markdown notes under docs/solutions) in the workspace and in the series project store. */
+function episodeHashes(workspace, projectDir) {
+  const roots = { workspace: path.join(workspace, PROTOCOL.carryForward), project: path.join(projectDir, 'docs', 'solutions') };
   const hashes = {};
   for (const [label, root] of Object.entries(roots)) {
-    for (const [rel, file] of Object.entries(listFiles(root))) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
+    for (const [rel, file] of Object.entries(listFiles(root))) if (rel.endsWith('.md')) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
   }
   return hashes;
+}
+
+/** Plans persisted outside the checkout survive between tasks through the shared home; every arm clears them before a task. */
+function clearExternalPlans(projectDir) {
+  let cleared = 0;
+  for (const rel of ['plans', 'docs/plans']) {
+    const dir = path.join(projectDir, rel);
+    cleared += Object.keys(listFiles(dir)).length;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  return cleared;
 }
 
 /** Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. */
@@ -207,7 +234,7 @@ export function collectCarryForward(workspace) {
   return carried;
 }
 
-/** Writes the series seed learning while the store is briefly on, then sets the arm's mode. The seed episode must already be committed. */
+/** Writes the series seed learning while the store is briefly on. The seed episode must already be committed. */
 export function seedStore({ workspace, home, series }) {
   if (!series.seed?.op || !series.seed?.episode) throw new TypeError(`series ${series.id} has no seed`);
   const set = writeStoreConfig(workspace, { home, mode: 'on' });
@@ -218,16 +245,25 @@ export function seedStore({ workspace, home, series }) {
   return `${series.seed.op.domain}/${series.seed.op.slug}`;
 }
 
-export function configureArm({ workspace, home, arm, series }) {
+/** Sets the arm's knowledge mode and feedback state. Runs before every task, so an agent-made change never carries over. */
+export function configureArm({ workspace, home, arm, series, seed = false }) {
   let seeded = null;
-  if (arm.seed) seeded = seedStore({ workspace, home, series });
+  if (arm.seed && seed) seeded = seedStore({ workspace, home, series });
   const mode = writeStoreConfig(workspace, { home, mode: arm.mode });
   if (!mode.pass) throw new Error(`knowledge mode configuration failed: ${mode.blockedReason}`);
-  if (arm.feedback !== undefined) {
-    const feedback = writeFeedbackConfig(workspace, { home, feedback: arm.feedback });
-    if (!feedback.pass) throw new Error(`feedback configuration failed: ${feedback.blockedReason}`);
-  }
+  const feedback = writeFeedbackConfig(workspace, { home, feedback: arm.feedback ?? 'off' });
+  if (!feedback.pass) throw new Error(`feedback configuration failed: ${feedback.blockedReason}`);
   return { seeded };
+}
+
+/** Knowledge mode and feedback state stored for an identity, read by directory so an agent-changed origin cannot redirect the read. */
+function storedConfig(dir) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
+    return { mode: KNOWLEDGE_MODES.has(parsed?.mode) ? parsed.mode : 'on', feedback: KNOWLEDGE_FEEDBACK_STATES.has(parsed?.feedback) ? parsed.feedback : 'off' };
+  } catch {
+    return { mode: 'on', feedback: 'off' };
+  }
 }
 
 /** What `ae orient` would inject for this task, computed without writing orientation artifacts or calling a model. */
@@ -268,7 +304,7 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
     corpusHash: hash(JSON.stringify(catalog)), checkerHash: hash(fs.readFileSync(checker)), protocolHash: hash(JSON.stringify(protocol)),
     runtime: process.version, platform: process.platform, arch: process.arch, host, model,
     modelSelection: model?.trim().toLowerCase() === 'auto' ? 'automatic' : 'fixed',
-    runtimeIsolation: 'candidate-cli-v1',
+    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-run-temporary-root-v1',
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(),
     sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim()),
     profile: protocol.profile, publicVerifier: protocol.publicVerifier, maxTurns: protocol.maxTurns, maxSeconds: protocol.maxSeconds,
@@ -276,14 +312,18 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
   };
   provenance.configHash = hash(JSON.stringify(provenance));
   provenance.sourceHash = hash(execFileSync('git', ['ls-files', '-z', 'packages/ae/lib', 'packages/ae/bin', 'packages/ae/corpus', 'packages/ae/eval/context', 'packages/ae/eval/memory'], { cwd: repoRoot }).toString().split('\0').filter(Boolean).map(file => `${file}:${hash(fs.readFileSync(path.resolve(repoRoot, file)))}`).join('\n'));
+  provenance.batch = hash(`${provenance.configHash}:${provenance.sourceHash}:${randomBytes(8).toString('hex')}`);
   return provenance;
 }
 
 /**
  * Runs every (series, arm, repeat) with one harness home shared across the series's tasks and a fresh checkout per task.
- * `originFor(series, index)` exists so tests can prove identity drift is caught; production runs use seriesOrigin.
+ * Each run's agent-facing files live in a fresh temporary root outside `root`, deleted after the run; each task's checkout
+ * is deleted after its attempt, so no agent can list sibling runs, earlier tasks or private checks.
+ * `originFor(series, index)` lets tests prove identity drift is caught; `inspect(fixture, attempt)` lets tests look at a
+ * task before its checkout is removed. Production runs use neither.
  */
-export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, arms = runnableArms(protocol), repeats = protocol.repeats, split = 'all', dryRun = false, execute, model = null, host = null, originFor = series => seriesOrigin(series.id) }) {
+export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, arms = runnableArms(protocol), repeats = protocol.repeats, split = 'all', dryRun = false, execute, model = null, host = null, originFor = series => seriesOrigin(series.id), inspect = null }) {
   validateProtocol(protocol);
   validateCatalog(catalog);
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) throw new TypeError('repeats must be 1..20');
@@ -306,87 +346,108 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
       for (const armId of [...arms.slice(offset), ...arms.slice(0, offset)]) {
         const arm = armById(protocol, armId);
         const runId = `${item.id}-${armSlug(armId)}-r${repeat + 1}`;
-        const runDir = path.join(root, runId);
-        const copilotHome = path.join(runDir, 'copilot');
-        const harnessHome = path.join(runDir, 'home');
-        fs.mkdirSync(copilotHome, { recursive: true });
-        fs.mkdirSync(harnessHome, { recursive: true });
+        const recordDir = path.join(root, 'attempts', runId);
+        const privateDir = path.join(root, 'private', runId);
+        fs.mkdirSync(recordDir, { recursive: true });
+        const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-'));
+        const copilotHome = path.join(runRoot, 'copilot');
+        const harnessHome = path.join(runRoot, 'state');
+        const agentHome = path.join(runRoot, 'home');
+        for (const dir of [copilotHome, harnessHome, agentHome]) fs.mkdirSync(dir);
         let carried = {};
         let first = null;
         let seeded = null;
-        let runEpisodes = 0;
-        for (let index = 0; index < item.tasks.length; index++) {
-          const task = item.tasks[index];
-          const extraFiles = index === 0 && arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
-          const fixture = prepareTask({ series: item, index, runDir, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
-          if (index === 0) ({ seeded } = configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item }));
-          const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
-          if (!first) first = identity;
-          const modeBefore = readStoreConfig(fixture.workspace, { home: harnessHome }).mode;
-          const feedbackBefore = readFeedbackConfig(fixture.workspace, { home: harnessHome });
-          const baseline = await runChecks(fixture);
-          const publicBaseline = runPublicChecks(fixture);
-          const trapBaseline = fixture.trap ? await runChecks(fixture.trap) : null;
-          if (baseline.pass || !baseline.integrity || baseline.error || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
-          const episodesBefore = episodeHashes(fixture);
-          const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
-          const startedAt = Date.now();
-          let result = {}, error = null;
-          if (!dryRun) {
-            try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
-            catch (caught) { error = String(caught.message).slice(0, 2000); }
+        const runAttempts = [];
+        try {
+          for (let index = 0; index < item.tasks.length; index++) {
+            const task = item.tasks[index];
+            const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
+            const fixture = prepareTask({ series: item, index, runRoot, privateDir, agentHome, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
+            const configured = configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 });
+            if (index === 0) seeded = configured.seeded;
+            const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
+            if (!first) first = identity;
+            const projectDir = projectDirFor(harnessHome, first);
+            const plansCleared = clearExternalPlans(projectDir);
+            const before = { ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) };
+            const baseline = await runChecks(fixture);
+            const publicBaseline = runPublicChecks(fixture);
+            const trapBaseline = fixture.trap ? await runChecks(fixture.trap) : null;
+            if (baseline.pass || !baseline.integrity || baseline.error || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
+            const episodesBefore = episodeHashes(fixture.workspace, projectDir);
+            const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
+            const startedAt = Date.now();
+            let result = {}, error = null;
+            if (!dryRun) {
+              try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
+              catch (caught) { error = String(caught.message).slice(0, 2000); }
+            }
+            // A dry run changes nothing, so the baseline checks above already describe its workspace.
+            const checks = dryRun ? null : await runChecks(fixture);
+            const trapChecks = dryRun || !fixture.trap ? null : await runChecks(fixture.trap);
+            const otherChecks = dryRun || !fixture.rest ? null : await runChecks(fixture.rest);
+            const scope = scopeResult(fixture);
+            // Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
+            const unexpected = scope.unexpected.filter(file => !file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`));
+            const originAfter = readOrigin(fixture.workspace);
+            const originUnchanged = originAfter === fixture.origin;
+            // Read every after-state through the series identity, never through an origin the agent may have changed.
+            if (!originUnchanged) spawnSync('git', originAfter === null ? ['remote', 'add', 'origin', fixture.origin] : ['remote', 'set-url', 'origin', fixture.origin], { cwd: fixture.workspace, env: gitEnv() });
+            const after = storedConfig(first.storeDir);
+            const episodesAfter = episodeHashes(fixture.workspace, projectDir);
+            const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
+            const kind = dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
+            const executed = kind === 'live' || kind === 'scripted';
+            const invalidReasons = [
+              identity.repoId !== first.repoId && 'repo-identity-drift',
+              identity.storeDir !== first.storeDir && 'store-directory-drift',
+              before.observed !== arm.mode && 'knowledge-mode-mismatch',
+              before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
+            ].filter(Boolean);
+            const valid = invalidReasons.length === 0;
+            const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
+            const usage = usageOf(result);
+            let repeatMistake = null;
+            if (executed && valid && task.trap) {
+              const evidence = repeatEvidenceFromServed({ workspace: fixture.workspace, home: harnessHome, session: { lastQuery: memoryPrompt(task), files: task.seeds }, delivered: addedDiff(fixture.workspace, task.editable) });
+              repeatMistake = { flagged: evidence.length > 0, learnings: evidence.map(row => row.learning) };
+            }
+            // A recurrence is scored only when the rest of the task was solved; an unsolved task says nothing about the trap.
+            const scorable = executed && valid && task.trap === 'recurrence';
+            const attempt = {
+              id: `${runId}-t${index + 1}`, run: runId, series: item.id, split: item.split, trapId: item.trap.id, arm: armId, repeat: repeat + 1,
+              task: task.id, taskIndex: index + 1, trapRole: task.trap ?? null, kind, valid, invalidReasons,
+              pass: executed && valid && result.status === 'ok' && checks?.pass === true && unexpected.length === 0 && originUnchanged && modeUnchanged,
+              baseline, publicBaseline, trapBaseline, checks, trapChecks, otherChecks,
+              trapRecurred: scorable && otherChecks?.pass ? !trapChecks.pass : null,
+              recurrenceUnscored: scorable && !otherChecks?.pass ? 'rest-of-task-unsolved' : null,
+              trapFirstFailed: executed && valid && task.trap === 'first' && otherChecks?.pass ? !trapChecks.pass : null,
+              repeatMistake,
+              scope: { ...scope, pass: unexpected.length === 0, unexpected },
+              origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
+              repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: before.observed, feedback: before.feedbackObserved,
+              knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
+              carriedForward: fixture.carriedForward, externalPlansCleared: plansCleared,
+              learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
+              episodesWritten,
+              turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
+              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
+              requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
+              status: result.status ?? null, stopReason: result.stopReason ?? null, error, durationMs: Date.now() - startedAt,
+            };
+            fs.writeFileSync(path.join(recordDir, `t${index + 1}-${task.id}.json`), JSON.stringify(attempt, null, 2));
+            attempts.push(attempt);
+            runAttempts.push(attempt);
+            carried = capturesMemory(arm) ? collectCarryForward(fixture.workspace) : {};
+            if (inspect) await inspect(fixture, attempt);
+            fs.rmSync(fixture.trial, { recursive: true, force: true });
           }
-          // A dry run changes nothing, so the baseline checks above already describe its workspace.
-          const checks = dryRun ? null : await runChecks(fixture);
-          const trapChecks = dryRun || !fixture.trap ? null : await runChecks(fixture.trap);
-          const scope = scopeResult(fixture);
-          const unexpected = scope.unexpected.filter(file => !file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`));
-          const originAfter = readOrigin(fixture.workspace);
-          const modeAfter = readStoreConfig(fixture.workspace, { home: harnessHome }).mode;
-          const episodesAfter = episodeHashes(fixture);
-          const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
-          runEpisodes += episodesWritten;
-          const kind = dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
-          const executed = kind === 'live' || kind === 'scripted';
-          const invalidReasons = [
-            identity.repoId !== first.repoId && 'repo-identity-drift',
-            identity.storeDir !== first.storeDir && 'store-directory-drift',
-            modeBefore !== arm.mode && 'knowledge-mode-mismatch',
-            feedbackBefore !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
-            modeAfter !== arm.mode && 'knowledge-mode-changed-by-agent',
-          ].filter(Boolean);
-          const valid = invalidReasons.length === 0;
-          const originUnchanged = originAfter === fixture.origin;
-          const usage = usageOf(result);
-          let repeatMistake = null;
-          if (executed && task.trap) {
-            const evidence = repeatEvidenceFromServed({ workspace: fixture.workspace, home: harnessHome, session: { lastQuery: memoryPrompt(task), files: task.seeds }, delivered: addedDiff(fixture.workspace, task.editable) });
-            repeatMistake = { flagged: evidence.length > 0, learnings: evidence.map(row => row.learning) };
-          }
-          const attempt = {
-            id: `${runId}-t${index + 1}`, run: runId, series: item.id, split: item.split, trapId: item.trap.id, arm: armId, repeat: repeat + 1,
-            task: task.id, taskIndex: index + 1, trapRole: task.trap ?? null, kind, valid, invalidReasons,
-            pass: executed && valid && result.status === 'ok' && checks?.pass === true && unexpected.length === 0 && originUnchanged,
-            baseline, publicBaseline, trapBaseline, checks, trapChecks,
-            trapRecurred: executed && valid && task.trap === 'recurrence' ? !trapChecks.pass : null,
-            trapFirstFailed: executed && valid && task.trap === 'first' ? !trapChecks.pass : null,
-            repeatMistake,
-            // Harness state and new episodes are expected writes; anything else outside the editable files fails scope.
-            scope: { ...scope, pass: unexpected.length === 0, unexpected }, origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
-            repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: modeBefore, knowledgeModeAfter: modeAfter, feedback: feedbackBefore, seeded,
-            carriedForward: fixture.carriedForward,
-            learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
-            episodesWritten,
-            turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
-            inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
-            requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
-            status: result.status ?? null, stopReason: result.stopReason ?? null, error, durationMs: Date.now() - startedAt,
-          };
-          fs.writeFileSync(path.join(fixture.trial, 'attempt.json'), JSON.stringify(attempt, null, 2));
-          attempts.push(attempt);
-          carried = collectCarryForward(fixture.workspace);
+        } finally {
+          fs.rmSync(runRoot, { recursive: true, force: true });
         }
-        runs.push({ id: runId, series: item.id, split: item.split, arm: armId, repeat: repeat + 1, harnessHome, episodesWritten: runEpisodes });
+        runs.push({ id: runId, series: item.id, split: item.split, arm: armId, repeat: repeat + 1,
+          measured: runAttempts.every(row => row.valid && (row.kind === 'live' || row.kind === 'scripted')),
+          episodesWritten: runAttempts.reduce((sum, row) => sum + row.episodesWritten, 0) });
       }
     }
   }
@@ -400,19 +461,22 @@ function rate(numerator, denominator) {
 }
 
 /** Per-arm statistics on one split; the promotion rule reads the held-out split. */
-export function armStatistics({ attempts, runs, arm, split }) {
+export function armStatistics({ attempts, runs, arm, split, batch = null }) {
   const rows = attempts.filter(row => row.arm === arm && (split === 'all' || row.split === split));
-  // Dry runs and runtime errors never count as measured task outcomes.
+  // Dry runs, runtime errors and invalid attempts never count as measured task outcomes.
   const valid = rows.filter(row => row.valid && (row.kind === 'live' || row.kind === 'scripted'));
   const recurrence = valid.filter(row => row.trapRecurred !== null);
-  const armRuns = runs.filter(row => row.arm === arm && (split === 'all' || row.split === split));
+  const armRuns = runs.filter(row => row.arm === arm && row.measured && (split === 'all' || row.split === split));
   const complete = field => valid.length > 0 && valid.every(row => row.usageCoverage === 'complete' && Number.isFinite(row[field]));
   return {
+    batch,
     attempts: rows.length, measuredAttempts: valid.length, invalidAttempts: rows.filter(row => !row.valid).length,
     heldOutAttempts: split === 'held-out' ? valid.length : valid.filter(row => row.split === 'held-out').length,
     passed: valid.filter(row => row.pass).length, passRate: rate(valid.filter(row => row.pass).length, valid.length),
     recurrenceAttempts: recurrence.length, recurred: recurrence.filter(row => row.trapRecurred).length,
     recurrenceRate: rate(recurrence.filter(row => row.trapRecurred).length, recurrence.length),
+    recurrenceUnscored: valid.filter(row => row.recurrenceUnscored).length,
+    configChangedByAgent: valid.filter(row => row.configChangedByAgent).length,
     repeatMistakesFlagged: valid.filter(row => row.repeatMistake?.flagged).length,
     episodesPerSeries: rate(armRuns.reduce((sum, row) => sum + row.episodesWritten, 0), armRuns.length),
     // Injection is computed before execution, so dry runs report it too.
@@ -425,23 +489,45 @@ export function armStatistics({ attempts, runs, arm, split }) {
   };
 }
 
+function logChoose(n, k) {
+  let total = 0;
+  for (let i = 1; i <= k; i++) total += Math.log(n - k + i) - Math.log(i);
+  return total;
+}
+
+/** One-sided Fisher exact test: probability of the candidate recurring this rarely or less if both arms shared one rate. */
+export function fisherOneSided({ candidateRecurred, candidateObservations, referenceRecurred, referenceObservations }) {
+  const recurred = candidateRecurred + referenceRecurred;
+  const total = candidateObservations + referenceObservations;
+  const denominator = logChoose(total, candidateObservations);
+  let p = 0;
+  for (let x = Math.max(0, candidateObservations - (total - recurred)); x <= candidateRecurred; x++) {
+    p += Math.exp(logChoose(recurred, x) + logChoose(total - recurred, candidateObservations - x) - denominator);
+  }
+  return Math.min(1, p);
+}
+
 /** One arm against one reference arm, per the protocol's promotion thresholds. */
 export function compareArms(candidate, reference, limits = PROTOCOL.promotion) {
   const reasons = [];
+  if (limits.requireSameBatchBaseline && (!candidate.batch || candidate.batch !== reference.batch)) reasons.push('reference-not-in-same-batch');
   if (!(candidate.heldOutAttempts >= limits.minimumHeldOutAttemptsPerArm && reference.heldOutAttempts >= limits.minimumHeldOutAttemptsPerArm)) reasons.push('insufficient-held-out-attempts');
+  if (!(candidate.recurrenceAttempts >= limits.minimumRecurrenceObservationsPerArm && reference.recurrenceAttempts >= limits.minimumRecurrenceObservationsPerArm)) reasons.push('insufficient-recurrence-observations');
   if (limits.requireCompleteObservedUsage && (candidate.usageCoverage !== 'complete' || reference.usageCoverage !== 'complete')) reasons.push('incomplete-observed-usage');
-  let reduction = null;
+  let reduction = null, pValue = null;
   if (!Number.isFinite(candidate.recurrenceRate) || !Number.isFinite(reference.recurrenceRate)) reasons.push('recurrence-unmeasured');
   else if (!(reference.recurrenceRate > 0)) reasons.push('reference-has-no-recurrence');
   else {
     reduction = (reference.recurrenceRate - candidate.recurrenceRate) / reference.recurrenceRate;
     if (reduction < limits.minimumRelativeTrapRecurrenceReduction - TOLERANCE) reasons.push('recurrence-reduction-below-threshold');
+    pValue = fisherOneSided({ candidateRecurred: candidate.recurred, candidateObservations: candidate.recurrenceAttempts, referenceRecurred: reference.recurred, referenceObservations: reference.recurrenceAttempts });
+    if (!(pValue <= limits.maximumRecurrenceTestPValue)) reasons.push('recurrence-reduction-not-significant');
   }
   const passDifference = Number.isFinite(candidate.passRate) && Number.isFinite(reference.passRate) ? candidate.passRate - reference.passRate : null;
   if (passDifference === null) reasons.push('pass-rate-unmeasured');
   else if (passDifference < -limits.passRateNonInferiorityMargin - TOLERANCE) reasons.push('pass-rate-regressed');
   if (limits.episodesMayRiseOnlyIfRecurrenceFalls && candidate.episodesPerSeries > reference.episodesPerSeries && !(candidate.recurrenceRate < reference.recurrenceRate)) reasons.push('episodes-rose-without-recurrence-falling');
-  return { pass: reasons.length === 0, relativeRecurrenceReduction: reduction, passRateDifference: passDifference, reasons };
+  return { pass: reasons.length === 0, relativeRecurrenceReduction: reduction, recurrencePValue: pValue, passRateDifference: passDifference, reasons };
 }
 
 /**
@@ -477,12 +563,13 @@ export function scorePromotion(stats, { protocol = PROTOCOL, eligible = true, in
 export function summarizeStudy({ attempts, runs, provenance, protocol = PROTOCOL }) {
   const arms = {}, heldOut = {};
   for (const arm of provenance.arms) {
-    arms[arm] = armStatistics({ attempts, runs, arm, split: 'all' });
-    heldOut[arm] = armStatistics({ attempts, runs, arm, split: protocol.promotion.split });
+    arms[arm] = armStatistics({ attempts, runs, arm, split: 'all', batch: provenance.batch });
+    heldOut[arm] = armStatistics({ attempts, runs, arm, split: protocol.promotion.split, batch: provenance.batch });
   }
   let ineligibleReason = null;
   if (provenance.modelSelection === 'automatic' || provenance.model === 'auto') ineligibleReason = 'automatic-model-selection';
   else if (!attempts.length || attempts.some(row => row.kind !== 'live')) ineligibleReason = 'not-a-complete-live-batch';
+  else if (attempts.some(row => !row.valid)) ineligibleReason = 'invalid-attempts-in-batch';
   else if (attempts.some(row => row.actualModel !== provenance.model)) ineligibleReason = 'model-identity-not-observed-or-mixed';
   return { arms, heldOut, promotion: scorePromotion(heldOut, { protocol, eligible: !ineligibleReason, ineligibleReason }), limits: protocol.limits };
 }

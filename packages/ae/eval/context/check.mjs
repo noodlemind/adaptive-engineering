@@ -3,18 +3,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// Captured before any workspace module is imported: a checked module can replace methods on the shared
+// assert object, but not these bindings.
+const { equal, deepEqual, rejects } = assert;
+const hasOwn = Object.hasOwn;
+
 export async function checkCases(workspace, checks) {
   for (const check of checks) {
     const module = await import(pathToFileURL(path.join(workspace, check.module)));
     if (check.absent) {
-      assert.equal(Object.hasOwn(module, check.export), false);
+      equal(hasOwn(module, check.export), false);
     } else {
-      const evaluate = () => Object.hasOwn(check, 'args') ? module[check.export](...check.args) : module[check.export];
-      if (check.throws) await assert.rejects(async () => evaluate(), error => String(error.message).includes(check.throws));
+      const evaluate = () => hasOwn(check, 'args') ? module[check.export](...check.args) : module[check.export];
+      if (check.throws) await rejects(async () => evaluate(), error => String(error.message).includes(check.throws));
       else {
         const result = evaluate();
-        if (check.synchronous) assert.equal(typeof result?.then, 'undefined', `${check.export} must remain synchronous`);
-        assert.deepEqual(await result, check.expected);
+        if (check.synchronous) equal(typeof result?.then, 'undefined', `${check.export} must remain synchronous`);
+        deepEqual(await result, check.expected);
       }
     }
   }

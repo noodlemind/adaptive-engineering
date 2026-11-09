@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Two development and two held-out JavaScript task series. Each series plants one recurring trap: task 1 fails a private trap check with the obvious implementation, and a later task repeats the trap in a different form. reference and naive files stay outside the workspace; tests use them to prove each trap is reachable and each fix exists. This pilot does not establish statistical power or cross-language quality.",
+  "note": "Two development and two held-out JavaScript task series. Each series plants one recurring trap: task 1 fails a private trap check with the obvious implementation, and a later task repeats the trap in a different form. reference, naive and idioms files stay outside the workspace; tests use them to prove each fix exists and that the obvious implementation and common alternative idioms all fall into the trap. Each checkout contains the reference files of earlier tasks, as if their work had merged. This pilot does not establish statistical power or cross-language quality.",
   "series": [
     {
       "id": "catalog-ordering",
@@ -12,7 +12,7 @@
       "files": {
         "package.json": "{ \"name\": \"catalog\", \"private\": true, \"type\": \"module\" }\n",
         "README.md": "# Catalog\n\nSmall catalog helpers. See docs/CONVENTIONS.md.\n",
-        "docs/CONVENTIONS.md": "# Conventions\n\nEvery list shown to users is ordered with `compareText` from `src/text.mjs`. It ignores case first, then breaks ties by case. The default `Array.prototype.sort` order puts capital letters first and is wrong for display.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nEvery list shown to users is ordered with `compareText` from `src/text.mjs`. It ignores case first; names that differ only in case put the capitalized one first. The default `Array.prototype.sort`, `localeCompare` and `Intl.Collator` orders all get this wrong.\n",
         "src/text.mjs": "export function compareText(a, b) {\n  const x = a.toLowerCase();\n  const y = b.toLowerCase();\n  if (x !== y) return x < y ? -1 : 1;\n  return a < b ? -1 : a > b ? 1 : 0;\n}\n"
       },
       "seed": {
@@ -24,7 +24,7 @@
           "domain": "javascript",
           "slug": "display-order-compare-text",
           "trigger": "sorting or ordering names, tags or lists in display order",
-          "body": "Sort display lists with compareText from src/text.mjs; the default sort puts capitals first."
+          "body": "Sort display lists with compareText from src/text.mjs; default sort, localeCompare and Collator order case wrongly."
         }
       },
       "tasks": [
@@ -56,6 +56,7 @@
               "args": [
                 [
                   "carol",
+                  "bob",
                   "Bob",
                   "alice"
                 ]
@@ -63,6 +64,7 @@
               "expected": [
                 "alice",
                 "Bob",
+                "bob",
                 "carol"
               ],
               "trap": true
@@ -91,7 +93,18 @@
           },
           "naive": {
             "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort();\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort((a, b) => a.localeCompare(b));\n}\n"
+            },
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));\n}\n"
+            },
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort(new Intl.Collator('en').compare);\n}\n"
+            }
+          ]
         },
         {
           "id": "initials",
@@ -168,13 +181,13 @@
                   {
                     "tags": [
                       "zeta",
-                      "Beta"
+                      "beta"
                     ]
                   },
                   {
                     "tags": [
-                      "alpha",
-                      "zeta"
+                      "Beta",
+                      "alpha"
                     ]
                   }
                 ]
@@ -182,6 +195,7 @@
               "expected": [
                 "alpha",
                 "Beta",
+                "beta",
                 "zeta"
               ],
               "trap": true
@@ -219,7 +233,15 @@
           },
           "naive": {
             "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort();\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort((a, b) => a.localeCompare(b));\n}\n"
+            },
+            {
+              "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));\n}\n"
+            }
+          ]
         },
         {
           "id": "slugify",
@@ -281,8 +303,8 @@
         "op": {
           "domain": "javascript",
           "slug": "csv-rows-string-fields",
-          "trigger": "summing or comparing quantity or price fields of order rows",
-          "body": "Order rows from parseCsv hold strings; convert quantity and price fields with Number() first."
+          "trigger": "adding or summing quantity, price or shipping fields of order rows",
+          "body": "Order rows from parseCsv hold strings; convert quantity, price and shipping fields with Number() before adding."
         }
       },
       "tasks": [
@@ -347,7 +369,15 @@
           },
           "naive": {
             "src/orders.mjs": "export function totalQuantity(rows) {\n  return rows.reduce((sum, row) => sum + row.qty, 0);\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/orders.mjs": "export function totalQuantity(rows) {\n  return rows.map(row => row.qty).reduce((a, b) => a + b, 0);\n}\n"
+            },
+            {
+              "src/orders.mjs": "export function totalQuantity(rows) {\n  let total = 0;\n  for (const row of rows) total += row.qty;\n  return total;\n}\n"
+            }
+          ]
         },
         {
           "id": "order-id",
@@ -395,39 +425,38 @@
           }
         },
         {
-          "id": "max-price",
+          "id": "order-total",
           "trap": "recurrence",
-          "prompt": "Implement maxPrice(rows) in src/stats.mjs. rows are order rows as returned by parseCsv. Return the highest price as a number, or 0 for no rows.",
+          "prompt": "Implement orderTotal(row) in src/total.mjs. row is one order row as returned by parseCsv. Return its price plus its shipping, as a number.",
           "files": {
-            "src/stats.mjs": "export function maxPrice(rows) {\n  throw new Error('not implemented');\n}\n"
+            "src/total.mjs": "export function orderTotal(row) {\n  throw new Error('not implemented');\n}\n"
           },
           "editable": [
-            "src/stats.mjs"
+            "src/total.mjs"
           ],
           "seeds": [
-            "src/stats.mjs"
+            "src/total.mjs"
           ],
           "checks": [
             {
-              "module": "src/stats.mjs",
-              "export": "maxPrice",
+              "module": "src/total.mjs",
+              "export": "orderTotal",
               "args": [
-                []
+                {
+                  "price": 0,
+                  "shipping": 0
+                }
               ],
               "expected": 0
             },
             {
-              "module": "src/stats.mjs",
-              "export": "maxPrice",
+              "module": "src/total.mjs",
+              "export": "orderTotal",
               "args": [
-                [
-                  {
-                    "price": "9"
-                  },
-                  {
-                    "price": "12"
-                  }
-                ]
+                {
+                  "price": "9",
+                  "shipping": "3"
+                }
               ],
               "expected": 12,
               "trap": true
@@ -435,27 +464,31 @@
           ],
           "publicChecks": [
             {
-              "module": "src/stats.mjs",
-              "export": "maxPrice",
+              "module": "src/total.mjs",
+              "export": "orderTotal",
               "args": [
-                [
-                  {
-                    "price": 5
-                  },
-                  {
-                    "price": 12
-                  }
-                ]
+                {
+                  "price": 9,
+                  "shipping": 3
+                }
               ],
               "expected": 12
             }
           ],
           "reference": {
-            "src/stats.mjs": "export function maxPrice(rows) {\n  return rows.reduce((max, row) => Math.max(max, Number(row.price)), 0);\n}\n"
+            "src/total.mjs": "export function orderTotal(row) {\n  return Number(row.price) + Number(row.shipping);\n}\n"
           },
           "naive": {
-            "src/stats.mjs": "export function maxPrice(rows) {\n  return rows.reduce((max, row) => (row.price > max ? row.price : max), 0);\n}\n"
-          }
+            "src/total.mjs": "export function orderTotal(row) {\n  return row.price + row.shipping;\n}\n"
+          },
+          "idioms": [
+            {
+              "src/total.mjs": "export function orderTotal(row) {\n  return Number(row.price + row.shipping);\n}\n"
+            },
+            {
+              "src/total.mjs": "export function orderTotal({ price, shipping }) {\n  return [price, shipping].reduce((a, b) => a + b, 0);\n}\n"
+            }
+          ]
         },
         {
           "id": "active-only",
@@ -591,7 +624,12 @@
           },
           "naive": {
             "src/invoice.mjs": "export function formatTotal(amount) {\n  return amount.toFixed(2);\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/invoice.mjs": "export function formatTotal(amount) {\n  return (Math.round(amount * 100) / 100).toFixed(2);\n}\n"
+            }
+          ]
         },
         {
           "id": "invoice-label",
@@ -668,10 +706,10 @@
               "module": "src/tax.mjs",
               "export": "taxAmount",
               "args": [
-                1.15,
-                0.1
+                2.01,
+                0.5
               ],
-              "expected": 0.12,
+              "expected": 1.01,
               "trap": true
             }
           ],
@@ -691,7 +729,15 @@
           },
           "naive": {
             "src/tax.mjs": "export function taxAmount(net, rate) {\n  return Number((net * rate).toFixed(2));\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/tax.mjs": "export function taxAmount(net, rate) {\n  return Math.round(net * rate * 100) / 100;\n}\n"
+            },
+            {
+              "src/tax.mjs": "export function taxAmount(net, rate) {\n  return parseFloat((net * rate).toFixed(2));\n}\n"
+            }
+          ]
         },
         {
           "id": "eligible",
@@ -750,8 +796,8 @@
       "files": {
         "package.json": "{ \"name\": \"profiles\", \"private\": true, \"type\": \"module\" }\n",
         "README.md": "# Profiles\n\nProfile helpers. See docs/CONVENTIONS.md.\n",
-        "docs/CONVENTIONS.md": "# Conventions\n\nNames from the sign-up form may arrive decomposed (NFD), so the same name can have different code points. Compare or key user text only after `normalizeText` from `src/strings.mjs`.\n",
-        "src/strings.mjs": "export function normalizeText(value) {\n  return value.normalize('NFC');\n}\n"
+        "docs/CONVENTIONS.md": "# Conventions\n\nNames from the sign-up form may arrive decomposed (NFD) or in full-width compatibility characters from some keyboards, so the same name can have different code points. Compare or key user text only after `normalizeText` from `src/strings.mjs`, which applies NFKC. NFC and `localeCompare` are not enough.\n",
+        "src/strings.mjs": "export function normalizeText(value) {\n  return value.normalize('NFKC');\n}\n"
       },
       "seed": {
         "episode": {
@@ -762,7 +808,7 @@
           "domain": "javascript",
           "slug": "names-normalize-before-compare",
           "trigger": "comparing, counting or deduplicating user names",
-          "body": "Compare or key names only after normalizeText from src/strings.mjs; names may arrive decomposed."
+          "body": "Compare or key names only after normalizeText (NFKC) from src/strings.mjs; names may arrive decomposed or full-width."
         }
       },
       "tasks": [
@@ -798,6 +844,16 @@
               ],
               "expected": true,
               "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Ａna",
+                "Ana"
+              ],
+              "expected": true,
+              "trap": true
             }
           ],
           "publicChecks": [
@@ -816,7 +872,18 @@
           },
           "naive": {
             "src/users.mjs": "export function sameName(a, b) {\n  return a === b;\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b) === 0;\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.normalize() === b.normalize();\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.toLowerCase() === b.toLowerCase();\n}\n"
+            }
+          ]
         },
         {
           "id": "greeting",
@@ -884,6 +951,7 @@
                 [
                   "Zoë",
                   "Zoë",
+                  "Ａnn",
                   "Ann"
                 ]
               ],
@@ -910,7 +978,15 @@
           },
           "naive": {
             "src/directory.mjs": "export function countUnique(names) {\n  return new Set(names).size;\n}\n"
-          }
+          },
+          "idioms": [
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  return new Set(names.map(name => name.normalize())).size;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  return names.filter((name, i) => names.findIndex(other => other.localeCompare(name) === 0) === i).length;\n}\n"
+            }
+          ]
         },
         {
           "id": "truncate",
