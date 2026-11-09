@@ -4,11 +4,11 @@ import { harnessGlobalHome } from './paths.mjs';
 import { redactedJson } from './redact.mjs';
 import { diagramArtifactPaths, diagramPath, diagramStatus, renderDiagramView } from './diagram.mjs';
 
-export const DIAGRAM_VERBS = Object.freeze(['render', 'graph', 'flow', 'formal', 'status']);
+export const DIAGRAM_VERBS = Object.freeze(['render', 'graph', 'flow', 'status']);
 const GLOBAL_VALUES = ['--workspace', '--ae-home', '--harness-home', '--copilot-home', '--output'];
 const BOOLEAN = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v']);
-const ALLOWED = { render: ['--file', '--sources', '--renderer', '--layout', '--timeout', '--scale'], graph: ['--root', '--operation', '--depth', '--limit', '--max-nodes', '--timeout', '--scale'], flow: ['--flow', '--limit', '--max-nodes', '--timeout', '--scale'], formal: ['--file', '--model', '--max-nodes', '--timeout', '--scale'], status: ['--receipt'] };
-const VERB_BOOLEAN = { render: ['--png'], graph: ['--png'], flow: ['--png'], formal: ['--png'], status: [] };
+const ALLOWED = { render: ['--file', '--sources', '--renderer', '--layout', '--timeout', '--scale'], graph: ['--root', '--operation', '--depth', '--limit', '--max-nodes', '--timeout', '--scale'], flow: ['--flow', '--limit', '--max-nodes', '--timeout', '--scale'], status: ['--receipt'] };
+const VERB_BOOLEAN = { render: ['--png'], graph: ['--png'], flow: ['--png'], status: [] };
 const usage = message => Object.assign(new Error(`diagrams: ${message}`), { code: 'E_USAGE', exit: 2, hint: 'ae help diagrams' });
 
 export function parseDiagramArguments(argv) {
@@ -26,9 +26,8 @@ export function parseDiagramArguments(argv) {
     if (!value || value.startsWith('-') || Buffer.byteLength(value) > 4096 || /[\x00-\x1f\x7f]/.test(value)) throw usage(`${name} requires a bounded value`);
     values.set(name, value);
   }
-  const required = { render: '--file', graph: '--root', flow: '--flow', formal: '--file', status: '--receipt' }[verb];
+  const required = { render: '--file', graph: '--root', flow: '--flow', status: '--receipt' }[verb];
   if (!values.has(required)) throw usage(`${verb} requires ${required}`);
-  if (verb === 'formal' && (!values.has('--model') || !/^[A-Za-z][A-Za-z0-9_]*\.tla$/.test(values.get('--model')))) throw usage('formal requires --model with an exact recorded Module.tla name');
   const numeric = (flag, fallback, min, max) => {
     const value = values.get(flag);
     if (value === undefined) return fallback;
@@ -42,7 +41,7 @@ export function parseDiagramArguments(argv) {
     receiptPath = values.has('--receipt') ? diagramPath(values.get('--receipt')) : undefined;
     if (values.has('--sources')) sources = values.get('--sources').split(',').map(p => diagramPath(p.trim(), { scope: true }));
   } catch (error) { throw usage(error.message); }
-  if (file && !(verb === 'formal' ? /\.json$/ : /\.(?:mmd|mermaid|d2)$/).test(file)) throw usage(verb === 'formal' ? 'formal --file must name a .json receipt' : '--file must end in .mmd, .mermaid or .d2');
+  if (file && !/\.(?:mmd|mermaid|d2)$/.test(file)) throw usage('--file must end in .mmd, .mermaid or .d2');
   const renderer = values.get('--renderer') || (file?.endsWith('.d2') ? 'd2' : undefined);
   if (renderer && !['pele', 'd2'].includes(renderer)) throw usage('--renderer requires pele or d2');
   const layout = values.get('--layout');
@@ -52,7 +51,7 @@ export function parseDiagramArguments(argv) {
   const png = seen.has('--png');
   if (values.has('--scale') && !png) throw usage('--scale requires --png');
   const flags = parseFlags(argv);
-  return { flags, verb, file, sources, root, operation, receiptPath, renderer, layout, png, scale: png ? numeric('--scale', 2, 1, 4) : undefined, flow: values.get('--flow'), model: values.get('--model'), depth: numeric('--depth', 2, 1, 32), limit: numeric('--limit', 50, 1, 200), maxNodes: numeric('--max-nodes', 50, 1, 200), timeoutMs: numeric('--timeout', 10000, 1, 30000) };
+  return { flags, verb, file, sources, root, operation, receiptPath, renderer, layout, png, scale: png ? numeric('--scale', 2, 1, 4) : undefined, flow: values.get('--flow'), depth: numeric('--depth', 2, 1, 32), limit: numeric('--limit', 50, 1, 200), maxNodes: numeric('--max-nodes', 50, 1, 200), timeoutMs: numeric('--timeout', 10000, 1, 30000) };
 }
 
 export function formatDiagramReport(result, workspace) {

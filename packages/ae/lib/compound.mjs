@@ -21,7 +21,7 @@ import { withPlanUpdateLock } from './plan-update.mjs';
 import { proofPrerequisites } from './completion.mjs';
 import { recordHash, readReviewRecord, publishReviewRecord } from './review.mjs';
 import { learningPointerRel, publicationTarget, learningPublicationCurrent } from './learning-record.mjs';
-import { validateFeedbackFields, publishFeedbackRecord } from './learning-feedback.mjs';
+import { validateFeedbackFields, publishFeedbackRecord, acceptedFeedbackRecord } from './learning-feedback.mjs';
 import { capabilityOptions, capabilityContext, adaptationContext, loadedResourceUses } from './adaptive-context.mjs';
 import { retainVerifiedPublication } from './resource-recurrence.mjs';
 import { discoveryPolicy } from './capability-catalog.mjs';
@@ -396,11 +396,19 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (!selected.plan) throw new Error('Learning decision requires an unambiguous plan');
   const recordRoot = planRecordRoot(workspace, selected.plan);
   const home = planHome(workspace, selected.plan, flags.harnessHome || process.env.HARNESS_HOME);
-  const feedback = validateFeedbackFields(decision, { recordRoot, planPath: selected.plan.path });
+  // Exposure is mutable bookkeeping: only new work is judged against it. An
+  // exact replay of a completed operation reuses the feedback it accepted.
+  let feedback = null, feedbackError = null;
+  try { feedback = validateFeedbackFields(decision, { recordRoot, planPath: selected.plan.path }); } catch (error) { feedbackError = error; }
+  if (feedbackError && readReviewRecord(recordRoot, `.harness/learning/${recordHash(decision.operation)}.json`)?.state !== 'done') throw feedbackError;
   const recordFeedback = record => {
-    if (!feedback) return {};
+    if (!feedback && !feedbackError) return {};
     try {
-      return { feedbackRecord: publishFeedbackRecord({ workspace, home, operation: record.operation, planPath: selected.plan.path, captureDate: record.captureDate, feedback }) };
+      if (feedbackError) {
+        const accepted = acceptedFeedbackRecord({ workspace, home, operation: record.operation, digest: record.digest, planPath: selected.plan.path, feedback: decision });
+        return { feedbackRecord: accepted ? { path: accepted, written: false } : { written: false, reason: feedbackError.message } };
+      }
+      return { feedbackRecord: publishFeedbackRecord({ workspace, home, operation: record.operation, digest: record.digest, planPath: selected.plan.path, captureDate: record.captureDate, feedback }) };
     } catch (error) {
       return { feedbackRecord: { written: false, reason: error.message } };
     }
@@ -439,6 +447,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
       publishReviewRecord(recordRoot, pointer, { version: 1, operation, record: rel });
       return { ...prior.result, learningRecord: rel, replayed: true, ...recordFeedback(prior) };
     }
+    if (feedbackError) throw feedbackError;
     const pending = prior ? { ...prior, digest, ...(destination ? { destination } : {}) } : { version: 1, operation, digest, decision, ...(destination ? { destination } : {}), proof: checked.value, captureDate: new Date().toISOString().slice(0, 10), state: 'pending' };
     const fresh = proofPrerequisites({ workspace, plan: selected.plan, copilotHome });
     if (!fresh.pass || fresh.id !== checked.id) throw new Error('Work changed before learning publication');

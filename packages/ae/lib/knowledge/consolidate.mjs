@@ -214,7 +214,7 @@ export function consolidateStatus(options) {
   return statusWithRecheck(options).status;
 }
 
-function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, recheckRequested = false }) {
+function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, recheckRequested = false }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -234,7 +234,7 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
     const learnings = listLearnings(view.layerRoot);
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
-  const feedback = feedbackView({ workspace, home, learnings: active });
+  const feedback = feedbackView({ workspace, home, learnings: active, withFeedback });
   let recheckMode = 'off';
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
   // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks.
@@ -253,7 +253,7 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
     learnings: { active: active.length, total: learnings.length },
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
-    ...(feedback ? { feedback: { state: feedback.state, records: feedback.records, review_required: feedback.review_required } } : {}),
+    ...(feedback ? { feedback } : {}),
     ...(recheckMode !== 'off' ? { recheck: { state: recheckMode, ...(recheck ? { counts: recheck.counts } : {}), ...(recheck?.unavailable ? { unavailable: recheck.unavailable } : {}) } } : {}),
     storeDir: dir,
     layer: view.layer,
@@ -282,11 +282,15 @@ function answeredClusters(dir) {
   return answered;
 }
 
-/** Feedback evidence for packets and status; absent when the effective state is `off`, so output stays byte-identical. */
-function feedbackView({ workspace, home, learnings }) {
+/**
+ * Feedback evidence for packets and status; absent when the effective state is
+ * `off`, so output stays byte-identical. The history is read under `on`, where
+ * `due` depends on it, or under `suggest` only for a caller that shows it.
+ */
+function feedbackView({ workspace, home, learnings, withFeedback }) {
   let state = 'off';
   try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
-  if (state === 'off') return null;
+  if (state === 'off' || (state === 'suggest' && !withFeedback)) return null;
   try {
     return { state, ...feedbackSummary({ workspace, home, learnings }) };
   } catch (error) {
@@ -324,7 +328,7 @@ function recheckView({ workspace, home, state, resolved }) {
 }
 
 export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null, recheck: recheckRequested = false }) {
-  const { status, recheck: computedRecheck } = statusWithRecheck({ workspace, copilotHome, home, writeLayer, layerOverride, recheckRequested });
+  const { status, recheck: computedRecheck } = statusWithRecheck({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, recheckRequested });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
 
@@ -371,7 +375,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const active = activeLearnings(listLearnings(view.layerRoot));
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
-  const feedback = feedbackView({ workspace, home, learnings: active });
+  const feedback = status.feedback || null;
   const recheck = recheckRequested ? computedRecheck : null;
   const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
   const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;

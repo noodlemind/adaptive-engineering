@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readReviewRecord, publishReviewRecord, recordHash } from './review.mjs';
-import { readFileNoFollow, writeFileContained, assertNoSymlinkAncestors } from './fs-safe.mjs';
+import { readFileNoFollow, readPrefixNoFollow, writeFileContained, assertNoSymlinkAncestors } from './fs-safe.mjs';
+import { acquireFileLock, releaseFileLock } from './file-lock.mjs';
+import { ensureHarnessDir } from './session.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { projectStoreDir } from './project-layout.mjs';
 import { loadLayeredLearnings } from './knowledge/overlay.mjs';
@@ -19,9 +21,11 @@ export const FEEDBACK_NOTE_CAP = 280;
 export const RECALLED_VERDICTS = Object.freeze(['helped', 'irrelevant', 'wrong']);
 export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed']);
 const FINDING_ENTRY_CAP = 128;
-const REVIEW_RECORD_SCAN_CAP = 256;
-const FEEDBACK_RECORD_SCAN_CAP = 512;
 const FEEDBACK_SECTION_CAP = 20;
+// One cap for every feedback record read or write. Plain-text notes keep a
+// full record near 110 KiB; escaped content can exceed it and is refused.
+const FEEDBACK_RECORD_MAX_BYTES = 256 * 1024;
+const FEEDBACK_RECORD_RESERVE_BYTES = 2 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 const LEARNING_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 
@@ -33,7 +37,8 @@ export const learningVersion = learning => recordHash({ fm: learning.fm, body: l
 
 function learningVersions({ workspace, home }) {
   try {
-    return new Map(loadLayeredLearnings({ workspace, home }).learnings.map(learning => [learning.id, learningVersion(learning)]));
+    // A subordinate branch twin shares its protected golden's ID; key it apart so each layer keeps its own version.
+    return new Map(loadLayeredLearnings({ workspace, home }).learnings.map(learning => [learning.subordinate ? `${learning.id}#branch` : learning.id, learningVersion(learning)]));
   } catch {
     return new Map();
   }
@@ -60,17 +65,34 @@ export function readExposure(recordRoot, planPath) {
  * bounded exposure record. Written in every feedback state: it is Harness
  * bookkeeping, outside the work contract, and never invalidates evidence.
  */
-export function recordExposure({ recordRoot, workspace, home, planPath, delivered, now = new Date() }) {
+export function recordExposure(options) {
+  const { recordRoot, planPath, delivered } = options;
   if (!planPath || !Array.isArray(delivered) || !delivered.length) return null;
+  // Serialize read/merge/publish so concurrent orientations for one plan cannot drop each other's entries.
+  const full = ensureHarnessDir(recordRoot) && assertNoSymlinkAncestors(recordRoot, exposureRel(planPath));
+  if (!full) throw new Error('exposure record target is unsafe');
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  const lock = acquireFileLock(path.join(path.dirname(full), `.${path.basename(full)}.lock`));
+  try {
+    return mergeExposure(options);
+  } finally {
+    releaseFileLock(lock);
+  }
+}
+
+function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now = new Date() }) {
   const versions = learningVersions({ workspace, home });
   const at = now.toISOString();
   const prior = readExposure(recordRoot, planPath);
   const entries = new Map((prior?.entries || []).map(entry => [entry.id, entry]));
+  // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
+  const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
   for (const item of delivered) {
     const id = typeof item === 'string' ? item : item?.id;
     if (typeof id !== 'string' || !LEARNING_ID.test(id)) continue;
+    if (item?.subordinate && goldenDelivered.has(id)) continue;
     const before = entries.get(id);
-    const version = versions.get(id) || null;
+    const version = versions.get(item?.subordinate ? `${id}#branch` : id) || null;
     entries.set(id, {
       id,
       layer: item?.layer === 'branch' ? 'branch' : 'golden',
@@ -107,14 +129,29 @@ function checkEntries(value, { field, cap, keys, choiceKey, choices }) {
   }
 }
 
+// Review records are published as {"version": N, "plan": ..., ...}; anything else reads in full.
+const REVIEW_HEADER = /^\{\s*"version":\s*\d+,\s*"plan":\s*("(?:[^"\\]|\\.)*"|null)/;
+
+/** The plan named in a review record's header, or undefined when the header is not recognized. */
+function reviewHeaderPlan(full, root) {
+  const prefix = readPrefixNoFollow(full, { root });
+  const match = prefix && REVIEW_HEADER.exec(prefix.toString('utf8'));
+  if (!match) return undefined;
+  try { return JSON.parse(match[1]); } catch { return undefined; }
+}
+
 /** Findings from every review record bound to this plan; fixing a finding drops it from the next review. */
 export function planReviewFindings(recordRoot, planPath) {
   const dir = path.join(recordRoot, '.harness/reviews/records');
   const found = new Map();
   if (!assertNoSymlinkAncestors(recordRoot, '.harness/reviews/records')) return found;
   let names = [];
-  try { names = fs.readdirSync(dir).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort().slice(0, REVIEW_RECORD_SCAN_CAP); } catch { return found; }
+  // Every record is considered: a hash-ordered prefix could skip this plan's records and reject a real finding.
+  // Review records carry no per-plan index, so another plan's record is skipped from its first 8 KiB header.
+  try { names = fs.readdirSync(dir).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return found; }
   for (const name of names) {
+    const header = reviewHeaderPlan(path.join(dir, name), recordRoot);
+    if (header !== undefined && header !== planPath) continue;
     const record = readReviewRecord(recordRoot, `.harness/reviews/records/${name}`);
     if (!record || record.plan !== planPath || !Array.isArray(record.findings)) continue;
     for (const finding of record.findings) {
@@ -168,42 +205,89 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
     const latest = latestReviewFindingIds(recordRoot, planPath);
     out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), observed: observedFinding(latest, entry.id), ...(entry.note ? { note: entry.note } : {}) }));
   }
+  // Notes are bounded in characters, not bytes; refuse before acceptance a record that could never be published.
+  // The reserve covers operation, digest, capture date and a readiness citation.
+  const bytes = Buffer.byteLength(JSON.stringify({ version: 1, plan: planPath, ...out }, null, 2));
+  if (bytes + FEEDBACK_RECORD_RESERVE_BYTES > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`recalled and findings serialize to ${bytes} bytes; the feedback record limit is ${FEEDBACK_RECORD_MAX_BYTES - FEEDBACK_RECORD_RESERVE_BYTES}`);
   return out;
 }
 
-const feedbackRecordRel = operation => `${feedbackDirRel}/${operation}.json`;
+// Operation receipts are checkout-local, so two worktrees can accept different
+// decisions under one operation name. The project-wide key adds the plan and
+// the accepted decision/proof digest; records without a digest keep the
+// operation key.
+const feedbackKey = ({ operation, plan, digest }) => digest ? recordHash({ operation, plan, digest }) : operation;
+const feedbackRecordRel = key => `${feedbackDirRel}/${key}.json`;
 
-/** One immutable record per learning operation, in the project store so every worktree's verdicts aggregate. */
-export function publishFeedbackRecord({ workspace, home, operation, planPath, captureDate, feedback }) {
-  if (!feedback || !ID.test(operation || '')) return null;
-  const base = projectStoreDir(workspace, { home });
+function readFeedbackFile(base, rel) {
+  const text = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
+  try { return text === null ? null : JSON.parse(text); } catch { return null; }
+}
+
+/** The authored part of a verdict set; Harness observations such as versions may differ on replay. */
+const feedbackIdentity = ({ recalled, findings }) => JSON.stringify([
+  (Array.isArray(recalled) ? recalled : []).map(entry => [entry?.id, entry?.verdict, entry?.note || null]),
+  (Array.isArray(findings) ? findings : []).map(entry => [entry?.id, entry?.disposition, entry?.note || null]),
+]);
+
+/**
+ * A record accepted before keys carried the digest lives at `<operation>.json`.
+ * It is this decision's record only when plan and authored verdicts match.
+ */
+function legacyAccepted(base, { operation, plan, digest, feedback }) {
+  if (!digest || !feedback) return null;
   const rel = feedbackRecordRel(operation);
+  const record = readFeedbackFile(base, rel);
+  return record?.version === 1 && record.operation === operation && record.plan === plan && record.digest === undefined
+    && feedbackIdentity(record) === feedbackIdentity(feedback) ? path.join(base, rel) : null;
+}
+
+/** One immutable record per accepted learning decision, in the project store so every worktree's verdicts aggregate. */
+export function publishFeedbackRecord({ workspace, home, operation, digest, planPath, captureDate, feedback }) {
+  if (!feedback || !ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
+  const base = projectStoreDir(workspace, { home });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest, feedback });
+  if (legacy) return { path: legacy, written: false };
+  const rel = feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest }));
   // Cite the decision agent's latest readiness receipt so dispositions can measure its judgments later.
   const readiness = latestReadinessReceipt({ workspace, home, planPath });
-  const record = { version: 1, operation, plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
-  const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 });
+  const record = { version: 1, operation, ...(digest ? { digest } : {}), plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
+  if (Buffer.byteLength(JSON.stringify(record, null, 2)) + 1 > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`feedback record exceeds ${FEEDBACK_RECORD_MAX_BYTES} bytes`);
+  const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
   if (existing !== null) return { path: path.join(base, rel), written: false };
   if (!writeFileContained(base, rel, `${JSON.stringify(record, null, 2)}\n`, { exclusive: true })) {
-    if (readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 }) !== null) return { path: path.join(base, rel), written: false };
+    if (readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) !== null) return { path: path.join(base, rel), written: false };
     throw new Error('feedback record target is unsafe or unavailable');
   }
   return { path: path.join(base, rel), written: true };
 }
 
+/** Path of the feedback record already accepted for this decision (`feedback` holds its authored verdicts), or null. */
+export function acceptedFeedbackRecord({ workspace, home, operation, digest, planPath, feedback }) {
+  if (!ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
+  const base = projectStoreDir(workspace, { home });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest, feedback });
+  if (legacy) return legacy;
+  const full = path.join(base, feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest })));
+  return readFileNoFollow(full, { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) === null ? null : full;
+}
+
 export function readFeedbackRecords({ workspace, home }) {
   const base = projectStoreDir(workspace, { home });
-  if (!assertNoSymlinkAncestors(base, feedbackDirRel)) return { records: [], omitted: 0 };
+  if (!assertNoSymlinkAncestors(base, feedbackDirRel)) return { records: [] };
   let names = [];
-  try { names = fs.readdirSync(path.join(base, feedbackDirRel)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return { records: [], omitted: 0 }; }
+  try { names = fs.readdirSync(path.join(base, feedbackDirRel)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return { records: [] }; }
+  // The full history decides review_required and due; only displayed rows are
+  // capped. Callers read it only under `suggest` or `on`, and each file is small.
   const records = [];
-  for (const name of names.slice(0, FEEDBACK_RECORD_SCAN_CAP)) {
-    const text = readFileNoFollow(path.join(base, feedbackDirRel, name), { root: base, maxBytes: 1024 * 1024 });
-    try {
-      const record = JSON.parse(text);
-      if (record?.version === 1 && `${record.operation}.json` === name) records.push(record);
-    } catch { /* unreadable records are skipped */ }
+  for (const name of names) {
+    const record = readFeedbackFile(base, `${feedbackDirRel}/${name}`);
+    if (record?.version === 1 && (record.digest === undefined || ID.test(record.digest)) && `${feedbackKey(record)}.json` === name) records.push(record);
   }
-  return { records, omitted: Math.max(0, names.length - FEEDBACK_RECORD_SCAN_CAP) };
+  // A keyed record repeating a legacy record's operation, plan and authored verdicts is the same decision; count it once.
+  const sameDecision = record => JSON.stringify([record.operation, record.plan, feedbackIdentity(record)]);
+  const legacy = new Set(records.filter(record => record.digest === undefined).map(sameDecision));
+  return { records: records.filter(record => record.digest === undefined || !legacy.has(sameDecision(record))) };
 }
 
 /**
@@ -212,7 +296,7 @@ export function readFeedbackRecords({ workspace, home }) {
  * Counts never activate, retire or dispute anything.
  */
 export function feedbackSummary({ workspace, home, learnings }) {
-  const { records, omitted } = readFeedbackRecords({ workspace, home });
+  const { records } = readFeedbackRecords({ workspace, home });
   const current = new Map((learnings || []).map(learning => [learning.id, learningVersion(learning)]));
   const perLearning = new Map(), perReviewer = new Map();
   for (const record of records) {
@@ -240,7 +324,6 @@ export function feedbackSummary({ workspace, home, learnings }) {
   const reviewerRows = [...perReviewer.values()].sort((a, b) => a.reviewer.localeCompare(b.reviewer));
   return {
     records: records.length,
-    ...(omitted ? { omittedRecords: omitted } : {}),
     learnings: learningRows.slice(0, FEEDBACK_SECTION_CAP).map(({ plans, wrongCurrent, ...row }) => ({ ...row, plans: [...plans].sort().slice(0, 5) })),
     ...(learningRows.length > FEEDBACK_SECTION_CAP ? { omittedLearnings: learningRows.length - FEEDBACK_SECTION_CAP } : {}),
     review_required: learningRows.filter(row => row.wrongCurrent).map(row => row.id),

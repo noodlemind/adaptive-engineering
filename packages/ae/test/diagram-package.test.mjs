@@ -62,8 +62,7 @@ test('offline local and global archives render both bundled backends from foreig
     assert.ok(fs.existsSync(command), `${mode} installation must expose ae`);
     assert.equal(fs.existsSync(path.join(installed, 'test')), false);
     assert.equal(fs.existsSync(path.join(installed, 'node_modules/tree-sitter-java')), false, 'optional grammars are omitted');
-    for (const asset of ['THIRD-PARTY-NOTICES.md', 'node_modules/pele/LICENSE', 'node_modules/@d2lang/d2/LICENSE.txt', 'node_modules/@d2lang/d2/THIRD_PARTY_NOTICES.txt', 'node_modules/@d2lang/d2/dist/node-esm/d2.wasm', 'node_modules/@d2lang/d2/dist/node-esm/worker.js', 'node_modules/@resvg/resvg-wasm/index_bg.wasm', 'lib/diagrams/fonts/SourceSans3-Regular.ttf', 'lib/diagrams/fonts/LICENSE.md', 'lib/diagrams/formal.mjs', 'lib/diagrams/formal-protocol.mjs', 'lib/diagrams/formal-graph.mjs']) assert.ok(fs.existsSync(path.join(installed, asset)), `${mode} archive is missing ${asset}`);
-    assert.equal(fs.existsSync(path.join(installed, 'lib/diagrams/vendor/pstack')), false, 'archive carries AE native implementation, not an upstream subsystem');
+    for (const asset of ['THIRD-PARTY-NOTICES.md', 'node_modules/pele/LICENSE', 'node_modules/@d2lang/d2/LICENSE.txt', 'node_modules/@d2lang/d2/THIRD_PARTY_NOTICES.txt', 'node_modules/@d2lang/d2/dist/node-esm/d2.wasm', 'node_modules/@d2lang/d2/dist/node-esm/worker.js', 'node_modules/@resvg/resvg-wasm/index_bg.wasm', 'lib/diagrams/fonts/SourceSans3-Regular.ttf', 'lib/diagrams/fonts/LICENSE.md', 'corpus/skills/create-primitive/assets/state-model/check.mjs']) assert.ok(fs.existsSync(path.join(installed, asset)), `${mode} archive is missing ${asset}`);
     assert.equal(run(process.execPath, [cli, '--version'], root).trim(), packed.version);
     const workspace = path.join(root, `${mode} fixture workspace`), foreign = path.join(root, `${mode} foreign working directory`);
     fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
@@ -84,40 +83,6 @@ test('offline local and global archives render both bundled backends from foreig
       assert.match(svg, /Received/);
       assert.match(svg, /Processed/);
     }
-    // Replay a saved upstream TLC trace through the installed CLI, with invalid
-    // checker paths: drawing must never need to read or execute those tools.
-    const formalStdout = fs.readFileSync(path.join(packageRoot, 'test/fixtures/formal-diagrams/pstack-counterjump.txt'), 'utf8');
-    const formalEvidence = { schema: 1, feature: 'formal-verification', passed: true, status: 'passed',
-      source: { files: [{ path: 'src/input.mjs', sha256: digest(path.join(workspace, 'src/input.mjs')) }] },
-      verificationBindings: [{ path: '<copied-runner>', sha256: '0'.repeat(64) }],
-      models: [{ module: 'CounterJump.tla', expected: 'safety-violation', property: 'NotThree', pass: true,
-        execution: { status: 12, signal: null, error: null, stdout: formalStdout, stderr: '' } }] };
-    fs.writeFileSync(path.join(workspace, 'formal-verification.json'), JSON.stringify(formalEvidence));
-    const formal = JSON.parse(run(process.execPath, [cli, 'diagrams', 'formal', '--file', 'formal-verification.json', '--model', 'CounterJump.tla', '--workspace', workspace, '--json'], foreign,
-      { AE_TLC_JAR: path.join(root, 'missing-tlc.jar'), AE_TLC_JAVA: path.join(root, 'missing-java') }));
-    assert.equal(formal.kind, 'formal-trace');
-    assert.equal(formal.verification, 'not-verified');
-    const formalRecord = JSON.parse(fs.readFileSync(path.join(workspace, formal.artifacts.receipt), 'utf8'));
-    assert.equal(formalRecord.projection.property, 'NotThree');
-    assert.equal(formalRecord.projection.role, 'expected-negative-control');
-    assert.match(fs.readFileSync(path.join(workspace, formal.artifacts.svg), 'utf8'), /Jump/);
-    const dot = fs.readFileSync(path.join(packageRoot, 'test/fixtures/formal-diagrams/pstack-counter-graph.dot'), 'utf8');
-    fs.writeFileSync(path.join(workspace, 'Counter.graph.dot'), dot);
-    const frame = (code, body = '') => `@!@!@STARTMSG ${code}:0 @!@!@\n${body}\n@!@!@ENDMSG ${code} @!@!@\n`;
-    // Saved graph and synthetic envelope exercise the installed import path;
-    // this is protocol replay, not a fresh positive model-checking result.
-    formalEvidence.models = [{ module: 'Counter.tla', expected: 'pass', pass: true,
-      graph: { format: 'tlc-dot', file: 'Counter.graph.dot', sha256: digest(path.join(workspace, 'Counter.graph.dot')), exploration: 'complete' },
-      execution: { status: 0, signal: null, error: null, stdout: frame(2193) + frame(2199, '4 states generated, 4 distinct states found, 0 states left on queue.') + frame(2186), stderr: '' } }];
-    fs.writeFileSync(path.join(workspace, 'formal-verification.json'), JSON.stringify(formalEvidence));
-    const explored = JSON.parse(run(process.execPath, [cli, 'diagrams', 'formal', '--file', 'formal-verification.json', '--model', 'Counter.tla', '--workspace', workspace, '--json'], foreign,
-      { AE_TLC_JAR: path.join(root, 'missing-tlc.jar'), AE_TLC_JAVA: path.join(root, 'missing-java') }));
-    assert.equal(explored.kind, 'formal-state-graph'); assert.equal(explored.verification, 'not-verified');
-    const exploredRecord = JSON.parse(fs.readFileSync(path.join(workspace, explored.artifacts.receipt), 'utf8'));
-    assert.equal(exploredRecord.projection.nodes.length, 4);
-    assert.equal(exploredRecord.projection.coverage.exploration, 'complete');
-    assert.match(fs.readFileSync(path.join(workspace, explored.artifacts.svg), 'utf8'), /Inc/);
-    assert.match(fs.readFileSync(path.join(installed, 'THIRD-PARTY-NOTICES.md'), 'utf8'), /Lauren Tan/);
     npmRun(['run', 'prepack'], installed, cache);
     const repacked = path.join(root, `${mode} repacked`);
     fs.mkdirSync(repacked);
