@@ -226,8 +226,8 @@ function readFeedbackFile(base, rel) {
 
 /** The authored part of a verdict set; Harness observations such as versions may differ on replay. */
 const feedbackIdentity = ({ recalled, findings }) => JSON.stringify([
-  (Array.isArray(recalled) ? recalled : []).map(entry => [entry?.id, entry?.verdict, entry?.note ?? null]),
-  (Array.isArray(findings) ? findings : []).map(entry => [entry?.id, entry?.disposition, entry?.note ?? null]),
+  (Array.isArray(recalled) ? recalled : []).map(entry => [entry?.id, entry?.verdict, entry?.note || null]),
+  (Array.isArray(findings) ? findings : []).map(entry => [entry?.id, entry?.disposition, entry?.note || null]),
 ]);
 
 /**

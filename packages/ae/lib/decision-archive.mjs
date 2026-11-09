@@ -103,6 +103,14 @@ export function compactDecisions(loc, state) {
   const warnings = [];
   if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return warnings;
   const now = loc.now ?? Date.now(), touched = new Set();
+  // The newest live readiness receipt per plan; only it is kept live when its index write is refused.
+  const newestReadiness = new Map();
+  for (const [requestId, request] of Object.entries(state.requests)) {
+    const receipt = state.receipts[requestId];
+    if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string') continue;
+    const current = state.receipts[newestReadiness.get(request.planPath)];
+    if (!current || receipt.recordedAt > current.recordedAt) newestReadiness.set(request.planPath, requestId);
+  }
   for (const [requestId, request] of Object.entries(state.requests)) {
     const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
@@ -115,10 +123,13 @@ export function compactDecisions(loc, state) {
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
     // A refused readiness-index write must not block compaction, and must not
-    // leave the index naming an older receipt: keep this request live and retry.
+    // leave the index naming an older receipt as latest: the plan's newest
+    // readiness request stays live for a retry; older ones compact normally,
+    // so live state stays bounded at one request per plan.
     try { retainLatestReadiness(loc, request, receipt); } catch (error) {
-      warnings.push(`readiness index not retained; request ${requestId} stays live: ${error.message}`);
-      continue;
+      const keep = newestReadiness.get(request.planPath) === requestId;
+      warnings.push({ requestId, message: `readiness index not retained${keep ? '; request stays live' : ''}: ${error.message}` });
+      if (keep) continue;
     }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];

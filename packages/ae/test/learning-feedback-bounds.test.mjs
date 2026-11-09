@@ -10,7 +10,7 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { ensureStore, writeFeedbackConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { compactDecisions } from '../lib/decision-archive.mjs';
+import { compactDecisions, latestArchivedReadiness } from '../lib/decision-archive.mjs';
 import { decisionStatus, prepareDecision } from '../lib/decision-agent.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import {
@@ -274,7 +274,7 @@ test('a refused readiness index write keeps the newer receipt live so an older o
   const second = d.state([r2]);
   const warnings = compactDecisions({ home: c.home, workspace: d.workspace, now: 10 }, second);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /readiness index not retained/);
+  assert.match(warnings[0].message, /readiness index not retained/);
   assert.ok(second.requests[r2.requestId] && second.receipts[r2.requestId], 'the request whose index write failed stays live for a retry');
   assert.equal(fs.readdirSync(path.join(c.dir, 'elsewhere')).length, 1, 'nothing new was written through the redirect');
   fs.mkdirSync(path.dirname(d.stateFile), { recursive: true });
@@ -302,4 +302,59 @@ test('compaction warnings are kept quietly in decision state and reported by dec
   assert.match(stored.warnings[0].message, /readiness index not retained/);
   const status = decisionStatus({ workspace: c.ws, home: c.home, policy, requestId: prepared.requestId, now: 1001 });
   assert.deepEqual(status.warnings, stored.warnings);
+  // Once the fault clears, the next compaction retains the index, retires the request and drops its warning.
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  prepareDecision({ workspace: c.ws, home: c.home, policy, input: { ...input, taskId: 'task-1', sessionId: 'session-1' }, now: 1002 });
+  const cleared = JSON.parse(fs.readFileSync(d.stateFile, 'utf8'));
+  assert.equal(cleared.warnings, undefined, 'a fixed fault is no longer reported');
+  assert.equal(decisionStatus({ workspace: c.ws, home: c.home, policy, requestId: prepared.requestId, now: 1003 }).warnings, undefined);
+});
+
+test('a lasting readiness index failure keeps only the newest readiness request per plan live, and a cleared fault retries', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  fs.mkdirSync(d.archive, { recursive: true });
+  fs.mkdirSync(path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'readiness'), 'dir');
+  const items = [d.readiness('escalate', 1), d.readiness('escalate', 2), d.readiness('escalate', 3)];
+  const state = d.state(items);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  for (let pass = 0; pass < 3; pass++) {
+    const warnings = compactDecisions(loc, state);
+    assert.deepEqual(Object.keys(state.requests), [items[2].requestId], `pass ${pass}: only the newest readiness request stays live`);
+    assert.ok(warnings.some(item => item.requestId === items[2].requestId && /stays live/.test(item.message)));
+  }
+  assert.equal(fs.readdirSync(path.join(c.dir, 'elsewhere')).length, 0);
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  assert.deepEqual(compactDecisions(loc, state), [], 'the retry succeeds once the fault clears');
+  assert.deepEqual(Object.keys(state.requests), []);
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 3);
+});
+
+test('decision status reports only well-formed warnings about live requests, one per request, at most 16', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+  const hash = value => crypto.createHash('sha256').update(stable(value)).digest('hex');
+  const requests = {};
+  for (let i = 0; i < 20; i++) {
+    const packet = { schema: 1, type: 'readiness', planPath: PLAN, nonce: i };
+    requests[hash(packet)] = { ...packet, requestId: hash(packet), createdAt: i };
+  }
+  const ids = Object.keys(requests);
+  const warnings = [
+    ...ids.map((requestId, i) => ({ at: i, requestId, message: `old ${i}` })),
+    { at: 99, requestId: ids[19], message: 'newest for 19' },
+    { at: 'soon', requestId: ids[0], message: 'bad time' },
+    { at: 1, requestId: ids[0], message: 7 },
+    { at: 1, requestId: 'f'.repeat(64), message: 'retired request' },
+    'loose text',
+  ];
+  fs.mkdirSync(path.dirname(d.stateFile), { recursive: true });
+  fs.writeFileSync(d.stateFile, JSON.stringify({ schema: 1, workspace: d.workspace, tasks: {}, requests, observations: {}, receipts: {}, invocations: {}, nativeProbes: {}, warnings }));
+  const status = decisionStatus({ workspace: c.ws, home: c.home, policy: { enabled: true, revision: 'r', tools: [], budgets: {} }, requestId: ids[0], now: 100 });
+  assert.equal(status.warnings.length, 16);
+  assert.ok(status.warnings.every(item => typeof item.at === 'number' && typeof item.message === 'string' && Object.hasOwn(requests, item.requestId)));
+  assert.equal(new Set(status.warnings.map(item => item.requestId)).size, 16, 'one warning per request');
+  assert.equal(status.warnings.at(-1).message, 'newest for 19');
 });

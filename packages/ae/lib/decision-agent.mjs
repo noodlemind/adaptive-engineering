@@ -119,6 +119,17 @@ function readState(loc) {
   return state;
 }
 
+/** Well-formed warnings about live requests, the newest per request, at most MAX_STATE_WARNINGS. */
+function stateWarnings(state) {
+  const byRequest = new Map();
+  for (const item of Array.isArray(state.warnings) ? state.warnings : []) {
+    if (!object(item) || !Number.isFinite(item.at) || typeof item.message !== 'string' || !ID.test(item.requestId || '') || !Object.hasOwn(state.requests, item.requestId)) continue;
+    byRequest.delete(item.requestId);
+    byRequest.set(item.requestId, { at: item.at, requestId: item.requestId, message: item.message.slice(0, 500) });
+  }
+  return [...byRequest.values()].slice(-MAX_STATE_WARNINGS);
+}
+
 function mutate(loc, callback) {
   fs.mkdirSync(loc.home, { recursive: true });
   const directory = path.join(loc.home, 'decisions');
@@ -130,9 +141,11 @@ function mutate(loc, callback) {
   catch (error) { if (error.code === 'EEXIST') throw fail('decision state is busy; retry without resetting its budget'); throw error; }
   try {
     const state = readState(loc), result = callback(state);
-    // Compaction warnings stay in the state, quietly, for decision status to report.
-    const warnings = compactDecisions(loc, state);
-    if (warnings.length) state.warnings = [...(Array.isArray(state.warnings) ? state.warnings.filter(item => !warnings.includes(item?.message)) : []), ...warnings.map(message => ({ at: loc.now, message }))].slice(-MAX_STATE_WARNINGS);
+    // Compaction warnings stay in the state, quietly, for decision status to
+    // report, and leave once their request is no longer live.
+    const fresh = compactDecisions(loc, state).map(item => ({ at: loc.now, requestId: item.requestId, message: item.message }));
+    const warnings = stateWarnings({ ...state, warnings: [...(Array.isArray(state.warnings) ? state.warnings : []), ...fresh] });
+    if (warnings.length) state.warnings = warnings; else delete state.warnings;
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
     if (!writeFileContained(loc.home, loc.relative, `${bytes}\n`, { mode: 0o600 })) throw fail('decision state publication refused');
@@ -441,7 +454,7 @@ export function decisionStatus(options) {
   const loc = locations(options), state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  const warnings = Array.isArray(state.warnings) && state.warnings.length ? { warnings: state.warnings } : {};
+  const live = stateWarnings(state), warnings = live.length ? { warnings: live } : {};
   if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }

@@ -154,3 +154,32 @@ test('an exact replay reuses the accepted feedback after the exposure cap evicts
   assert.notEqual(fresh.status, 0, 'a new operation still validates against current exposure');
   assert.match(fresh.stdout + fresh.stderr, /never delivered/);
 });
+
+test('a replay after eviction reuses a legacy feedback record only when its authored verdicts match', t => {
+  const f = feedbackFixture(t);
+  verifiedAfterOrient(f);
+  const value = { operation: 'judge-legacy', decision: 'no-learning', rationale: 'No new lesson.', recalled: [{ id: 'logic/export-example-value', verdict: 'helped', note: '' }] };
+  const first = decide(f, value);
+  assert.equal(first.status, 0, first.stderr || first.stdout);
+  // Rewrite the accepted record as one saved before keys carried the digest.
+  const keyed = JSON.parse(first.stdout).feedbackRecord.path;
+  const { digest, ...stored } = JSON.parse(fs.readFileSync(keyed, 'utf8'));
+  assert.match(digest, /^[a-f0-9]{64}$/);
+  const legacy = path.join(path.dirname(keyed), `${stored.operation}.json`);
+  fs.rmSync(keyed);
+  const later = Array.from({ length: EXPOSURE_ENTRY_CAP }, (_, i) => ({ id: `logic/later-${String(i).padStart(3, '0')}` }));
+  recordExposure({ recordRoot: f.ws, workspace: f.ws, home: f.home, planPath: f.plan, delivered: later, now: new Date(Date.now() + 60000) });
+
+  fs.writeFileSync(legacy, `${JSON.stringify(stored, null, 2)}\n`);
+  const matching = decide(f, value);
+  assert.equal(matching.status, 0, matching.stderr || matching.stdout);
+  assert.deepEqual(JSON.parse(matching.stdout).feedbackRecord, { path: legacy, written: false }, 'an empty note matches a stored record without one');
+
+  fs.writeFileSync(legacy, `${JSON.stringify({ ...stored, recalled: [{ ...stored.recalled[0], verdict: 'wrong' }] }, null, 2)}\n`);
+  const differing = decide(f, value);
+  assert.equal(differing.status, 0, differing.stderr || differing.stdout);
+  const out = JSON.parse(differing.stdout).feedbackRecord;
+  assert.equal(out.written, false);
+  assert.equal(out.path, undefined, 'a legacy record with different verdicts is not this decision\'s record');
+  assert.match(out.reason, /never delivered/);
+});
