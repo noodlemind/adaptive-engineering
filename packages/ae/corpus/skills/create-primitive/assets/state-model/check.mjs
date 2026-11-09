@@ -31,7 +31,7 @@ const edgeText = edge => `${edge.from} --> ${edge.to}${edge.action ? ` : ${edge.
 export function parseStateDiagram(text) {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('%%'));
   if (lines[0] !== 'stateDiagram-v2' && lines[0] !== 'stateDiagram') throw fail('model must start with stateDiagram-v2');
-  const edges = [], labels = {};
+  const edges = [], labels = Object.create(null);
   for (const line of lines.slice(1)) {
     const named = /^state\s+"([^"\n]{1,120})"\s+as\s+([A-Za-z][A-Za-z0-9_]*)$/.exec(line);
     if (named) { labels[named[2]] = named[1]; continue; }
@@ -159,7 +159,8 @@ export function checkModel(edges, spec, labels = {}) {
     }
     for (const [state, node] of afterStates) {
       const exits = outgoing(state);
-      if (canReach.has(state) || (exits.length && exits.every(edge => edge.to === START))) continue;
+      // A legal end: every exit finishes the run or stays put (an inert self-loop such as capturing an insight).
+      if (canReach.has(state) || (exits.some(edge => edge.to === START) && exits.every(edge => edge.to === START || edge.to === state))) continue;
       violations.push({ rule: rule.id, edge: null, detail: exits.length ? `${state} cannot reach ${rule.action}` : `${state} is a dead end`, state, path: pathTo(node, back) });
     }
   }
@@ -173,7 +174,8 @@ export function checkModel(edges, spec, labels = {}) {
   return { passed: result.length === 0, states: reachable.size, explored: nodes.size, violations: result.map(v => ({ ...v, words: words(v, labels) })) };
 }
 
-const nameOf = (state, labels) => state === START ? 'start' : labels[state] || state;
+const labelOf = (labels, state) => (Object.hasOwn(labels, state) ? labels[state] : undefined);
+const nameOf = (state, labels) => state === START ? 'start' : labelOf(labels, state) || state;
 
 /** Tell a bug path as numbered steps in the reader's words. */
 function words(violation, labels) {
@@ -193,6 +195,8 @@ export function markedChart(edges, labels, violations) {
     const last = violation.path.at(-1);
     const state = violation.state || (last && (last.to !== START ? last.to : last.from));
     if (state && state !== START) breaks.set(state, new Set([...(breaks.get(state) || []), violation.rule]));
+    // A failure on an edge no path reaches still marks that edge, so the chart never looks like a pass.
+    if (!violation.path.length && violation.edge) marks.set(violation.edge, new Set([...(marks.get(violation.edge) || []), `${violation.rule}, breaks`]));
     // Every path keeps its own numbering: an edge on several bug paths lists each rule's step.
     violation.path.forEach((edge, index) => {
       const key = edgeText(edge);
@@ -205,7 +209,7 @@ export function markedChart(edges, labels, violations) {
   for (const state of states) {
     const rules = breaks.get(state);
     const label = `${nameOf(state, labels)}${rules ? ` - BREAKS ${[...rules].join(', ')}` : ''}`;
-    if (labels[state] || rules) lines.push(`  state "${encode(label)}" as ${state}`);
+    if (labelOf(labels, state) || rules) lines.push(`  state "${encode(label)}" as ${state}`);
   }
   for (const edge of edges) {
     const mark = marks.get(edgeText(edge));
@@ -234,6 +238,10 @@ export function run({ modelPath, rulesPath }) {
   const spec = validateRules(JSON.parse(rulesText));
   const { edges, labels } = parseStateDiagram(modelText);
   const result = checkModel(edges, spec, labels);
+  const states = new Set(edges.flatMap(edge => [edge.from, edge.to]));
+  for (const control of spec.negativeControls) for (const edge of control.addEdges || []) {
+    for (const state of [edge.from, edge.to]) if (!states.has(state)) throw fail(`negative control ${control.id} names state ${state}, which is not in the model`);
+  }
   const negativeControls = spec.negativeControls.map(control => {
     const variant = checkModel(applyControl(edges, control), spec, labels);
     return { id: control.id, expect: control.expect, detected: variant.violations.some(v => v.rule === control.expect), violations: [...new Set(variant.violations.map(v => v.rule))] };

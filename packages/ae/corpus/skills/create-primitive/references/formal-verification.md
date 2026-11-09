@@ -27,7 +27,7 @@ The rules file is data, not code:
 | Field | Meaning |
 | --- | --- |
 | `schema`, `actions`, `required` | Schema `1`, every allowed action name, and actions the model must contain |
-| `rules[]` | Each has an `id`, a `kind`, and a `says` sentence in plain words. `requires`: every `action` follows `requires`, optionally since the last `resetBy` action. `inert`: `action` never changes state. `reachable`: after `after`, `action` stays reachable from every state that has not ended. A state whose only exits go to `[*]` is a legal end, such as cancellation; a finished run never restarts |
+| `rules[]` | Each has an `id`, a `kind`, and a `says` sentence in plain words. `requires`: every `action` follows `requires`, optionally since the last `resetBy` action. `inert`: `action` never changes state. `reachable`: after `after`, `action` stays reachable from every state that has not ended. A state that can end the run and otherwise only stays put, such as cancellation with an insight self-loop, is a legal end; a finished run never restarts |
 | `negativeControls[]` | Broken variants that must be caught: `removeAction` or `addEdges`, with the rule id it must `expect`. At least one is required |
 | `limits` | What the model leaves out |
 

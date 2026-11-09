@@ -168,7 +168,7 @@ test('malformed ids, expectations and added edges are refused rather than counte
 
 test('a finished run does not restart, so ending is not a route to the action', () => {
   const { edges, labels } = parsed();
-  const result = checkModel([...edges, { from: 'Approved', to: 'Parked', action: 'Note' }, { from: 'Parked', to: 'Parked', action: 'Note' }, { from: 'Parked', to: '[*]', action: null }], RULES, labels);
+  const result = checkModel([...edges, { from: 'Approved', to: 'Parked', action: 'Note' }, { from: 'Parked', to: 'Hold', action: 'Note' }, { from: 'Hold', to: 'Parked', action: 'Note' }, { from: 'Parked', to: '[*]', action: null }], RULES, labels);
   const stuck = result.violations.find(v => v.rule === 'can-pay');
   assert.equal(stuck?.state, 'Parked');
   assert.match(stuck.detail, /cannot reach Pay/);
@@ -211,5 +211,32 @@ test('a manual run with no output directory still writes its artifacts and says 
   const out = /artifacts: (.+)/.exec(result.stderr)?.[1];
   assert.ok(out && fs.existsSync(path.join(out, 'chart.mmd')) && fs.existsSync(path.join(out, 'report.md')));
   fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a legal end with an inert self-loop is still a legal end', () => {
+  const { edges, labels } = parsed();
+  const result = checkModel([...edges, { from: 'Paid', to: 'Paid', action: 'Note' }], RULES, labels);
+  assert.equal(result.passed, true, JSON.stringify(result.violations));
+});
+
+test('state names that match Object members are not mistaken for labels', () => {
+  const { labels } = parseStateDiagram('stateDiagram-v2\n  [*] --> constructor\n  constructor --> toString : Approve\n');
+  assert.equal(Object.keys(labels).length, 0);
+  const chart = markedChart([{ from: '[*]', to: 'constructor', action: null }], labels, []);
+  assert.doesNotMatch(chart, /function/);
+});
+
+test('a failure on an unreachable edge still marks the chart', () => {
+  const { edges, labels } = parsed();
+  const broken = [...edges, { from: 'Orphan', to: 'Other', action: 'Note' }];
+  const chart = markedChart(broken, labels, checkModel(broken, RULES, labels).violations);
+  assert.ok(chart.includes('Orphan --> Other : Note #40;notes-are-inert, breaks#41;'), chart);
+});
+
+test('a negative control that names a state missing from the model is bad input', () => {
+  const rules = clone(RULES); rules.negativeControls[0].addEdges = [{ from: 'Renamed', to: 'Paid', action: 'Pay' }];
+  const dir = workspace(MODEL, rules);
+  assert.throws(() => run({ modelPath: path.join(dir, 'model.mmd'), rulesPath: path.join(dir, 'rules.json') }), /state Renamed, which is not in the model/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
