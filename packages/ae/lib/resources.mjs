@@ -59,7 +59,7 @@ export function parseManifest(text, { source = '(inline)' } = {}) {
       fail(errors, `${source}: contributes.${kind} must be a list of paths`);
       continue;
     }
-        for (const rel of list) {
+    for (const rel of list) {
       if (typeof rel !== 'string' || !rel) {
         fail(errors, `${source}: contributes.${kind} entries must be non-empty strings`);
         continue;
@@ -111,7 +111,7 @@ export function bundleDigest(dir) {
       const relative = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) walk(full, relative);
       else if (entry.isFile() && !NON_CONTENT_FILES.has(relative)) files.push([relative, full]);
-            else if (entry.isSymbolicLink()) files.push([relative, full, 'symlink']);
+      else if (entry.isSymbolicLink()) files.push([relative, full, 'symlink']);
     }
   };
   walk(dir);
@@ -125,7 +125,7 @@ export function bundleDigest(dir) {
       continue;
     }
     if (rel === MANIFEST_FILE) {
-            hash.update(fs.readFileSync(full, 'utf8').split(/\r?\n/).filter((l) => !/^\s*integrity\s*:/.test(l)).join('\n'));
+      hash.update(fs.readFileSync(full, 'utf8').split(/\r?\n/).filter((l) => !/^\s*integrity\s*:/.test(l)).join('\n'));
     } else {
       hash.update(fs.readFileSync(full));
     }
@@ -155,7 +155,7 @@ export function discoverBundles(copilotHome, { trustedNames = new Set() } = {}) 
     let state = disabled ? 'disabled' : 'enabled';
     let reason = disabled ? 'disabled by the operator' : null;
 
-        const digest = bundleDigest(dir);
+    const digest = bundleDigest(dir);
     if (manifest.integrity && manifest.integrity !== digest) {
       state = 'tampered';
       reason = `integrity pin does not match the bundle's contents (${manifest.integrity} vs ${digest})`;
@@ -164,7 +164,7 @@ export function discoverBundles(copilotHome, { trustedNames = new Set() } = {}) 
       reason = 'not approved — run `ae resources enable` after reading what it contributes';
     }
 
-        bundles.push({ id: entry.name, dir, name: manifest.name, manifest, state, reason, errors: [], digest });
+    bundles.push({ id: entry.name, dir, name: manifest.name, manifest, state, reason, errors: [], digest });
   }
 
     const claims = new Map();
@@ -193,7 +193,7 @@ export function resolvePrecedence(bundles) {
     for (const kind of CONTRIBUTION_KINDS) {
       for (const rel of bundle.manifest.contributes[kind] || []) {
         const key = `${kind}/${rel}`;
-                if (!byPath.has(key)) byPath.set(key, { kind, path: rel, winner: bundle.name, winnerId: bundle.id, shadowed: [] });
+        if (!byPath.has(key)) byPath.set(key, { kind, path: rel, winner: bundle.name, winnerId: bundle.id, shadowed: [] });
         else byPath.get(key).shadowed.push(bundle.name);
       }
     }

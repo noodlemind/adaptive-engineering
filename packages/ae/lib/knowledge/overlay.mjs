@@ -84,7 +84,7 @@ export function bucketAncestryOk(workspace, meta) {
       timeout: 10_000,
     });
     if (res.error) return null;
-        if (typeof res.status !== 'number') return null;
+    if (typeof res.status !== 'number') return null;
     return res.status === 0;
   } catch {
     return null;
@@ -136,7 +136,7 @@ export function loadLayeredLearnings({ workspace, home } = {}) {
   const merged = new Map(goldenById);
 
   for (const b of bucketLearnings) {
-        if (
+    if (
       b.fm.superseded_by ||
       b.fm.promoted_to ||
       b.fm.promoted_to_golden ||
@@ -144,12 +144,12 @@ export function loadLayeredLearnings({ workspace, home } = {}) {
     ) {
       continue;
     }
-        const decision = governance.get(b.id);
+    const decision = governance.get(b.id);
     if (decision && GOVERNED_EXCLUSION_ACTIONS.has(decision.action)) continue;
 
     const goldenTwin = goldenById.get(b.id);
     if (goldenTwin && isProtectedFm(goldenTwin.fm)) {
-            merged.set(`${b.id}#branch`, { ...b, layer: 'branch', subordinate: true });
+      merged.set(`${b.id}#branch`, { ...b, layer: 'branch', subordinate: true });
       continue;
     }
     // Shadow (or plain addition): the branch-local claim IS the candidate.

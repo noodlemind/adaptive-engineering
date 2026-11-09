@@ -166,7 +166,7 @@ function assertValidVerbs(entry, args) {
       throw new Error(`registerCommand: "${entry.name}" verb "${v.verb}" has an invalid sideEffect "${v.sideEffect}"`);
     }
     if (v.sideEffect !== undefined) assertNotAboveEntry(entry, `verb "${v.verb}"`, v.sideEffect);
-        for (const name of v.positionals || []) {
+    for (const name of v.positionals || []) {
       if (!positionalNames.has(name)) {
         throw new Error(`registerCommand: "${entry.name}" verb "${v.verb}" consumes positional "${name}", which it does not declare`);
       }
@@ -192,7 +192,7 @@ function assertValidFlagMetadata(entry, args) {
       throw new Error(`registerCommand: "${entry.name}" flag ${def.name} has an invalid sideEffect "${def.sideEffect}"`);
     }
     if (def.sideEffect !== undefined) assertNotAboveEntry(entry, `flag ${def.name}`, def.sideEffect);
-        for (const req of def.requires || []) {
+    for (const req of def.requires || []) {
       if (!declared.has(req)) {
         throw new Error(`registerCommand: "${entry.name}" flag ${def.name} requires ${req}, which it does not declare`);
       }
@@ -325,10 +325,10 @@ export function validateArgs(entry, argv) {
         : `ae help ${entry.name}`;
       throw usageError(`unknown flag: ${flagName}`, hint);
     }
-        if (def.type !== 'boolean' || eq === -1) present.add(def.name);
+    if (def.type !== 'boolean' || eq === -1) present.add(def.name);
     if (def.type !== 'boolean' && eq === -1) {
       const next = argv[i + 1];
-            const nextIsValue = next !== undefined && (def.valueIsLiteral === true || !next.startsWith('--'));
+      const nextIsValue = next !== undefined && (def.valueIsLiteral === true || !next.startsWith('--'));
       if (nextIsValue) i++;
     }
   }
@@ -431,7 +431,7 @@ async function runHandler(entry, rest, ctx, events) {
   events?.emit(EVENT_TYPE.COMMAND_START, { flags: summarizeArgFlags(rest, flagIndex(entry)), result: PENDING_RESULT });
   try {
     const exit = await entry.handler(rest, ctx);
-        const status = ctx.__reportedStatus ?? statusForExit(exit);
+    const status = ctx.__reportedStatus ?? statusForExit(exit);
     events?.emit(EVENT_TYPE.COMMAND_RESULT, commandResultPayload(status, Date.now() - startedAt, exit));
     return exit;
   } catch (err) {
@@ -455,14 +455,14 @@ async function dispatchLane(entry, rest, ctx, lane, events) {
         redactor,
         inert: ctx.inert,
       });
-            process.stdout.write(rendered.text);
+      process.stdout.write(rendered.text);
       if (events) recordAgentLaneBytes({ writeEvent: (record) => events.emit(record.type, { ...record, result: PENDING_RESULT }) }, entry.name, rendered.bytes);
     } else {
-            console.log(redactedJson(envelope, { redactor }));
+      console.log(redactedJson(envelope, { redactor }));
     }
-        const status = envelope.status || STATUS.OK;
-        ctx.reportStatus?.(status);
-        const exit = typeof entry.exitOf === 'function'
+    const status = envelope.status || STATUS.OK;
+    ctx.reportStatus?.(status);
+    const exit = typeof entry.exitOf === 'function'
       ? entry.exitOf(result)
       : (status === STATUS.OK ? EXIT.ok : 1);
     events?.emit(EVENT_TYPE.COMMAND_RESULT, commandResultPayload(status, Date.now() - startedAt, exit));
@@ -485,10 +485,10 @@ async function dispatchLane(entry, rest, ctx, lane, events) {
         redactor,
         inert: ctx.inert,
       });
-            process.stdout.write(rendered.text);
+      process.stdout.write(rendered.text);
       if (events) recordAgentLaneBytes({ writeEvent: (record) => events.emit(record.type, { ...record, result: PENDING_RESULT }) }, entry.name, rendered.bytes);
     } else {
-            console.error(redactedJson(errorEnvelope, { redactor }));
+      console.error(redactedJson(errorEnvelope, { redactor }));
     }
     events?.emit(EVENT_TYPE.COMMAND_RESULT, commandResultPayload(status, Date.now() - startedAt, exit));
     return exit;
@@ -932,7 +932,7 @@ registerCommand({
   args: {
     positionals: [],
     flags: [
-            {
+      {
         name: '--status',
         type: 'boolean',
         description:
@@ -1144,7 +1144,7 @@ registerCommand({
   group: 'engineer loop',
   sideEffect: 'read',
   args: {
-        positionals: [{ name: 'query', description: 'free-text search terms (joined)', required: true, default: '', variadic: true }],
+    positionals: [{ name: 'query', description: 'free-text search terms (joined)', required: true, default: '', variadic: true }],
     flags: [
       { name: '--limit', type: 'number', valueName: 'n', description: 'result count (default 3)', required: false, default: 3, tui: 'prompt' },
       { name: '--collection', aliases: ['-c'], type: 'string', valueName: 'name', description: 'filter by knowledge/collections.yaml', required: false, default: null, tui: 'prompt' },
@@ -1165,7 +1165,7 @@ registerCommand({
   args: {
     positionals: [],
     flags: [
-            { name: '--docid', type: 'string', valueName: 'id', description: 'manifest doc id', required: false, default: null, tui: 'prompt' },
+      { name: '--docid', type: 'string', valueName: 'id', description: 'manifest doc id', required: false, default: null, tui: 'prompt' },
       { name: '--reference', type: 'string', valueName: 'id', description: 'installed corpus file, for example skills/code-review/references/findings-schema.md. Prints that file. Does not search the workspace.', required: false, default: null, tui: 'cli-only' },
       { name: '--path', type: 'string', valueName: 'rel', description: 'relative file path', required: false, default: null, tui: 'prompt', choices: 'path' },
       { name: '--lines', type: 'number', valueName: 'n', description: `max lines (default ${GET_DEFAULT_LINES})`, required: false, default: GET_DEFAULT_LINES, tui: 'prompt' },
@@ -1607,7 +1607,7 @@ registerCommand({
   outputModes: ['ledger', 'json'],
   usage: '<task...> [--profile <name>] [--verify-cmd <argv>] [--agent <persona>] [--provider <id>] [--model <id>] [--max-turns <n>] [--max-seconds <s>] [--tool-timeout <s>] [--dry-run]',
   args: {
-        positionals: [{ name: 'task...', description: 'what to do, in words', required: true, default: null }],
+    positionals: [{ name: 'task...', description: 'what to do, in words', required: true, default: null }],
     flags: [
       { name: '--profile', type: 'string', valueName: 'name', description: `deliver | autonomous | bench | benchmark (default ${DEFAULT_PROFILE_ID})`, required: false, default: DEFAULT_PROFILE_ID, tui: 'prompt' },
       { name: '--verify-cmd', type: 'string', valueName: 'argv', description: 'task verifier argv for autonomous success (e.g. "node ./verify.mjs"); green is terminal success', required: false, default: null, tui: 'prompt', valueIsLiteral: true },
@@ -1746,7 +1746,7 @@ registerCommand({
       { name: 'value', description: 'the new value, for set', required: false, default: null, choices: 'config-value' },
     ],
     flags: [
-            { name: '--scope', type: 'string', valueName: 'scope', description: `set: which file to write, ${SCOPES.join(' or ')}`, required: true, default: null, tui: 'prompt', verbs: ['set'], choices: 'scope' },
+      { name: '--scope', type: 'string', valueName: 'scope', description: `set: which file to write, ${SCOPES.join(' or ')}`, required: true, default: null, tui: 'prompt', verbs: ['set'], choices: 'scope' },
     ],
   },
   handler: cmdConfig,
@@ -1793,7 +1793,7 @@ registerCommand({
       { name: 'query', description: 'free-text query words (joined)', required: true, default: '', variadic: true },
     ],
     flags: [
-            { name: '--match', type: 'string', valueName: 'mode', description: `match mode: ${SEARCH_MATCH_MODES.join('|')} (default ranked)`, required: false, default: 'ranked', tui: 'prompt' },
+      { name: '--match', type: 'string', valueName: 'mode', description: `match mode: ${SEARCH_MATCH_MODES.join('|')} (default ranked)`, required: false, default: 'ranked', tui: 'prompt' },
       { name: '--source', type: 'string', valueName: 'a,b', description: `restrict to sources: ${SEARCH_SOURCE_NAMES.join(',')}`, required: false, default: null, tui: 'prompt' },
       { name: '--explain', type: 'boolean', description: 'include the retrieval reason per result', required: false, default: false, tui: 'prompt' },
       { name: '--cursor', type: 'string', valueName: 'c', description: 'resume from a previous page', required: false, default: null, tui: 'cli-only' },
@@ -2002,7 +2002,7 @@ registerCommand({
   args: {
     positionals: [],
     flags: [
-            { name: '--status', type: 'boolean', description: 'debt vs threshold, quarantine, promotion candidates (default)', required: false, default: false, tui: 'cli-only' },
+      { name: '--status', type: 'boolean', description: 'debt vs threshold, quarantine, promotion candidates (default)', required: false, default: false, tui: 'cli-only' },
             { name: '--candidates', type: 'boolean', description: 'persist a frozen work packet; --dry-run previews without publication', required: false, default: false, tui: 'verb', sideEffect: 'mutate' },
       {
         name: '--apply',
@@ -2078,7 +2078,7 @@ registerCommand({
       { name: 'id', description: 'the learning id', required: true, default: null },
     ],
     flags: [
-            { name: '--reason', type: 'string', valueName: 'r', description: 'required for retire/dispute; recorded in the store commit', required: false, default: null, tui: 'prompt' },
+      { name: '--reason', type: 'string', valueName: 'r', description: 'required for retire/dispute; recorded in the store commit', required: false, default: null, tui: 'prompt' },
             { name: '--to', type: 'string', valueName: 'path', description: 'primitive path recorded on promote (behavior supersedes knowledge)', required: false, default: null, tui: 'prompt', verbs: ['promote'], choices: 'path' },
     ],
   },

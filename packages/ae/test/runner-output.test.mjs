@@ -87,3 +87,14 @@ for (const outcome of ['timed-out', 'cancelled']) {
     assert.equal(result.truncated, true);
   });
 }
+
+test('prefix capture never ends on a lone high surrogate when no newline fits', async () => {
+  // 'a' then astral characters: an odd budget lands between the two halves of a pair.
+  const result = await runProcess({
+    argv: [process.execPath, '-e', "process.stdout.write('a' + '\\u{1F600}'.repeat(50));"],
+    maxBuffer: 6,
+  });
+  assert.equal(result.truncated, true);
+  assert.equal(result.stdout, 'a\u{1F600}\u{1F600}');
+  assert.doesNotMatch(result.stdout, /[\uD800-\uDBFF]$/);
+});

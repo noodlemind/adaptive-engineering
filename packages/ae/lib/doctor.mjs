@@ -554,10 +554,10 @@ function knowledgeChecks({ workspace, copilotHome }) {
 export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots(), lockPath } = {}) {
   const checks = [];
   try {
-        const disk = grammarStatus({ grammarRoots, lockPath });
+    const disk = grammarStatus({ grammarRoots, lockPath });
     const index = readStructuralIndex(workspace);
     const recorded = index?.meta?.integrityFailures || [];
-        const stale = recorded.filter((f) => disk.grammars?.[f.language]?.ok === true);
+    const stale = recorded.filter((f) => disk.grammars?.[f.language]?.ok === true);
     const live = recorded.filter((f) => !stale.includes(f));
     const mismatches = [...disk.integrityFailures, ...live];
     if (mismatches.length) {
@@ -588,7 +588,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
       const languages = [...new Set(stale.map((f) => f.language))].join(', ');
       issues.push(`index meta still records a grammar integrity mismatch (${languages}) that the current wasm no longer has — re-run: ae index --structural`);
     }
-        if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
+    if (index.unreadable?.length) issues.push(`${index.unreadable.join('; ')} — delete the index directory and re-run: ae index --structural`);
     const head = spawnGitSync(['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 });
     const headSha = head.status === 0 ? head.stdout.trim() : null;
     if (index.meta.sha && headSha && index.meta.sha !== headSha) {
@@ -597,7 +597,7 @@ export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots
     const filesIndexed = Math.max(index.meta.filesIndexed || Object.keys(index.files).length, 1);
     const failRate = (index.meta.parseFailures || 0) / filesIndexed;
     if (failRate > 0.2) issues.push(`parse-failure rate ${(failRate * 100).toFixed(0)}% — inspect grammar installation`);
-        let orphans = 0;
+    let orphans = 0;
     for (const rel of Object.keys(index.files).slice(0, 500)) {
       const full = assertNoSymlinkAncestors(workspace, rel);
       if (!full || !fs.existsSync(full)) orphans += 1;
@@ -640,6 +640,7 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
   try { git = spawnSync(resolveGit(), ['--version'], { encoding: 'utf8', timeout: 5_000 }); }
   catch (error) { git = { error }; }
   const gitOk = !git.error && git.status === 0 && Boolean(String(git.stdout || '').trim());
+  const noLazyFetch = gitOk ? gitSupportsNoLazyFetch({ resolveGit }) : false;
   return [
     {
       id: 'R1',
@@ -653,7 +654,28 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
       pass: gitOk,
       hint: gitOk ? String(git.stdout).trim() : git.error?.code === 'E_GIT_EXECUTABLE' ? git.error.message : 'git is not installed or not on PATH',
     },
+    {
+      id: 'R3',
+      name: `git ${MIN_GIT_NO_LAZY_FETCH}+ (--no-lazy-fetch)`,
+      pass: noLazyFetch,
+      optional: true,
+      hint: noLazyFetch
+        ? 'flow models and formal verification can read Git metadata without automatic fetches'
+        : `flow models and formal verification stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
+    },
   ];
+}
+
+export const MIN_GIT_NO_LAZY_FETCH = '2.45';
+
+/** True when Git accepts the global --no-lazy-fetch option that flow models and formal checks require. */
+export function gitSupportsNoLazyFetch({ resolveGit = gitExecutable } = {}) {
+  try {
+    const probe = spawnSync(resolveGit(), ['--no-lazy-fetch', 'version'], { encoding: 'utf8', timeout: 5_000 });
+    return !probe.error && probe.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** The adaptive bootstrap needs four eligible procedures; richer automation is acquired on demand. */

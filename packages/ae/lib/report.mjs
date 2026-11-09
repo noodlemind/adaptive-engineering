@@ -614,7 +614,7 @@ export function renderReport(report, ui = createStyle()) {
         : 'run some harness commands, then report',
       keyWidth,
     }));
-        const sessionStateDir = !partialOnly && report.copilotHome ? path.join(report.copilotHome, 'session-state') : null;
+    const sessionStateDir = !partialOnly && report.copilotHome ? path.join(report.copilotHome, 'session-state') : null;
     const vscodeUsage = report.copilotHome ? path.join(report.copilotHome, 'host-usage', 'vscode.jsonl') : null;
     const countSessions = (dir) => {
       try {

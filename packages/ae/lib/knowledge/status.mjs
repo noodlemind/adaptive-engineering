@@ -40,7 +40,7 @@ export function knowledgeStatus({ workspace, copilotHome, home } = {}) {
   const buckets = [];
   if (storeExists) {
     for (const { key, dir: bucketDir, meta } of listBuckets(dir)) {
-            let active = 0;
+      let active = 0;
       let total = 0;
       let promoted = 0;
       try {

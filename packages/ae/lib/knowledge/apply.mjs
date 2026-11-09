@@ -699,7 +699,7 @@ export function applyOps({
     parsed.promotion && typeof parsed.promotion === 'object' && !Array.isArray(parsed.promotion) ? parsed.promotion : null;
   const promotionMode = Boolean(promotion);
   if (promotionMode) {
-        if (!isSafeBucketKey(promotion.branchKey)) {
+    if (!isSafeBucketKey(promotion.branchKey)) {
       return {
         applied: [],
         governed: [],
@@ -721,7 +721,7 @@ export function applyOps({
     }
     const digest = crypto.createHash('sha256').update(JSON.stringify(parsed.ops)).digest('hex');
     if (digest !== promotion.digest) {
-            return {
+      return {
         applied: [],
         governed: [],
         rejected: [fail('E_SCHEMA', 'promotion op-set digest mismatch — regenerate with: ae knowledge promote')],
@@ -792,18 +792,18 @@ export function applyOps({
     if (operationRecovery) return { kind: 'reject', applied: [], governed: [], rejected: [fail('E_RETRY', 'Repair history and committed receipt are missing')], exitCode: 1 };
     const packetFailure = packetPreflight?.({ storeDir: dir, layer: routing.layer, bucketKey: routing.bucketKey });
     if (packetFailure) return { kind: 'reject', applied: [], governed: [], rejected: [packetFailure], exitCode: 1 };
-        if (!dryRun) {
+    if (!dryRun) {
       const movedEarly = assertHeadUnmoved();
       if (movedEarly) return movedEarly;
     }
-        let layerRoot = dir;
+    let layerRoot = dir;
     if (promotionMode) {
-            layerRoot = dir;
+      layerRoot = dir;
     } else if (routing.layer === 'branch' && routing.bucketKey) {
       if (dryRun) {
-                layerRoot = bucketDirFor(dir, routing.bucketKey);
+        layerRoot = bucketDirFor(dir, routing.bucketKey);
       } else {
-                migrateRenamedBucket(dir, { workspace, context: routing.context });
+        migrateRenamedBucket(dir, { workspace, context: routing.context });
         layerRoot = ensureBucket(dir, {
           key: routing.bucketKey,
           branch: routing.context.branch,
@@ -813,11 +813,11 @@ export function applyOps({
     }
     const existing = new Map(listLearnings(layerRoot).map((l) => [l.id, l]));
 
-        const promotionSources = promotionMode
+    const promotionSources = promotionMode
       ? new Map(listLearnings(bucketDirFor(dir, promotion.branchKey)).map((l) => [l.id, l]))
       : null;
     if (promotionMode) {
-            const promotionBucketDir = bucketDirFor(dir, promotion.branchKey);
+      const promotionBucketDir = bucketDirFor(dir, promotion.branchKey);
       if (bucketAncestryOk(workspace, readBucketMeta(promotionBucketDir)) === false) {
         return {
           kind: 'reject',
@@ -836,8 +836,8 @@ export function applyOps({
     }
 
     function recordContentFailure(code, episodes) {
-            if (dryRun || !git || promotionMode || !CONTENT_FAILURE_CODES.has(code)) return null;
-            const seenKeys = new Set();
+      if (dryRun || !git || promotionMode || !CONTENT_FAILURE_CODES.has(code)) return null;
+      const seenKeys = new Set();
       const eps = (episodes || [])
         .filter((e) => e && e.path && /^[0-9a-f]{64}$/.test(e.sha256 || ''))
         .filter((e) => {
@@ -847,9 +847,9 @@ export function applyOps({
           return true;
         });
       if (!eps.length) return null;
-            let unrecoverable = null;
+      let unrecoverable = null;
       try {
-                const ledger = readLedger(dir);
+        const ledger = readLedger(dir);
         const at = todayClamped();
         const entries = [];
         for (const e of eps) {
@@ -862,14 +862,14 @@ export function applyOps({
         appendLedger(dir, entries);
         const commitRes = commitStore(dir, `consolidate: record failure ${code}`);
         if (!commitRes.ok) {
-                    if (!rollbackUncommitted()) {
+          if (!rollbackUncommitted()) {
             unrecoverable = `strike recording failed to commit (${commitRes.stderr || 'git commit failed'}) and could not be rolled back`;
           }
           return `strike recording failed to commit: ${commitRes.stderr || 'git commit failed'}`;
         }
         recordCheckpoint();
       } catch (err) {
-                if (err instanceof StoreTransactionAbort) throw err;
+        if (err instanceof StoreTransactionAbort) throw err;
       } finally {
         if (unrecoverable) throw new Error(unrecoverable);
       }
@@ -888,7 +888,7 @@ export function applyOps({
       };
     }
 
-        const domainProjection = new Map();
+    const domainProjection = new Map();
     function projectedActive(domain) {
       if (!domainProjection.has(domain)) {
         domainProjection.set(domain, activeCountInDomain(existing, domain));
@@ -899,23 +899,23 @@ export function applyOps({
       domainProjection.set(domain, projectedActive(domain) + delta);
     }
 
-        const consumedTargets = new Set(); // SUPERSEDE/MERGE targets already spoken for this run
-        const strengthenedTargets = new Set();
+    const consumedTargets = new Set(); // SUPERSEDE/MERGE targets already spoken for this run
+    const strengthenedTargets = new Set();
     const plannedIds = new Set(); // new ids (ADD/SUPERSEDE-rename/MERGE) already claimed this run
     function idTaken(id) {
       return existing.has(id) || plannedIds.has(id);
     }
 
-        const governance = readGovernance(dir);
+    const governance = readGovernance(dir);
 
-        const candidateKeys = new Set();
+    const candidateKeys = new Set();
     {
       const onDisk = collectEpisodes({ workspace, copilotHome, home });
-            const { consumed } = splitLedger(readLedger(dir));
+      const { consumed } = splitLedger(readLedger(dir));
       if (layerRoot !== dir) {
         for (const key of splitLedger(readLedger(layerRoot)).consumed) consumed.add(key);
       }
-            const eligibility = {
+      const eligibility = {
         layer: routing.layer,
         currentBranch: routing.context?.branch || null,
         defaultBranchName: routing.defaultBranch?.name || null,
@@ -927,7 +927,7 @@ export function applyOps({
         if (!consumed.has(key)) candidateKeys.add(key);
       }
     }
-        function episodesNeedingCandidacy(op) {
+    function episodesNeedingCandidacy(op) {
       if (op.op === 'ADD') return op.episodes || [];
       const exempt = new Set();
       const targets = op.op === 'MERGE' ? op.targets || [] : op.target ? [op.target] : [];
@@ -953,9 +953,9 @@ export function applyOps({
     const planned = [];
     const disputes = [];
     for (let i = 0; i < parsed.ops.length; i++) {
-            let op = parsed.ops[i];
+      let op = parsed.ops[i];
       if (promotionMode && !PROMOTION_OP_KINDS.has(op.op)) {
-                return {
+        return {
           kind: 'reject',
           applied: [],
           governed: [],
@@ -967,7 +967,7 @@ export function applyOps({
       if (op.op === 'NOOP') {
         const bad = validateEpisodes(op.episodes, i);
         if (bad) return rejectOp(bad.code, bad.reason, op.episodes);
-                const badNoop = verifyNoopEpisodes(workspace, copilotHome, op.episodes, i, home);
+        const badNoop = verifyNoopEpisodes(workspace, copilotHome, op.episodes, i, home);
         if (badNoop) return rejectOp(badNoop.code, badNoop.reason, op.episodes);
         planned.push({ ...op });
         continue;
@@ -977,9 +977,9 @@ export function applyOps({
       }
       const bad = validateEpisodes(op.episodes, i);
       if (bad) return rejectOp(bad.code, bad.reason, op.episodes);
-            let promotedEpisodes = null;
+      let promotedEpisodes = null;
       if (promotionMode) {
-                const src = op.source && typeof op.source === 'object' ? op.source : null;
+        const src = op.source && typeof op.source === 'object' ? op.source : null;
         const sourceLearning = src && typeof src.id === 'string' ? promotionSources.get(src.id) : null;
         if (!sourceLearning) {
           return {
@@ -991,7 +991,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-                if (!isActiveFm(sourceLearning.fm)) {
+        if (!isActiveFm(sourceLearning.fm)) {
           return {
             kind: 'reject',
             applied: [],
@@ -1006,7 +1006,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-                const sourceText = readLearningFile(sourceLearning.file);
+        const sourceText = readLearningFile(sourceLearning.file);
         if (sourceText === null) {
           return {
             kind: 'reject',
@@ -1028,7 +1028,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-                const destId = op.op === 'STRENGTHEN' ? op.target : newIdFor(op);
+        const destId = op.op === 'STRENGTHEN' ? op.target : newIdFor(op);
         if (destId !== src.id) {
           return {
             kind: 'reject',
@@ -1044,7 +1044,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-                const namedTargets = [
+        const namedTargets = [
           ...(op.target !== undefined ? [op.target] : []),
           ...(Array.isArray(op.targets) ? op.targets : []),
         ];
@@ -1068,7 +1068,7 @@ export function applyOps({
         if (op.op !== 'STRENGTHEN') {
           op = { ...op, trigger: sourceLearning.fm.trigger || '', body: sourceLearning.body };
         }
-                const recorded = new Map();
+        const recorded = new Map();
         for (const e of sourceLearning.fm.episodes || []) {
           if (e.path) recorded.set(`${e.path}@${e.sha256}`, e);
         }
@@ -1095,12 +1095,12 @@ export function applyOps({
           });
         }
       } else {
-                const badKind = verifyAdmittedEpisodeKinds(workspace, copilotHome, op.episodes, i, home);
+        const badKind = verifyAdmittedEpisodeKinds(workspace, copilotHome, op.episodes, i, home);
         if (badKind) return rejectOp(badKind.code, badKind.reason, op.episodes);
-                const notCandidate = assertCandidacy(op, i);
+        const notCandidate = assertCandidacy(op, i);
         if (notCandidate) return rejectOp(notCandidate.code, notCandidate.reason, op.episodes);
       }
-            if (op.merged_from !== undefined) {
+      if (op.merged_from !== undefined) {
         return rejectOp(
           'E_SCHEMA',
           `op ${i}: merged_from is derived from a MERGE's own targets and cannot be asserted by an op`,
@@ -1108,18 +1108,18 @@ export function applyOps({
         );
       }
 
-            let isReteachShape = false;
+      let isReteachShape = false;
       let allHumanTeaching = false;
 
       if (op.op === 'STRENGTHEN' || op.op === 'SUPERSEDE') {
         if (!op.target || !existing.has(op.target)) {
           return rejectOp('E_TARGET', `op ${i}: target ${op.target || '(none)'} does not exist`, op.episodes);
         }
-                const promotedTo = existing.get(op.target).fm.promoted_to;
+        const promotedTo = existing.get(op.target).fm.promoted_to;
         if (promotedTo) {
           return promotedTargetRejection(i, op.target, promotedTo);
         }
-                isReteachShape = op.op === 'SUPERSEDE' && newIdFor(op) === op.target;
+        isReteachShape = op.op === 'SUPERSEDE' && newIdFor(op) === op.target;
         allHumanTeaching =
           isReteachShape &&
           op.episodes.length > 0 &&
@@ -1143,7 +1143,7 @@ export function applyOps({
           };
         }
         if (consumedTargets.has(op.target)) {
-                    return {
+          return {
             kind: 'reject',
             applied: [],
             governed: [],
@@ -1152,7 +1152,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-                if (op.op === 'SUPERSEDE' && strengthenedTargets.has(op.target)) {
+        if (op.op === 'SUPERSEDE' && strengthenedTargets.has(op.target)) {
           return {
             kind: 'reject',
             applied: [],
@@ -1187,7 +1187,7 @@ export function applyOps({
         }
         for (const t of op.targets) {
           if (consumedTargets.has(t)) {
-                        return {
+            return {
               kind: 'reject',
               applied: [],
               governed: [],
@@ -1196,7 +1196,7 @@ export function applyOps({
               exitCode: 1,
             };
           }
-                    if (strengthenedTargets.has(t)) {
+          if (strengthenedTargets.has(t)) {
             return {
               kind: 'reject',
               applied: [],
@@ -1210,7 +1210,7 @@ export function applyOps({
           }
         }
         for (const t of op.targets) {
-                    if (!isActiveFm(existing.get(t).fm)) {
+          if (!isActiveFm(existing.get(t).fm)) {
             return {
               kind: 'reject',
               applied: [],
@@ -1224,7 +1224,7 @@ export function applyOps({
       }
 
       if (op.op === 'ADD' || op.op === 'SUPERSEDE' || op.op === 'MERGE') {
-                if (
+        if (
           typeof op.domain !== 'string' || !op.domain ||
           typeof op.slug !== 'string' || !op.slug ||
           typeof op.trigger !== 'string' || !op.trigger ||
@@ -1232,12 +1232,12 @@ export function applyOps({
         ) {
           return rejectOp('E_SCHEMA', `op ${i}: ${op.op} needs domain, slug, trigger, body as non-empty strings`, op.episodes);
         }
-                if (CONTROL_CHAR_RE.test(op.trigger)) {
+        if (CONTROL_CHAR_RE.test(op.trigger)) {
           return rejectOp('E_SCHEMA', `op ${i}: trigger must not contain control characters (newlines, tabs, etc.)`, op.episodes);
         }
         const newId = newIdFor(op);
         if (op.op === 'ADD') {
-                    if (idTaken(newId)) {
+          if (idTaken(newId)) {
             if (existing.has(newId)) {
               // Real on-disk dedup miss — a content-failure strike is warranted.
               return rejectOp(
@@ -1246,7 +1246,7 @@ export function applyOps({
                 op.episodes
               );
             }
-                        return {
+            return {
               kind: 'reject',
               applied: [],
               governed: [],
@@ -1255,7 +1255,7 @@ export function applyOps({
               exitCode: 1,
             };
           }
-                    const domain = normalizeSlug(op.domain);
+          const domain = normalizeSlug(op.domain);
           if (projectedActive(domain) >= DOMAIN_ACTIVE_CAP) {
             return {
               kind: 'reject',
@@ -1280,7 +1280,7 @@ export function applyOps({
               op.episodes
             );
           }
-                    return {
+          return {
             kind: 'reject',
             applied: [],
             governed: [],
@@ -1302,11 +1302,11 @@ export function applyOps({
       if (op.op === 'MERGE') {
         const disputedTargets = op.targets.filter((t) => isDisputedTargetFm(existing.get(t).fm));
         if (disputedTargets.length) {
-                    for (const t of disputedTargets) disputes.push({ index: i, target: t });
+          for (const t of disputedTargets) disputes.push({ index: i, target: t });
           continue;
         }
 
-                for (const t of op.targets) {
+        for (const t of op.targets) {
           bumpProjectedActive(existing.get(t).domain, -1);
         }
         const domain = normalizeSlug(op.domain);
@@ -1331,7 +1331,7 @@ export function applyOps({
         const target = existing.get(op.target);
         const newId = newIdFor(op);
 
-                if (newId !== op.target && idTaken(newId)) {
+        if (newId !== op.target && idTaken(newId)) {
           if (existing.has(newId)) {
             // Real on-disk dedup miss — a content-failure strike is warranted.
             return rejectOp(
@@ -1340,7 +1340,7 @@ export function applyOps({
               op.episodes
             );
           }
-                    return {
+          return {
             kind: 'reject',
             applied: [],
             governed: [],
@@ -1350,12 +1350,12 @@ export function applyOps({
           };
         }
 
-                if (!allHumanTeaching && isDisputedTargetFm(target.fm)) {
-                    disputes.push({ index: i, target: op.target });
+        if (!allHumanTeaching && isDisputedTargetFm(target.fm)) {
+          disputes.push({ index: i, target: op.target });
           continue;
         }
 
-                if (newId !== op.target) {
+        if (newId !== op.target) {
           bumpProjectedActive(target.domain, -1);
           const domain = normalizeSlug(op.domain);
           if (projectedActive(domain) >= DOMAIN_ACTIVE_CAP) {
@@ -1400,7 +1400,7 @@ export function applyOps({
           exitCode: 1,
         };
       }
-            planned.push({ ...op, ...(promotedEpisodes ? { episodes: promotedEpisodes } : {}), index: i });
+      planned.push({ ...op, ...(promotedEpisodes ? { episodes: promotedEpisodes } : {}), index: i });
     }
 
     // Compose ADD/SUPERSEDE/MERGE files and enforce the byte cap before writing.
@@ -1410,12 +1410,12 @@ export function applyOps({
       const domain = normalizeSlug(op.domain);
       const slug = normalizeSlug(op.slug);
       const id = `${domain}/${slug}`;
-            let source = op.episodes.length && op.episodes.every((e) => verifyHumanTeachingEpisode(workspace, copilotHome, e, home)) ? 'human' : 'auto';
+      let source = op.episodes.length && op.episodes.every((e) => verifyHumanTeachingEpisode(workspace, copilotHome, e, home)) ? 'human' : 'auto';
       let status = source === 'human' ? 'active' : 'provisional';
       let provenance = writeProvenance;
       let scope = op;
       if (promotionMode) {
-                const src = promotionSources.get(op.source.id);
+        const src = promotionSources.get(op.source.id);
         source = src.fm.source || 'auto';
         status = isActiveFm(src.fm) && src.fm.status === 'active' ? 'active' : src.fm.status || 'provisional';
         provenance = { commit: src.fm.commit, branch: src.fm.branch, base: src.fm.base };
@@ -1443,13 +1443,13 @@ export function applyOps({
         shows: scope.shows,
         provenance,
       });
-            if (Buffer.byteLength(content, 'utf8') - provenanceBytes(provenance) - applicabilityBytes(parseLearningFrontmatter(content).fm) > LEARNING_BYTE_CAP) {
+      if (Buffer.byteLength(content, 'utf8') - provenanceBytes(provenance) - applicabilityBytes(parseLearningFrontmatter(content).fm) > LEARNING_BYTE_CAP) {
         return rejectOp('E_BYTE_CAP', `${id} exceeds ${LEARNING_BYTE_CAP} bytes — split into two claims`, op.episodes);
       }
       writes.push({ op, id, domain, slug, content });
     }
 
-        const strengthenWrites = [];
+    const strengthenWrites = [];
     for (const op of planned) {
       if (op.op !== 'STRENGTHEN') continue;
       const target = existing.get(op.target);
@@ -1457,7 +1457,7 @@ export function applyOps({
       if (content === null) {
         return rejectOp('E_TARGET', `op ${op.target}: learning file could not be read safely from the store`, op.episodes);
       }
-            if (Buffer.byteLength(content, 'utf8') - provenanceBytes(target.fm) - applicabilityBytes(parseLearningFrontmatter(content).fm) > LEARNING_BYTE_CAP) {
+      if (Buffer.byteLength(content, 'utf8') - provenanceBytes(target.fm) - applicabilityBytes(parseLearningFrontmatter(content).fm) > LEARNING_BYTE_CAP) {
         return rejectOp(
           'E_BYTE_CAP',
           `${op.target} exceeds ${LEARNING_BYTE_CAP} bytes after strengthening — split into two claims or supersede`,
@@ -1476,9 +1476,9 @@ export function applyOps({
       };
     }
 
-        const moved = assertHeadUnmoved();
+    const moved = assertHeadUnmoved();
     if (moved) {
-            if (!rollbackToCheckpoint()) {
+      if (!rollbackToCheckpoint()) {
         throw new Error(
           `${moved.rejected[0].reason} — and the store could not be rolled back to its checkpoint; the run is aborted with the store left for manual inspection`
         );
@@ -1486,27 +1486,27 @@ export function applyOps({
       return moved;
     }
 
-        const applied = [];
+    const applied = [];
     const rejected = [];
     const ledgerEntries = [];
     const governed = [];
     const at = todayClamped();
-        const governanceAt = new Date().toISOString();
+    const governanceAt = new Date().toISOString();
 
     for (const { op, id, domain, slug, content } of writes) {
       const file = path.join(layerRoot, 'learnings', domain, `${slug}.md`);
-            if (!writeLearningFile(file, content)) {
+      if (!writeLearningFile(file, content)) {
         throw new Error(`refused to write ${id}: the learning path does not resolve safely inside the knowledge store`);
       }
       applied.push({ op: op.op, id });
       for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at });
-            if (op.op === 'SUPERSEDE' && op.target !== id) {
+      if (op.op === 'SUPERSEDE' && op.target !== id) {
         const target = existing.get(op.target);
         if (!updateFrontmatterField(target.file, 'superseded_by', id)) {
           throw new Error(`refused to tombstone ${op.target}: the learning path does not resolve safely inside the knowledge store`);
         }
       }
-            if (op.op === 'MERGE') {
+      if (op.op === 'MERGE') {
         for (const t of op.targets) {
           const target = existing.get(t);
           if (!updateFrontmatterField(target.file, 'superseded_by', id)) {
@@ -1516,14 +1516,14 @@ export function applyOps({
       }
     }
 
-        for (const { op, id, domain, slug } of writes) {
+    for (const { op, id, domain, slug } of writes) {
       const entry = governance.get(id);
       if (!entry || !['retire', 'dispute', 'promote'].includes(entry.action)) continue;
       const isReteach =
         op.episodes.length > 0 &&
         op.episodes.every((e) => verifyHumanTeachingEpisode(workspace, copilotHome, e, home)) &&
         overridesGovernanceRecency(workspace, copilotHome, op.episodes, entry, { humanPresent, home });
-            if (isReteach && layerRoot === dir) {
+        if (isReteach && layerRoot === dir) {
         appendGovernance(dir, { id, action: 'confirm', reason: 'superseded by re-teach', to: null, at: governanceAt });
         continue;
       }
@@ -1534,7 +1534,7 @@ export function applyOps({
       }
       const file = path.join(layerRoot, 'learnings', domain, `${slug}.md`);
       if (entry.action === 'promote') {
-                const root = path.resolve(workspace);
+        const root = path.resolve(workspace);
         const toFull = path.resolve(root, entry.to || '');
         if (!entry.to || (toFull !== root && !toFull.startsWith(root + path.sep))) {
           log(`consolidate: governance record for ${id} has an unsafe promote target (${entry.to}) — skipped reapply`);
@@ -1556,7 +1556,7 @@ export function applyOps({
       governed.push({ id, action: entry.action });
     }
 
-        for (const { op, target, content } of strengthenWrites) {
+    for (const { op, target, content } of strengthenWrites) {
       if (!writeLearningFile(target.file, content)) {
         throw new Error(`refused to strengthen ${op.target}: the learning path does not resolve safely inside the knowledge store`);
       }
@@ -1564,13 +1564,13 @@ export function applyOps({
       for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at });
     }
 
-        if (promotionMode && !dryRun) {
+    if (promotionMode && !dryRun) {
       const bucketRoot = bucketDirFor(dir, promotion.branchKey);
       let touchedBucket = false;
-            for (const entry of [...writes, ...strengthenWrites]) {
+      for (const entry of [...writes, ...strengthenWrites]) {
         const src = entry.op.source?.id ? promotionSources.get(entry.op.source.id) : null;
         if (!src) continue;
-                const text = readLearningFile(src.file);
+        const text = readLearningFile(src.file);
         if (text === null) {
           throw new Error(`refused to tombstone ${src.id}: bucket learning path does not resolve safely inside the knowledge store`);
         }
@@ -1608,7 +1608,7 @@ export function applyOps({
     if (ledgerEntries.length) appendLedger(layerRoot, ledgerEntries);
     rebuildIndex(layerRoot);
 
-        const summary = applied.length
+    const summary = applied.length
       ? applied.map((a) => `${a.op.toLowerCase()}${a.id ? ` ${a.id}` : ''}`).join(' · ')
       : disputes.length
         ? `dispute ${disputes.map((d) => d.target).join(', ')}`
@@ -1631,7 +1631,7 @@ export function applyOps({
   }
 
   if (dryRun) {
-        deriveRouting();
+    deriveRouting();
     const { dir, git } = ensureStore(workspace, { home, dryRun: true });
     const result = runOnce({ dir, git });
     if (result.kind === 'reject') {
@@ -1658,7 +1658,7 @@ export function applyOps({
       if (err instanceof StoreTransactionAbort) throw err;
       // best effort — any OTHER hand-edit absorb failure must never block applyOps.
     }
-        const { mode: freshMode } = readStoreConfig(workspace, { home });
+    const { mode: freshMode } = readStoreConfig(workspace, { home });
     if (freshMode !== 'on' && !(freshMode === 'suggest' && approve)) {
       const reason =
         freshMode === 'suggest'

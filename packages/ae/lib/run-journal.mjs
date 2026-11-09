@@ -163,7 +163,7 @@ export function foldRuns(records, { isAlive = pidAlive } = {}) {
     if (!record?.run) continue;
     if (record.type === 'run.start') {
       const existing = runs.get(record.run);
-            if (existing?.startedAt) continue;
+      if (existing?.startedAt) continue;
       runs.set(record.run, {
         run: record.run,
         command: record.command,
@@ -182,7 +182,7 @@ export function foldRuns(records, { isAlive = pidAlive } = {}) {
       });
     } else if (record.type === 'run.result') {
       const existing = runs.get(record.run) || { run: record.run, command: null, argv: [], plan: null, host: null, actor: null, pid: null, startedAt: null };
-            if (existing.terminal) continue;
+      if (existing.terminal) continue;
       runs.set(record.run, {
         ...existing,
         status: record.status,
@@ -195,7 +195,7 @@ export function foldRuns(records, { isAlive = pidAlive } = {}) {
     }
   }
   return [...runs.values()].map((r) => {
-        const known = RUN_STATUSES.includes(r.status);
+    const known = RUN_STATUSES.includes(r.status);
     return {
       ...r,
       status: known ? r.status : 'running',

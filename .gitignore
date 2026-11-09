@@ -15,3 +15,6 @@ evals/
 
 # Local audit and research notes — never committed
 .audit/
+
+# Local and CI test manifests and the full-suite receipt
+ci-test-results/

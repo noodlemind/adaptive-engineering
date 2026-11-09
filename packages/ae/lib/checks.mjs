@@ -238,7 +238,7 @@ export async function runNamedCheck(workspace, name, config, { signal, onStdout,
     return finish(resultCheck(name, 'timeout', isolated ? `Experiment invocation timed out after ${isolated.timeoutMs}ms within its remaining wall budget` : `Timed out after ${timeoutSeconds}s`, output));
   }
   if (execution.status === 'failed' && execution.exitCode === null) {
-        const detail = execution.signalName ? `Terminated by signal ${execution.signalName}` : 'Named check could not be spawned';
+    const detail = execution.signalName ? `Terminated by signal ${execution.signalName}` : 'Named check could not be spawned';
     return finish(resultCheck(name, 'unavailable', detail, output));
   }
   if (execution.status === 'failed') {

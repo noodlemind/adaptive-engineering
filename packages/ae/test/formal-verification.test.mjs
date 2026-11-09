@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { TEST_GIT_ENV } from './helpers/store.mjs';
 import { collectCoverage, classifyTlc, validateConfiguration, runFormalVerification, tlcModelArguments, publishModelGraph } from '../corpus/skills/create-primitive/assets/formal-verification/check.mjs';
+import { NEEDS_NO_LAZY_FETCH } from './helpers/git-features.mjs';
 
 const msg = (id, severity = 0, body = '') => `@!@!@STARTMSG ${id}:${severity} @!@!@\n${body}\n@!@!@ENDMSG ${id} @!@!@\n`;
 const success = msg(2193) + msg(2199, 0, '12 states generated, 8 distinct states found, 0 states left on queue.') + msg(2186);
@@ -86,7 +87,7 @@ test('graph capture rejects symlink input and artifact ancestors without outside
   assert.equal(fs.readFileSync(path.join(outside, f.file), 'utf8'), f.dot);
 });
 
-test('the actual capture flag retains deliberate tool prerequisites instead of installing tools', t => {
+test('the actual capture flag retains deliberate tool prerequisites instead of installing tools', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = manifestFixture(t);
   const runner = fileURLToPath(new URL('../corpus/skills/create-primitive/assets/formal-verification/check.mjs', import.meta.url));
   const invocation = spawnSync(process.execPath, [runner, '--workspace', f.root, '--manifest', f.filename, '--maintain', '--rationale', 'Reviewed fixture.', '--capture-graph'], { encoding: 'utf8', env: { ...process.env, AE_TLC_JAR: '', HARNESS_CHECK_ARTIFACT_DIR: path.join(f.root, 'capture-evidence') } });
@@ -114,7 +115,7 @@ function fixture(t) {
 
 function manifestFixture(t) {
   const f = fixture(t);
-  const pilot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../.cursor/skills/verify-harness/formal/delivery-evidence');
+  const pilot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/formal-verification');
   const manifest = JSON.parse(fs.readFileSync(path.join(pilot, 'manifest.json'), 'utf8'));
   for (const name of new Set(manifest.models.flatMap(model => [model.module, model.config]))) fs.copyFileSync(path.join(pilot, name), path.join(f.root, name));
   fs.writeFileSync(path.join(f.root, 'intent.md'), 'The exported fixture value is one.\n');
@@ -148,7 +149,7 @@ console.log(JSON.stringify({ schema: 1, feature: negative ? 'fixture-negative' :
   return { ...f, manifest, filename, save };
 }
 
-test('coverage binds actual tracked source bytes', t => {
+test('coverage binds actual tracked source bytes', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), captured = collectCoverage(f.root, f.coverage);
   assert.deepEqual(captured.files.map(file => file.path), ['src/service.mjs']);
   assert.match(captured.files[0].sha256, /^[a-f0-9]{64}$/);
@@ -157,7 +158,7 @@ test('coverage binds actual tracked source bytes', t => {
   assert.equal(captured.sourceKind, 'working-tree-bytes');
 });
 
-test('coverage metadata does not invoke a configured Git filesystem monitor', { skip: process.platform === 'win32' }, t => {
+test('coverage metadata does not invoke a configured Git filesystem monitor', { skip: (process.platform === 'win32') || NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), monitor = path.join(f.root, 'monitor.sh'), called = `${monitor}.called`;
   fs.writeFileSync(monitor, '#!/bin/sh\n: > "$0.called"\nprintf "token\\0"\n', { mode: 0o700 });
   f.git('config', 'core.fsmonitor', monitor);
@@ -168,7 +169,7 @@ test('coverage metadata does not invoke a configured Git filesystem monitor', { 
   assert.equal(fs.existsSync(called), false);
 });
 
-test('coverage metadata does not execute a configured clean filter', t => {
+test('coverage metadata does not execute a configured clean filter', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), marker = path.join(f.root, 'filter.marker'), filter = path.join(f.root, 'filter.cjs');
   fs.writeFileSync(filter, `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(marker)}, 'called'); process.stdout.write(fs.readFileSync(0));\n`);
   fs.writeFileSync(path.join(f.root, '.gitattributes'), 'src/service.mjs filter=FormalFixture\n');
@@ -184,7 +185,7 @@ test('coverage metadata does not execute a configured clean filter', t => {
   assert.equal(captured.files[0].sha256, crypto.createHash('sha256').update('export const value = 2;\n').digest('hex'));
 });
 
-test('coverage metadata does not execute an unwatched submodule clean filter', t => {
+test('coverage metadata does not execute an unwatched submodule clean filter', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), child = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-formal-submodule-'));
   t.after(() => fs.rmSync(child, { recursive: true, force: true }));
   const gitAt = (cwd, ...args) => {
@@ -210,7 +211,7 @@ test('coverage metadata does not execute an unwatched submodule clean filter', t
   assert.deepEqual(captured.files.map(file => file.path), ['src/service.mjs']);
 });
 
-test('coverage includes an untracked writer under a watched root', t => {
+test('coverage includes an untracked writer under a watched root', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), before = collectCoverage(f.root, f.coverage);
   fs.writeFileSync(path.join(f.root, 'src/new-writer.mjs'), 'export const writer = true;\n');
   const after = collectCoverage(f.root, f.coverage);
@@ -219,13 +220,13 @@ test('coverage includes an untracked writer under a watched root', t => {
   assert.equal(after.dirty, true);
 });
 
-test('coverage detects changed bytes without requiring a commit', t => {
+test('coverage detects changed bytes without requiring a commit', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), before = collectCoverage(f.root, f.coverage);
   fs.writeFileSync(path.join(f.root, 'src/service.mjs'), 'export const value = 2;\n');
   assert.notEqual(collectCoverage(f.root, f.coverage).digest, before.digest);
 });
 
-test('unrelated files do not alter declared coverage', t => {
+test('unrelated files do not alter declared coverage', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), before = collectCoverage(f.root, f.coverage);
   fs.writeFileSync(path.join(f.root, 'unrelated.md'), 'Unrelated notes.\n');
   assert.equal(collectCoverage(f.root, f.coverage).digest, before.digest);
@@ -287,7 +288,7 @@ test('tool errors and cancellation cannot supply formal evidence', () => {
   assert.equal(classifyTlc({ ...result(0, success), signal: 'SIGTERM' }, 'pass').pass, false);
 });
 
-test('missing prerequisites block without writing synchronization metadata', async t => {
+test('missing prerequisites block without writing synchronization metadata', { skip: NEEDS_NO_LAZY_FETCH }, async t => {
   const f = manifestFixture(t), source = fs.readFileSync(f.filename, 'utf8');
   const check = await runFormalVerification({ workspace: f.root, manifestPath: f.filename, maintain: true, rationale: 'Reviewed fixture coverage.', env: { ...process.env, AE_TLC_JAR: '' } });
   assert.equal(check.passed, false);

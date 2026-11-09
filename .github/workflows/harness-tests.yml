@@ -1,10 +1,13 @@
-# Runs the complete source suite, including prompt contracts, on every PR.
+# Pull requests run the fast tier: every test file whose recorded duration is
+# at most 30 seconds plus every new, unmeasured file (scripts/ci-tests.mjs
+# `--suite fast`), in one job. The complete suite runs on the machine that
+# opens the PR (`node scripts/full-suite.mjs`, which prints the receipt for the
+# PR description) and here only on manual dispatch, in four shards.
 name: Harness Tests
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,11 +18,11 @@ concurrency:
 
 jobs:
   suites:
-    name: linux-tests (${{ matrix.shard }}/4)
+    name: linux-tests (${{ matrix.suite }} ${{ matrix.shard }}/${{ matrix.shards }})
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[{"suite":"source","shard":1,"shards":4},{"suite":"source","shard":2,"shards":4},{"suite":"source","shard":3,"shards":4},{"suite":"source","shard":4,"shards":4}]' || '[{"suite":"fast","shard":1,"shards":1}]') }}
     runs-on: ubuntu-latest
     steps:
       # persist-credentials: false — nothing in this job talks to GitHub after
@@ -29,23 +32,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # Node 22: the lowest LTS the package's `engines: >=20` still admits
-      # (Node 20 left maintenance in April 2026). Single version on purpose —
-      # the suite is pure Node with one runtime dependency, so a matrix would
-      # buy little for double the compute. Add 24 here if that changes.
+      # Node 22 here; package-candidate.yml covers the `engines: >=20` floor
+      # and Node 24. The suite is pure Node over four bundled runtime
+      # dependencies, so one version keeps compute down.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: packages/ae/package-lock.json
 
-      # optionalDependencies are installed (npm ci's default). The suite is
-      # green either way for the four NATIVE tree-sitter-* grammar packages —
-      # their cases skip when absent, and no native build is required because
-      # each ships prebuilt binaries. `web-tree-sitter` is the one optional dep
-      # that must actually be present (treesitter-extractor's "runtime
-      # integrity mismatch" case asserts on the runtime rather than skipping);
-      # it is pure WASM/JS with no install script, so it resolves everywhere.
+      # No optionalDependencies: Tree-sitter's runtime and grammar WASM are
+      # vendored under packages/ae/lib/repo-map/vendor and checked by
+      # check:release, so the install needs no native build.
       - name: Install harness dependencies
         run: npm ci --prefix packages/ae
 
@@ -53,7 +51,9 @@ jobs:
         shell: bash
         env:
           HARNESS_PROOF_LOG: ${{ github.workspace }}/delivery-transcripts.jsonl
-        run: node scripts/ci-tests.mjs --shard ${{ matrix.shard }} --shards 4 2>&1 | tee harness-tests.log
+          # Flow-model and formal tests skip on Git < 2.45; CI must run them.
+          AE_REQUIRE_NO_LAZY_FETCH: '1'
+        run: node scripts/ci-tests.mjs --suite ${{ matrix.suite }} --shard ${{ matrix.shard }} --shards ${{ matrix.shards }} 2>&1 | tee harness-tests.log
 
       - name: Preserve test and installed-delivery output
         if: always()
@@ -82,7 +82,10 @@ jobs:
           pattern: linux-tests-*
           path: linux-shards
       - name: Require complete same-revision test inventory
-        run: node scripts/ci-tests.mjs --verify-manifests linux-shards --shards 4 --platform linux --node-major 22
+        env:
+          SUITE: ${{ github.event_name == 'workflow_dispatch' && 'source' || 'fast' }}
+          SHARDS: ${{ github.event_name == 'workflow_dispatch' && '4' || '1' }}
+        run: node scripts/ci-tests.mjs --verify-manifests linux-shards --suite "$SUITE" --shards "$SHARDS" --platform linux --node-major 22
       - name: Require every shard job to succeed
         if: always()
         env:

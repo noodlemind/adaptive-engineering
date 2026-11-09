@@ -34,7 +34,7 @@ export function resolveWriteLayer({ workspace, home, layerOverride = null, log =
     return { layer: 'branch', bucketKey: context.branchKey, context, defaultBranch, detached: true, branchWarning };
   }
   if (!context.branch) {
-        return { layer: 'golden', bucketKey: null, context, defaultBranch, branchWarning };
+    return { layer: 'golden', bucketKey: null, context, defaultBranch, branchWarning };
   }
   if (defaultBranch && context.branch === defaultBranch.name) {
     return { layer: 'golden', bucketKey: null, context, defaultBranch, branchWarning };
@@ -100,7 +100,7 @@ export function branchExists(workspace, branch) {
   if (refs === null) return null;
   return refs.some((r) => {
     if (r === `refs/heads/${branch}`) return true;
-        if (!r.startsWith('refs/remotes/')) return false;
+    if (!r.startsWith('refs/remotes/')) return false;
     const rest = r.slice('refs/remotes/'.length);
     const slash = rest.indexOf('/');
     return slash !== -1 && rest.slice(slash + 1) === branch;
@@ -127,8 +127,8 @@ export function migrateRenamedBucket(dir, { workspace, context }) {
   const target = assertNoSymlinkAncestors(dir, path.join('branches', context.branchKey));
   if (!target) return null;
   try {
-        const meta = source.meta || {};
-        if (!writeStoreFile(path.join(source.dir, 'meta.json'), JSON.stringify({ ...meta, branch: context.branch, branchKey: context.branchKey }) + '\n')) {
+    const meta = source.meta || {};
+    if (!writeStoreFile(path.join(source.dir, 'meta.json'), JSON.stringify({ ...meta, branch: context.branch, branchKey: context.branchKey }) + '\n')) {
       return null;
     }
     fs.renameSync(containedSource, target);

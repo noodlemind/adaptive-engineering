@@ -130,3 +130,32 @@ test('inventory proof rejects missing shards, duplicate files, stale revisions a
   assert.throws(() => verifyShardManifests([{ ...manifests[0], sourceSha: 'old' }, manifests[1]], expected), /source|revision/i);
   assert.throws(() => verifyShardManifests([{ ...manifests[0], results: [] }, manifests[1]], expected), /execution|inventory/i);
 });
+
+test('the fast pull-request tier keeps quick and unmeasured files and leaves slow ones to the full suite', async () => {
+  const { FAST_FILE_LIMIT_MS, readCosts } = await import('../../../scripts/ci-tests.mjs');
+  const root = path.resolve(import.meta.dirname, '../../..');
+  const all = readSuiteFiles(root, 'source');
+  const fast = readSuiteFiles(root, 'fast');
+  const costs = readCosts(root);
+  assert.ok(fast.length > all.length / 2, 'the fast tier must still cover most files');
+  assert.ok(fast.length < all.length);
+  for (const file of all) {
+    const quick = !Object.hasOwn(costs, file) || costs[file] <= FAST_FILE_LIMIT_MS;
+    assert.equal(fast.includes(file), quick, file);
+  }
+  assert.ok(fast.includes('ci-test-shards.test.mjs'));
+});
+
+test('the local full-suite receipt is valid only for a passing run at a clean HEAD', async () => {
+  const { checkReceipt, receiptLine } = await import('../../../scripts/full-suite.mjs');
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const receipt = { head, dirty: false, passed: true, files: 2, tests: 10, platform: 'win32', node: '22.11.0', durationMs: 180000 };
+  assert.equal(checkReceipt(receipt, { head, dirty: false }), null);
+  assert.match(receiptLine(receipt), /^Full suite: PASS · 10 tests in 2 files · win32 Node 22\.11\.0 · abcdef012345 · 3 min$/);
+  assert.match(checkReceipt(null, { head, dirty: false }), /no full-suite receipt/);
+  assert.match(checkReceipt({ ...receipt, head: '1'.repeat(40) }, { head, dirty: false }), /receipt is for/);
+  assert.match(checkReceipt({ ...receipt, dirty: true }, { head, dirty: false }), /uncommitted/);
+  assert.match(checkReceipt(receipt, { head, dirty: true }), /uncommitted/);
+  assert.match(checkReceipt({ ...receipt, passed: false }, { head, dirty: false }), /failed/);
+  assert.match(receiptLine({ ...receipt, passed: false, dirty: true }), /^Full suite: FAIL .*\(uncommitted changes\)/);
+});

@@ -51,7 +51,7 @@ export function storePathParts(file) {
   // <layerRoot>/learnings/<domain>/<slug>.md — exactly one domain level.
   if (n >= 4 && at(n - 3) === 'learnings' && at(n - 2) && String(at(n - 1)).endsWith('.md')) {
     const layerParts = seg.slice(0, n - 3);
-        const isBucket = layerParts.length >= 2 && layerParts[layerParts.length - 2] === 'branches';
+    const isBucket = layerParts.length >= 2 && layerParts[layerParts.length - 2] === 'branches';
     const rootParts = isBucket ? layerParts.slice(0, layerParts.length - 2) : layerParts;
     return parts(rootParts, full, 'learning', isBucket);
   }

@@ -96,7 +96,7 @@ function runs({ workspace }) {
     .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))
     .slice(0, MAX_VALUES)
     .map((r) => item(r.run, {
-            label: String(r.run ?? '').slice(0, 8),
+      label: String(r.run ?? '').slice(0, 8),
       note: [r.command, r.status].filter(Boolean).join(' · '),
     }));
 }
@@ -138,7 +138,7 @@ export function resolveValues(choices, { workspace = process.cwd(), copilotHome 
   try {
     items = resolver({ workspace, copilotHome, parentEnv, values, query }) || [];
   } catch {
-        return { items: [], free: true };
+    return { items: [], free: true };
   }
   return { items: items.slice(0, MAX_VALUES), free: FREE.has(choices.source) || items.length === 0 };
 }

@@ -25,7 +25,7 @@ function readMarks(workspace) {
     const parsed = JSON.parse(raw);
     return new Set(Array.isArray(parsed?.marked) ? parsed.marked : []);
   } catch {
-        return new Set();
+    return new Set();
   }
 }
 
@@ -73,14 +73,14 @@ export function createLedger({
   const marks = readMarks(workspace);
 
   function hydrate({ limit = HYDRATE_LIMIT, restoreWorthy = null } = {}) {
-        if (!journaling) return [];
+    if (!journaling) return [];
     let folded;
     try {
       folded = foldRuns(readJournal(workspace));
     } catch {
       return [];
     }
-        const worthKeeping = restoreWorthy ?? ((r) => {
+    const worthKeeping = restoreWorthy ?? ((r) => {
       if (r.command === 'tui') return false;
       if (r.status !== 'succeeded') return true;
       return !['search', 'lookup', 'tree', 'run', 'orient', 'status', 'get', 'recall', 'help', 'doctor', 'report'].includes(r.command);
@@ -122,7 +122,7 @@ export function createLedger({
       kind,
       cwd: workspace,
     });
-        block.argv = [...argv];
+    block.argv = [...argv];
     block._startedMs = now();
     block._plan = plan;
     blocks.push(block);
@@ -143,7 +143,7 @@ export function createLedger({
         harnessVersion,
       });
     } catch {
-            block.run = null;
+      block.run = null;
     }
     return block;
   }
@@ -203,14 +203,14 @@ export function createLedger({
       if (!wanted) return null;
       const exact = blocks.find((b) => b.id === wanted || b.run === wanted);
       if (exact) return exact;
-            const matches = (v) => String(v ?? '').startsWith(wanted) || String(v ?? '').endsWith(wanted);
+      const matches = (v) => String(v ?? '').startsWith(wanted) || String(v ?? '').endsWith(wanted);
       const hits = blocks.filter((b) => matches(b.id) || matches(b.run));
       return hits.length === 1 ? hits[0] : null;
     },
     /** Toggle a mark, persisting it. Returns the new state, or null when the
      * block has no durable id to hang a mark on. */
     toggleMark(block) {
-            if (!block?.run) return null;
+      if (!block?.run) return null;
       const key = block.run;
       block.marked = !block.marked;
       if (block.marked) marks.add(key);

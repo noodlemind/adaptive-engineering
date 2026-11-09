@@ -26,7 +26,7 @@ function notFoundError(message, hint) {
 function readChecks(workspace, options) {
   const { checks, error } = loadNamedChecks(workspace, options);
   if (error) {
-        throw notFoundError(error, 'define version: 1 checks in the selected project authority shown by ae init-repo');
+    throw notFoundError(error, 'define version: 1 checks in the selected project authority shown by ae init-repo');
   }
   return checks;
 }
@@ -164,7 +164,7 @@ export async function cmdChecks(argv, ctx = {}) {
         note: result.outcome.message,
         keyWidth,
       }));
-            for (const stream of ['stdout', 'stderr']) {
+      for (const stream of ['stdout', 'stderr']) {
         const text = result.outcome[stream];
         if (text) console.log(`${stream}:\n${String(text).split('\n').map(inertLine).join('\n')}`);
       }

@@ -39,7 +39,7 @@ export function tokenize(s) {
   for (const token of raw) {
     const lower = token.toLowerCase();
     const parts = identifierParts(token);
-        if (lower.length > 2 && !STOPWORDS.has(lower)) out.add(stem(lower));
+    if (lower.length > 2 && !STOPWORDS.has(lower)) out.add(stem(lower));
     if (parts.length > 1) {
       for (const part of parts) {
         if (part.length > 2 && !STOPWORDS.has(part)) out.add(stem(part));

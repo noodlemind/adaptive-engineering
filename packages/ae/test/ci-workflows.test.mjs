@@ -46,17 +46,27 @@ test('full suites retain discovery and replace the repeated delivery and adaptiv
   assert.deepEqual(Object.keys(linux.jobs), ['suites', 'test']);
   assert.equal(linux.on.pull_request?.paths, undefined);
   assert.equal(windows.on.pull_request?.paths, undefined);
-  assert.deepEqual(linux.jobs.suites.strategy.matrix.shard, [1, 2, 3, 4]);
+  assert.deepEqual(Object.keys(linux.on).sort(), ['pull_request', 'workflow_dispatch'], 'the complete suite runs locally; CI runs it only on dispatch');
+  const linuxMatrix = expression => {
+    const [, dispatch, pullRequest] = /^\$\{\{ fromJSON\(github\.event_name == 'workflow_dispatch' && '(.+)' \|\| '(.+)'\) \}\}$/.exec(expression);
+    return { dispatch: JSON.parse(dispatch), pullRequest: JSON.parse(pullRequest) };
+  };
+  const { dispatch, pullRequest } = linuxMatrix(linux.jobs.suites.strategy.matrix.include);
+  assert.deepEqual(dispatch, [1, 2, 3, 4].map(shard => ({ suite: 'source', shard, shards: 4 })));
+  assert.deepEqual(pullRequest, [{ suite: 'fast', shard: 1, shards: 1 }]);
   assert.equal(linux.jobs.suites.strategy['fail-fast'], false);
-  assert.match(suite(linux.jobs.suites).run, /node scripts\/ci-tests\.mjs --shard \$\{\{ matrix.shard \}\} --shards 4/);
+  assert.match(suite(linux.jobs.suites).run, /node scripts\/ci-tests\.mjs --suite \$\{\{ matrix.suite \}\} --shard \$\{\{ matrix.shard \}\} --shards \$\{\{ matrix.shards \}\}/);
   assert.equal(linux.jobs.test.needs, 'suites');
   assert.equal(linux.jobs.test.if, 'always()');
-  assert.ok(linux.jobs.test.steps.some(step => /--verify-manifests linux-shards --shards 4/.test(step.run || '')));
+  const inventory = linux.jobs.test.steps.find(step => /--verify-manifests linux-shards --suite "\$SUITE" --shards "\$SHARDS"/.test(step.run || ''));
+  assert.equal(inventory.env.SUITE, "${{ github.event_name == 'workflow_dispatch' && 'source' || 'fast' }}");
+  assert.equal(inventory.env.SHARDS, "${{ github.event_name == 'workflow_dispatch' && '4' || '1' }}");
   assert.deepEqual(windows.jobs.tests.strategy.matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.equal(windows.jobs.tests.strategy['fail-fast'], false);
   assert.match(suite(windows.jobs.tests).run, /node scripts\/ci-tests\.mjs --shard \$\{\{ matrix.shard \}\} --shards 12/);
-  assert.equal(windows.jobs.windows.needs, 'tests');
-  assert.equal(windows.jobs.windows.if, 'always()');
+  assert.deepEqual(windows.jobs.windows.needs, ['scope', 'tests']);
+  assert.match(windows.jobs.windows.if, /^always\(\) && /);
+  assert.match(windows.jobs.windows.if, /needs\.scope\.result != 'success'/, 'a broken scope job must not skip Windows');
   for (const file of ['deterministic-delivery', 'insight-compound', 'domain-commands', 'windows-authority', 'ci-workflows']) {
     assert.ok(fs.existsSync(new URL(`packages/ae/test/${file}.test.mjs`, root)), file);
   }
@@ -81,7 +91,7 @@ test('Linux log capture preserves the real suite exit code', { skip: process.pla
   assert.equal(command.shell, 'bash');
   for (const code of [0, 7]) {
     fs.writeFileSync(node, `#!/bin/sh\nprintf 'suite-marker\\n'\nexit ${code}\n`, { mode: 0o755 });
-    const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', command.run.replaceAll('${{ matrix.shard }}', '1')], {
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', command.run.replaceAll('${{ matrix.suite }}', 'fast').replaceAll('${{ matrix.shard }}', '1').replaceAll('${{ matrix.shards }}', '1')], {
       cwd: directory, encoding: 'utf8', timeout: 5000,
       env: { ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH}` },
     });
@@ -103,7 +113,8 @@ test('Windows consolidation retains the native probes and the final fail-closed 
   const gate = job.steps.at(-1);
   assert.equal(gate.name, 'Windows probe gate');
   assert.equal(gate.if, 'always()');
-  assert.equal(gate.env.SUITE_OUTCOME, '${{ needs.tests.result }}');
+  assert.equal(gate.env.SUITE_OUTCOME, "${{ needs.scope.outputs.full == 'true' && needs.tests.result || steps.subset.outcome }}");
+  assert.equal(gate.env.SUITE_SCOPE, "${{ needs.scope.outputs.full == 'true' && 'full' || 'subset' }}");
   assert.equal(gate.env.INVENTORY_OUTCOME, '${{ steps.inventory.outcome }}');
   assert.equal(gate.env.REDACTION_RESULT, '${{ steps.redaction.outputs.result }}');
   assert.equal(gate.env.CANCELLATION_RESULT, '${{ steps.cancellation.outputs.result }}');
@@ -153,8 +164,8 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.match(candidate.concurrency.group, /github\.workflow/);
   assert.match(candidate.concurrency.group, /github\.ref/);
   const job = candidate.jobs.archive;
-  assert.deepEqual(job.strategy.matrix.os, ['ubuntu-latest', 'windows-latest']);
-  assert.deepEqual(job.strategy.matrix.node, ['20', '24']);
+  assert.equal(job.strategy.matrix.os, `\${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}`, 'PRs install on Linux; manual qualification adds Windows');
+  assert.equal(job.strategy.matrix.node, `\${{ fromJSON(github.event_name == 'pull_request' && '["24"]' || '["20", "24"]') }}`, 'PRs install on Node 24; manual qualification adds Node 20');
   const runtime = job.steps.find(step => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(runtime.with['node-version'], '${{ matrix.node }}');
   const release = job.steps.find(step => step.name === 'Validate release contracts');
@@ -174,6 +185,7 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.match(upload(job).with.name, /matrix\.node/);
   assert.equal(job.steps.some(step => step.name === 'Validate Git integration regressions'), false, 'archive feedback must not wait for unrelated source suites');
   const git = candidate.jobs['git-regressions'];
+  assert.equal(git.if, "github.event_name != 'pull_request'", 'Git regressions repeat full-suite files on PRs; they run on manual qualification');
   assert.equal(git.strategy['fail-fast'], false);
   const expected = [];
   for (const os of ['ubuntu-latest', 'windows-latest']) for (const node of ['20', '24']) {
@@ -189,7 +201,10 @@ test('package qualification filters its inputs, cancels stale runs and keeps bot
   assert.ok(gate.steps.some(step => /--verify-manifests git-shards.*--suite git/.test(step.run || '')));
   const result = gate.steps.find(step => step.name === 'Require archive and Git regression success');
   assert.equal(result.env.ARCHIVE_RESULT, '${{ needs.archive.result }}');
-  assert.equal(result.env.GIT_RESULT, "${{ needs['git-regressions'].result }}");
+  assert.equal(result.env.GIT_RESULT, "${{ github.event_name == 'pull_request' && 'success' || needs['git-regressions'].result }}");
+  for (const step of gate.steps.filter(item => item.uses?.startsWith('actions/download-artifact@') || item.name === 'Require complete same-revision Git inventory')) {
+    assert.equal(step.if, "github.event_name != 'pull_request'");
+  }
   assert.match(result.run, /success/);
 });
 
@@ -206,5 +221,94 @@ test('stable Linux and package gates refuse failed, cancelled, skipped or absent
       vm.runInNewContext(code, { process: { env, exit(value) { exitCode = value; } } });
       assert.equal(exitCode, status === 'success' ? 0 : 1, `${field}: ${status}`);
     }
+  }
+});
+
+test('the complete Windows suite runs only on dispatch; pull requests get one subset job', () => {
+  const windows = workflow('harness-windows');
+  assert.equal(windows.jobs.tests.needs, 'scope');
+  assert.equal(windows.jobs.tests.if, "needs.scope.outputs.full == 'true'");
+  assert.equal(windows.jobs.scope['runs-on'], 'ubuntu-latest');
+  const job = windows.jobs.windows;
+  const subset = job.env.WINDOWS_SUBSET.trim().split(/\s+/);
+  assert.ok(subset.length >= 20, 'the pull-request subset must stay meaningful');
+  assert.equal(new Set(subset).size, subset.length);
+  for (const file of subset) assert.ok(fs.existsSync(new URL(`packages/ae/test/${file}`, root)), file);
+  for (const file of ['hook-runtime.test.mjs', 'host-native-hooks.test.mjs', 'cli-vscode-hooks.test.mjs', 'runner.test.mjs', 'paths.test.mjs', 'redact.test.mjs', 'windows-authority.test.mjs', 'windows-workflow.test.mjs', 'ci-workflows.test.mjs']) {
+    assert.ok(subset.includes(file), file);
+  }
+  const step = job.steps.find(item => item.id === 'subset');
+  assert.equal(step.if, "env.FULL_SUITE != 'true'");
+  assert.match(step.run, /--test-concurrency=2 @files/);
+  assert.match(step.run, /exit \$code/);
+  assert.ok(upload(job).with.path.includes('windows-subset.log'));
+});
+
+test('Windows scope skips unrelated pull requests and runs the full suite only on demand', { skip: process.platform === 'win32' }, t => {
+  const decide = workflow('harness-windows').jobs.scope.steps.find(step => step.id === 'decide');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-ci-scope-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', ['-c', 'user.email=ci@example.com', '-c', 'user.name=ci', ...args], { cwd: directory, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const run = event => {
+    const output = path.join(directory, '..', `${path.basename(directory)}-out`);
+    const summary = `${output}-summary`;
+    fs.writeFileSync(output, '');
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-c', decide.run], {
+      cwd: directory, encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, EVENT: event, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const values = Object.fromEntries(fs.readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')));
+    fs.rmSync(output, { force: true });
+    fs.rmSync(summary, { force: true });
+    return values;
+  };
+  // Model the pull_request merge commit: HEAD^1 is the base tip.
+  const commit = (file, message) => {
+    fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+    fs.writeFileSync(path.join(directory, file), message);
+    git('add', '-A');
+    git('commit', '-q', '-m', message);
+  };
+  git('init', '-q');
+  commit('README.md', 'base');
+  commit('docs/guide.md', 'docs only');
+  assert.deepEqual(run('pull_request'), { run: 'false', full: 'false' });
+  commit('packages/ae/lib/hooks.mjs', 'hook change');
+  assert.deepEqual(run('pull_request'), { run: 'true', full: 'false' });
+  commit('.github/workflows/harness-windows.yml', 'workflow change');
+  assert.deepEqual(run('pull_request'), { run: 'true', full: 'false' });
+  assert.deepEqual(run('workflow_dispatch'), { run: 'true', full: 'true' });
+});
+
+test('the full-suite receipt workflow only warns and reads the PR body through the environment', () => {
+  const receipt = workflow('full-suite-receipt');
+  assert.deepEqual(receipt.on.pull_request.types, ['opened', 'edited', 'synchronize', 'reopened', 'ready_for_review']);
+  const step = receipt.jobs.receipt.steps.at(-1);
+  assert.equal(step.env.PR_BODY, '${{ github.event.pull_request.body }}');
+  assert.doesNotMatch(step.run, /\$\{\{/, 'no expression may be interpolated into the script');
+  assert.match(step.run, /::warning /);
+  assert.doesNotMatch(step.run, /exit 1/);
+});
+
+test('the receipt check recognizes a passing receipt only for the head commit', { skip: process.platform === 'win32' }, () => {
+  const step = workflow('full-suite-receipt').jobs.receipt.steps.at(-1);
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const check = body => spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', step.run], {
+    encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, PR_BODY: body, HEAD_SHA: head, GITHUB_STEP_SUMMARY: '/dev/null' },
+  });
+  for (const [body, found] of [
+    ['Full suite: PASS · 10 tests in 2 files · win32 Node 22.11.0 · abcdef012345 · 3 min', true],
+    ['Full suite: FAIL · 10 tests in 2 files · win32 Node 22.11.0 · abcdef012345 · 3 min', false],
+    ['Full suite: PASS · 10 tests in 2 files · win32 Node 22.11.0 · 999999999999 · 3 min', false],
+    ['Full suite: not run', false],
+  ]) {
+    const result = check(body);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(/::warning /.test(result.stdout), !found, body);
   }
 });

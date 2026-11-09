@@ -213,7 +213,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
   if (copilotSelected) {
     allStats.vscode = syncAssetsToTarget(assets, copilotHome, flags, logger);
     seedProfile(assets, copilotHome, flags, logger);
-        allStats.bundles = syncBundles({
+    allStats.bundles = syncBundles({
       copilotHome,
       shippedFiles: new Set(collectAllAssetFiles(assets)),
       trustedNames: approvedBundleNames(copilotHome),
@@ -295,7 +295,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
   const checkReadiness = workspace.checkReadiness || inspectCheckReadiness({ workspace: runnerWorkspace, copilotHome, home: flags.harnessHome });
   const installation = { status: flags.dryRun ? 'planned' : 'completed', runtime: path.join(copilotSelected ? path.join(copilotHome, '.ae-bin') : pkgRoot, 'bin/ae.mjs') };
   if (flags.json) {
-        console.log(
+    console.log(
       redactedJson(
         {
           command,
@@ -370,7 +370,7 @@ export async function cmdInstallOrUpgrade(command, argv) {
       }
       console.log(formatWorkspaceOutcome(workspace));
       printNext('ae doctor');
-            if (command === 'upgrade') {
+      if (command === 'upgrade') {
         const workspace = path.resolve(flags.workspace);
         const leftovers = leftoverWorkspaceArtifacts(workspace);
         if (leftovers.length) {
@@ -413,7 +413,7 @@ export async function cmdDoctor(argv) {
     if (shown.length) {
       const keyWidth = keyWidthFor(shown.map((c) => c.id));
       for (const c of shown) {
-                const hint = c.pass ? undefined : String(c.hint ?? '').replace(/^Run:\s*/i, '');
+        const hint = c.pass ? undefined : String(c.hint ?? '').replace(/^Run:\s*/i, '');
         console.log(
           ui.line({
             state: c.pass ? 'ok' : c.optional ? 'warn' : 'error',
@@ -661,7 +661,7 @@ export async function cmdIndex(argv) {
     const extractor = await createTreesitterExtract();
     const result = await buildStructuralIndex({ workspace, extractor, since, dryRun: flags.dryRun, log: logger });
     const integrity = (result.meta.integrityFailures || []).length > 0;
-        const persistFailed = !flags.dryRun && !result.written;
+    const persistFailed = !flags.dryRun && !result.written;
     writeEvent(workspace, flags, {
       type: 'index',
       command: 'index',
@@ -706,7 +706,7 @@ export async function cmdIndex(argv) {
         result.meta.callEdgesTruncated ? 'call edges' : null,
         result.meta.unresolvedTruncated ? 'unresolved' : null,
       ].filter(Boolean);
-            const deltaNote =
+      const deltaNote =
         `symbols +${result.delta.added.count} −${result.delta.removed.count} ~${result.delta.changed.count}` +
         (result.basedOn ? ' vs prior index' : ' (no prior index)') +
         (truncatedTables.length ? ` · TRUNCATED at build caps (${truncatedTables.join(', ')})` : '') +
@@ -766,7 +766,7 @@ export async function cmdIndex(argv) {
         for (const l of listLearnings(dir)) {
           const anchors = l.fm.anchors || [];
           if (!anchors.length) continue;
-                    const missing = anchors.filter((a) => {
+          const missing = anchors.filter((a) => {
             const full = assertNoSymlinkAncestors(workspace, a);
             return !full || !fs.existsSync(full);
           });
@@ -1041,13 +1041,13 @@ export async function cmdVerify(argv, ctx = {}) {
       evidencePath: result.evidencePath,
       checks: result.checks.map((c) => ({ id: c.id, status: c.status, unifiedStatus: unifiedStatusForCheck(c) })),
     });
-        await jsonl.drained();
+    await jsonl.drained();
     return exitCode;
   }
 
   if (flags.json) emitJson(flags, result);
   else {
-        const gating = isGatingCheck;
+    const gating = isGatingCheck;
     const failed = result.checks.filter(gating).length;
     const passed = result.outcome === 'passed';
     console.log(
@@ -1062,7 +1062,7 @@ export async function cmdVerify(argv, ctx = {}) {
         note: result.evidencePath,
       })
     );
-        if (result.projectPolicyIgnored) {
+    if (result.projectPolicyIgnored) {
       console.log(
         ui.line({
           state: 'warn',
@@ -1072,7 +1072,7 @@ export async function cmdVerify(argv, ctx = {}) {
         })
       );
     }
-        if (result.projectPolicyError) {
+    if (result.projectPolicyError) {
       console.log(
         ui.line({
           state: 'warn',
@@ -1082,7 +1082,7 @@ export async function cmdVerify(argv, ctx = {}) {
         })
       );
     }
-        for (const refused of result.refusedSeverityDowngrades || []) {
+    for (const refused of result.refusedSeverityDowngrades || []) {
       console.log(
         ui.line({
           state: 'warn',
@@ -1096,7 +1096,7 @@ export async function cmdVerify(argv, ctx = {}) {
     if (passed) {
       printNext('ae compound (or /auto-compound), then stop');
     } else if (!cancelled) {
-            const firstFail = result.checks.find(gating);
+      const firstFail = result.checks.find(gating);
 
       if (firstFail) {
         const detail = String(firstFail.message ?? firstFail.name ?? '').slice(0, 100);
@@ -1732,9 +1732,9 @@ export async function cmdKnowledge(argv) {
   if (subcommand === 'purge') {
     const rawTarget = argv[1];
     const isAll = rawTarget === '--all';
-        const target = !isAll && rawTarget && !rawTarget.startsWith('--') ? rawTarget : null;
+    const target = !isAll && rawTarget && !rawTarget.startsWith('--') ? rawTarget : null;
     const logger = (m) => log(flags, m);
-        const result = isAll
+    const result = isAll
       ? purgeAll({ workspace, log: logger, home: flags.home || process.env.HARNESS_HOME })
       : purgeEpisode({
           workspace,
@@ -1922,7 +1922,7 @@ export async function cmdKnowledge(argv) {
     if (flags.json) {
       emitJson(flags, result);
     } else {
-            for (const p of result.preview || []) {
+      for (const p of result.preview || []) {
         console.log(
           ui.paint(
             'muted',
@@ -2096,7 +2096,7 @@ export async function cmdGet(argv) {
     emitJson(flags, result);
   } else {
     console.log(ui.line({ key: 'get', value: result.docid || result.path, keyWidth: 3 }));
-        console.log(result.excerpt.split('\n').map(inertLine).join('\n'));
+    console.log(result.excerpt.split('\n').map(inertLine).join('\n'));
   }
   return 0;
 }

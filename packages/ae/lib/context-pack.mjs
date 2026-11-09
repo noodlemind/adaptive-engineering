@@ -18,8 +18,8 @@ export function buildLearningsLines(learnings) {
   lines.push(`Retrieved learnings: ${learnings.map((l) => l.id).join(', ')}`);
   for (const l of learnings) {
     const fence = l.advisory ? ' [unverified memory — advisory]' : '';
-        const layerMark = l.layer === 'branch' ? (l.subordinate ? ' [branch-local, subordinate]' : ' [branch-local]') : '';
-        const applies = l.applies ? ` applies ${inertLine(redactSecrets(l.applies))}` : '';
+    const layerMark = l.layer === 'branch' ? (l.subordinate ? ' [branch-local, subordinate]' : ' [branch-local]') : '';
+    const applies = l.applies ? ` applies ${inertLine(redactSecrets(l.applies))}` : '';
     const doesNot = l.does_not_apply ? ` does not apply ${inertLine(redactSecrets(l.does_not_apply))}` : '';
     const applicability = l.applicability ? ` [applicability: ${['current', 'needs-review', 'unknown'].includes(l.applicability.state) ? l.applicability.state : 'unknown'}; source bindings only]` : '';
     lines.push(
@@ -87,7 +87,7 @@ export function buildContextPack({
   }
 
   if (activePlan) {
-        lines.push('', '## Active plan', `- Path: \`${inertLine(activePlan.path)}\``);
+    lines.push('', '## Active plan', `- Path: \`${inertLine(activePlan.path)}\``);
     lines.push(`- status: ${activePlan.status} | plan_lock: ${activePlan.plan_lock} | phase: ${activePlan.phase}`);
     if (activePlan.memoryExcerpt) {
       lines.push('', '### Memory Cards (excerpt)', activePlan.memoryExcerpt);
@@ -192,9 +192,9 @@ export function buildContextPack({
   if (!recall.length) {
     lines.push('- _(no manifest matches — run `ae index`)_');
   } else {
-        lines.push(RECALL_DATA_PREAMBLE);
+    lines.push(RECALL_DATA_PREAMBLE);
     for (const r of recall) {
-            const docid = inertLine(r.docid || r.id);
+      const docid = inertLine(r.docid || r.id);
       const label = r.kind === 'insight' ? ' [insight]' : '';
       const title = inertLine(redactSecrets(r.title || docid));
       lines.push(`- **${title}**${label} (\`${inertLine(r.path)}\`, docid \`${docid}\`, score ${r.score.toFixed(2)})`);
@@ -208,7 +208,7 @@ export function buildContextPack({
     lines.push('- _(no title overlap)_');
   } else {
     for (const p of plans) {
-            lines.push(`- \`${inertLine(p.path)}\` status=${p.status} lock=${p.plan_lock} score=${p.score?.toFixed?.(2) ?? p.score}`);
+      lines.push(`- \`${inertLine(p.path)}\` status=${p.status} lock=${p.plan_lock} score=${p.score?.toFixed?.(2) ?? p.score}`);
     }
   }
 
@@ -236,16 +236,16 @@ export function buildContextPack({
     const prefix = prefixBudget > 0 ? clipUtf8(body.slice(0, gateAt), prefixBudget) : '';
     body = `${prefix}${marker}${protectedBlock}${nextTools}\n`;
   } else if (Buffer.byteLength(body, 'utf8') > MAX_BYTES) {
-        const budget = MAX_BYTES - 80;
+    const budget = MAX_BYTES - 80;
     const buf = Buffer.from(body, 'utf8').subarray(0, budget);
-        let leadIdx = buf.length - 1;
+    let leadIdx = buf.length - 1;
     while (leadIdx >= 0 && (buf[leadIdx] & 0xc0) === 0x80) leadIdx--;
     let end = buf.length;
     if (leadIdx >= 0 && leadIdx < buf.length) {
       const lead = buf[leadIdx];
-            const seqLen =
+      const seqLen =
         (lead & 0x80) === 0x00 ? 1 : (lead & 0xe0) === 0xc0 ? 2 : (lead & 0xf0) === 0xe0 ? 3 : (lead & 0xf8) === 0xf0 ? 4 : 1;
-            if (leadIdx + seqLen > buf.length) end = leadIdx;
+        if (leadIdx + seqLen > buf.length) end = leadIdx;
     }
     body = buf.subarray(0, end).toString('utf8') + '\n\n…(truncated to 2KB budget)\n';
   }

@@ -88,7 +88,7 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
   const episodes = [];
   for (const { dir, base } of roots) {
     const dirRel = path.relative(base, dir);
-        if (!assertNoSymlinkAncestors(base, dirRel)) continue;
+    if (!assertNoSymlinkAncestors(base, dirRel)) continue;
     for (const cat of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!cat.isDirectory()) continue;
       const catRel = path.join(dirRel, cat.name);
@@ -99,7 +99,7 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
         const fileRel = path.join(catRel, f);
         const full = assertNoSymlinkAncestors(base, fileRel);
         if (!full) continue; // symlinked leaf (or any ancestor) — never follow
-                const text = readFileNoFollow(full, { root: base });
+        const text = readFileNoFollow(full, { root: base });
         if (text === null) continue;
         const fm = parseFrontmatter(text);
         episodes.push({

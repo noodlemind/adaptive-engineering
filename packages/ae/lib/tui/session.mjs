@@ -24,7 +24,7 @@ export function tokenize(line) {
     started = true;
   }
   if (quote) {
-        throw Object.assign(new Error(`unterminated ${quote === '"' ? 'double' : 'single'} quote`), {
+    throw Object.assign(new Error(`unterminated ${quote === '"' ? 'double' : 'single'} quote`), {
       code: 'E_USAGE', exit: 2, hint: 'close the quote, or drop it',
     });
   }
@@ -142,8 +142,8 @@ export function interpretLine(rawLine) {
 
     if (line.startsWith('!!')) {
     const target = line.slice(2).trim();
-        if (!target) return { kind: 'rerun', target: null };
-        if (/^[0-9a-z]+(-[0-9a-z]+)*$/i.test(target) && target.replace(/-/g, '').length >= 4) {
+    if (!target) return { kind: 'rerun', target: null };
+    if (/^[0-9a-z]+(-[0-9a-z]+)*$/i.test(target) && target.replace(/-/g, '').length >= 4) {
       return { kind: 'rerun', target };
     }
     return {
@@ -178,7 +178,7 @@ export function interpretLine(rawLine) {
   }
 
   if (line.startsWith('/')) {
-        return { kind: 'palette', query: line.slice(1).trim() };
+    return { kind: 'palette', query: line.slice(1).trim() };
   }
 
   if (line.startsWith('@')) {

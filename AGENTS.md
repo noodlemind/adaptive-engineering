@@ -13,11 +13,13 @@ User documentation lives in `README.md` and `docs/`. The concept and contract ov
 ```bash
 npm ci --prefix packages/ae
 cd packages/ae
-npm test               # full suite (Linux and Windows in CI)
+npm test               # full suite (CI runs only a fast tier on PRs)
 npm run check:repo     # repository contract tests, including docs and links
 npm run check:engineer # generated Engineer files match the contract
 npm run check:release  # versions, packaged assets and prompt budgets
 ```
+
+Before opening or updating a PR, run `node scripts/full-suite.mjs` from the repository root and paste the receipt line it prints into the PR description; PR CI runs only a fast tier (see `.github/CI.md`).
 
 On macOS, run tests with `TMPDIR="$(cd "$TMPDIR" && pwd -P)/"`; AE refuses the redirected `/var` temporary path. Run the CLI from source with `node packages/ae/bin/ae.mjs`.
 

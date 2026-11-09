@@ -50,8 +50,18 @@ export async function guardNestedRendererWorkers() {
   syncBuiltinESMExports();
 }
 
+function d2PackageJson() {
+  for (const directory of require.resolve.paths('@d2lang/d2') || []) {
+    const candidate = path.join(directory, '@d2lang', 'd2', 'package.json');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error('bundled d2 package metadata is missing');
+}
+
 function assertVersion(engine) {
-  const location = engine === 'pele' ? require.resolve('pele/package.json') : path.resolve(path.dirname(require.resolve('@d2lang/d2')), '../../package.json');
+  // D2 exports no package.json, and the installed runtime keeps only its node-esm build,
+  // so locate the manifest through the module search path instead of a resolved entry.
+  const location = engine === 'pele' ? require.resolve('pele/package.json') : d2PackageJson();
   const metadata = JSON.parse(fs.readFileSync(location, 'utf8'));
   if (metadata.version !== VERSIONS[engine]) throw new Error(`bundled ${engine} version must be ${VERSIONS[engine]}, found ${metadata.version}`);
 }

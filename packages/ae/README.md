@@ -9,7 +9,7 @@
 
 ## Install
 
-`ae-harness` is not yet published to the npm registry. From the repository root:
+`ae-harness` is not yet published to the npm registry. It needs Node 20+ and Git on PATH; flow models and formal verification also need Git 2.45+ (`--no-lazy-fetch`), which `ae doctor` reports as check R3. From the repository root:
 
 ```bash
 npm install -g ./packages/ae
@@ -156,4 +156,4 @@ The bundled VS Code bridge has its own version in `vscode-extension/package.json
 bin/ae.mjs   lib/   test/   eval/   corpus/   config/
 ```
 
-Runtime libraries are `yaml`, Pele and D2/WASM. Pinned Tree-sitter grammars ship inside the package, so no native parser build or runtime download is needed. Diagram rendering uses bundled assets only. See [third-party notices](THIRD-PARTY-NOTICES.md).
+Node 20+ and Git (2.45+ for flow models and formal verification). Runtime libraries are `yaml`, Pele and D2/WASM. Pinned Tree-sitter grammars ship inside the package, so no native parser build or runtime download is needed. Diagram rendering uses bundled assets only. See [third-party notices](THIRD-PARTY-NOTICES.md).

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { tempDir } from './helpers/temp.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { prepareFlowModel, publishFlowModel, showFlowModel, flowModelStatus, flowModelContext, flowMaintenance } from '../lib/flow-model.mjs';
+import { NEEDS_NO_LAZY_FETCH } from './helpers/git-features.mjs';
 
 function fixture(t) {
   const root = tempDir('ae-flow-model #-'), workspace = path.join(root, 'product'), home = path.join(root, 'private');
@@ -68,7 +69,7 @@ catch (failure) { console.log(failure.message); }
   assert.equal(fs.existsSync(f.home), false);
 });
 
-test('preparation binds default-branch bytes, including while a feature worktree differs', t => {
+test('preparation binds default-branch bytes, including while a feature worktree differs', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   f.git('checkout', '-qb', 'feature');
   fs.writeFileSync(path.join(f.workspace, 'src/app.js'), 'uncommitted feature state\n');
@@ -115,7 +116,7 @@ process.exit(result.status ?? 1);
   assert.notDeepEqual(fs.readdirSync(packRoot).sort(), packs);
 });
 
-test('narrow watch paths remain usable when unrelated committed inventory exceeds the tree budget', t => {
+test('narrow watch paths remain usable when unrelated committed inventory exceeds the tree budget', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), published = publishFlowModel({ ...f, input: candidate(f) });
   const blob = f.git('rev-parse', `${f.initial}:src/app.js`);
   const inventory = Array.from({ length: 25_000 }, (_, i) =>
@@ -139,7 +140,7 @@ test('narrow watch paths remain usable when unrelated committed inventory exceed
   assert.equal(flowModelContext({ ...f, files: ['src/app.js'] }).state, 'current');
 });
 
-test('watch paths with glob characters select literal committed paths', t => {
+test('watch paths with glob characters select literal committed paths', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   // Build Git objects so this also covers names Windows cannot materialize.
   const sourceTree = f.git('rev-parse', `${f.initial}:src`);
@@ -158,7 +159,7 @@ test('watch paths with glob characters select literal committed paths', t => {
   assert.equal(prepareFlowModel({ ...f, watchPaths: ['.'] }).sources.length, 7);
 });
 
-test('publication is immutable, repeatable and available through one validated reader', t => {
+test('publication is immutable, repeatable and available through one validated reader', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f);
   const dry = publishFlowModel({ ...f, input, dryRun: true });
   assert.equal(dry.dryRun, true); assert.equal(fs.existsSync(f.home), false);
@@ -178,7 +179,7 @@ test('publication is immutable, repeatable and available through one validated r
   assert.deepEqual(fs.readFileSync(first.reference), bytes);
 });
 
-test('publication terminates when a missing lock cannot be created', t => {
+test('publication terminates when a missing lock cannot be created', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f);
   const module = new URL('../lib/flow-model.mjs', import.meta.url).href;
   const script = `import fs from 'node:fs';
@@ -199,7 +200,7 @@ catch (error) { console.log(error.message); process.exitCode = 2; }
   assert.equal(flowModelStatus(f).state, 'absent');
 });
 
-test('publication rejects obsolete or forged preparation and invalid statechart edges', t => {
+test('publication rejects obsolete or forged preparation and invalid statechart edges', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f);
   const invalid = structuredClone(input); invalid.model.flows[0].transitions[0].to = 'missing';
   assert.throws(() => publishFlowModel({ ...f, input: invalid }), /state|transition/i);
@@ -213,7 +214,7 @@ test('publication rejects obsolete or forged preparation and invalid statechart 
   assert.equal(fs.existsSync(f.home), false);
 });
 
-test('linked worktrees share one project model without accepting their feature HEAD as the baseline', t => {
+test('linked worktrees share one project model without accepting their feature HEAD as the baseline', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), published = publishFlowModel({ ...f, input: candidate(f) });
   const linked = path.join(f.root, 'linked');
   f.git('worktree', 'add', '-qb', 'feature-linked', linked);
@@ -224,7 +225,7 @@ test('linked worktrees share one project model without accepting their feature H
   assert.equal(flowModelContext({ ...fromLinked, files: ['src/app.js'] }).state, 'current');
 });
 
-test('an interrupted publication can retry immutable bytes but cannot advance a pointer after the default tip changes', t => {
+test('an interrupted publication can retry immutable bytes but cannot advance a pointer after the default tip changes', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f), originalLink = fs.linkSync;
   let advanced = false;
   fs.linkSync = function (from, to) {
@@ -248,7 +249,7 @@ test('an interrupted publication can retry immutable bytes but cannot advance a 
   assert.deepEqual(fs.readFileSync(published.reference), bytes);
 });
 
-test('racing writers cannot replace a newer generation pointer with an older publication', async t => {
+test('racing writers cannot replace a newer generation pointer with an older publication', { skip: NEEDS_NO_LAZY_FETCH }, async t => {
   const f = fixture(t), firstInput = candidate(f), marker = path.join(f.root, 'before-pointer');
   const firstFile = path.join(f.root, 'first.json'), secondFile = path.join(f.root, 'second.json');
   fs.writeFileSync(firstFile, JSON.stringify(firstInput));
@@ -289,7 +290,7 @@ console.log(JSON.stringify(publishFlowModel({ workspace: process.env.FLOW_WORKSP
   assert.equal(current.model.flows[0].title, 'Newer authored generation');
 });
 
-test('freshness ignores unrelated commits and detects newly committed writers in watched directories', t => {
+test('freshness ignores unrelated commits and detects newly committed writers in watched directories', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   publishFlowModel({ ...f, input: candidate(f) });
   fs.appendFileSync(path.join(f.workspace, 'README.md'), 'unrelated\n');
@@ -306,7 +307,7 @@ test('freshness ignores unrelated commits and detects newly committed writers in
   assert.equal(fs.readFileSync(stale.reference, 'utf8').includes('new-writer.js'), false);
 });
 
-test('removing every watched source still requests regeneration instead of hiding the change as unknown', t => {
+test('removing every watched source still requests regeneration instead of hiding the change as unknown', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t); publishFlowModel({ ...f, input: candidate(f) });
   fs.rmSync(path.join(f.workspace, 'src'), { recursive: true });
   f.git('update-ref', 'refs/remotes/origin/trunk', f.commit());
@@ -314,7 +315,7 @@ test('removing every watched source still requests regeneration instead of hidin
   assert.deepEqual(flowMaintenance(f).changedPaths, ['src/app.js']);
 });
 
-test('a rewritten default history or unresolved default is unknown rather than reusable proof', t => {
+test('a rewritten default history or unresolved default is unknown rather than reusable proof', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t); publishFlowModel({ ...f, input: candidate(f) });
   f.git('checkout', '--orphan', 'rewritten');
   f.git('add', '.'); f.git('commit', '-qm', 'unrelated history');
@@ -324,7 +325,7 @@ test('a rewritten default history or unresolved default is unknown rather than r
   assert.equal(flowModelStatus(f).state, 'unknown');
 });
 
-test('unmatched orientation reads only bounded metadata; relevant orientation returns a descriptive reference', t => {
+test('unmatched orientation reads only bounded metadata; relevant orientation returns a descriptive reference', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t); const stored = publishFlowModel({ ...f, input: candidate(f) });
   const originalOpen = fs.openSync; let bodyReads = 0;
   fs.openSync = function (file, ...args) { if (path.resolve(String(file)) === stored.reference) bodyReads++; return originalOpen.call(this, file, ...args); };
@@ -341,7 +342,7 @@ test('unmatched orientation reads only bounded metadata; relevant orientation re
   } finally { fs.openSync = originalOpen; }
 });
 
-test('the default root inventory does not make unrelated task files relevant or open model bodies', t => {
+test('the default root inventory does not make unrelated task files relevant or open model bodies', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f, ['.']);
   input.preparation = prepareFlowModel(f);
   assert.deepEqual(input.preparation.watchPaths, ['.']);
@@ -357,7 +358,7 @@ test('the default root inventory does not make unrelated task files relevant or 
   } finally { fs.openSync = originalOpen; }
 });
 
-test('a shared freshness inventory does not merge disjoint flows and still detects unmapped new writers', t => {
+test('a shared freshness inventory does not merge disjoint flows and still detects unmapped new writers', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t);
   for (const name of ['login', 'shared', 'unmapped']) fs.writeFileSync(path.join(f.workspace, `src/${name}.js`), `export const ${name} = true;\n`);
   f.git('update-ref', 'refs/remotes/origin/trunk', f.commit());
@@ -380,7 +381,7 @@ test('a shared freshness inventory does not merge disjoint flows and still detec
   assert.deepEqual(flowMaintenance(f).changedPaths, ['src/new-writer.js']);
 });
 
-test('orientation normalizes equivalent task paths while keeping outside requests omitted', t => {
+test('orientation normalizes equivalent task paths while keeping outside requests omitted', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t); publishFlowModel({ ...f, input: candidate(f) });
   const expected = flowModelContext({ ...f, files: ['src/app.js'] });
   assert.equal(expected.state, 'current');
@@ -392,7 +393,7 @@ test('orientation normalizes equivalent task paths while keeping outside request
   }
 });
 
-test('tampered models, unsafe pointers and stale source bindings remain advisory unknowns', t => {
+test('tampered models, unsafe pointers and stale source bindings remain advisory unknowns', { skip: NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), stored = publishFlowModel({ ...f, input: candidate(f) });
   fs.appendFileSync(stored.reference, 'tamper');
   assert.equal(flowModelContext({ ...f, files: ['README.md'] }), null);
@@ -411,7 +412,7 @@ test('watch selections and stored paths cannot escape their owners', t => {
   assert.equal(fs.existsSync(f.home), false);
 });
 
-test('symlinked private namespaces and committed source links are refused', { skip: process.platform === 'win32' ? 'symlink privileges are not guaranteed on Windows' : false }, t => {
+test('symlinked private namespaces and committed source links are refused', { skip: (process.platform === 'win32' ? 'symlink privileges are not guaranteed on Windows' : false) || NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f), outside = path.join(f.root, 'outside');
   fs.mkdirSync(outside); fs.mkdirSync(f.home); fs.symlinkSync(outside, path.join(f.home, 'projects'));
   assert.throws(() => publishFlowModel({ ...f, input }), /unsafe|symlink/i);
@@ -422,7 +423,7 @@ test('symlinked private namespaces and committed source links are refused', { sk
   assert.throws(() => prepareFlowModel({ ...f, watchPaths: ['src'] }), /regular|symlink|source/i);
 });
 
-test('a symlinked current pointer is never followed or replaced', { skip: process.platform === 'win32' ? 'symlink privileges are not guaranteed on Windows' : false }, t => {
+test('a symlinked current pointer is never followed or replaced', { skip: (process.platform === 'win32' ? 'symlink privileges are not guaranteed on Windows' : false) || NEEDS_NO_LAZY_FETCH }, t => {
   const f = fixture(t), input = candidate(f); publishFlowModel({ ...f, input });
   const pointer = path.join(projectStoreDir(f.workspace, { home: f.home }), 'knowledge/flow-models/current.json');
   const outside = path.join(f.root, 'outside.json'); fs.writeFileSync(outside, 'private unrelated bytes');

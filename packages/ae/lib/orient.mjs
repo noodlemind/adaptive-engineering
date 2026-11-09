@@ -139,7 +139,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
       const debt = consolidateStatus({ workspace, copilotHome });
       if (['on', 'suggest'].includes(debt.mode)) {
         knowledgeDebt = { debt: debt.debt, threshold: debt.threshold, due: debt.due };
-                if (debt.due && !active) {
+        if (debt.due && !active) {
           nextTools.push(`ae consolidate --candidates  # knowledge debt ${debt.debt}/${debt.threshold}`);
         }
       }

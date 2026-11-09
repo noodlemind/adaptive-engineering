@@ -11,6 +11,7 @@ import { createRedactor } from '../lib/redact.mjs';
 import { diagramsResultOf, parseDiagramArguments } from '../lib/diagram-cmd.mjs';
 import { runFormalVerification } from '../corpus/skills/create-primitive/assets/formal-verification/check.mjs';
 import { TEST_GIT_ENV } from './helpers/store.mjs';
+import { NEEDS_NO_LAZY_FETCH } from './helpers/git-features.mjs';
 
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const frame = (code, level, body = '') => `@!@!@STARTMSG ${code}:${level} @!@!@\n${body}\n@!@!@ENDMSG ${code} @!@!@\n`;
@@ -176,13 +177,13 @@ test('actual CLI renders a retained receipt without Java or mise and prints its 
   assert.match(fs.readFileSync(path.join(f.workspace, output.artifacts.html), 'utf8'), /expected-negative-control/);
 });
 
-test('actual producer receipt fields and copied-runner identity remain compatible with offline saved-witness replay', async t => {
+test('actual producer receipt fields and copied-runner identity remain compatible with offline saved-witness replay', { skip: NEEDS_NO_LAZY_FETCH }, async t => {
   const f = fixture(t);
   for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture']]) {
     const git = spawnSync('git', args, { cwd: f.workspace, encoding: 'utf8', env: { ...process.env, ...TEST_GIT_ENV } });
     assert.equal(git.status, 0, git.stderr);
   }
-  const pilot = new URL('../../../.cursor/skills/verify-harness/formal/delivery-evidence/', import.meta.url);
+  const pilot = new URL('./fixtures/formal-verification/', import.meta.url);
   const manifest = JSON.parse(fs.readFileSync(new URL('manifest.json', pilot), 'utf8'));
   for (const name of new Set(manifest.models.flatMap(model => [model.module, model.config]))) fs.copyFileSync(fileURLToPath(new URL(name, pilot)), path.join(f.workspace, name));
   fs.writeFileSync(path.join(f.workspace, 'intent.md'), 'Publish once.\n');

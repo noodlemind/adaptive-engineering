@@ -233,7 +233,7 @@ export async function resourcesResultOf(argv, ctx = {}) {
   if (verb === 'add' || verb === 'update') {
     if (!target) throw usageError(`resources ${verb} requires a bundle directory`, `ae resources ${verb} ./my-bundle`);
     const added = addBundle(copilotHome, target);
-        const sync = applyBundles(copilotHome);
+    const sync = applyBundles(copilotHome);
     return { schema: 1, verb, bundle: added, sync };
   }
 
@@ -245,14 +245,14 @@ export async function resourcesResultOf(argv, ctx = {}) {
         `ae resources discard ${target}`,
       );
     }
-        const dir = resolveBundleDir(copilotHome, target);
+    const dir = resolveBundleDir(copilotHome, target);
     if (!fs.existsSync(dir)) {
       throw Object.assign(new Error(`no bundle named ${JSON.stringify(target)}`), {
         code: 'E_NOT_FOUND', exit: EXIT.notFound, hint: 'ae resources discard <path> deletes a local skill or extra file',
       });
     }
     fs.rmSync(dir, { recursive: true, force: true });
-        const sync = applyBundles(copilotHome);
+    const sync = applyBundles(copilotHome);
     return { schema: 1, verb, bundle: { name: target }, sync };
   }
 
@@ -372,7 +372,7 @@ export async function cmdResources(argv, ctx = {}) {
       keyWidth,
     }));
     for (const p of result.primitives) {
-            console.log(ui.line({
+      console.log(ui.line({
         state: STATE_STYLE[p.state] || 'warn',
         key: p.path,
         value: p.state,

@@ -63,11 +63,5 @@
     "agent-skills",
     "adaptive-engineer",
     "harness"
-  ],
-  "bundleDependencies": [
-    "@d2lang/d2",
-    "@resvg/resvg-wasm",
-    "pele",
-    "yaml"
   ]
 }

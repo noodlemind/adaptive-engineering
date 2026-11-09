@@ -390,7 +390,7 @@ export function resolveConfig({ copilotHome, workspace, projectTrusted = true, h
       if (spec.merge === 'user') {
         note = 'ignored: this key is user-scoped';
       } else if (spec.merge === 'restrictive') {
-                const restricted = spec.restrict(value, projectValue);
+        const restricted = spec.restrict(value, projectValue);
         if (restricted !== value) {
           value = restricted;
           source = 'project';
@@ -412,7 +412,7 @@ export function resolveConfig({ copilotHome, workspace, projectTrusted = true, h
       }
     }
 
-        values[key] = spec.type === 'list' && Array.isArray(value)
+    values[key] = spec.type === 'list' && Array.isArray(value)
       ? (spec.ordered ? [...new Set(value)] : [...new Set(value)].sort())
       : value;
     provenance[key] = { source, file, ...(note ? { note } : {}) };
@@ -440,7 +440,7 @@ export function setConfigValue({ scope, key, value, copilotHome, workspace, home
   const file = configPathFor(scope, { copilotHome, workspace, home });
   const existing = loadConfigFile(file, { root: scope === 'user' ? copilotHome : projectAuthorityFile(workspace, 'config.yaml', { home }).root });
   if (existing.errors.length && existing.exists) {
-        throw Object.assign(new Error(`refusing to write over a config with errors: ${existing.errors[0]}`), {
+    throw Object.assign(new Error(`refusing to write over a config with errors: ${existing.errors[0]}`), {
       code: 'E_TARGET',
       exit: 1,
       hint: 'fix the file by hand, or run `ae config validate` to see every error',
