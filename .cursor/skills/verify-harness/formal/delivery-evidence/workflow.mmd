@@ -1,0 +1,28 @@
+stateDiagram-v2
+  %% Delivery-evidence workflow. Transition labels are the actions checked by scripts/check.mjs.
+  [*] --> AnswerMode
+  [*] --> InvestigateMode
+  [*] --> ReviewMode
+  [*] --> Deliver : EnterDeliver
+  AnswerMode --> Deliver : EnterDeliver
+  InvestigateMode --> Deliver : EnterDeliver
+  ReviewMode --> Deliver : EnterDeliver
+  Deliver --> Locked : Lock
+  Locked --> Locked : Edit
+  Locked --> Locked : Amend
+  Locked --> Reviewed : Review
+  Reviewed --> Locked : Edit
+  Reviewed --> Locked : Amend
+  Reviewed --> Verified : Verify
+  Verified --> Verified : Verify
+  Verified --> Locked : Edit
+  Verified --> Locked : Amend
+  Verified --> Compounded : Compound
+  AnswerMode --> AnswerMode : CaptureInsight
+  InvestigateMode --> InvestigateMode : CaptureInsight
+  ReviewMode --> ReviewMode : CaptureInsight
+  Deliver --> Deliver : CaptureInsight
+  Locked --> Locked : CaptureInsight
+  Reviewed --> Reviewed : CaptureInsight
+  Verified --> Verified : CaptureInsight
+  Compounded --> [*]

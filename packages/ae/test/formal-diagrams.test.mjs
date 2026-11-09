@@ -182,7 +182,7 @@ test('actual producer receipt fields and copied-runner identity remain compatibl
     const git = spawnSync('git', args, { cwd: f.workspace, encoding: 'utf8', env: { ...process.env, ...TEST_GIT_ENV } });
     assert.equal(git.status, 0, git.stderr);
   }
-  const pilot = new URL('../../../.cursor/skills/verify-harness/formal/delivery-evidence/', import.meta.url);
+  const pilot = new URL('./fixtures/formal-verification/', import.meta.url);
   const manifest = JSON.parse(fs.readFileSync(new URL('manifest.json', pilot), 'utf8'));
   for (const name of new Set(manifest.models.flatMap(model => [model.module, model.config]))) fs.copyFileSync(fileURLToPath(new URL(name, pilot)), path.join(f.workspace, name));
   fs.writeFileSync(path.join(f.workspace, 'intent.md'), 'Publish once.\n');

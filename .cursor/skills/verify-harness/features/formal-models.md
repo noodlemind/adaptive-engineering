@@ -10,7 +10,7 @@ The shared application map describes committed source on the resolved default br
 - Matching orientation returns bounded descriptive references; unrelated work omits the map.
 - Unrelated default-branch commits preserve currentness; watched changes mark the generation stale.
 - Obsolete candidates cannot replace current knowledge. Explicit prepare and publish refresh the map after reviewed source changes.
-- The optional delivery-evidence pilot separately checks a finite model, actual lifecycle conformance, and sensitivity to a deliberately broken guard.
+- The delivery-evidence model separately checks every path through a Mermaid state diagram of the delivery workflow.
 
 ## How a person reaches it
 
@@ -28,10 +28,10 @@ The drive observes absent status, captures a `src` preparation, publishes and re
 
 The receipt records actual argv, working directory, exit status, stdout, stderr, observed generations, doctor, and owned cleanup in `formal-flows/drive.json` under `HARNESS_CHECK_ARTIFACT_DIR`. Without an artifact root it uses a unique private temporary evidence directory. The receipt survives success, failure and cancellation. A failed drive reruns doctor before another attempt.
 
-The optional deep command is `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`. Read its [pilot skill](../formal/delivery-evidence/SKILL.md) and [maintenance skill](../formal/delivery-evidence/maintain/SKILL.md) first. The deep receipt is `formal-verification.json`; missing tools and source/model drift fail rather than becoming a pass. The [workflow-invariant feature](./workflow-invariants.md) documents the actual implementation and negative-control drives reused by that pilot.
+The delivery-evidence model check is `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`; read its [skill](../formal/delivery-evidence/SKILL.md) first. Its receipt is `delivery-evidence-model.json`. The [workflow-invariant feature](./workflow-invariants.md) documents the implementation and negative-control drives that confirm the code follows that workflow.
 
 ## Gotchas
 
 The scope is committed default-branch source, including when a feature worktree differs. Dirty feature edits do not become the shared generation. Unresolved or rewritten default history is unknown. Freshness proves captured byte identity under declared watch paths, not semantic completeness, correctness, or authority to edit.
 
-Maintain watched paths so new writers are included. A passing statechart schema is distinct from a checked TLA+ property and from implementation conformance. Shared maps grant no gate, intent, trust, or verification authority. Agent judgment and specialized rerunnable checks remain explicit. Neither this CLI drive nor the deep finite pilot proves all application behavior, arbitrary schedules, or native editor activation. Java/TLC are prerequisites only for the optional deep pilot, never for the ordinary doctor or flow-map drive.
+Maintain watched paths so new writers are included. A passing statechart schema is distinct from a checked workflow rule and from implementation conformance. Shared maps grant no gate, intent, trust, or verification authority. Agent judgment and specialized rerunnable checks remain explicit. Neither this CLI drive nor the delivery-evidence model proves all application behavior, arbitrary schedules, or native editor activation. None of these checks needs Java.
