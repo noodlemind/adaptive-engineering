@@ -38,6 +38,16 @@ Both decision types accept two optional fields. Omit them when there is nothing 
 
 Harness records the learning IDs each context pack actually delivered for the plan. A `recalled` ID outside that record, a finding ID that no review record of this plan contains, a duplicate, or a note that looks like a secret is rejected. Judge honestly: `helped` means the learning changed what you did, `irrelevant` means it did not apply, `wrong` means following it would have been a mistake. `dismissed` means the finding was deliberately not acted on. Harness records its own observation beside each disposition (`still-reported`, `no-longer-reported` or `no-latest-review` in the plan's latest review), so a `fixed` claim the latest review still reports shows as contradicted. Verdicts are written to an immutable feedback record in the project store, which also cites the decision agent's latest readiness receipt for the plan. They are evidence for consolidation only and never retire, dispute, confirm or promote anything.
 
+### Quoted evidence
+
+A `publish` decision accepts an optional `evidence_quote`: the verbatim error, test output or diff text that showed the lesson, copied exactly rather than paraphrased.
+
+```json
+"evidence_quote": "not ok 3 - export keeps value\n  expected: 2\n  actual: 1"
+```
+
+The quote is at most 600 bytes. It may contain tabs and newlines but no other control characters, so strip terminal color codes. A quote that looks like a secret is rejected. `no-learning` decisions refuse the field. Harness stores the quote as one escaped `evidence_quote` frontmatter line on the episode, leaves the body unchanged and never indexes the quote for recall. `/consolidate` sees it in the packet as one inert line, with any secret redacted. The quote never enters a learning, so the 1,200-byte learning cap still measures only the claim. Omit the field when no short verbatim evidence exists; an absent field leaves the decision, its identity and the episode bytes unchanged. `ae compound --insight --evidence-quote "<text>"` applies the same contract to an insight.
+
 `--dry-run` validates without publication. Optional authored `trigger` and `claim` fields are supported. Investigation capture without passed work uses the existing `compound --insight` lane and remains an insight.
 
 ## Consolidation

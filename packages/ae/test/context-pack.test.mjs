@@ -11,6 +11,10 @@ import { buildContextPack, RECALL_DATA_PREAMBLE, CONTEXT_PACK_MAX_BYTES } from '
 import { loadManifest, rankRecall } from '../lib/recall-rank.mjs';
 import { DEFAULT_MAX_BYTES } from '../lib/fs-safe.mjs';
 import { ensureStore, listLearnings, serializeLearning } from '../lib/knowledge/store.mjs';
+import { spawnSync } from 'node:child_process';
+import { approveProject } from '../lib/trust.mjs';
+import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
+import { packageRoot } from './helpers/cli.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -349,4 +353,64 @@ test('a short routing section survives when the repo map and tool list are the o
   assert.equal(body.includes(mapPath), false);
   assert.equal(body.includes('## Change neighborhood'), false);
   assert.equal(body.includes('## Next tools'), false);
+});
+
+// Resume verification hint (memory plan phase 5b). ----------------------------
+function resumeFixture(t) {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-resume-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ws = path.join(dir, 'product'), home = path.join(dir, 'home'), copilot = path.join(dir, 'copilot');
+  fs.mkdirSync(ws);
+  fs.mkdirSync(copilot);
+  fs.writeFileSync(path.join(ws, '.gitignore'), '.harness/\n');
+  fs.writeFileSync(path.join(ws, 'package.json'), '{"type":"module"}\n');
+  writeChecks(ws, { behavior: { command: [process.execPath, '-e', "import('./src/example.js').then(m => { if (m.value !== 2) process.exit(1); })"] } });
+  fs.writeFileSync(path.join(ws, '.github/harness/policy.yaml'), 'version: 1\nenforcement: enforce\n');
+  initGit(ws);
+  approveProject({ workspace: ws, copilotHome: copilot, home });
+  const env = { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilot, HARNESS_NO_EVENTS: '1', HARNESS_BIN: path.join(packageRoot, 'bin/ae.mjs') };
+  delete env.HARNESS_ENFORCEMENT;
+  const cli = (...args) => spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), ...args, '--workspace', ws, '--harness-home', home, '--copilot-home', copilot], { cwd: ws, env, encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
+  const plan = writeVersionedPlan(ws, { required: ['behavior'], criteria: { AC1: ['behavior'] } });
+  const source = value => fs.writeFileSync(path.join(ws, 'src/example.js'), value);
+  const orient = () => {
+    const result = cli('orient', '--plan', plan, '--query', 'example value', '--json');
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const out = JSON.parse(result.stdout);
+    const pack = fs.readFileSync(path.join(ws, out.contextPack), 'utf8');
+    return { out, nextInPack: pack.slice(pack.indexOf('## Next tools')).split('\n')[1] };
+  };
+  return { ws, plan, cli, source, orient };
+}
+
+test('a resumed plan with current verification evidence keeps its next tools unchanged', t => {
+  const f = resumeFixture(t);
+  const before = f.orient();
+  assert.equal(before.out.resumeVerification, undefined, 'no evidence yet is not a resume');
+  f.source('export const value = 2;\n');
+  assert.equal(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+  const after = f.orient();
+  assert.equal(after.out.resumeVerification, undefined);
+  assert.deepEqual(after.out.nextTools, before.out.nextTools, 'current evidence adds no verify hint');
+  assert.ok(!after.out.nextTools[0].includes('prior verification'));
+});
+
+test('a resumed plan with stale or failed verification evidence puts ae verify first in the pack', t => {
+  const f = resumeFixture(t);
+  f.source('export const value = 2;\n');
+  assert.equal(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+  const current = f.orient().out.nextTools;
+  f.source('export const value = 2; // edited after verification\n');
+  const stale = f.orient();
+  assert.equal(stale.out.resumeVerification.state, 'stale');
+  assert.equal(stale.out.nextTools[0], `ae verify --plan ${f.plan}  # prior verification is stale; check for leftover breakage before new work`);
+  assert.deepEqual(stale.out.nextTools.slice(1), current, 'the hint only adds a first step');
+  assert.equal(stale.nextInPack, `- \`${stale.out.nextTools[0]}\``, 'the pack lists the verify hint first');
+
+  f.source('export const value = 1;\n');
+  assert.notEqual(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+  const failed = f.orient();
+  assert.equal(failed.out.resumeVerification.state, 'failed');
+  assert.match(failed.out.nextTools[0], /^ae verify --plan .+ # prior verification is failed;/);
+  assert.equal(failed.out.gateStatus, stale.out.gateStatus, 'the hint is advisory; the gate is unchanged');
 });

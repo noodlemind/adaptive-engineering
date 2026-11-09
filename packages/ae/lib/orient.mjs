@@ -20,7 +20,9 @@ import { buildContextRecord } from './context-record.mjs';
 import { accountContext } from './token-meter.mjs';
 import { writeFileContained } from './fs-safe.mjs';
 import { recordExposure } from './learning-feedback.mjs';
-import { planRecordRoot } from './domain-context.mjs';
+import { planRecordRoot, planTrustHome } from './domain-context.mjs';
+import { readEvidence, validateEvidence } from './evidence.mjs';
+import { loadPolicy } from './policy.mjs';
 
 const ORIENT_BRANCH_CAP = 80;
 function writeContextFile(workspace, rel, content) {
@@ -37,6 +39,26 @@ function jsonGitContext(gitContext) {
     headSha: gitContext.headSha,
     baseSha: gitContext.baseSha,
   };
+}
+
+/**
+ * A resumed plan whose last `ae verify` evidence failed or no longer matches
+ * the work may hide breakage left by the previous session. Advisory only: it
+ * reorders next tools and never changes a gate. Null when there is no active
+ * plan, no evidence yet, or the evidence is current.
+ */
+function resumeVerification({ workspace, copilotHome, flags, active }) {
+  if (!active?.path) return null;
+  try {
+    const evidence = readEvidence(planRecordRoot(workspace, active), active.path);
+    if (!evidence) return null;
+    if (evidence.outcome !== 'passed') return { state: 'failed', reason: `Latest ae verify outcome is ${inertLine(evidence.outcome || 'unknown')}` };
+    const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
+    const fresh = validateEvidence({ workspace, plan: active, evidence, maxAgeHours, copilotHome });
+    return fresh.pass ? null : { state: 'stale', reason: inertLine(fresh.message || 'verification evidence is not current').slice(0, 200) };
+  } catch {
+    return null;
+  }
 }
 
 export function runOrient({ workspace, copilotHome, flags, query, files }) {
@@ -148,6 +170,9 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     // Advisory; never block orientation on it.
   }
 
+  const resumeCheck = resumeVerification({ workspace, copilotHome, flags, active });
+  if (resumeCheck) nextTools.unshift(`ae verify --plan ${active.path}  # prior verification is ${resumeCheck.state}; check for leftover breakage before new work`);
+
   if (gatePreview.pass && routingLines) {
     for (const line of routingLines) if (line.startsWith('read ') && !nextTools.includes(line)) nextTools.push(line);
     const javaFile = namedFiles.find(rel => rel.endsWith('.java'));
@@ -251,6 +276,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     repoMap: repoMapRef,
     contextAccounting: accountContext({ boundary: 'orientation-output', components: [{ category: 'pack', id: packRel, content: packBody }] }),
     knowledgeDebt,
+    ...(resumeCheck ? { resumeVerification: resumeCheck } : {}),
     gitContext: jsonGitContext(gitContext),
     worktree: {
       blocked: isolation.blocked,

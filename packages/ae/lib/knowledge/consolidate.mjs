@@ -7,6 +7,7 @@ import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor } from './overlay.mjs';
 import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
+import { readEvidenceQuote, inertEvidenceQuote } from './evidence-quote.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -102,6 +103,7 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
         const text = readFileNoFollow(full, { root: base });
         if (text === null) continue;
         const fm = parseFrontmatter(text);
+        const evidenceQuote = readEvidenceQuote(text);
         episodes.push({
           path: fileRel.split(path.sep).join('/'),
           sha256: crypto.createHash('sha256').update(text).digest('hex'),
@@ -110,6 +112,7 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
           title: fm.title || f.replace(/\.md$/, ''),
           tags: fm.tags ? fm.tags.split(',').map((t) => t.trim()) : [],
           excerpt: excerpt(text),
+          ...(evidenceQuote ? { evidenceQuote } : {}),
           date: fm.date || null,
                     branch: fm.branch || null,
         });
@@ -289,6 +292,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
             title: inertLine(full.title).slice(0, CANDIDATE_TITLE_CAP),
       tags: capTags(full.tags, CANDIDATE_TAGS_TOTAL_CAP),
       excerpt: full.excerpt,
+      ...(full.evidenceQuote ? { evidence_quote: inertEvidenceQuote(full.evidenceQuote) } : {}),
     };
     const entryBytes = Buffer.byteLength(JSON.stringify(entry), 'utf8');
     if (includedEntries.length > 0 && usedBytes + entryBytes > CANDIDATE_EPISODE_BUDGET_BYTES) break;

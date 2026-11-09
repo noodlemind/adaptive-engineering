@@ -15,6 +15,7 @@ import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { readStoreConfig } from './knowledge/store.mjs';
+import { evidenceQuoteError, evidenceQuoteLine } from './knowledge/evidence-quote.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
@@ -176,6 +177,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       nextTools: ['ae compound --insight --title "..." --body "..."'],
     };
   }
+  const evidenceQuote = flags.evidenceQuote ?? null;
+  const quoteError = evidenceQuote === null ? null : evidenceQuoteError(evidenceQuote);
+  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['shorten or redact --evidence-quote and re-run'] };
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);
   // Category is one safe path segment — never a traversal vector.
   const category = slugify(flags.category || 'insights');
@@ -193,6 +197,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
+  if (evidenceQuote !== null) fmLines.push(evidenceQuoteLine(evidenceQuote));
   // Git provenance (blueprint P1/P9): optional commit/branch/base stamped at
   // capture time from the CURRENT workspace HEAD. This is the sole CLI
   // episode writer — `compound --insight` (kind: insight) and
@@ -378,8 +383,13 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
   const decision = JSON.parse(text);
   if (!decision || typeof decision !== 'object' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(decision.operation || '') || !['no-learning', 'publish'].includes(decision.decision)
-    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
+    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'evidence_quote'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
+  if (decision.evidence_quote !== undefined) {
+    if (decision.decision !== 'publish') throw new Error('evidence_quote applies only to a publish decision');
+    const quoteError = evidenceQuoteError(decision.evidence_quote);
+    if (quoteError) throw new Error(quoteError);
+  }
   const selected = selectPlan(workspace, { planPath: flags.plan, session: readSession(workspace), requireUnique: true, home: flags.harnessHome, domainContext });
   if (!selected.plan) throw new Error('Learning decision requires an unambiguous plan');
   const recordRoot = planRecordRoot(workspace, selected.plan);
@@ -409,7 +419,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   const rel = `.harness/learning/${operation}.json`;
   const existing = readReviewRecord(recordRoot, rel);
   compatible(existing);
-  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
+  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, evidenceQuote: decision.evidence_quote, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
   if (flags.dryRun) return decision.decision === 'publish' ? { ...publish(existing?.captureDate), dryRun: true } : { pass: true, exitCode: 0, dryRun: true, decision: decision.decision, path: null, indexed: null };
   publishReviewRecord(recordRoot, '.harness/learning/.ready.json', { version: 1 });
   const pointer = learningPointerRel(selected.plan.path);

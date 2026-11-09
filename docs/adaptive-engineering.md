@@ -31,7 +31,7 @@ Only Deliver can change product files. A request that needs an edit switches to 
 
 The Harness is deterministic. Given the same plan, files and checks, it gives the same answer. It owns the things a model should not be trusted to judge about its own work:
 
-- **Orientation.** `ae orient` builds a small context pack: relevant specs, plans, prior learnings, and the files near the change.
+- **Orientation.** `ae orient` builds a small context pack: relevant specs, plans, prior learnings, and the files near the change. When a resumed plan's last `ae verify` evidence failed or no longer matches the work, the pack lists `ae verify` first, so the session checks for leftover breakage before new work. This is advisory and changes no gate.
 - **The plan.** Plans are stored outside your repository, in `~/.ae/projects/<repo-id>/plans/`. The Harness writes headings, IDs, dates and progress. The Engineer supplies the decisions.
 - **The gate.** Before Deliver edits a product file, the plan must be locked and an implement gate granted. Host hooks deny edits that have no gate.
 - **Verification.** `ae verify` runs the checks the plan names and records the result. A missing check is not a pass.
@@ -148,7 +148,7 @@ The registry of shipped capabilities and their states is [capability-registry.ya
 
 Knowledge has three tiers. Each tier has a single writer.
 
-1. **Episodes.** After `ae verify` passes, the Engineer records what the task taught as a private solution episode in `~/.ae/projects/<repo-id>/docs/solutions/`. `ae remember` records something a person teaches directly. Episodes never leave your machine on their own.
+1. **Episodes.** After `ae verify` passes, the Engineer records what the task taught as a private solution episode in `~/.ae/projects/<repo-id>/docs/solutions/`. An episode can keep up to 600 bytes of verbatim error, test or diff text as `evidence_quote`, which `/consolidate` reads as inert evidence. `ae remember` records something a person teaches directly. Episodes never leave your machine on their own.
 2. **Learnings.** `/consolidate` clusters episodes into learnings, stored in a local Git repository at `~/.ae/knowledge/<repo-id>/`, outside your working tree. Only `ae` commands write that store: `ae consolidate --apply` and `ae remember` add learnings, and `ae learning` changes their status. `ae orient` injects the best-matching learnings into the next task's context.
 3. **Behavior.** A pattern that should change how every task runs becomes a skill, agent or instruction, through a reviewed change to the corpus.
 
