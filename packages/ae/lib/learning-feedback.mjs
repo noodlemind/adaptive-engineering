@@ -247,3 +247,103 @@ export function feedbackSummary({ workspace, home, learnings }) {
     reviewers: reviewerRows.map(row => ({ ...row, resolutionRate: Number((row.fixed / (row.fixed + row.dismissed)).toFixed(3)) })),
   };
 }
+
+// Visibility (memory plan 1d, rest of 1e). Readers only: nothing below writes
+// learning content, governance or status.
+
+export const PRUNING_EXPOSURE_THRESHOLD = 5;
+const EXPOSURE_DIR_REL = '.harness/learning/exposures';
+const EXPOSURE_SCAN_CAP = 512;
+
+/**
+ * Per-learning exposure totals summed over every plan's exposure record under
+ * this record root. Exposure records live in each worktree, so another
+ * worktree's exposures are not visible here; verdicts are, because feedback
+ * records live in the project store.
+ */
+export function exposureTotals(recordRoot) {
+  const totals = new Map();
+  if (!recordRoot || !assertNoSymlinkAncestors(recordRoot, EXPOSURE_DIR_REL)) return totals;
+  let names = [];
+  try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort().slice(0, EXPOSURE_SCAN_CAP); } catch { return totals; }
+  for (const name of names) {
+    const rel = `${EXPOSURE_DIR_REL}/${name}`;
+    const record = readReviewRecord(recordRoot, rel);
+    if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
+    for (const entry of record.entries) {
+      if (typeof entry?.id !== 'string' || !LEARNING_ID.test(entry.id) || !Number.isInteger(entry.count) || entry.count < 1) continue;
+      const row = totals.get(entry.id) || { exposed: 0, last_exposed: null };
+      row.exposed += entry.count;
+      if (typeof entry.lastExposedAt === 'string' && (!row.last_exposed || entry.lastExposedAt > row.last_exposed)) row.last_exposed = entry.lastExposedAt;
+      totals.set(entry.id, row);
+    }
+  }
+  return totals;
+}
+
+export const emptyFeedbackColumns = () => ({ exposed: 0, helped: 0, wrong: 0, last_exposed: null });
+
+/** `exposed`, `helped`, `wrong` and `last_exposed` per learning ID that has any exposure or verdict. */
+export function feedbackColumns({ workspace, home, recordRoot = workspace }) {
+  const columns = new Map();
+  const row = id => {
+    if (!columns.has(id)) columns.set(id, emptyFeedbackColumns());
+    return columns.get(id);
+  };
+  // Evidence only: an unreadable source degrades to zero counts, never a failure.
+  try {
+    for (const [id, total] of exposureTotals(recordRoot)) Object.assign(row(id), total);
+  } catch { /* exposure unreadable */ }
+  try {
+    for (const record of readFeedbackRecords({ workspace, home }).records) {
+      for (const entry of Array.isArray(record.recalled) ? record.recalled : []) {
+        if (typeof entry?.id !== 'string' || !['helped', 'wrong'].includes(entry.verdict)) continue;
+        row(entry.id)[entry.verdict] += 1;
+      }
+    }
+  } catch { /* feedback records unreadable */ }
+  return columns;
+}
+
+/**
+ * Status rows for learnings with any exposure or verdict; null when the
+ * effective feedback state is `off`, so status output stays byte-identical.
+ */
+export function feedbackStatusView({ workspace, home, learnings, recordRoot = workspace }) {
+  let state = 'off';
+  try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
+  if (state === 'off') return null;
+  const columns = feedbackColumns({ workspace, home, recordRoot });
+  const rows = (learnings || [])
+    .filter(learning => columns.has(learning.id))
+    .map(learning => ({ id: learning.id, ...columns.get(learning.id) }))
+    .sort((a, b) => b.exposed - a.exposed || b.wrong - a.wrong || a.id.localeCompare(b.id));
+  return {
+    state,
+    learnings: rows.slice(0, FEEDBACK_SECTION_CAP),
+    ...(rows.length > FEEDBACK_SECTION_CAP ? { omittedLearnings: rows.length - FEEDBACK_SECTION_CAP } : {}),
+  };
+}
+
+/** Advisory pruning hint: learnings exposed at least the threshold with no `helped` verdict. */
+export function pruningCandidates({ columns, learnings, threshold = PRUNING_EXPOSURE_THRESHOLD }) {
+  return (learnings || [])
+    .map(learning => ({ id: learning.id, ...(columns.get(learning.id) || emptyFeedbackColumns()) }))
+    .filter(row => row.exposed >= threshold && row.helped === 0)
+    .sort((a, b) => b.exposed - a.exposed || a.id.localeCompare(b.id));
+}
+
+/**
+ * Packet ordering under `knowledge.feedback=on`: learnings whose current
+ * version needs review first, then learnings with any `wrong` verdict, then
+ * the most exposed. Ties keep the incoming order. Ordering only: nothing is
+ * activated, disputed or retired.
+ */
+export function feedbackOrder(learnings, { columns, reviewRequired = [] }) {
+  const review = new Set(reviewRequired);
+  const col = id => columns.get(id) || emptyFeedbackColumns();
+  return learnings.toSorted((a, b) =>
+    Number(review.has(b.id)) - Number(review.has(a.id))
+    || Number(col(b.id).wrong > 0) - Number(col(a.id).wrong > 0)
+    || col(b.id).exposed - col(a.id).exposed);
+}

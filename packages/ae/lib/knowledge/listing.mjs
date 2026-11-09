@@ -4,6 +4,7 @@ import { redactSecrets } from '../secret-scan.mjs';
 import { readEvents, EVENTS_MAX_LIMIT } from '../events.mjs';
 import { verifiedAndPlans, isPromotionEligible, consolidateStatus } from './consolidate.mjs';
 import { APPLICABILITY_VERSION, learningApplicability } from './applicability.mjs';
+import { feedbackState, feedbackColumns, emptyFeedbackColumns } from '../learning-feedback.mjs';
 
 function failureCounts(workspace) {
   const counts = new Map();
@@ -56,6 +57,10 @@ export function listingView({ workspace, copilotHome, domain, home }) {
   const failures = failureCounts(workspace);
   const repository = scoped.some(learning => String(learning.fm.applicability_version) === String(APPLICABILITY_VERSION)) ? repoId(workspace) : null;
   const sourceCache = new Map();
+  // Feedback columns appear only under `suggest` or `on`, so `off` output is byte-identical.
+  let state = 'off';
+  try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
+  const columns = state === 'off' ? null : feedbackColumns({ workspace, home });
 
   const learnings = scoped
     .map((l) => {
@@ -70,6 +75,7 @@ export function listingView({ workspace, copilotHome, domain, home }) {
                 promotionEligible: l.fm.promoted_to ? false : isPromotionEligible(verified, plans),
         failures: failures.get(l.id) || 0,
         applicability: learningApplicability({ workspace, repository, cache: sourceCache, fm: l.fm }),
+        ...(columns ? columns.get(l.id) || emptyFeedbackColumns() : {}),
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -79,7 +85,7 @@ export function listingView({ workspace, copilotHome, domain, home }) {
     path: q.path,
     sha256: q.sha256,
   }));
-  return { learnings, counts: { active, total: learnings.length }, quarantined };
+  return { learnings, counts: { active, total: learnings.length }, quarantined, ...(columns ? { feedback: state } : {}) };
 }
 
 export function whyView({ workspace, id, home }) {

@@ -23,9 +23,10 @@ import { harnessGlobalHome, resolveIntelliJHome, resolveVSCodeSettingsPaths } fr
 import { loadRetired, findStaleOrphans } from './sync.mjs';
 import { storeDir, storeDirForId, repoId, localRepoId, workspaceStorageId, listLearnings, readSavedLearningFiles, matchingLocalStoreIds, carriedBytesDiffer } from './knowledge/store.mjs';
 import { storageIdForRepo } from './storage-aliases.mjs';
-import { consolidateStatus } from './knowledge/consolidate.mjs';
+import { consolidateStatus, isActiveFm } from './knowledge/consolidate.mjs';
 import { loadRoutingPolicy } from './routing-policy.mjs';
-import { listBuckets } from './knowledge/overlay.mjs';
+import { listBuckets, loadLayeredLearnings } from './knowledge/overlay.mjs';
+import { feedbackState, feedbackColumns, pruningCandidates, PRUNING_EXPOSURE_THRESHOLD } from './learning-feedback.mjs';
 import { branchExists } from './knowledge/layer.mjs';
 import { deriveGitContext, resolveDefaultBranch } from './git-context.mjs';
 import { loadReportEvents, knowledgeSlos } from './report.mjs';
@@ -548,7 +549,35 @@ function knowledgeChecks({ workspace, copilotHome }) {
     // Advisory; never fail doctor on a knowledge-check error.
   }
 
+  const pruning = feedbackPruningCheck({ workspace });
+  if (pruning) checks.push(pruning);
+
   return checks;
+}
+
+/**
+ * K8 (memory plan 1d): advisory pruning hint for learnings exposed at least
+ * PRUNING_EXPOSURE_THRESHOLD times with no `helped` verdict. Reported only
+ * under knowledge.feedback suggest|on; it never retires or disputes anything.
+ */
+export function feedbackPruningCheck({ workspace, home } = {}) {
+  try {
+    if (feedbackState({ workspace, home }) === 'off') return null;
+    const learnings = loadLayeredLearnings({ workspace, home }).learnings.filter((l) => isActiveFm(l.fm));
+    const candidates = pruningCandidates({ columns: feedbackColumns({ workspace, home }), learnings });
+    return {
+      id: 'K8',
+      name: `Learnings exposed ${PRUNING_EXPOSURE_THRESHOLD}+ times have helped at least once`,
+      pass: candidates.length === 0,
+      hint: candidates.length
+        ? `pruning hint, advisory only: ${candidates.slice(0, 5).map((c) => `${c.id} (exposed ${c.exposed}, helped 0)`).join(', ')}${candidates.length > 5 ? ` and ${candidates.length - 5} more` : ''} — review with ae learnings --why <id>; retire only through ae learning retire`
+        : `no learning exposed ${PRUNING_EXPOSURE_THRESHOLD}+ times without a helped verdict`,
+      optional: true,
+      ...(candidates.length ? { pruningCandidates: candidates.map((c) => c.id) } : {}),
+    };
+  } catch {
+    return null; // Advisory; never fail doctor on a knowledge-check error.
+  }
 }
 
 export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots(), lockPath } = {}) {

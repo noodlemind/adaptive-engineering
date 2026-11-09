@@ -6,7 +6,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor } from './overlay.mjs';
-import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
+import { feedbackState, feedbackSummary, feedbackColumns, feedbackOrder } from '../learning-feedback.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -310,8 +310,8 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
   const feedback = feedbackView({ workspace, home, learnings: active });
-  const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
-  const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
+  // Under `on` only: review_required first, then feedback-disputed, then most exposed.
+  const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home }), reviewRequired: feedback.review_required }) : active;
   const learnings = ordered.map((l) => ({
     id: l.id,
         trigger: inertLine(l.fm.trigger || ''),

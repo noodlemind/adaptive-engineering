@@ -326,7 +326,7 @@ For delivery completion, submit a publish or explicit no-learning decision with 
 { "pass": true, "exitCode": 0, "removed": { "episode": "docs/solutions/...", "learnings": ["..."], "links": ["..."], "ledger": 1 }, "blockedReason": null }
 ```
 
-**knowledge status** — read-only layer-aware report (golden per-domain counts, branch-bucket rows when buckets exist, recall-index drift). Emits a `knowledge` event; never creates or mutates the store. Bucket `promotable` is derived from the key shape (`detached-*` is never promotable); `ancestryOk: false` marks a bucket whose recorded base is not an ancestor of the current HEAD (excluded from the read overlay).
+**knowledge status** — read-only layer-aware report (golden per-domain counts, branch-bucket rows when buckets exist, recall-index drift). Emits a `knowledge` event; never creates or mutates the store. Bucket `promotable` is derived from the key shape (`detached-*` is never promotable); `ancestryOk: false` marks a bucket whose recorded base is not an ancestor of the current HEAD (excluded from the read overlay). Under `knowledge.feedback` `suggest` or `on` the report adds `feedback: { state, learnings: [{ id, exposed, helped, wrong, last_exposed }] }` for learnings with any exposure or verdict; under `off` the key is absent.
 ```json
 {
   "pass": true,

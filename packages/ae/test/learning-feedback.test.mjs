@@ -8,8 +8,9 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { readFeedbackConfig, storeDir, writeFeedbackConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import {
-  EXPOSURE_ENTRY_CAP, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
+  EXPOSURE_ENTRY_CAP, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
 } from '../lib/learning-feedback.mjs';
+import { feedbackPruningCheck } from '../lib/doctor.mjs';
 import { initGit } from './helpers/cli-fixtures.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 
@@ -152,4 +153,81 @@ test('feedback records cite the decision agent\'s latest readiness receipt for t
   assert.equal(readiness.verdict, 'ready');
   assert.equal(readiness.recordedAt, 2, 'the newest receipt for this plan, not another plan\'s');
   assert.match(readiness.id, /^[a-f0-9]{64}$/);
+});
+
+function addLearnings(t, c, slugs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-feedback-ops-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ops = slugs.map(slug => {
+    const text = `---\ntitle: "${slug}"\nkind: fix\ndate: 2026-11-02\n---\n\nEvidence for ${slug}.\n`;
+    fs.writeFileSync(path.join(c.ws, `docs/solutions/logic/${slug}.md`), text);
+    return { op: 'ADD', domain: 'logic', slug, trigger: `working on ${slug}`, body: `Claim for ${slug}.`, episodes: [{ path: `docs/solutions/logic/${slug}.md`, sha256: sha(text), kind: 'fix', plan: `docs/plans/${slug}.md` }] };
+  });
+  fs.writeFileSync(path.join(dir, 'ops.json'), JSON.stringify({ schema: 1, ops }));
+  assert.equal(applyOps({ workspace: c.ws, opsPath: path.join(dir, 'ops.json'), home: c.home }).exitCode, 0);
+  return loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings;
+}
+
+const expose = (c, planPath, id, times) => {
+  for (let i = 0; i < times; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath, delivered: [{ id }], now: new Date(Date.UTC(2026, 10, 1, i)) });
+};
+
+test('exposure totals sum every plan record in the workspace and skip records whose plan does not match the file', t => {
+  const c = seeded(t);
+  expose(c, PLAN, c.id, 2);
+  expose(c, 'docs/plans/other.md', c.id, 1);
+  const forged = path.join(c.ws, '.harness/learning/exposures', `plan-${'0'.repeat(64)}.json`);
+  fs.writeFileSync(forged, JSON.stringify({ version: 1, plan: 'docs/plans/forged.md', entries: [{ id: c.id, count: 50, lastExposedAt: '2027-01-01T00:00:00.000Z' }] }));
+  assert.deepEqual(exposureTotals(c.ws).get(c.id), { exposed: 3, last_exposed: '2026-11-01T01:00:00.000Z' });
+  assert.equal(exposureTotals(path.join(c.ws, 'missing')).size, 0);
+});
+
+test('doctor pruning hint: off reports nothing; 4 exposures no hint; 5 with zero helped hints; 5 with one helped does not', t => {
+  const c = seeded(t);
+  expose(c, PLAN, c.id, 3);
+  expose(c, 'docs/plans/other.md', c.id, 2);
+  assert.equal(feedbackPruningCheck({ workspace: c.ws, home: c.home }), null, 'off: no K8 check at all, so doctor output is unchanged');
+
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  const atFive = feedbackPruningCheck({ workspace: c.ws, home: c.home });
+  assert.equal(atFive.id, 'K8');
+  assert.equal(atFive.optional, true, 'advisory only');
+  assert.equal(atFive.pass, false);
+  assert.deepEqual(atFive.pruningCandidates, [c.id]);
+  assert.match(atFive.hint, /exposed 5, helped 0/);
+
+  const four = seeded(t);
+  expose(four, PLAN, four.id, 4);
+  writeFeedbackConfig(four.ws, { home: four.home, feedback: 'on' });
+  const atFour = feedbackPruningCheck({ workspace: four.ws, home: four.home });
+  assert.equal(atFour.pass, true);
+  assert.equal(atFour.pruningCandidates, undefined);
+
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('helped-once'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } });
+  assert.equal(feedbackPruningCheck({ workspace: c.ws, home: c.home }).pass, true, 'one helped verdict clears the hint');
+  assert.equal(learningVersion(loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings[0]), learningVersion(c.learnings[0]), 'the hint never changes the learning');
+});
+
+test('packet ordering uses exposure and feedback only under on; off and suggest keep the existing order', t => {
+  const c = seeded(t);
+  const learnings = addLearnings(t, c, ['alpha', 'zeta']);
+  const ids = learnings.map(l => l.id);
+  const [alpha, zeta] = ['logic/alpha', 'logic/zeta'].map(id => learnings.find(l => l.id === id));
+  assert.ok(alpha && zeta);
+  const order = () => consolidateCandidates({ workspace: c.ws, home: c.home }).learnings.map(l => l.id);
+  const base = order();
+  assert.deepEqual([...base].sort(), [...ids].sort());
+
+  expose(c, PLAN, zeta.id, 4);
+  expose(c, PLAN, c.id, 1);
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('stale-wrong'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: alpha.id, verdict: 'wrong', version: '0'.repeat(64) }] } });
+  assert.deepEqual(order(), base, 'off: order unchanged');
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  assert.deepEqual(order(), base, 'suggest: order unchanged');
+
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'on' });
+  assert.deepEqual(order(), [alpha.id, zeta.id, c.id], 'on: feedback-disputed first, then most exposed');
+
+  publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: operation('current-wrong'), planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'wrong', version: learningVersion(c.learnings[0]) }] } });
+  assert.deepEqual(order(), [c.id, alpha.id, zeta.id], 'on: review_required stays first');
 });

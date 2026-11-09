@@ -16,7 +16,11 @@ import { absorbHandEdits, rebuildStore } from '../lib/knowledge/admin.mjs';
 import { buildPromotionOps, PROMOTE_OPS_REL, promotionDigest } from '../lib/knowledge/promote.mjs';
 import { pruneBuckets } from '../lib/knowledge/prune.mjs';
 import { knowledgeStatus } from '../lib/knowledge/status.mjs';
-import { consolidateStatus, verifiedAndPlans, isActiveFm } from '../lib/knowledge/consolidate.mjs';
+import { consolidateStatus, consolidateCandidates, verifiedAndPlans, isActiveFm } from '../lib/knowledge/consolidate.mjs';
+import { writeFeedbackConfig } from '../lib/knowledge/store.mjs';
+import { listingView } from '../lib/knowledge/listing.mjs';
+import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
+import { feedbackPruningCheck } from '../lib/doctor.mjs';
 import { bucketDirFor, readBucketMeta, isSafeBucketKey } from '../lib/knowledge/overlay.mjs';
 import { retrievalExclusion } from '../lib/knowledge/retrieve.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
@@ -587,4 +591,34 @@ test('rebuildIndex excludes branch→golden tombstones so INDEX.md agrees with r
   );
   rebuildIndex(dir);
   assert.ok(!fs.readFileSync(path.join(dir, 'INDEX.md'), 'utf8').includes('sql/gone'));
+});
+
+test('no recall feedback path reaches the promote, retire, dispute or learning-content writers', () => {
+  // Static: the feedback module and its readers never import or call a writer.
+  const writers = /\b(setLearningStatus|appendGovernance|buildPromotionOps|applyOps|writeLearningFile|withStoreTransaction|appendLedger|writeStoreFile)\b|knowledge\/(lifecycle|promote|apply)\.mjs/;
+  const feedbackSrc = fs.readFileSync(path.join(packageRoot, 'lib/learning-feedback.mjs'), 'utf8');
+  assert.doesNotMatch(feedbackSrc, writers, 'lib/learning-feedback.mjs must stay a reader of learning state');
+  const doctorSrc = fs.readFileSync(path.join(packageRoot, 'lib/doctor.mjs'), 'utf8');
+  const pruning = doctorSrc.slice(doctorSrc.indexOf('export function feedbackPruningCheck'), doctorSrc.indexOf('export function structuralChecks'));
+  assert.ok(pruning.length > 0);
+  assert.doesNotMatch(pruning, writers, 'the doctor pruning hint is advisory and never retires');
+
+  // Behavioral: under feedback=on with a current wrong verdict and heavy exposure, every reader leaves learnings and governance untouched.
+  const ws = featureWorkspace(null);
+  const home = tempDir('bh-fb-home-');
+  const ep = writeFixEpisode(ws, 'docs/solutions/logic/fb.md');
+  assert.equal(applyOps({ workspace: ws, home, opsPath: writeOps(ws, [{ op: 'ADD', domain: 'logic', slug: 'fb-claim', trigger: 'feedback boundary', body: 'A claim judged wrong.', episodes: [ep] }]) }).exitCode, 0);
+  const { dir } = ensureStore(ws, { home });
+  const [learning] = listLearnings(dir);
+  for (let i = 0; i < 6; i++) recordExposure({ recordRoot: ws, workspace: ws, home, planPath: 'docs/plans/p1.md', delivered: [{ id: learning.id }] });
+  publishFeedbackRecord({ workspace: ws, home, operation: 'd'.repeat(64), planPath: 'docs/plans/p1.md', captureDate: '2026-11-09', feedback: { recalled: [{ id: learning.id, verdict: 'wrong', version: learningVersion(learning) }] } });
+  assert.equal(writeFeedbackConfig(ws, { home, feedback: 'on' }).pass, true);
+  const snapshot = () => JSON.stringify({ learnings: listLearnings(dir).map((l) => [l.id, l.fm, l.body]), governance: [...readGovernance(dir).entries()] });
+  const before = snapshot();
+  assert.deepEqual(consolidateCandidates({ workspace: ws, home }).feedback.review_required, [learning.id]);
+  assert.equal(consolidateStatus({ workspace: ws, home }).due, true);
+  assert.equal(knowledgeStatus({ workspace: ws, home }).feedback.learnings[0].exposed, 6);
+  assert.equal(listingView({ workspace: ws, home }).learnings[0].wrong, 1);
+  assert.equal(feedbackPruningCheck({ workspace: ws, home }).pass, false);
+  assert.equal(snapshot(), before, 'feedback never changes learning status, content or governance');
 });
