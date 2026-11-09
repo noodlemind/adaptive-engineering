@@ -12,7 +12,7 @@ import { runInsightCompound } from '../lib/compound.mjs';
 import { ensureStore, readRecheckConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { solutionsScanRoots } from '../lib/project-layout.mjs';
-import { failureClusterId } from '../lib/knowledge/recheck.mjs';
+import { failureClusterId } from '../lib/learning-recheck.mjs';
 
 const bin = path.resolve(import.meta.dirname, '../bin/ae.mjs');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
@@ -33,7 +33,7 @@ function fixture(t) {
   const { dir } = ensureStore(ws, { home });
   assert.equal(writeStoreConfig(ws, { home, mode: 'on' }).pass, true);
   const evidence = PLANS.map((plan, n) => {
-    const record = { plan, outcome: 'failed', verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', stderr: `retry count wrong in ${plan}` }] };
+    const record = { plan, outcome: 'failed', verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: `retry count wrong in ${plan}` }] };
     return put(`.harness/evidence/history/${sha(JSON.stringify(record))}.json`, record);
   });
   const cli = (args, env = {}) => spawnSync(process.execPath, [bin, ...args, '--workspace', ws, '--copilot-home', copilotHome, '--json'], { encoding: 'utf8', env: { ...process.env, HARNESS_HOME: home, HARNESS_NO_EVENTS: '1', ...env } });
@@ -146,10 +146,58 @@ test('a derived_from insight is traceable from the applied learning back to the 
   const cleared = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
   assert.equal(cleared.some(c => c.id === cluster.id), false, 'an answered cluster no longer appears');
   const recurred = PLANS.map((plan, n) => {
-    const record = { plan, outcome: 'failed', verifiedAt: `2099-01-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', stderr: 'retry count wrong again' }] };
+    const record = { plan, outcome: 'failed', verifiedAt: `2099-01-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'retry count wrong again' }] };
     return f.put(`.harness/evidence/history/${sha(JSON.stringify(record))}.json`, record);
   });
   const reopened = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.find(c => c.id === cluster.id);
   assert.ok(reopened, 'failures after the consolidation reopen the cluster');
   assert.deepEqual(reopened.evidence.toSorted(), recurred.toSorted(), 'only failures after the answer count');
+});
+
+/** Capture an insight answering the fixture's cluster and consume it with one op. */
+function answerCluster(f, op, operation) {
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const [cluster] = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
+  const insight = runInsightCompound({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home, log: () => {},
+    flags: { title: `Retry count answer ${operation}`, body: 'The retry constant is read before config loads.', category: 'debugging', derivedFrom: `failure-cluster:${cluster.id}` } });
+  assert.equal(insight.pass, true, insight.blockedReason);
+  const packet = prepareConsolidationPacket({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home });
+  const episode = packet.clusters.flatMap(c => c.episodes).find(e => e.path === insight.path);
+  const opsPath = path.join(f.root, `${operation}.json`);
+  fs.writeFileSync(opsPath, JSON.stringify({ schema: 2, packet: packet.id, operation, attempt: 1, ops: [{ ...op, episodes: [{ id: episode.id }] }] }));
+  const applied = applyConsolidationProposal({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home, opsPath });
+  assert.equal(applied.exitCode, 0, JSON.stringify(applied.rejected));
+  const file = solutionsScanRoots(f.ws, { home: f.home }).map(root => path.join(root.base, insight.path)).find(candidate => fs.existsSync(candidate));
+  return { cluster, file };
+}
+
+const ADD = { op: 'ADD', domain: 'testing', slug: 'retry-constant-load-order', trigger: 'reading the retry constant during startup', body: 'Load config before reading the retry constant.' };
+const clusterIds = f => consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.map(c => c.id);
+const failAgain = (f, at) => PLANS.map(plan => {
+  const record = { plan, outcome: 'failed', verifiedAt: at, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'again' }] };
+  return f.put(`.harness/evidence/history/${sha(JSON.stringify(record))}.json`, record);
+});
+
+test('a NOOP consumption does not answer a cluster', t => {
+  const f = fixture(t);
+  const { cluster } = answerCluster(f, { op: 'NOOP', reason: 'Nothing durable to learn.' }, 'noop-answer');
+  assert.ok(clusterIds(f).includes(cluster.id), 'only a learning-writing op answers a cluster');
+});
+
+test('an answer is durable: it survives the episode being purged and a same-day recurrence still reopens it', t => {
+  const f = fixture(t);
+  const { cluster, file } = answerCluster(f, ADD, 'durable-answer');
+  assert.equal(clusterIds(f).includes(cluster.id), false);
+  fs.rmSync(file);
+  assert.equal(clusterIds(f).includes(cluster.id), false, 'the answer lives in the ledger, not the episode file');
+  failAgain(f, new Date(Date.now() + 60_000).toISOString());
+  assert.ok(clusterIds(f).includes(cluster.id), 'a recurrence later the same day reopens the cluster');
+});
+
+test('an answer recorded in a branch bucket is visible from other branches', t => {
+  const f = fixture(t);
+  assert.equal(spawnSync('git', ['switch', '-q', '-c', 'feature/answer'], { cwd: f.ws }).status, 0);
+  const { cluster } = answerCluster(f, ADD, 'branch-answer');
+  assert.equal(spawnSync('git', ['switch', '-q', '-c', 'feature/other'], { cwd: f.ws }).status, 0);
+  assert.equal(clusterIds(f).includes(cluster.id), false);
 });

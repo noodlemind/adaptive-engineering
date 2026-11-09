@@ -26,7 +26,7 @@ import { capabilityOptions, capabilityContext, adaptationContext, loadedResource
 import { retainVerifiedPublication } from './resource-recurrence.mjs';
 import { discoveryPolicy } from './capability-catalog.mjs';
 import { decisionPolicyFromDiscovery, inspectMemoryDecision } from './decision-agent.mjs';
-import { FAILURE_CLUSTER_REF } from './knowledge/recheck.mjs';
+import { FAILURE_CLUSTER_REF } from './learning-recheck.mjs';
 
 import { buildStructuralIndex } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';

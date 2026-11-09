@@ -5,9 +5,9 @@ import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, i
 import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
-import { bucketDirFor, loadLayeredLearnings } from './overlay.mjs';
+import { bucketDirFor, isSafeBucketKey, listBuckets, loadLayeredLearnings } from './overlay.mjs';
 import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
-import { recheckState, recheckSummary, recheckDue, FAILURE_CLUSTER_REF } from './recheck.mjs';
+import { recheckState, recheckSummary, recheckDue } from '../learning-recheck.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -113,7 +113,6 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
           excerpt: excerpt(text),
           date: fm.date || null,
                     branch: fm.branch || null,
-          ...(FAILURE_CLUSTER_REF.test(fm.derived_from || '') ? { derivedFrom: fm.derived_from } : {}),
         });
       }
     }
@@ -220,13 +219,11 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const view = layerView({ workspace, home, dir, writeLayer, layerOverride });
-  const goldenLedger = readLedger(dir);
-  const bucketLedger = view.layer === 'branch' ? readLedger(view.layerRoot) : [];
-  const { consumed, quarantined } = splitLedger(goldenLedger);
+  const { consumed, quarantined } = splitLedger(readLedger(dir));
   let layerQuarantined = [];
   if (view.layer === 'branch') {
     // The current bucket's ledger consumes (and quarantines) too.
-    const bucketSplit = splitLedger(bucketLedger);
+    const bucketSplit = splitLedger(readLedger(view.layerRoot));
     for (const key of bucketSplit.consumed) consumed.add(key);
     layerQuarantined = bucketSplit.quarantined;
   }
@@ -242,7 +239,7 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
   // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks.
   const recheck = recheckMode === 'on' || (recheckMode === 'suggest' && recheckRequested)
-    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(episodes, [...goldenLedger, ...bucketLedger]) })
+    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir) })
     : null;
   const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
   const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0) || recheckIsDue);
@@ -266,20 +263,19 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   return { status, recheck };
 }
 
-/** Cluster ID -> latest ledger day on which an episode citing it (`derived_from`) was consumed. */
-function answeredClusters(episodes, ledger) {
-  const consumedAt = new Map();
-  for (const entry of ledger) {
-    if (!('learning' in entry) || typeof entry.at !== 'string') continue;
-    const key = `${entry.path}@${entry.sha256}`;
-    if (!consumedAt.has(key) || entry.at > consumedAt.get(key)) consumedAt.set(key, entry.at.slice(0, 10));
-  }
+/**
+ * Cluster ID -> latest time a learning-writing op consumed an episode that
+ * answers it. Apply records `answers` and `answeredAt` on the ledger entry, so
+ * the answer survives edits or purges of the episode and is read from the
+ * golden ledger and every branch bucket. NOOP and quarantine entries carry no
+ * learning and never answer a cluster.
+ */
+function answeredClusters(dir) {
   const answered = new Map();
-  for (const episode of episodes) {
-    const at = episode.derivedFrom && consumedAt.get(`${episode.path}@${episode.sha256}`);
-    if (!at) continue;
-    const id = episode.derivedFrom.slice('failure-cluster:'.length);
-    if (!answered.has(id) || at > answered.get(id)) answered.set(id, at);
+  const ledgers = [readLedger(dir), ...listBuckets(dir).filter(bucket => isSafeBucketKey(bucket.key)).map(bucket => readLedger(bucket.dir))];
+  for (const entry of ledgers.flat()) {
+    if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
+    if (!answered.has(entry.answers) || entry.answeredAt > answered.get(entry.answers)) answered.set(entry.answers, entry.answeredAt);
   }
   return answered;
 }
@@ -303,10 +299,17 @@ function feedbackView({ workspace, home, learnings }) {
  */
 function recheckView({ workspace, home, state, resolved }) {
   // Golden plus the current branch bucket, whichever layer the caller routes to,
-  // so status and packets see the same learnings.
-  let allLearnings = [];
-  try { allLearnings = loadLayeredLearnings({ workspace, home }).learnings; } catch { allLearnings = []; }
-  const learnings = activeLearnings(allLearnings);
+  // so status and packets see the same learnings. A subordinate branch twin of
+  // a protected golden learning is not a separate learning.
+  let learnings = [], allLearnings = [];
+  try {
+    const layered = loadLayeredLearnings({ workspace, home });
+    learnings = activeLearnings(layered.learnings.filter(l => !l.subordinate));
+    const dir = storeDir(workspace, { home });
+    const key = layered.context?.branchKey;
+    // Reference targets include inactive learnings from both layers.
+    allLearnings = [...listLearnings(dir), ...(key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
+  } catch { learnings = []; allLearnings = []; }
   let reviewRequired = [];
   try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
   try {

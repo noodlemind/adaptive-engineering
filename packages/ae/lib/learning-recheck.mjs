@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
-import { redactSecrets, maskSecrets } from '../secret-scan.mjs';
-import { foldRuns, RUNS_FILE } from '../run-journal.mjs';
-import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './store.mjs';
-import { learningApplicability, APPLICABILITY_VERSION } from './applicability.mjs';
+import { readFileNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
+import { redactSecrets, maskSecrets } from './secret-scan.mjs';
+import { foldRuns, RUNS_FILE } from './run-journal.mjs';
+import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
+import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
 
 // Consolidation re-check (agent memory plan, Phase 2). Every signal here is
 // evidence for judgment built only from Harness-owned records in the
@@ -19,6 +19,7 @@ export const RECHECK_SECTION_CAP = 10;
 export const RECHECK_DUE_STALE_EXPOSED = 3;
 export const RECHECK_DUE_CLUSTER_PLANS = 3;
 export const RECHECK_EXCERPT_CAP = 400;
+const RECHECK_MASK_WINDOW = 8 * RECHECK_EXCERPT_CAP;
 /** `derived_from` reference to a failure cluster. The ID is a stable digest of the cluster key. */
 export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
 const SCAN_CAP = 512;
@@ -42,8 +43,13 @@ export function recheckState({ workspace, home }) {
   return readRecheckConfig(workspace, { home });
 }
 
-/** Record names, newest first by modification time, capped so a long history keeps its recent records. */
-function listRecordNames(root, rel, pattern) {
+/**
+ * Record names, newest first by modification time. Modification time only
+ * preselects (twice the cap): callers that can order by the record's own
+ * timestamp re-rank and cap with `newestRecords`, since copies and restores
+ * reset mtime.
+ */
+function listRecordNames(root, rel, pattern, limit = SCAN_CAP * 2) {
   const dir = assertNoSymlinkAncestors(root, rel);
   if (!dir) return { names: [], omitted: 0 };
   let entries = [];
@@ -55,7 +61,21 @@ function listRecordNames(root, rel, pattern) {
     });
   } catch { return { names: [], omitted: 0 }; }
   entries.sort((a, b) => b.mtime - a.mtime || b.name.localeCompare(a.name));
-  return { names: entries.slice(0, SCAN_CAP).map(entry => entry.name), omitted: Math.max(0, entries.length - SCAN_CAP) };
+  return { names: entries.slice(0, limit).map(entry => entry.name), omitted: Math.max(0, entries.length - limit) };
+}
+
+/** Keep the `SCAN_CAP` records with the newest own timestamp; the rest add to `omitted`. */
+function newestRecords(records, timestamp, omitted) {
+  const ranked = records.toSorted((a, b) => String(timestamp(b) || '').localeCompare(String(timestamp(a) || '')));
+  return { records: ranked.slice(0, SCAN_CAP), omitted: omitted + Math.max(0, ranked.length - SCAN_CAP) };
+}
+
+const digestOf = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+/** A history or observation record whose name is not the digest of its content was not written by Harness. */
+function readDigestRecord(root, rel, name) {
+  const value = readJson(root, rel);
+  return value && digestOf(value) === name.slice(0, -'.json'.length) ? value : null;
 }
 
 function readJson(root, rel) {
@@ -73,17 +93,21 @@ export function failureExcerpt(check) {
   const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
   if (!raw) return null;
   if (/PRIVATE KEY/.test(raw)) return '[withheld: private-key]';
-  const masked = maskSecrets(raw).replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Bound the masking input: some patterns are superlinear on long output.
+  const masked = maskSecrets(raw.slice(-RECHECK_MASK_WINDOW)).replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
   return redactSecrets(masked.slice(-RECHECK_EXCERPT_CAP));
 }
 
 /**
- * Only checks that ran a process (a named check from checks.yaml) are failure
- * evidence. Harness's built-in gate rows (plan-state, phase-tasks, scope,
- * required-reviews and the rest) carry no process output: they say the work
- * was unfinished, not that something broke.
+ * Only a named check (from checks.yaml) whose process failed is failure
+ * evidence: a nonzero exit, or a timeout with retained output. Harness's
+ * built-in gate rows (plan-state, phase-tasks, scope, required-reviews and the
+ * rest) carry no process result: they say the work was unfinished, not that
+ * something broke. A passing process whose row Harness later marked failed
+ * (an artifact or domain manifest refusal) keeps exit 0 and is excluded too.
  */
-const ranProcess = check => ['stdout', 'stderr', 'exitCode'].some(key => Object.hasOwn(check, key));
+const processFailed = check => (check.status === 'failed' && Number.isInteger(check.exitCode) && check.exitCode !== 0)
+  || (check.status === 'timeout' && ['stdout', 'stderr'].some(key => Object.hasOwn(check, key)));
 
 const byStrength = (a, b) => b.plan_count - a.plan_count || String(b.last_seen || '').localeCompare(String(a.last_seen || '')) || a.id.localeCompare(b.id);
 
@@ -93,29 +117,27 @@ function finishCluster(row) {
 }
 
 /**
- * A failure counts toward a cluster only when it is dated after the latest
- * consolidation that consumed an episode citing the cluster (`derived_from`),
- * so answering a cluster clears it until the failure recurs. The ledger
- * records days, so failures on the consolidation day count as answered.
+ * A failure counts toward a cluster only when it is timestamped after the
+ * latest learning-writing consolidation that consumed an episode answering the
+ * cluster (`derived_from`), so answering a cluster clears it until the failure
+ * recurs, the same day or later.
  */
-const unresolved = (resolved, id, at) => !resolved.has(id) || (typeof at === 'string' && at.slice(0, 10) > resolved.get(id));
+const unresolved = (resolved, id, at) => !resolved.has(id) || (typeof at === 'string' && at > resolved.get(id));
 
-/** Failed named `ae verify` checks, grouped by check ID across plans, from current and historical evidence records. */
+/**
+ * Failed named `ae verify` checks, grouped by check ID across plans, from the
+ * digest-named evidence history Harness writes on every verification.
+ */
 function evidenceClusters(workspace, resolved) {
-  const records = [];
   const history = listRecordNames(workspace, '.harness/evidence/history', HASH_FILE);
-  for (const name of history.names) records.push({ rel: `.harness/evidence/history/${name}`, value: readJson(workspace, `.harness/evidence/history/${name}`) });
-  const latest = listRecordNames(workspace, '.harness/evidence', /\.json$/);
-  for (const name of latest.names) records.push({ rel: `.harness/evidence/${name}`, value: readJson(workspace, `.harness/evidence/${name}`) });
-  const seen = new Set(), clusters = new Map();
+  const read = history.names.map(name => ({ rel: `.harness/evidence/history/${name}`, value: readDigestRecord(workspace, `.harness/evidence/history/${name}`, name) })).filter(record => record.value);
+  const { records, omitted } = newestRecords(read, record => record.value.verifiedAt, history.omitted);
+  const clusters = new Map();
   for (const { rel, value } of records) {
-    if (!value || typeof value.plan !== 'string' || !value.plan || !Array.isArray(value.checks)) continue;
+    if (typeof value.plan !== 'string' || !value.plan || !Array.isArray(value.checks)) continue;
     const at = typeof value.verifiedAt === 'string' ? value.verifiedAt : null;
-    const observation = `${value.plan}\0${at}`;
-    if (seen.has(observation)) continue; // the latest record duplicates one history record
-    seen.add(observation);
     for (const check of value.checks) {
-      if (!check || typeof check.id !== 'string' || !check.id || !['failed', 'timeout'].includes(check.status) || !ranProcess(check)) continue;
+      if (!check || typeof check.id !== 'string' || !check.id || !processFailed(check)) continue;
       const checkId = inertLine(check.id).slice(0, 200);
       const key = `check:${checkId}`;
       if (!unresolved(resolved, failureClusterId(key), at)) continue;
@@ -128,17 +150,35 @@ function evidenceClusters(workspace, resolved) {
       clusters.set(key, row);
     }
   }
-  return { clusters: [...clusters.values()], omitted: history.omitted + latest.omitted };
+  return { clusters: [...clusters.values()], omitted };
 }
 
-/** Bounded, no-follow read of the run journal. An oversized or unsafe journal contributes nothing. */
+/**
+ * Bounded, no-follow read of the run journal's newest bytes. An unsafe or
+ * symlinked journal contributes nothing; an oversized one contributes its
+ * tail, without the first partial line, and says so.
+ */
 function readJournalBounded(workspace) {
   const rel = path.join('.harness', RUNS_FILE);
   const full = assertNoSymlinkAncestors(workspace, rel);
-  if (!full) return [];
-  const text = readFileNoFollow(full, { root: workspace, maxBytes: JOURNAL_BYTE_CAP });
-  if (text === null) return [];
-  return text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  if (!full) return { records: [], truncated: false };
+  let fd;
+  try {
+    if (!fs.lstatSync(full).isFile()) return { records: [], truncated: false };
+    fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const { size } = fs.fstatSync(fd);
+    const length = Math.min(size, JOURNAL_BYTE_CAP);
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, size - length);
+    let text = buffer.toString('utf8');
+    const truncated = size > length;
+    if (truncated) text = text.slice(text.indexOf('\n') + 1);
+    return { records: text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean), truncated };
+  } catch {
+    return { records: [], truncated: false };
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 /**
@@ -147,8 +187,9 @@ function readJournalBounded(workspace) {
  * broken check, so these clusters never make consolidation due.
  */
 function journalClusters(workspace, resolved) {
+  const journal = readJournalBounded(workspace);
   let runs = [];
-  try { runs = foldRuns(readJournalBounded(workspace), { isAlive: () => false }); } catch { return []; }
+  try { runs = foldRuns(journal.records, { isAlive: () => false }); } catch { return { clusters: [], truncated: journal.truncated }; }
   const clusters = new Map();
   for (const run of runs) {
     if (run.status !== 'failed' || typeof run.plan !== 'string' || !run.plan || typeof run.command !== 'string' || !run.command) continue;
@@ -163,15 +204,15 @@ function journalClusters(workspace, resolved) {
     if (at && (!row.last_seen || at > row.last_seen)) row.last_seen = at;
     clusters.set(key, row);
   }
-  return [...clusters.values()];
+  return { clusters: [...clusters.values()], truncated: journal.truncated };
 }
 
 /** Recurring review findings grouped by perspective (the finding category) and file across plans. */
 function findingClusters(workspace) {
-  const { names, omitted } = listRecordNames(workspace, '.harness/reviews/observations', HASH_FILE);
+  const { names, omitted } = listRecordNames(workspace, '.harness/reviews/observations', HASH_FILE, SCAN_CAP);
   const packetPlans = new Map(), clusters = new Map();
   for (const name of names) {
-    const input = readJson(workspace, `.harness/reviews/observations/${name}`);
+    const input = readDigestRecord(workspace, `.harness/reviews/observations/${name}`, name);
     if (!input || !/^[a-f0-9]{64}$/.test(input.packet || '') || !Array.isArray(input.results)) continue;
     if (!packetPlans.has(input.packet)) packetPlans.set(input.packet, readJson(workspace, `.harness/reviews/packets/${input.packet}.json`)?.plan ?? null);
     const plan = packetPlans.get(input.packet);
@@ -197,11 +238,12 @@ function findingClusters(workspace) {
 
 /** Exposure entries across every plan's record: learning ID -> last exposure, total count, plans. */
 function exposureIndex(workspace) {
-  const { names } = listRecordNames(workspace, '.harness/learning/exposures', /^plan-[a-f0-9]{64}\.json$/);
+  const listed = listRecordNames(workspace, '.harness/learning/exposures', /^plan-[a-f0-9]{64}\.json$/);
+  const valid = listed.names.map(name => readJson(workspace, `.harness/learning/exposures/${name}`))
+    .filter(record => record?.version === 1 && typeof record.plan === 'string' && Array.isArray(record.entries));
+  const latest = record => record.entries.reduce((max, entry) => (typeof entry?.lastExposedAt === 'string' && entry.lastExposedAt > max ? entry.lastExposedAt : max), '');
   const index = new Map();
-  for (const name of names) {
-    const record = readJson(workspace, `.harness/learning/exposures/${name}`);
-    if (record?.version !== 1 || typeof record.plan !== 'string' || !Array.isArray(record.entries)) continue;
+  for (const record of newestRecords(valid, latest, 0).records) {
     for (const entry of record.entries) {
       if (typeof entry?.id !== 'string') continue;
       const row = index.get(entry.id) || { last: null, count: 0, plans: new Set() };
@@ -317,7 +359,8 @@ const plansAtLeast = n => row => row.plans.size >= n;
  */
 export function recheckSummary({ workspace, learnings, allLearnings = learnings, reviewRequired = [], resolved = new Map() }) {
   const evidence = evidenceClusters(workspace, resolved);
-  const failures = [...evidence.clusters, ...journalClusters(workspace, resolved)].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
+  const journal = journalClusters(workspace, resolved);
+  const failures = [...evidence.clusters, ...journal.clusters].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
   const findings = findingClusters(workspace);
   const findingRows = findings.clusters.filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
   const stale = staleExposed(workspace, learnings);
@@ -335,6 +378,7 @@ export function recheckSummary({ workspace, learnings, allLearnings = learnings,
     omitted: {
       stale_exposed: over(stale), review_required: over(reviewRequired), failure_clusters: over(failures), finding_clusters: over(findingRows), broken_references: over(broken),
       ...(evidence.omitted || findings.omitted ? { scannedRecords: evidence.omitted + findings.omitted } : {}),
+      ...(journal.truncated ? { journal: `only the newest ${JOURNAL_BYTE_CAP / (1024 * 1024)} MiB of the run journal was read` } : {}),
     },
     max_cluster_plans: failures.filter(row => row.source === 'evidence').reduce((n, row) => Math.max(n, row.plan_count), 0),
   };

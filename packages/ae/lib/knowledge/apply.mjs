@@ -152,6 +152,21 @@ function episodeHashMatches(full, root, sha256) {
   return crypto.createHash('sha256').update(text).digest('hex') === sha256;
 }
 
+/**
+ * The failure cluster a verified episode answers (`derived_from:
+ * failure-cluster:<id>`), or null. Recorded on the ledger entry of a
+ * learning-writing op so the answer outlives the episode file and is visible
+ * from every layer. Absent for every other episode, so ledger bytes are
+ * unchanged.
+ */
+function episodeAnswer(workspace, copilotHome, e, home) {
+  const hit = firstExistingEpisodeFile(workspace, copilotHome, e.path, home, e.sha256);
+  if (!hit) return null;
+  const text = readFileNoFollow(hit.full, { root: hit.root });
+  const fm = text?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
+  return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
+}
+
 function firstExistingEpisodeFile(workspace, copilotHome, p, home, sha256) {
   for (const { full, root } of resolveEpisodeFile(workspace, copilotHome, p, home)) {
     if (!fs.existsSync(full)) continue;
@@ -1499,7 +1514,10 @@ export function applyOps({
         throw new Error(`refused to write ${id}: the learning path does not resolve safely inside the knowledge store`);
       }
       applied.push({ op: op.op, id });
-      for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at });
+      for (const e of op.episodes) {
+        const answers = episodeAnswer(workspace, copilotHome, e, home);
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at, ...(answers ? { answers, answeredAt: governanceAt } : {}) });
+      }
       if (op.op === 'SUPERSEDE' && op.target !== id) {
         const target = existing.get(op.target);
         if (!updateFrontmatterField(target.file, 'superseded_by', id)) {
@@ -1561,7 +1579,10 @@ export function applyOps({
         throw new Error(`refused to strengthen ${op.target}: the learning path does not resolve safely inside the knowledge store`);
       }
       applied.push({ op: 'STRENGTHEN', id: op.target });
-      for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at });
+      for (const e of op.episodes) {
+        const answers = episodeAnswer(workspace, copilotHome, e, home);
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at, ...(answers ? { answers, answeredAt: governanceAt } : {}) });
+      }
     }
 
     if (promotionMode && !dryRun) {

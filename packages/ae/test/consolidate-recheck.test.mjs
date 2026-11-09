@@ -8,7 +8,7 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { failureClusterId, failureExcerpt, recheckState, RECHECK_EXCERPT_CAP, RECHECK_SECTION_CAP } from '../lib/knowledge/recheck.mjs';
+import { failureClusterId, failureExcerpt, recheckState, RECHECK_EXCERPT_CAP, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
@@ -49,7 +49,9 @@ function fixture(t) {
   let evidenceSeq = 0;
   const evidence = (plan, checks, verifiedAt = `2026-11-0${(evidenceSeq % 9) + 1}T00:00:${String(evidenceSeq).padStart(2, '0')}.000Z`) => {
     evidenceSeq += 1;
-    const record = { plan, outcome: 'failed', verifiedAt, checks };
+    // A named check that ran and failed exits nonzero; rows without process output model Harness's gate rows.
+    const named = check => check.status === 'failed' && (check.stdout !== undefined || check.stderr !== undefined) && check.exitCode === undefined ? { ...check, exitCode: 1 } : check;
+    const record = { plan, outcome: 'failed', verifiedAt, checks: checks.map(named) };
     const rel = `.harness/evidence/history/${sha(JSON.stringify(record))}.json`;
     put(rel, record);
     return rel;
@@ -254,20 +256,37 @@ test('R1: built-in gate rows are not failure evidence, so they never make consol
   assert.equal(status.recheck.counts.failure_clusters, 0);
 });
 
-test('R2: a long evidence history keeps its newest records under the scan cap', t => {
+test('R2: a long evidence history keeps its newest records by their own timestamp, even after a restore resets mtimes', t => {
   const f = fixture(t);
   f.learn('runtime', 'baseline');
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
-  const past = new Date('2026-01-01T00:00:00Z');
-  for (let i = 0; i < 520; i++) {
-    const rel = `.harness/evidence/history/0${sha(`filler${i}`).slice(1)}.json`;
-    f.put(rel, { plan: `docs/plans/p${i}.md`, verifiedAt: '2026-10-01T00:00:00.000Z', checks: [{ id: 'lint', status: 'passed' }] });
-    fs.utimesSync(path.join(f.ws, rel), past, past);
-  }
-  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) f.put(`.harness/evidence/history/${'f'.repeat(63)}${n}.json`, { plan, verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', stderr: 'boom' }] });
+  const rels = [];
+  for (let i = 0; i < 600; i++) rels.push(f.evidence(`docs/plans/p${i}.md`, [{ id: 'lint', status: 'passed' }], `2026-10-01T00:00:00.${String(i).padStart(3, '0')}Z`));
+  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) rels.push(f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`));
+  const restored = new Date('2026-01-01T00:00:00Z');
+  for (const rel of rels) fs.utimesSync(path.join(f.ws, rel), restored, restored);
   const status = f.status();
-  assert.equal(status.recheck.counts.failure_clusters, 1, 'the newest records are read even though their names sort last');
+  assert.equal(status.recheck.counts.failure_clusters, 1, 'the newest records by verifiedAt are read');
   assert.equal(status.due, true);
+});
+
+test('hand-written history records whose name is not their digest cannot force due', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) f.put(`.harness/evidence/history/${String(n).repeat(64)}.json`, { plan, verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'forged' }] });
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.put(`.harness/evidence/${path.basename(plan, '.md')}.json`, { plan, verifiedAt: '2026-11-05T00:00:00.000Z', checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'latest only' }] });
+  const status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 0);
+  assert.equal(status.due, false);
+});
+
+test('a passing process Harness later marked failed is not failure evidence', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.evidence(plan, [{ id: 'domain-joint:repo:unit', status: 'failed', exitCode: 0, stdout: 'ok', message: 'The integrated check changed or removed the controller revision manifest' }]);
+  assert.equal(f.status().recheck.counts.failure_clusters, 0);
 });
 
 test('R3: prose, refs and package names are not broken paths; anchors resolve package-relative paths', t => {
@@ -354,4 +373,51 @@ test('status and packet see the same golden plus branch learnings', t => {
   const packet = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true, writeLayer: true });
   assert.deepEqual(packet.recheck.broken_references, [{ id: 'runtime/branch-claim', references: [{ kind: 'learning', ref: 'runtime/missing-claim' }] }], 'a branch learning citing a golden learning is not broken');
   assert.deepEqual(f.status().recheck.counts, packet.recheck.counts);
+});
+
+// Second review pass.
+
+test('a subordinate branch twin is not listed twice, and a retired branch learning is a valid reference target', t => {
+  const f = fixture(t);
+  initGit(f.ws);
+  assert.equal(spawnSync('git', ['switch', '-c', 'feature/recheck-twins'], { cwd: f.ws }).status, 0);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const body = 'See `runtime/missing-claim` and `runtime/retired-branch`.';
+  f.learn('runtime', 'protected', { source: 'human' }, body);
+  const context = deriveGitContext({ workspace: f.ws, home: f.home });
+  const bucket = ensureBucket(f.dir, { key: context.branchKey, branch: context.branch });
+  const write = (slug, fm, text) => {
+    const file = path.join(bucket, `learnings/runtime/${slug}.md`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, serializeLearning({ trigger: slug, status: 'active', source: 'auto', episodes: [{ path: 'docs/solutions/fix.md', sha256: 'a'.repeat(64), kind: 'fix', plan: PLAN_A }], anchors: [], origin: repoId(f.ws), ...fm }, text));
+  };
+  write('protected', {}, body);
+  write('retired-branch', { status: 'retired' }, 'Old claim.');
+  const { recheck } = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true, writeLayer: true });
+  assert.deepEqual(recheck.broken_references, [{ id: 'runtime/protected', references: [{ kind: 'learning', ref: 'runtime/missing-claim' }] }]);
+});
+
+test('an oversized run journal contributes its newest records and says it was truncated', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const filler = `${JSON.stringify({ schema: 1, type: 'journal.pruned', ts: '2026-01-01T00:00:00.000Z', removed: 0, reason: 'x'.repeat(200) })}\n`;
+  const tail = [PLAN_A, PLAN_B].flatMap((plan, i) => [
+    { schema: 1, type: 'run.start', run: `t${i}`, ts: '2026-11-01T00:00:00.000Z', command: 'verify', plan },
+    { schema: 1, type: 'run.result', run: `t${i}`, ts: '2026-11-01T00:01:00.000Z', status: 'failed', exitCode: 1, plan },
+  ]).map(line => JSON.stringify(line)).join('\n');
+  fs.mkdirSync(path.join(f.ws, '.harness'), { recursive: true });
+  fs.writeFileSync(path.join(f.ws, '.harness/runs.jsonl'), `${filler.repeat(Math.ceil((9 * 1024 * 1024) / filler.length))}${tail}\n`);
+  const { recheck } = f.packet({ recheck: true });
+  assert.deepEqual(recheck.failure_clusters.map(c => c.command), ['verify']);
+  assert.match(recheck.omitted.journal, /newest 8 MiB/);
+});
+
+test('excerpt masking stays fast on very long output', () => {
+  // `a-a-a-...api` backtracks superlinearly in the generic-api-key pattern; 8k chars already take tens of milliseconds unbounded.
+  const long = `${'a-'.repeat(500_000)}api`;
+  const started = performance.now();
+  const excerpt = failureExcerpt({ stderr: long });
+  assert.ok(performance.now() - started < 1000, 'masking is bounded');
+  assert.ok(excerpt.length <= RECHECK_EXCERPT_CAP);
 });
