@@ -22,6 +22,10 @@ export const RECALLED_VERDICTS = Object.freeze(['helped', 'irrelevant', 'wrong']
 export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed']);
 const FINDING_ENTRY_CAP = 128;
 const FEEDBACK_SECTION_CAP = 20;
+// One cap for every feedback record read or write. Plain-text notes keep a
+// full record near 110 KiB; escaped content can exceed it and is refused.
+const FEEDBACK_RECORD_MAX_BYTES = 256 * 1024;
+const FEEDBACK_RECORD_RESERVE_BYTES = 2 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 const LEARNING_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 
@@ -201,6 +205,10 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
     const latest = latestReviewFindingIds(recordRoot, planPath);
     out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), observed: observedFinding(latest, entry.id), ...(entry.note ? { note: entry.note } : {}) }));
   }
+  // Notes are bounded in characters, not bytes; refuse before acceptance a record that could never be published.
+  // The reserve covers operation, digest, capture date and a readiness citation.
+  const bytes = Buffer.byteLength(JSON.stringify({ version: 1, plan: planPath, ...out }, null, 2));
+  if (bytes + FEEDBACK_RECORD_RESERVE_BYTES > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`recalled and findings serialize to ${bytes} bytes; the feedback record limit is ${FEEDBACK_RECORD_MAX_BYTES - FEEDBACK_RECORD_RESERVE_BYTES}`);
   return out;
 }
 
@@ -210,50 +218,58 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
 // operation key.
 const feedbackKey = ({ operation, plan, digest }) => digest ? recordHash({ operation, plan, digest }) : operation;
 const feedbackRecordRel = key => `${feedbackDirRel}/${key}.json`;
-// A full record (64 recalled + 128 findings with notes) stays near 110 KiB; larger files are refused.
-const FEEDBACK_RECORD_MAX_BYTES = 256 * 1024;
 
 function readFeedbackFile(base, rel) {
   const text = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
   try { return text === null ? null : JSON.parse(text); } catch { return null; }
 }
 
-/** A record accepted before keys carried the digest lives at `<operation>.json` and stays the accepted record for its plan. */
-function legacyAccepted(base, { operation, plan, digest }) {
-  if (!digest) return null;
+/** The authored part of a verdict set; Harness observations such as versions may differ on replay. */
+const feedbackIdentity = ({ recalled, findings }) => JSON.stringify([
+  (Array.isArray(recalled) ? recalled : []).map(entry => [entry?.id, entry?.verdict, entry?.note ?? null]),
+  (Array.isArray(findings) ? findings : []).map(entry => [entry?.id, entry?.disposition, entry?.note ?? null]),
+]);
+
+/**
+ * A record accepted before keys carried the digest lives at `<operation>.json`.
+ * It is this decision's record only when plan and authored verdicts match.
+ */
+function legacyAccepted(base, { operation, plan, digest, feedback }) {
+  if (!digest || !feedback) return null;
   const rel = feedbackRecordRel(operation);
   const record = readFeedbackFile(base, rel);
-  return record?.version === 1 && record.operation === operation && record.plan === plan && record.digest === undefined ? path.join(base, rel) : null;
+  return record?.version === 1 && record.operation === operation && record.plan === plan && record.digest === undefined
+    && feedbackIdentity(record) === feedbackIdentity(feedback) ? path.join(base, rel) : null;
 }
 
 /** One immutable record per accepted learning decision, in the project store so every worktree's verdicts aggregate. */
 export function publishFeedbackRecord({ workspace, home, operation, digest, planPath, captureDate, feedback }) {
   if (!feedback || !ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
   const base = projectStoreDir(workspace, { home });
-  const legacy = legacyAccepted(base, { operation, plan: planPath, digest });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest, feedback });
   if (legacy) return { path: legacy, written: false };
   const rel = feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest }));
   // Cite the decision agent's latest readiness receipt so dispositions can measure its judgments later.
   const readiness = latestReadinessReceipt({ workspace, home, planPath });
   const record = { version: 1, operation, ...(digest ? { digest } : {}), plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
   if (Buffer.byteLength(JSON.stringify(record, null, 2)) + 1 > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`feedback record exceeds ${FEEDBACK_RECORD_MAX_BYTES} bytes`);
-  const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 });
+  const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
   if (existing !== null) return { path: path.join(base, rel), written: false };
   if (!writeFileContained(base, rel, `${JSON.stringify(record, null, 2)}\n`, { exclusive: true })) {
-    if (readFileNoFollow(path.join(base, rel), { root: base, maxBytes: 1024 * 1024 }) !== null) return { path: path.join(base, rel), written: false };
+    if (readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) !== null) return { path: path.join(base, rel), written: false };
     throw new Error('feedback record target is unsafe or unavailable');
   }
   return { path: path.join(base, rel), written: true };
 }
 
-/** Path of the feedback record already accepted for this decision, or null. */
-export function acceptedFeedbackRecord({ workspace, home, operation, digest, planPath }) {
+/** Path of the feedback record already accepted for this decision (`feedback` holds its authored verdicts), or null. */
+export function acceptedFeedbackRecord({ workspace, home, operation, digest, planPath, feedback }) {
   if (!ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
   const base = projectStoreDir(workspace, { home });
-  const legacy = legacyAccepted(base, { operation, plan: planPath, digest });
+  const legacy = legacyAccepted(base, { operation, plan: planPath, digest, feedback });
   if (legacy) return legacy;
   const full = path.join(base, feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest })));
-  return readFileNoFollow(full, { root: base, maxBytes: 1024 * 1024 }) === null ? null : full;
+  return readFileNoFollow(full, { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) === null ? null : full;
 }
 
 export function readFeedbackRecords({ workspace, home }) {
@@ -268,9 +284,10 @@ export function readFeedbackRecords({ workspace, home }) {
     const record = readFeedbackFile(base, `${feedbackDirRel}/${name}`);
     if (record?.version === 1 && (record.digest === undefined || ID.test(record.digest)) && `${feedbackKey(record)}.json` === name) records.push(record);
   }
-  // A legacy record is the accepted one for its operation and plan; a keyed duplicate is not counted again.
-  const legacy = new Set(records.filter(record => record.digest === undefined).map(record => JSON.stringify([record.operation, record.plan])));
-  return { records: records.filter(record => record.digest === undefined || !legacy.has(JSON.stringify([record.operation, record.plan]))) };
+  // A keyed record repeating a legacy record's operation, plan and authored verdicts is the same decision; count it once.
+  const sameDecision = record => JSON.stringify([record.operation, record.plan, feedbackIdentity(record)]);
+  const legacy = new Set(records.filter(record => record.digest === undefined).map(sameDecision));
+  return { records: records.filter(record => record.digest === undefined || !legacy.has(sameDecision(record))) };
 }
 
 /**

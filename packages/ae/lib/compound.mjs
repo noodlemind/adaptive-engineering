@@ -393,7 +393,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
     if (!feedback && !feedbackError) return {};
     try {
       if (feedbackError) {
-        const accepted = acceptedFeedbackRecord({ workspace, home, operation: record.operation, digest: record.digest, planPath: selected.plan.path });
+        const accepted = acceptedFeedbackRecord({ workspace, home, operation: record.operation, digest: record.digest, planPath: selected.plan.path, feedback: decision });
         return { feedbackRecord: accepted ? { path: accepted, written: false } : { written: false, reason: feedbackError.message } };
       }
       return { feedbackRecord: publishFeedbackRecord({ workspace, home, operation: record.operation, digest: record.digest, planPath: selected.plan.path, captureDate: record.captureDate, feedback }) };

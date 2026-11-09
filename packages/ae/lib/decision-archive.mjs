@@ -114,8 +114,12 @@ export function compactDecisions(loc, state) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
-    // The readiness index is a read-only convenience: its failure must not block compaction.
-    try { retainLatestReadiness(loc, request, receipt); } catch (error) { warnings.push(`readiness index not retained: ${error.message}`); }
+    // A refused readiness-index write must not block compaction, and must not
+    // leave the index naming an older receipt: keep this request live and retry.
+    try { retainLatestReadiness(loc, request, receipt); } catch (error) {
+      warnings.push(`readiness index not retained; request ${requestId} stays live: ${error.message}`);
+      continue;
+    }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
     for (const key of Object.keys(invocations)) delete state.invocations[key];

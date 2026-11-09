@@ -1465,7 +1465,7 @@ export async function cmdConsolidate(argv) {
   }
 
   // Default: --status (deterministic debt gauge, zero model cost).
-  const status = consolidateStatus({ workspace, copilotHome, home: flags.home || process.env.HARNESS_HOME });
+  const status = consolidateStatus({ workspace, copilotHome, home: flags.home || process.env.HARNESS_HOME, withFeedback: true });
   writeEvent(workspace, flags, { type: 'consolidate', command: 'consolidate', result: 'pass', exitCode: 0 });
   if (flags.json) {
     emitJson(flags, status);

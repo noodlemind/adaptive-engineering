@@ -209,7 +209,7 @@ function layerView({ workspace, home, dir, writeLayer = false, layerOverride = n
   };
 }
 
-export function consolidateStatus({ workspace, copilotHome, home, writeLayer = false, layerOverride = null }) {
+export function consolidateStatus({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -229,7 +229,7 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     const learnings = listLearnings(view.layerRoot);
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
-  const feedback = feedbackView({ workspace, home, learnings: active });
+  const feedback = feedbackView({ workspace, home, learnings: active, withFeedback });
   const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0));
   return {
     mode,
@@ -249,11 +249,15 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
   };
 }
 
-/** Feedback evidence for packets and status; absent when the effective state is `off`, so output stays byte-identical. */
-function feedbackView({ workspace, home, learnings }) {
+/**
+ * Feedback evidence for packets and status; absent when the effective state is
+ * `off`, so output stays byte-identical. The history is read under `on`, where
+ * `due` depends on it, or under `suggest` only for a caller that shows it.
+ */
+function feedbackView({ workspace, home, learnings, withFeedback }) {
   let state = 'off';
   try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
-  if (state === 'off') return null;
+  if (state === 'off' || (state === 'suggest' && !withFeedback)) return null;
   try {
     return { state, ...feedbackSummary({ workspace, home, learnings }) };
   } catch (error) {
@@ -262,7 +266,7 @@ function feedbackView({ workspace, home, learnings }) {
 }
 
 export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null }) {
-  const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride });
+  const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
 

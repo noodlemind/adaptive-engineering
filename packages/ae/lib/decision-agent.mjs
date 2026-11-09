@@ -16,6 +16,7 @@ const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
 const ID = /^[a-f0-9]{64}$/;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
+const MAX_STATE_WARNINGS = 16;
 const DEFAULT_BUDGETS = Object.freeze({ maxDecisions: 24, maxRepairs: 3, maxAcquisitions: 3, maxSeconds: 900 });
 const LOCAL_INSPECTION = new Set(['read', 'Read', 'read_file', 'readFile', 'copilot_readFile', 'read_skill', 'readSkill', 'grep_search', 'file_search', 'list_dir', 'semantic_search', 'list_code_usages', 'get_errors', 'get_changed_files', 'get_search_view_results', 'test_search', 'open_file', 'codebase', 'search', 'usages', 'changes', 'problems', 'terminalLastCommand', 'get_terminal_output', 'think', 'todos']);
 const NATIVE_LOCAL_INSPECTION = new Set([...LOCAL_INSPECTION, 'ReadFile', 'Glob', 'Grep', 'ListDir', 'view', 'glob', 'grep', 'rg']);
@@ -129,7 +130,9 @@ function mutate(loc, callback) {
   catch (error) { if (error.code === 'EEXIST') throw fail('decision state is busy; retry without resetting its budget'); throw error; }
   try {
     const state = readState(loc), result = callback(state);
-    compactDecisions(loc, state);
+    // Compaction warnings stay in the state, quietly, for decision status to report.
+    const warnings = compactDecisions(loc, state);
+    if (warnings.length) state.warnings = [...(Array.isArray(state.warnings) ? state.warnings.filter(item => !warnings.includes(item?.message)) : []), ...warnings.map(message => ({ at: loc.now, message }))].slice(-MAX_STATE_WARNINGS);
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
     if (!writeFileContained(loc.home, loc.relative, `${bytes}\n`, { mode: 0o600 })) throw fail('decision state publication refused');
@@ -438,10 +441,11 @@ export function decisionStatus(options) {
   const loc = locations(options), state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false };
+  const warnings = Array.isArray(state.warnings) && state.warnings.length ? { warnings: state.warnings } : {};
+  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }
-  return { schema: 1, status: result.current ? 'current' : 'stale', taskId, counts: task.counts, budgets: policy.budgets, ...result, receipt: request ? state.receipts[request.requestId] || null : null };
+  return { schema: 1, status: result.current ? 'current' : 'stale', taskId, counts: task.counts, budgets: policy.budgets, ...result, receipt: request ? state.receipts[request.requestId] || null : null, ...warnings };
 }
 
 export function inspectDecisionAction(options) {
