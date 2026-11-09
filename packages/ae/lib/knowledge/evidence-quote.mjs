@@ -1,4 +1,4 @@
-import { scanSecrets } from '../secret-scan.mjs';
+import { scanSecrets, SECRET_PATTERNS } from '../secret-scan.mjs';
 import { inertLine } from './store.mjs';
 
 /**
@@ -9,6 +9,14 @@ import { inertLine } from './store.mjs';
  * Absent means no line at all, so episodes without it keep their bytes.
  */
 export const EVIDENCE_QUOTE_CAP = 600;
+
+/**
+ * The most a quote read back from an episode may hold before it is screened.
+ * Writes are capped at EVIDENCE_QUOTE_CAP, so only a hand-edited file goes
+ * past this; such a quote is withheld whole rather than screened, so screening
+ * cost stays bounded and nothing unscreened is ever shown.
+ */
+export const EVIDENCE_QUOTE_READ_CAP = 4096;
 
 // Tab, newline and carriage return are escaped on write. Every other C0 or C1
 // control, every bidirectional override, isolate or mark (U+200E, U+200F,
@@ -28,28 +36,83 @@ const ANSI_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x
 // final `m` is a word character, so a pattern that starts with \b would not
 // see a token that follows it. Used only on screening copies, never output.
 const SGR_REMNANT = /\[[0-9;]*m/g;
-// A line break and the spaces or tabs around it.
-const LINE_BREAK = /[^\S\r\n]*[\r\n]+[^\S\r\n]*/g;
 
 const stripAnsi = text => text.replace(ANSI_SEQUENCE, '');
 const secretIds = forms => [...new Set(forms.flatMap(form => scanSecrets(form).map(hit => hit.id)))];
 
+// Joins a form's lines with nothing between them, trimming the blanks at the
+// edges of each line, and records each join point. Splitting and trim() are
+// linear; a single regex for "blanks, break, blanks" backtracks quadratically
+// over a long run of blanks with no break.
+function compactLines(form) {
+  const lines = form.split(/\r\n|\r|\n/).map(line => inertLine(line.trim()));
+  let text = '';
+  const joins = [];
+  lines.forEach((line, i) => {
+    if (i) joins.push(text.length);
+    text += line;
+  });
+  return { text, joins };
+}
+
+// A split connection-string match is credentials only when a break falls in
+// the scheme or userinfo, at or before the `@`, and the password's first
+// unbroken piece is not digits only. A line ending in `host:port` followed by
+// an email or `@scope` line reads as `scheme://host:port...@...` once
+// compacted; there the password's first piece is the port.
+function splitConnectionCredentials(match, start, joins) {
+  const parts = match.match(/^(\w+:\/\/[^\s:@/]+:)([^\s@/]+)@/);
+  if (!parts) return false;
+  const passStart = start + parts[1].length;
+  const at = passStart + parts[2].length;
+  if (!joins.some(j => j > start && j <= at)) return false;
+  const cuts = joins.filter(j => j > passStart && j < at).map(j => j - passStart);
+  const pieces = [0, ...cuts].map((from, i, all) => parts[2].slice(from, all[i + 1])).filter(Boolean);
+  return !/^\d+$/.test(pieces[0]);
+}
+
+// Pattern ids that match a compacted form only across a join point.
+function splitIds(form) {
+  const { text, joins } = compactLines(form);
+  if (!joins.length) return [];
+  const ids = [];
+  for (const { id, re } of SECRET_PATTERNS) {
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    for (const m of text.matchAll(global)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      const spans = joins.some(j => j > start && j < end);
+      if (!spans) continue;
+      if (id === 'connection-string' && !splitConnectionCredentials(m[0], start, joins)) continue;
+      ids.push(id);
+      break;
+    }
+  }
+  return ids;
+}
+
 /**
  * Screens a quote in every form a reader or model might reassemble: as
  * written, with terminal escape sequences removed, with bare colour-code
- * remnants spaced apart from what follows, joined to one line with each break
- * as a space, and joined with each break (and the whitespace around it)
- * removed, which is how a credential wrapped across lines reads. Returns null
- * when no form holds a secret; `split` is true when only the break-removed
- * form does.
+ * remnants spaced apart from what follows (a remnant right before a token)
+ * and removed entirely (a remnant inside a token), and each of those joined
+ * to one line with each break as a space. Any match there is a direct hit.
+ *
+ * Only when no such form matches is the compact form checked: each form's
+ * lines joined with nothing between them and the blanks at their edges
+ * trimmed, which is how a credential wrapped across lines reads. A compact
+ * match counts as a split secret only if it spans a join point (so it cannot
+ * be seen on any one line) and, for connection-string, only if it looks like
+ * real credentials (see splitConnectionCredentials). Returns null when no form
+ * holds a secret; `split` is true when only the compact form does.
  */
-function screenSecrets(value) {
+export function screenSecrets(value) {
   const raw = String(value ?? '');
   const stripped = stripAnsi(raw);
-  const bases = [raw, stripped, stripped.replace(SGR_REMNANT, ' ')];
+  const bases = [raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, '')];
   const direct = secretIds([...bases, ...bases.map(inertLine)]);
   if (direct.length) return { ids: direct, split: false };
-  const split = secretIds(bases.map(form => inertLine(form.replace(LINE_BREAK, ''))));
+  const split = [...new Set(bases.flatMap(splitIds))];
   return split.length ? { ids: split, split: true } : null;
 }
 
@@ -98,17 +161,20 @@ function capBytes(text, max) {
 }
 
 /**
- * Quoted evidence as inert data for an agent-facing packet. Terminal escape
- * sequences are removed whole, then the quote is screened in every form
- * screenSecrets checks, including the forms where a credential split across a
- * line break is joined back together. Any hit withholds the whole quote behind
- * a marker naming the matched patterns, or `split-secret` when only a joined
- * form matched. Otherwise the quote is joined to one line by inertLine (which
+ * Quoted evidence as inert data for an agent-facing packet. A quote over
+ * EVIDENCE_QUOTE_READ_CAP bytes is withheld as `[redacted: oversize]` before
+ * any screening. Otherwise terminal escape sequences are removed whole, then
+ * the quote is screened in every form screenSecrets checks, including the
+ * compact form where a credential split across a line break is joined back
+ * together. Any hit withholds the whole quote behind a marker naming the
+ * matched patterns, or `split-secret` when only the compact form matched. Otherwise the quote is joined to one line by inertLine (which
  * also blanks C0, C1, bidi and invisible format characters) and capped in
  * bytes at a code-point boundary.
  */
 export function inertEvidenceQuote(value) {
-  const screen = screenSecrets(value);
+  const text = String(value ?? '');
+  if (Buffer.byteLength(text, 'utf8') > EVIDENCE_QUOTE_READ_CAP) return '[redacted: oversize]';
+  const screen = screenSecrets(text);
   if (screen) return screen.split ? '[redacted: split-secret]' : `[redacted: ${screen.ids.join(', ')}]`;
-  return capBytes(inertLine(stripAnsi(String(value ?? ''))), EVIDENCE_QUOTE_CAP);
+  return capBytes(inertLine(stripAnsi(text)), EVIDENCE_QUOTE_CAP);
 }

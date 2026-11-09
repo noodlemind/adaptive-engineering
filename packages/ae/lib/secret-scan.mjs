@@ -19,6 +19,12 @@ const PATTERNS = [
   },
 ];
 
+/**
+ * The patterns scanSecrets applies, for callers that need match positions
+ * (the evidence-quote split screen). Read-only: do not mutate.
+ */
+export const SECRET_PATTERNS = PATTERNS;
+
 export function scanSecrets(text) {
   const hits = [];
   const lines = String(text || '').split('\n');

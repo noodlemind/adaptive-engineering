@@ -7,7 +7,7 @@ import { runInsightCompound } from '../lib/compound.mjs';
 import { runRemember } from '../lib/knowledge/remember.mjs';
 import { solutionsWriteTarget } from '../lib/project-layout.mjs';
 import { trackWorkspaceSolutions } from './helpers/workspace.mjs';
-import { EVIDENCE_QUOTE_CAP, readEvidenceQuote } from '../lib/knowledge/evidence-quote.mjs';
+import { EVIDENCE_QUOTE_CAP, evidenceQuoteError, readEvidenceQuote } from '../lib/knowledge/evidence-quote.mjs';
 import { spawnSync } from 'node:child_process';
 import { packageRoot } from './helpers/cli.mjs';
 
@@ -188,6 +188,22 @@ test('an insight evidence quote with a secret split across lines is refused', ()
 
 test('an insight evidence quote with a bare colour-code remnant against a secret is refused', () => {
   const remnant = captureInsight({ evidenceQuote: `error: [33mghp_${'A'.repeat(36)}[0m rejected` });
+  assert.equal(remnant.result.pass, false);
+  assert.match(remnant.result.blockedReason, /secret \(github-token\)/);
+  assert.deepEqual(remnant.written, []);
+});
+
+test('an evidence quote of ordinary log output that puts a URL and an email or @scope on adjacent lines passes the quote screen', () => {
+  for (const quote of ['Server listening on http://localhost:3000\nadmin@example.com logged in', 'GET https://registry.npmjs.org:443\n@types/node 404 Not Found']) {
+    assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
+  }
+  const wrapped = captureInsight({ evidenceQuote: 'postgres://reader:hunter2pass\n@db.example' });
+  assert.equal(wrapped.result.pass, false);
+  assert.match(wrapped.result.blockedReason, /secret split across lines \(connection-string\)/);
+});
+
+test('an insight evidence quote with a bare colour-code remnant inside a token is refused', () => {
+  const remnant = captureInsight({ evidenceQuote: `token ghp_${'A'.repeat(18)}[1m${'B'.repeat(18)}[0m` });
   assert.equal(remnant.result.pass, false);
   assert.match(remnant.result.blockedReason, /secret \(github-token\)/);
   assert.deepEqual(remnant.written, []);

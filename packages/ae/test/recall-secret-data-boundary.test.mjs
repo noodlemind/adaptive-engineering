@@ -11,7 +11,7 @@ import { buildContextPack } from '../lib/context-pack.mjs';
 import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
-import { inertEvidenceQuote, EVIDENCE_QUOTE_CAP } from '../lib/knowledge/evidence-quote.mjs';
+import { inertEvidenceQuote, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
@@ -306,6 +306,43 @@ test('a hand-edited quote whose secret is split mid-token across a line break is
     assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
   }
   assert.equal(inertEvidenceQuote('expected 1\r\nreceived 2'), 'expected 1  received 2', 'ordinary multi-line output is only joined');
+});
+
+test('a URL ending one line and an email or @scope starting the next is ordinary log output, not a split connection string', () => {
+  for (const quote of [
+    'Server listening on http://localhost:3000\nadmin@example.com logged in',
+    'GET https://registry.npmjs.org:443\n@types/node 404 Not Found',
+    'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@acme%2fwidget - Not found\nnpm ERR! 404 \n@acme/widget@1.2.3 is not in this registry.',
+    'Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n    at file:///srv/app/db.mjs:12:7\n    at async main (file:///srv/app/index.mjs:4:3)',
+  ]) {
+    assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
+  }
+});
+
+test('a connection string wrapped inside its credentials is still withheld as a split secret', () => {
+  for (const quote of ['postgres://reader:pw\r\n@db.invalid', 'postgres://reader:hunter2pass\n@db.example', 'postgres://reader:hun\nter2pass@db.example', `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`]) {
+    assert.deepEqual(screenSecrets(quote)?.split, true, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
+  }
+});
+
+test('a bare colour-code remnant inside a token does not hide it', () => {
+  const quote = `token ghp_${'A'.repeat(18)}[1m${'B'.repeat(18)}[0m`;
+  assert.equal(inertEvidenceQuote(quote), '[redacted: github-token]');
+});
+
+test('the line join is linear and an oversize hand-edited quote is withheld before screening', () => {
+  const blanks = `${' '.repeat(200000)}x`;
+  let started = process.hrtime.bigint();
+  assert.equal(screenSecrets(blanks), null);
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'screening 200k blanks finishes well under a second');
+  started = process.hrtime.bigint();
+  assert.equal(inertEvidenceQuote(blanks), '[redacted: oversize]');
+  assert.equal(inertEvidenceQuote(`${'x'.repeat(EVIDENCE_QUOTE_READ_CAP)}\nghp_${'A'.repeat(36)}`), '[redacted: oversize]', 'nothing past the bound is shown unscreened');
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500);
+  assert.ok(EVIDENCE_QUOTE_READ_CAP >= 4 * EVIDENCE_QUOTE_CAP);
+  assert.equal(inertEvidenceQuote('x'.repeat(EVIDENCE_QUOTE_READ_CAP)), 'x'.repeat(EVIDENCE_QUOTE_CAP), 'a quote at the bound is screened and capped');
 });
 
 test('a frontmatter-only episode whose closing fence has no trailing newline keeps its frontmatter out of the excerpt and manifest', () => {
