@@ -3,10 +3,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import {
-  CATALOG, PROTOCOL, armById, baselineChain, compareArms, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, validateProtocol,
+  CATALOG, PROTOCOL, armById, armStatistics, baselineChain, clearExternalPlans, compareArms, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { writeStoreConfig } from '../lib/knowledge/store.mjs';
@@ -87,14 +88,16 @@ function main() {
       // AE suggests `ae knowledge on`; a stateless agent that follows it fails that attempt instead of invalidating the run.
       'stateless:1': ({ workspace, harnessHome }) => { writeStoreConfig(workspace, { home: harnessHome, mode: 'on' }); },
       // An agent-changed origin is read back through the series identity, so capture-only records a failure, not drift.
-      'capture-only:3': ({ workspace }) => { spawnSync('git', ['remote', 'set-url', 'origin', 'https://eval.invalid/other.git'], { cwd: workspace }); },
+      // A url rewrite changes the effective origin, which repository identity reads, without touching remote.origin.url.
+      'capture-only:3': ({ workspace }) => { spawnSync('git', ['config', '--local', 'url.https://eval.invalid/other/.insteadOf', 'https://eval.invalid/ae-memory/'], { cwd: workspace }); },
     };
     const executor = scriptedExecutor(calls, hooks);
     const result = await runStudy({ root, catalog: { ...CATALOG, series: [ordering] }, arms: ARMS, repeats: 1, model: 'scripted-test', host: 'scripted-test',
       execute: async fixture => {
         const runRoot = path.dirname(fixture.trial);
         observations[`${fixture.arm.id}:${fixture.index}`] = {
-          home: fs.readdirSync(fixture.env.HOME), runRoot: fs.readdirSync(runRoot).sort(), runRootPath: runRoot,
+          home: fs.readdirSync(fixture.env.HOME), homePath: fixture.env.HOME, tmp: fixture.env.TMPDIR, trial: fixture.trial,
+          runRoot: fs.readdirSync(runRoot).sort(), runRootPath: runRoot, studyParent: path.dirname(runRoot),
           checkFile: fixture.checkFile, trapFile: fixture.trap?.checkFile ?? null, outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
           planPresent: fs.existsSync(path.join(fixture.harnessHome, 'projects')) && fs.readdirSync(path.join(fixture.harnessHome, 'projects')).some(id => fs.existsSync(path.join(fixture.harnessHome, 'projects', id, 'plans', 'scripted-plan.md'))),
         };
@@ -214,7 +217,10 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
   for (const [key, seen] of Object.entries(observations)) {
     assert.deepEqual(seen.home, [], `${key} HOME is empty`);
     const index = Number(key.split(':')[1]);
-    assert.deepEqual(seen.runRoot, ['copilot', 'home', 'state', `t${index + 1}`], `${key} sees only its own task`);
+    assert.deepEqual(seen.runRoot, ['copilot', 'state', `t${index + 1}`], `${key} sees only its own task`);
+    assert.ok(seen.homePath.startsWith(seen.trial + path.sep), `${key} HOME belongs to this task only`);
+    assert.ok(seen.tmp.startsWith(seen.trial + path.sep), `${key} TMPDIR belongs to this task only`);
+    assert.deepEqual(fs.existsSync(seen.studyParent) ? fs.readdirSync(seen.studyParent) : [], [], `${key} study parent is removed`);
     assert.ok(seen.outsideOut, `${key} workspace is outside the output root`);
     for (const file of [seen.checkFile, seen.trapFile].filter(Boolean)) {
       assert.ok(path.relative(seen.runRootPath, file).startsWith('..'), `${key} private checks are outside the run root`);
@@ -265,6 +271,8 @@ test('a changed origin fails the private check and the after-state is read throu
   const last = rowsFor(result, 'capture-only')[3];
   assert.equal(last.checks.pass, true);
   assert.equal(last.origin.unchanged, false);
+  assert.equal(last.origin.after.configured, seriesOrigin(ordering.id), 'remote.origin.url was untouched');
+  assert.match(last.origin.after.effective, /eval\.invalid\/other\//, 'the url rewrite changed the effective origin');
   assert.equal(last.valid, true, 'not invalid: the series store still says capture-only');
   assert.equal(last.knowledgeModeAfter, 'capture-only');
   assert.equal(last.pass, false);
@@ -409,6 +417,81 @@ test('promotion: thresholds, observations, significance, batch and baseline fail
   const auto = scorePromotion({ stateless: stat(0.5), recall: stat(0.1) }, { eligible: false, ineligibleReason: 'automatic-model-selection' });
   assert.equal(auto.comparison, 'inconclusive');
   assert.deepEqual(auto.promotable, []);
+});
+
+test('external plan clearing refuses a planted symlink and never deletes outside the harness home', t => {
+  const root = directory(t);
+  const home = path.join(root, 'home');
+  const victim = path.join(root, 'victim');
+  fs.mkdirSync(path.join(victim, 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(victim, 'plans', 'keep.md'), 'outside\n');
+  fs.mkdirSync(path.join(home, 'projects'), { recursive: true });
+  fs.symlinkSync(victim, path.join(home, 'projects', 'repo-id'), process.platform === 'win32' ? 'junction' : 'dir');
+  const refused = clearExternalPlans(home, path.join(home, 'projects', 'repo-id'));
+  assert.deepEqual(refused.refused.sort(), [path.join('docs', 'plans'), 'plans'].sort());
+  assert.equal(fs.readFileSync(path.join(victim, 'plans', 'keep.md'), 'utf8'), 'outside\n');
+  fs.rmSync(path.join(home, 'projects', 'repo-id'));
+  fs.mkdirSync(path.join(home, 'projects', 'repo-id', 'plans'), { recursive: true });
+  fs.symlinkSync(path.join(victim, 'plans'), path.join(home, 'projects', 'repo-id', 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
+  fs.writeFileSync(path.join(home, 'projects', 'repo-id', 'plans', 'old.md'), 'plan\n');
+  const mixed = clearExternalPlans(home, path.join(home, 'projects', 'repo-id'));
+  assert.equal(mixed.cleared, 1);
+  assert.deepEqual(mixed.refused, [path.join('docs', 'plans')]);
+  assert.equal(fs.existsSync(path.join(home, 'projects', 'repo-id', 'plans')), false);
+  assert.ok(fs.existsSync(path.join(victim, 'plans', 'keep.md')));
+});
+
+test('stale study parents from dead runners are swept; live ones are kept', t => {
+  const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-study-'));
+  const live = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-study-'));
+  t.after(() => { fs.rmSync(stale, { recursive: true, force: true }); fs.rmSync(live, { recursive: true, force: true }); });
+  const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
+  fs.writeFileSync(path.join(stale, 'owner.pid'), dead);
+  fs.writeFileSync(path.join(live, 'owner.pid'), String(process.pid));
+  const swept = sweepStaleStudies();
+  assert.ok(swept.includes(stale));
+  assert.equal(fs.existsSync(stale), false);
+  assert.equal(fs.existsSync(live), true);
+});
+
+test('SIGTERM during a run removes the agent-facing temporary root', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const script = path.join(root, 'hang.mjs');
+  const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
+  fs.writeFileSync(script, `import { CATALOG, runStudy } from ${JSON.stringify(study)};
+await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...CATALOG, series: [CATALOG.series[0]] }, arms: ['stateless'], repeats: 1, host: 'scripted-test',
+  execute: async fixture => { setInterval(() => {}, 1000); process.stdout.write('READY ' + fixture.trial + '\\n'); await new Promise(() => {}); } });
+`);
+  const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  const trial = await new Promise((resolve, reject) => {
+    child.stdout.on('data', chunk => { output += chunk; const match = output.match(/READY (.+)\n/); if (match) resolve(match[1]); });
+    child.on('exit', code => reject(new Error(`exited early: ${code}`)));
+  });
+  const parent = path.dirname(path.dirname(trial));
+  assert.ok(fs.existsSync(parent));
+  const exited = new Promise(resolve => child.on('exit', (code, signal) => resolve({ code, signal })));
+  child.kill('SIGTERM');
+  const { code } = await exited;
+  assert.equal(code, 143);
+  assert.equal(fs.existsSync(parent), false, 'the study parent and its run root are gone');
+});
+
+test('same-batch enforcement compares the batch stamped on scored rows', () => {
+  const row = (batch, over = {}) => ({ arm: 'recall', split: 'held-out', kind: 'live', valid: true, pass: true, batch, learningsInjected: [], trapRole: null, trapRecurred: null, usageCoverage: 'complete', inputTokens: 1, outputTokens: 1, ...over });
+  assert.equal(armStatistics({ attempts: [row('a'), row('a')], runs: [], arm: 'recall', split: 'held-out' }).batch, 'a');
+  assert.equal(armStatistics({ attempts: [row('a'), row('b')], runs: [], arm: 'recall', split: 'held-out' }).batch, null);
+  assert.equal(armStatistics({ attempts: [row(undefined)], runs: [], arm: 'recall', split: 'held-out' }).batch, null);
+  assert.ok(compareArms(stat(0.1, { batch: null }), stat(0.5, { batch: null })).reasons.includes('reference-not-in-same-batch'));
+});
+
+test('compareArms reports unscored rates and rejects arms whose unscored rates differ widely', () => {
+  const close = compareArms(stat(0.1, { unscoredRate: 0.1 }), stat(0.5, { unscoredRate: 0.15 }));
+  assert.equal(close.pass, true);
+  assert.ok(Math.abs(close.unscoredRateDifference + 0.05) < 1e-9);
+  assert.equal(close.candidateUnscoredRate, 0.1);
+  const wide = compareArms(stat(0.1, { unscoredRate: 0.4 }), stat(0.5, { unscoredRate: 0.1 }));
+  assert.ok(wide.reasons.includes('unscored-rates-differ'));
 });
 
 test('output directory must be new and outside the checkout', t => {

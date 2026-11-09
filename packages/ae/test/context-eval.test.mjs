@@ -239,7 +239,8 @@ test('acceptance timeout remains a failure when source exits zero on termination
   } });
   const result = await runChecks(fixture);
   assert.equal(result.error, 'ETIMEDOUT');
-  if (process.platform !== 'win32') assert.equal(result.exitCode, 0);
+  // Checked code runs in a probe child; its SIGTERM handler can no longer turn the checker's own exit into zero.
+  if (process.platform !== 'win32') assert.notEqual(result.exitCode, 0);
   assert.equal(result.pass, false);
 });
 
@@ -248,7 +249,8 @@ test('source cannot pass acceptance by exiting before the assertions run', async
     ...simple, files: { 'src/value.mjs': 'process.exit(0);\nexport const value = 0;\n' },
   } });
   const result = await runChecks(fixture);
-  assert.equal(result.exitCode, 0);
+  // The early exit stops only the probe child; the checker reports the missing results and never prints its completion line.
+  assert.equal(result.completed, false);
   assert.equal(result.error, null);
   assert.equal(result.pass, false);
 });

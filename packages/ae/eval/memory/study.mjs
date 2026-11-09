@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { resolveStudyOutput, runChecks, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
 import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
@@ -108,9 +107,12 @@ export function validateCatalog(catalog = CATALOG) {
   return catalog;
 }
 
-/** Fixture state for task `index`: the series base, earlier tasks as merged (their overlays plus reference files), then this task's overlay. */
+/**
+ * Fixture state for task `index`: the series base, earlier tasks as merged, then this task's overlay. Earlier trap tasks
+ * keep their stubs: merging their reference would put the trap's fix in the repository as a cue for every arm.
+ */
 export function seriesState(series, index) {
-  return Object.assign({}, series.files, ...series.tasks.slice(0, index).flatMap(task => [task.files || {}, task.reference || {}]), series.tasks[index].files || {});
+  return Object.assign({}, series.files, ...series.tasks.slice(0, index).flatMap(task => [task.files || {}, task.trap ? {} : task.reference || {}]), series.tasks[index].files || {});
 }
 
 export function memoryPrompt(task) {
@@ -128,9 +130,40 @@ function gitEnv() {
   return { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'Memory Eval', GIT_AUTHOR_EMAIL: 'memory@example.test', GIT_COMMITTER_NAME: 'Memory Eval', GIT_COMMITTER_EMAIL: 'memory@example.test' };
 }
 
+/** The configured origin URL and the effective one after url.*.insteadOf rewriting, which is what repository identity reads. */
 function readOrigin(workspace) {
-  const result = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: workspace, env: gitEnv(), encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : null;
+  const read = args => {
+    const result = spawnSync('git', args, { cwd: workspace, env: gitEnv(), encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+  return { configured: read(['config', '--local', '--get', 'remote.origin.url']), effective: read(['remote', 'get-url', 'origin']) };
+}
+
+/** Removes agent-added url rewrites and resets origin; returns whether both readings now match the series origin. */
+function restoreOrigin(workspace, expected) {
+  const env = gitEnv();
+  const rewrites = spawnSync('git', ['config', '--local', '--name-only', '--get-regexp', '^url\\.'], { cwd: workspace, env, encoding: 'utf8' });
+  for (const key of new Set((rewrites.stdout || '').split(/\r?\n/).filter(Boolean))) spawnSync('git', ['config', '--local', '--unset-all', key], { cwd: workspace, env });
+  const current = readOrigin(workspace);
+  const fixed = current.configured === null
+    ? spawnSync('git', ['remote', 'add', 'origin', expected], { cwd: workspace, env })
+    : spawnSync('git', ['remote', 'set-url', 'origin', expected], { cwd: workspace, env });
+  const after = readOrigin(workspace);
+  return fixed.status === 0 && after.configured === expected && after.effective === expected;
+}
+
+/** Public verifier copied into the workspace. It holds only public checks and never references the AE checkout. */
+function publicVerifierSource(checks) {
+  return `import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const checks = ${JSON.stringify(checks)};
+for (const check of checks) {
+  const module = await import(pathToFileURL(path.join(process.cwd(), check.module)));
+  const value = Object.hasOwn(check, 'args') ? await module[check.export](...check.args) : module[check.export];
+  assert.deepEqual(value, check.expected);
+}
+`;
 }
 
 function writeCheckFile(file, checks) {
@@ -147,7 +180,7 @@ export const capturesMemory = arm => arm.mode === 'on' || arm.mode === 'suggest'
  * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`; private checks live under `privateDir`,
  * which is outside `runRoot` and outside the agent's HOME.
  */
-export function prepareTask({ series, index, runRoot, privateDir, agentHome, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
+export function prepareTask({ series, index, runRoot, privateDir, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
   const task = series.tasks[index];
   const trial = path.join(runRoot, `t${index + 1}`);
   fs.mkdirSync(trial);
@@ -162,22 +195,23 @@ export function prepareTask({ series, index, runRoot, privateDir, agentHome, car
   git(['remote', 'add', 'origin', origin]);
   ensureHarnessDir(workspace, false);
   const control = path.join(workspace, '.harness');
-  fs.writeFileSync(path.join(control, 'context-public-checks.json'), JSON.stringify({ checks: task.publicChecks }), { mode: 0o444 });
-  fs.writeFileSync(path.join(control, 'context-verify.mjs'), `import fs from 'node:fs';\nimport { checkCases } from ${JSON.stringify(pathToFileURL(checker).href)};\nconst task = JSON.parse(fs.readFileSync(new URL('./context-public-checks.json', import.meta.url), 'utf8'));\nawait checkCases(process.cwd(), task.checks);\n`, { mode: 0o444 });
+  fs.writeFileSync(path.join(control, 'context-verify.mjs'), publicVerifierSource(task.publicChecks), { mode: 0o444 });
   const checks = path.join(privateDir, `t${index + 1}`);
   fs.mkdirSync(checks, { recursive: true });
   const checkerHash = hash(fs.readFileSync(checker));
-  const subset = (name, list) => list.length ? { workspace, task: { checks: list }, checkFile: path.join(checks, name), checkHash: writeCheckFile(path.join(checks, name), list), checkerHash } : null;
+  const subset = (name, list) => ({ workspace, task: { checks: list }, checkFile: path.join(checks, name), checkHash: writeCheckFile(path.join(checks, name), list), checkerHash });
   const env2 = trialEnvironment({ trial, copilotHome, harnessHome });
-  // The agent's own HOME is an empty directory; the ae wrapper keeps its pinned homes.
+  // The agent gets an empty HOME and its own temporary directory for this task only; the ae wrapper keeps its pinned homes.
+  const agentHome = path.join(trial, 'home');
+  const agentTemp = path.join(trial, 'tmp');
+  fs.mkdirSync(agentHome); fs.mkdirSync(agentTemp);
   env2.HOME = agentHome; env2.USERPROFILE = agentHome;
+  env2.TMPDIR = agentTemp; env2.TMP = agentTemp; env2.TEMP = agentTemp;
   const all = subset('checks.json', task.checks);
   const fixture = {
     series, task, index, trial, workspace, copilotHome, harnessHome, origin, env: env2,
     verifyCmd: `"${process.execPath}" .harness/context-verify.mjs`,
     checkFile: all.checkFile, checkHash: all.checkHash, checkerHash,
-    trap: subset('trap-checks.json', task.checks.filter(check => check.trap)),
-    rest: task.trap ? subset('other-checks.json', task.checks.filter(check => !check.trap)) : null,
     carriedForward: Object.keys(carried).sort(),
   };
   fixture.before = snapshot(workspace);
@@ -209,15 +243,34 @@ function episodeHashes(workspace, projectDir) {
   return hashes;
 }
 
-/** Plans persisted outside the checkout survive between tasks through the shared home; every arm clears them before a task. */
-function clearExternalPlans(projectDir) {
+/**
+ * Plans persisted outside the checkout survive between tasks through the shared home; every arm clears them before a task.
+ * Every path component from the harness home down must be a real directory that resolves inside the harness home, so a
+ * planted symlink cannot redirect the deletion. A refused clear is reported and makes the attempt invalid.
+ */
+export function clearExternalPlans(harnessHome, projectDir) {
+  const home = fs.realpathSync(harnessHome);
   let cleared = 0;
-  for (const rel of ['plans', 'docs/plans']) {
-    const dir = path.join(projectDir, rel);
-    cleared += Object.keys(listFiles(dir)).length;
-    fs.rmSync(dir, { recursive: true, force: true });
+  const refused = [];
+  for (const rel of ['plans', path.join('docs', 'plans')]) {
+    const target = path.join(projectDir, rel);
+    const parts = path.relative(harnessHome, target).split(path.sep);
+    if (parts[0] === '..' || path.isAbsolute(path.relative(harnessHome, target))) { refused.push(rel); continue; }
+    let current = harnessHome, ok = true, exists = true;
+    for (const part of parts) {
+      current = path.join(current, part);
+      let stat;
+      try { stat = fs.lstatSync(current); } catch { exists = false; break; }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) { ok = false; break; }
+    }
+    if (!ok) { refused.push(rel); continue; }
+    if (!exists) continue;
+    const real = fs.realpathSync(target);
+    if (path.relative(home, real).startsWith('..') || path.isAbsolute(path.relative(home, real))) { refused.push(rel); continue; }
+    cleared += Object.keys(listFiles(real)).length;
+    fs.rmSync(real, { recursive: true, force: true });
   }
-  return cleared;
+  return { cleared, refused };
 }
 
 /** Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. */
@@ -254,6 +307,12 @@ export function configureArm({ workspace, home, arm, series, seed = false }) {
   const feedback = writeFeedbackConfig(workspace, { home, feedback: arm.feedback ?? 'off' });
   if (!feedback.pass) throw new Error(`feedback configuration failed: ${feedback.blockedReason}`);
   return { seeded };
+}
+
+/** Pass result for the trap (or non-trap) checks of a task, from one checker run's per-check verdicts. */
+function subsetResult(task, result, trap) {
+  const verdicts = task.checks.map((check, index) => [Boolean(check.trap) === trap, result.verdicts?.[index]]).filter(([selected]) => selected).map(([, verdict]) => verdict);
+  return { pass: result.integrity !== false && verdicts.length > 0 && verdicts.every(verdict => verdict === true), verdicts };
 }
 
 /** Knowledge mode and feedback state stored for an identity, read by directory so an agent-changed origin cannot redirect the read. */
@@ -316,6 +375,40 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
   return provenance;
 }
 
+const STUDY_PREFIX = 'aem-study-';
+
+/** Removes study parents left by runner processes that no longer exist (for example after SIGKILL). */
+export function sweepStaleStudies(base = os.tmpdir()) {
+  const swept = [];
+  for (const name of fs.existsSync(base) ? fs.readdirSync(base) : []) {
+    if (!name.startsWith(STUDY_PREFIX)) continue;
+    const dir = path.join(base, name);
+    let pid = null;
+    try { pid = Number(fs.readFileSync(path.join(dir, 'owner.pid'), 'utf8')); } catch { /* unreadable owner: treat as stale */ }
+    let alive = false;
+    if (Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); alive = true; } catch (error) { alive = error.code === 'EPERM'; }
+    }
+    if (alive) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+    swept.push(dir);
+  }
+  return swept;
+}
+
+/** One temporary parent per study, removed on normal exit and on SIGINT/SIGTERM. Run roots are created inside it. */
+function openStudyParent() {
+  sweepStaleStudies();
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), STUDY_PREFIX));
+  fs.writeFileSync(path.join(parent, 'owner.pid'), String(process.pid));
+  const remove = () => fs.rmSync(parent, { recursive: true, force: true });
+  const onSignal = signal => { remove(); process.exit(signal === 'SIGINT' ? 130 : 143); };
+  process.on('exit', remove);
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  return { parent, close() { remove(); process.off('exit', remove); process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); } };
+}
+
 /**
  * Runs every (series, arm, repeat) with one harness home shared across the series's tasks and a fresh checkout per task.
  * Each run's agent-facing files live in a fresh temporary root outside `root`, deleted after the run; each task's checkout
@@ -340,20 +433,19 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
   const attempts = [];
   const runs = [];
+  const study = openStudyParent();
+  try {
   for (const [seriesIndex, item] of series.entries()) {
     for (let repeat = 0; repeat < repeats; repeat++) {
       const offset = (seriesIndex + repeat) % arms.length;
       for (const armId of [...arms.slice(offset), ...arms.slice(0, offset)]) {
         const arm = armById(protocol, armId);
         const runId = `${item.id}-${armSlug(armId)}-r${repeat + 1}`;
-        const recordDir = path.join(root, 'attempts', runId);
         const privateDir = path.join(root, 'private', runId);
-        fs.mkdirSync(recordDir, { recursive: true });
-        const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-'));
+        const runRoot = fs.mkdtempSync(path.join(study.parent, 'run-'));
         const copilotHome = path.join(runRoot, 'copilot');
         const harnessHome = path.join(runRoot, 'state');
-        const agentHome = path.join(runRoot, 'home');
-        for (const dir of [copilotHome, harnessHome, agentHome]) fs.mkdirSync(dir);
+        for (const dir of [copilotHome, harnessHome]) fs.mkdirSync(dir);
         let carried = {};
         let first = null;
         let seeded = null;
@@ -362,18 +454,18 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
           for (let index = 0; index < item.tasks.length; index++) {
             const task = item.tasks[index];
             const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
-            const fixture = prepareTask({ series: item, index, runRoot, privateDir, agentHome, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
+            const fixture = prepareTask({ series: item, index, runRoot, privateDir, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
             const configured = configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 });
             if (index === 0) seeded = configured.seeded;
             const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
             if (!first) first = identity;
             const projectDir = projectDirFor(harnessHome, first);
-            const plansCleared = clearExternalPlans(projectDir);
+            const plans = clearExternalPlans(harnessHome, projectDir);
             const before = { ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) };
             const baseline = await runChecks(fixture);
             const publicBaseline = runPublicChecks(fixture);
-            const trapBaseline = fixture.trap ? await runChecks(fixture.trap) : null;
-            if (baseline.pass || !baseline.integrity || baseline.error || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
+            const trapBaseline = task.trap ? subsetResult(task, baseline, true) : null;
+            if (baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
             const episodesBefore = episodeHashes(fixture.workspace, projectDir);
             const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
             const startedAt = Date.now();
@@ -384,15 +476,16 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             }
             // A dry run changes nothing, so the baseline checks above already describe its workspace.
             const checks = dryRun ? null : await runChecks(fixture);
-            const trapChecks = dryRun || !fixture.trap ? null : await runChecks(fixture.trap);
-            const otherChecks = dryRun || !fixture.rest ? null : await runChecks(fixture.rest);
+            // One checker run scores the whole task; trap and non-trap results are subsets of its per-check verdicts.
+            const trapChecks = dryRun || !task.trap ? null : subsetResult(task, checks, true);
+            const otherChecks = dryRun || !task.trap ? null : subsetResult(task, checks, false);
             const scope = scopeResult(fixture);
             // Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
             const unexpected = scope.unexpected.filter(file => !file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`));
             const originAfter = readOrigin(fixture.workspace);
-            const originUnchanged = originAfter === fixture.origin;
+            const originUnchanged = originAfter.configured === fixture.origin && originAfter.effective === fixture.origin;
             // Read every after-state through the series identity, never through an origin the agent may have changed.
-            if (!originUnchanged) spawnSync('git', originAfter === null ? ['remote', 'add', 'origin', fixture.origin] : ['remote', 'set-url', 'origin', fixture.origin], { cwd: fixture.workspace, env: gitEnv() });
+            const originRestored = originUnchanged || restoreOrigin(fixture.workspace, fixture.origin);
             const after = storedConfig(first.storeDir);
             const episodesAfter = episodeHashes(fixture.workspace, projectDir);
             const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
@@ -403,6 +496,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               identity.storeDir !== first.storeDir && 'store-directory-drift',
               before.observed !== arm.mode && 'knowledge-mode-mismatch',
               before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
+              plans.refused.length > 0 && 'external-plans-not-cleared',
+              !originRestored && 'origin-restore-failed',
             ].filter(Boolean);
             const valid = invalidReasons.length === 0;
             const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
@@ -415,6 +510,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             // A recurrence is scored only when the rest of the task was solved; an unsolved task says nothing about the trap.
             const scorable = executed && valid && task.trap === 'recurrence';
             const attempt = {
+              batch: provenance.batch,
               id: `${runId}-t${index + 1}`, run: runId, series: item.id, split: item.split, trapId: item.trap.id, arm: armId, repeat: repeat + 1,
               task: task.id, taskIndex: index + 1, trapRole: task.trap ?? null, kind, valid, invalidReasons,
               pass: executed && valid && result.status === 'ok' && checks?.pass === true && unexpected.length === 0 && originUnchanged && modeUnchanged,
@@ -427,7 +523,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
               repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: before.observed, feedback: before.feedbackObserved,
               knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
-              carriedForward: fixture.carriedForward, externalPlansCleared: plansCleared,
+              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
@@ -435,7 +531,6 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
               status: result.status ?? null, stopReason: result.stopReason ?? null, error, durationMs: Date.now() - startedAt,
             };
-            fs.writeFileSync(path.join(recordDir, `t${index + 1}-${task.id}.json`), JSON.stringify(attempt, null, 2));
             attempts.push(attempt);
             runAttempts.push(attempt);
             carried = capturesMemory(arm) ? collectCarryForward(fixture.workspace) : {};
@@ -451,6 +546,15 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
       }
     }
   }
+  } finally {
+    study.close();
+  }
+  // Attempt records carry checker diagnostics with expected values, so they are written only after every agent has stopped.
+  for (const attempt of attempts) {
+    const dir = path.join(root, 'attempts', attempt.run);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `t${attempt.taskIndex}-${attempt.task}.json`), JSON.stringify(attempt, null, 2));
+  }
   const output = { schema: 1, provenance, runs, attempts, summary: summarizeStudy({ attempts, runs, provenance, protocol }) };
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(output, null, 2));
   return output;
@@ -461,21 +565,25 @@ function rate(numerator, denominator) {
 }
 
 /** Per-arm statistics on one split; the promotion rule reads the held-out split. */
-export function armStatistics({ attempts, runs, arm, split, batch = null }) {
+export function armStatistics({ attempts, runs, arm, split }) {
   const rows = attempts.filter(row => row.arm === arm && (split === 'all' || row.split === split));
   // Dry runs, runtime errors and invalid attempts never count as measured task outcomes.
   const valid = rows.filter(row => row.valid && (row.kind === 'live' || row.kind === 'scripted'));
   const recurrence = valid.filter(row => row.trapRecurred !== null);
   const armRuns = runs.filter(row => row.arm === arm && row.measured && (split === 'all' || row.split === split));
+  const batches = new Set(valid.map(row => row.batch));
+  const recurrenceRows = valid.filter(row => row.trapRole === 'recurrence');
   const complete = field => valid.length > 0 && valid.every(row => row.usageCoverage === 'complete' && Number.isFinite(row[field]));
   return {
-    batch,
+    // Every scored row must come from one batch; mixed or unstamped rows leave no batch and fail the same-batch rule.
+    batch: batches.size === 1 && !batches.has(undefined) ? [...batches][0] : null,
     attempts: rows.length, measuredAttempts: valid.length, invalidAttempts: rows.filter(row => !row.valid).length,
     heldOutAttempts: split === 'held-out' ? valid.length : valid.filter(row => row.split === 'held-out').length,
     passed: valid.filter(row => row.pass).length, passRate: rate(valid.filter(row => row.pass).length, valid.length),
     recurrenceAttempts: recurrence.length, recurred: recurrence.filter(row => row.trapRecurred).length,
     recurrenceRate: rate(recurrence.filter(row => row.trapRecurred).length, recurrence.length),
     recurrenceUnscored: valid.filter(row => row.recurrenceUnscored).length,
+    unscoredRate: rate(valid.filter(row => row.recurrenceUnscored).length, recurrenceRows.length),
     configChangedByAgent: valid.filter(row => row.configChangedByAgent).length,
     repeatMistakesFlagged: valid.filter(row => row.repeatMistake?.flagged).length,
     episodesPerSeries: rate(armRuns.reduce((sum, row) => sum + row.episodesWritten, 0), armRuns.length),
@@ -523,11 +631,14 @@ export function compareArms(candidate, reference, limits = PROTOCOL.promotion) {
     pValue = fisherOneSided({ candidateRecurred: candidate.recurred, candidateObservations: candidate.recurrenceAttempts, referenceRecurred: reference.recurred, referenceObservations: reference.recurrenceAttempts });
     if (!(pValue <= limits.maximumRecurrenceTestPValue)) reasons.push('recurrence-reduction-not-significant');
   }
+  const unscoredDifference = Number.isFinite(candidate.unscoredRate) && Number.isFinite(reference.unscoredRate) ? candidate.unscoredRate - reference.unscoredRate : null;
+  if (unscoredDifference !== null && Math.abs(unscoredDifference) > limits.maximumUnscoredRateDifference + TOLERANCE) reasons.push('unscored-rates-differ');
   const passDifference = Number.isFinite(candidate.passRate) && Number.isFinite(reference.passRate) ? candidate.passRate - reference.passRate : null;
   if (passDifference === null) reasons.push('pass-rate-unmeasured');
   else if (passDifference < -limits.passRateNonInferiorityMargin - TOLERANCE) reasons.push('pass-rate-regressed');
   if (limits.episodesMayRiseOnlyIfRecurrenceFalls && candidate.episodesPerSeries > reference.episodesPerSeries && !(candidate.recurrenceRate < reference.recurrenceRate)) reasons.push('episodes-rose-without-recurrence-falling');
-  return { pass: reasons.length === 0, relativeRecurrenceReduction: reduction, recurrencePValue: pValue, passRateDifference: passDifference, reasons };
+  return { pass: reasons.length === 0, relativeRecurrenceReduction: reduction, recurrencePValue: pValue, passRateDifference: passDifference,
+    candidateUnscoredRate: candidate.unscoredRate ?? null, referenceUnscoredRate: reference.unscoredRate ?? null, unscoredRateDifference: unscoredDifference, reasons };
 }
 
 /**
@@ -563,8 +674,8 @@ export function scorePromotion(stats, { protocol = PROTOCOL, eligible = true, in
 export function summarizeStudy({ attempts, runs, provenance, protocol = PROTOCOL }) {
   const arms = {}, heldOut = {};
   for (const arm of provenance.arms) {
-    arms[arm] = armStatistics({ attempts, runs, arm, split: 'all', batch: provenance.batch });
-    heldOut[arm] = armStatistics({ attempts, runs, arm, split: protocol.promotion.split, batch: provenance.batch });
+    arms[arm] = armStatistics({ attempts, runs, arm, split: 'all' });
+    heldOut[arm] = armStatistics({ attempts, runs, arm, split: protocol.promotion.split });
   }
   let ineligibleReason = null;
   if (provenance.modelSelection === 'automatic' || provenance.model === 'auto') ineligibleReason = 'automatic-model-selection';

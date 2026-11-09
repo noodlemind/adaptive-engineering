@@ -24,10 +24,11 @@
     "minimumHeldOutAttemptsPerArm": 30,
     "minimumRecurrenceObservationsPerArm": 30,
     "maximumRecurrenceTestPValue": 0.05,
+    "maximumUnscoredRateDifference": 0.1,
     "requireSameBatchBaseline": true,
     "requireCompleteObservedUsage": true,
     "incrementalArmsMustAlsoPassAgainstStateless": true,
     "maximumBaselineDepth": 2
   },
-  "limits": "This small JavaScript pilot is diagnostic. Each held-out series has one recurrence task, so the default 4 repeats give 8 recurrence observations per arm, below the 30 the promotion rule requires; a qualifying batch needs at least 15 repeats on the held-out split. With 32 held-out attempts, one attempt is about 3 percentage points, so the 2-point non-inferiority margin tolerates no additional failure. Results apply to the model and runtime that produced them. Auto-routed models, dry runs and scripted runs never qualify for promotion."
+  "limits": "This small JavaScript pilot is diagnostic. Each held-out series has one recurrence task, so the default 4 repeats give 8 recurrence observations per arm, below the 30 the promotion rule requires; 15 repeats on the held-out split is only a floor, because unscored recurrence tasks reduce the count. With 32 held-out attempts, one attempt is about 3 percentage points, so the 2-point non-inferiority margin tolerates no additional failure. Results apply to the model and runtime that produced them. Auto-routed models, dry runs and scripted runs never qualify for promotion."
 }

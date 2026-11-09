@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Two development and two held-out JavaScript task series. Each series plants one recurring trap: task 1 fails a private trap check with the obvious implementation, and a later task repeats the trap in a different form. reference, naive and idioms files stay outside the workspace; tests use them to prove each fix exists and that the obvious implementation and common alternative idioms all fall into the trap. Each checkout contains the reference files of earlier tasks, as if their work had merged. This pilot does not establish statistical power or cross-language quality.",
+  "note": "Two development and two held-out JavaScript task series. Each series plants one recurring trap: task 1 fails a private trap check with the obvious implementation, and a later task repeats the trap in a different form. reference, naive and idioms files stay outside the workspace; tests use them to prove each fix exists and that the obvious implementation and common alternative idioms all fall into the trap. Each checkout contains the reference files of earlier non-trap tasks, as if their work had merged; earlier trap tasks keep their stubs so the repository holds no fix for the trap. This pilot does not establish statistical power or cross-language quality.",
   "series": [
     {
       "id": "catalog-ordering",
@@ -796,7 +796,7 @@
       "files": {
         "package.json": "{ \"name\": \"profiles\", \"private\": true, \"type\": \"module\" }\n",
         "README.md": "# Profiles\n\nProfile helpers. See docs/CONVENTIONS.md.\n",
-        "docs/CONVENTIONS.md": "# Conventions\n\nNames from the sign-up form may arrive decomposed (NFD) or in full-width compatibility characters from some keyboards, so the same name can have different code points. Compare or key user text only after `normalizeText` from `src/strings.mjs`, which applies NFKC. NFC and `localeCompare` are not enough.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nNames from the sign-up form may arrive decomposed (NFD) or in full-width compatibility characters from some keyboards, so the same name can have different code points. Compare or key user text only after `normalizeText` from `src/strings.mjs`, which applies NFKC, and then compare exactly: case and accents are significant (Jose and José are different people). NFC, `localeCompare` and `Intl.Collator` are not enough.\n",
         "src/strings.mjs": "export function normalizeText(value) {\n  return value.normalize('NFKC');\n}\n"
       },
       "seed": {
@@ -854,6 +854,26 @@
               ],
               "expected": true,
               "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Jose",
+                "José"
+              ],
+              "expected": false,
+              "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "ana",
+                "Ana"
+              ],
+              "expected": false,
+              "trap": true
             }
           ],
           "publicChecks": [
@@ -882,6 +902,12 @@
             },
             {
               "src/users.mjs": "export function sameName(a, b) {\n  return a.toLowerCase() === b.toLowerCase();\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b, undefined, { sensitivity: 'base' }) === 0;\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b, undefined, { sensitivity: 'accent' }) === 0;\n}\n"
             }
           ]
         },
@@ -957,6 +983,20 @@
               ],
               "expected": 2,
               "trap": true
+            },
+            {
+              "module": "src/directory.mjs",
+              "export": "countUnique",
+              "args": [
+                [
+                  "Jose",
+                  "José",
+                  "ann",
+                  "Ann"
+                ]
+              ],
+              "expected": 4,
+              "trap": true
             }
           ],
           "publicChecks": [
@@ -985,6 +1025,12 @@
             },
             {
               "src/directory.mjs": "export function countUnique(names) {\n  return names.filter((name, i) => names.findIndex(other => other.localeCompare(name) === 0) === i).length;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  const collator = new Intl.Collator('en', { sensitivity: 'base' });\n  return names.filter((name, i) => names.findIndex(other => collator.compare(other, name) === 0) === i).length;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  const collator = new Intl.Collator('en', { sensitivity: 'accent' });\n  return names.filter((name, i) => names.findIndex(other => collator.compare(other, name) === 0) === i).length;\n}\n"
             }
           ]
         },

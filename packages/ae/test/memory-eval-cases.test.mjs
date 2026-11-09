@@ -80,10 +80,13 @@ test('every task has a failing baseline, the obvious fix falls into the trap, an
   }
 });
 
-test('each checkout contains earlier tasks as merged reference files', () => {
+test('each checkout merges earlier non-trap tasks and keeps earlier trap tasks as stubs', () => {
   for (const series of CATALOG.series) {
     const state = seriesState(series, 2);
-    for (const earlier of series.tasks.slice(0, 2)) for (const [file, content] of Object.entries(earlier.reference)) assert.equal(state[file], content, `${series.id}: ${file} is merged`);
+    for (const earlier of series.tasks.slice(0, 2)) {
+      const expected = earlier.trap ? earlier.files : earlier.reference;
+      for (const [file, content] of Object.entries(expected)) assert.equal(state[file], content, `${series.id}: ${file}`);
+    }
     for (const [file, content] of Object.entries(series.tasks[2].files)) assert.equal(state[file], content);
   }
 });
@@ -108,15 +111,51 @@ test('each seed is the top learning for its own recurrence task when all seeds s
   }
 });
 
+function runChecker(t, source, checks) {
+  const root = directory(t);
+  const workspace = path.join(root, 'workspace');
+  fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'src/value.mjs'), source);
+  const challenge = crypto.randomBytes(16).toString('hex');
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}\n${JSON.stringify({ checks })}`, encoding: 'utf8', timeout: 15000 });
+  return { ...result, completed: result.stdout.includes(`harness-context-checked-v1:${challenge}:${checks.length}`) };
+}
+
+test('the private checker passes honest code and fails wrong values', t => {
+  const checks = [{ module: 'src/value.mjs', export: 'value', expected: 2 }, { module: 'src/value.mjs', export: 'fail', args: [], throws: 'boom' }, { module: 'src/value.mjs', export: 'gone', absent: true }];
+  const honest = runChecker(t, "export const value = 2;\nexport function fail() { throw new Error('a boom here'); }\n", checks);
+  assert.equal(honest.status, 0, honest.stderr);
+  assert.equal(honest.completed, true);
+  const wrong = runChecker(t, "export const value = 3;\nexport function fail() { throw new Error('a boom here'); }\n", checks);
+  assert.notEqual(wrong.status, 0);
+  assert.equal(wrong.completed, false);
+});
+
+test('checked code cannot read expectations from any command line or forge a throws check', t => {
+  const checks = [{ module: 'src/value.mjs', export: 'value', args: [], expected: { secret: 41 } }, { module: 'src/value.mjs', export: 'fail', args: [], throws: 'specific message' }];
+  const source = `import fs from 'node:fs';
+String.prototype.includes = () => true;
+function find() {
+  const lines = [process.argv, ...[process.ppid].map(pid => { try { return fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0'); } catch { return []; } })].flat();
+  for (const item of lines) { try { const parsed = JSON.parse(fs.readFileSync(item, 'utf8')); if (parsed.checks) return parsed.checks[0].expected; } catch {} }
+  return null;
+}
+export function value() { return find(); }
+export function fail() { throw new Error('other'); }
+`;
+  const result = runChecker(t, source, checks);
+  assert.notEqual(result.status, 0);
+  assert.equal(result.completed, false);
+});
+
 test('a checked module cannot disable the private checker by replacing assert methods', t => {
   const root = directory(t);
   const workspace = path.join(root, 'workspace');
   fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'src/value.mjs'), "import assert from 'node:assert/strict';\nassert.deepEqual = () => {};\nassert.equal = () => {};\nassert.rejects = async () => {};\nexport const value = 1;\n");
-  const checks = path.join(root, 'checks.json');
-  fs.writeFileSync(checks, JSON.stringify({ checks: [{ module: 'src/value.mjs', export: 'value', expected: 2 }] }));
   const challenge = crypto.randomBytes(16).toString('hex');
-  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace, checks], { input: challenge, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}\n${JSON.stringify({ checks: [{ module: 'src/value.mjs', export: 'value', expected: 2 }] })}`, encoding: 'utf8' });
   assert.notEqual(result.status, 0);
-  assert.doesNotMatch(result.stdout, new RegExp(challenge));
+  assert.doesNotMatch(result.stdout, new RegExp(`harness-context-checked-v1:${challenge}`));
+  assert.match(result.stdout, new RegExp(`harness-context-check-v1:${challenge}:0:fail`));
 });

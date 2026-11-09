@@ -134,10 +134,17 @@ function integrity(fixture) {
 export async function runChecks(fixture) {
   if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
   const challenge = randomBytes(16).toString('hex');
-  const result = spawnSync(process.execPath, [checker, fixture.workspace, fixture.checkFile], { input: challenge, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
+  // The checks travel on stdin, so the check-file path never appears in a command line the checked code could read.
+  let checkText;
+  try { checkText = fs.readFileSync(fixture.checkFile, 'utf8'); } catch { return { pass: false, integrity: false, reason: 'check content unreadable' }; }
+  if (hash(checkText) !== fixture.checkHash) return { pass: false, integrity: false, reason: 'check content changed' };
+  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge}\n${checkText}`, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
   const intact = integrity(fixture);
-  const completed = (result.stdout || '').split(/\r?\n/).includes(`harness-context-checked-v1:${challenge}:${fixture.task.checks.length}`);
-  return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
+  const lines = (result.stdout || '').split(/\r?\n/);
+  const completed = lines.includes(`harness-context-checked-v1:${challenge}:${fixture.task.checks.length}`);
+  // Per-check verdicts let a caller score subsets (for example trap checks) from one run; null when the checker did not report.
+  const verdicts = fixture.task.checks.map((_, index) => lines.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : lines.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
+  return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, verdicts: intact && !result.error ? verdicts : verdicts.map(() => null), exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
 }
 
 export function runPublicChecks(fixture) {
