@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { applyOps } from '../lib/knowledge/apply.mjs';
+import { writeRecheckConfig } from '../lib/knowledge/store.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binPath = path.join(packageRoot, 'bin', 'ae.mjs');
@@ -223,4 +224,20 @@ test('below-threshold debt: knowledgeDebt reports due false and no hint', () => 
     !out.nextTools.some((t) => t.includes('consolidate --candidates')),
     JSON.stringify(out.nextTools)
   );
+});
+
+test('when re-check makes consolidation due, the orient hint asks for the recheck packet', () => {
+  const c = ctx();
+  seedStoreWithDebt(c, { count: 0 });
+  assert.equal(writeRecheckConfig(c.ws, { home: c.harnessHome, recheck: 'on' }).pass, true);
+  for (const [n, plan] of ['docs/plans/a.md', 'docs/plans/b.md', 'docs/plans/c.md'].entries()) {
+    const record = { plan, outcome: 'failed', verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'boom' }] };
+    const file = path.join(c.ws, '.harness/evidence/history', `${crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex')}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(record));
+  }
+  const res = run(c, ['orient', '--query', TRIGGER]);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const out = JSON.parse(res.stdout);
+  assert.ok(out.nextTools.includes('ae consolidate --candidates --recheck  # knowledge debt 0/5'), JSON.stringify(out.nextTools));
 });

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
-import { redactSecrets } from '../secret-scan.mjs';
-import { readJournal, foldRuns } from '../run-journal.mjs';
+import { redactSecrets, maskSecrets } from '../secret-scan.mjs';
+import { foldRuns, RUNS_FILE } from '../run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './store.mjs';
 import { learningApplicability, APPLICABILITY_VERSION } from './applicability.mjs';
 
@@ -26,6 +26,7 @@ const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
 const FINDING_TITLE_CAP = 120;
 const HASH_FILE = /^[a-f0-9]{64}\.json$/;
+const JOURNAL_BYTE_CAP = 8 * 1024 * 1024;
 
 /** Cluster IDs are digests of the cluster key, so they can be recomputed from the same evidence at any time. */
 export const failureClusterId = key => crypto.createHash('sha256').update(`failure-cluster\0${key}`).digest('hex').slice(0, 16);
@@ -41,11 +42,20 @@ export function recheckState({ workspace, home }) {
   return readRecheckConfig(workspace, { home });
 }
 
+/** Record names, newest first by modification time, capped so a long history keeps its recent records. */
 function listRecordNames(root, rel, pattern) {
-  if (!assertNoSymlinkAncestors(root, rel)) return { names: [], omitted: 0 };
-  let names = [];
-  try { names = fs.readdirSync(path.join(root, rel)).filter(name => pattern.test(name)).sort(); } catch { return { names: [], omitted: 0 }; }
-  return { names: names.slice(0, SCAN_CAP), omitted: Math.max(0, names.length - SCAN_CAP) };
+  const dir = assertNoSymlinkAncestors(root, rel);
+  if (!dir) return { names: [], omitted: 0 };
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isFile() && pattern.test(entry.name)).map(entry => {
+      let mtime = 0;
+      try { mtime = fs.lstatSync(path.join(dir, entry.name)).mtimeMs; } catch { mtime = 0; }
+      return { name: entry.name, mtime };
+    });
+  } catch { return { names: [], omitted: 0 }; }
+  entries.sort((a, b) => b.mtime - a.mtime || b.name.localeCompare(a.name));
+  return { names: entries.slice(0, SCAN_CAP).map(entry => entry.name), omitted: Math.max(0, entries.length - SCAN_CAP) };
 }
 
 function readJson(root, rel) {
@@ -54,23 +64,44 @@ function readJson(root, rel) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** Bounded, secret-screened tail of a failing check's retained output. */
+/**
+ * Bounded, secret-screened tail of a failing check's retained output. The whole
+ * output is masked before the tail is taken, so a cut cannot leave a fragment
+ * the patterns no longer recognize; any private-key header withholds it.
+ */
 export function failureExcerpt(check) {
   const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
   if (!raw) return null;
-  const tail = raw.trim().slice(-RECHECK_EXCERPT_CAP);
-  return inertLine(redactSecrets(tail)).replace(/\s+/g, ' ').trim();
+  if (/PRIVATE KEY/.test(raw)) return '[withheld: private-key]';
+  const masked = maskSecrets(raw).replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return redactSecrets(masked.slice(-RECHECK_EXCERPT_CAP));
 }
 
-const byStrength = (a, b) => b.plans.length - a.plans.length || String(b.last_seen || '').localeCompare(String(a.last_seen || '')) || a.id.localeCompare(b.id);
+/**
+ * Only checks that ran a process (a named check from checks.yaml) are failure
+ * evidence. Harness's built-in gate rows (plan-state, phase-tasks, scope,
+ * required-reviews and the rest) carry no process output: they say the work
+ * was unfinished, not that something broke.
+ */
+const ranProcess = check => ['stdout', 'stderr', 'exitCode'].some(key => Object.hasOwn(check, key));
+
+const byStrength = (a, b) => b.plan_count - a.plan_count || String(b.last_seen || '').localeCompare(String(a.last_seen || '')) || a.id.localeCompare(b.id);
 
 function finishCluster(row) {
   const plans = [...row.plans].sort();
   return { ...row, plans: plans.slice(0, PLAN_LIST_CAP), plan_count: plans.length };
 }
 
-/** Failed `ae verify` checks, grouped by check ID across plans, from current and historical evidence records. */
-function evidenceClusters(workspace) {
+/**
+ * A failure counts toward a cluster only when it is dated after the latest
+ * consolidation that consumed an episode citing the cluster (`derived_from`),
+ * so answering a cluster clears it until the failure recurs. The ledger
+ * records days, so failures on the consolidation day count as answered.
+ */
+const unresolved = (resolved, id, at) => !resolved.has(id) || (typeof at === 'string' && at.slice(0, 10) > resolved.get(id));
+
+/** Failed named `ae verify` checks, grouped by check ID across plans, from current and historical evidence records. */
+function evidenceClusters(workspace, resolved) {
   const records = [];
   const history = listRecordNames(workspace, '.harness/evidence/history', HASH_FILE);
   for (const name of history.names) records.push({ rel: `.harness/evidence/history/${name}`, value: readJson(workspace, `.harness/evidence/history/${name}`) });
@@ -84,9 +115,10 @@ function evidenceClusters(workspace) {
     if (seen.has(observation)) continue; // the latest record duplicates one history record
     seen.add(observation);
     for (const check of value.checks) {
-      if (!check || typeof check.id !== 'string' || !check.id || !['failed', 'timeout'].includes(check.status)) continue;
+      if (!check || typeof check.id !== 'string' || !check.id || !['failed', 'timeout'].includes(check.status) || !ranProcess(check)) continue;
       const checkId = inertLine(check.id).slice(0, 200);
       const key = `check:${checkId}`;
+      if (!unresolved(resolved, failureClusterId(key), at)) continue;
       const row = clusters.get(key) || { id: failureClusterId(key), source: 'evidence', check: checkId, plans: new Set(), failures: 0, first_seen: null, last_seen: null, excerpt: null, evidence: [] };
       row.plans.add(value.plan);
       row.failures += 1;
@@ -99,16 +131,31 @@ function evidenceClusters(workspace) {
   return { clusters: [...clusters.values()], omitted: history.omitted + latest.omitted };
 }
 
-/** Failed runs per command across plans, from the run journal's `run.result` records. */
-function journalClusters(workspace) {
+/** Bounded, no-follow read of the run journal. An oversized or unsafe journal contributes nothing. */
+function readJournalBounded(workspace) {
+  const rel = path.join('.harness', RUNS_FILE);
+  const full = assertNoSymlinkAncestors(workspace, rel);
+  if (!full) return [];
+  const text = readFileNoFollow(full, { root: workspace, maxBytes: JOURNAL_BYTE_CAP });
+  if (text === null) return [];
+  return text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+}
+
+/**
+ * Failed runs per command across plans, from the run journal's `run.result`
+ * records. Context only: a journal result cannot tell a gate refusal from a
+ * broken check, so these clusters never make consolidation due.
+ */
+function journalClusters(workspace, resolved) {
   let runs = [];
-  try { runs = foldRuns(readJournal(workspace), { isAlive: () => false }); } catch { return []; }
+  try { runs = foldRuns(readJournalBounded(workspace), { isAlive: () => false }); } catch { return []; }
   const clusters = new Map();
   for (const run of runs) {
     if (run.status !== 'failed' || typeof run.plan !== 'string' || !run.plan || typeof run.command !== 'string' || !run.command) continue;
     const command = inertLine(run.command).slice(0, 80);
     const key = `command:${command}`;
     const at = run.finishedAt || run.startedAt || null;
+    if (!unresolved(resolved, failureClusterId(key), at)) continue;
     const row = clusters.get(key) || { id: failureClusterId(key), source: 'run-journal', command, plans: new Set(), failures: 0, first_seen: null, last_seen: null };
     row.plans.add(run.plan);
     row.failures += 1;
@@ -192,23 +239,52 @@ function staleExposed(workspace, learnings) {
 const CODE_SPAN = /`([^`\n]{1,300})`/g;
 const LEARNING_REF = /^([a-z0-9][a-z0-9_-]*)\/([a-z0-9][a-z0-9._-]*)$/;
 
+const REF_PREFIX = /^(?:origin|upstream|refs|heads|tags|remotes)\//;
+
 function pathLike(token) {
-  return token.includes('/') && !/\s/.test(token) && !/[*?{}<>$~:|"'\\]/.test(token)
-    && !token.startsWith('/') && !token.startsWith('-') && !token.startsWith('.harness/')
+  return token.includes('/') && !/\s/.test(token) && !/[*?{}<>$~:|"'\\@]/.test(token)
+    && !token.startsWith('/') && !token.startsWith('-') && !token.startsWith('.harness/') && !REF_PREFIX.test(token)
     && !token.split('/').includes('..') && path.posix.normalize(token).replace(/\/$/, '') === token.replace(/\/$/, '');
 }
 
-function pathExists(workspace, rel) {
-  const clean = rel.replace(/\/$/, '');
-  const full = assertNoSymlinkAncestors(workspace, clean);
-  if (!full) return true; // unsafe paths are not reported as missing; they are not ours to judge
-  try { fs.lstatSync(full); return true; } catch { return false; }
+/** 'present', 'absent', or 'unknown' when the path is unsafe to inspect. */
+function pathState(base, rel) {
+  const full = assertNoSymlinkAncestors(base, rel.replace(/\/$/, ''));
+  if (!full) return 'unknown';
+  try { fs.lstatSync(full); return 'present'; } catch { return 'absent'; }
+}
+
+/** The workspace root plus each ancestor directory of the learning's anchors and source bindings. */
+function referenceBases(workspace, fm) {
+  const bases = new Set(['']);
+  const anchors = [...(Array.isArray(fm?.anchors) ? fm.anchors : []), ...(Array.isArray(fm?.source_bindings) ? fm.source_bindings.map(b => b?.path) : [])];
+  for (const anchor of anchors) {
+    if (typeof anchor !== 'string' || !pathLike(anchor)) continue;
+    for (let dir = path.posix.dirname(anchor); dir && dir !== '.'; dir = path.posix.dirname(dir)) bases.add(dir);
+  }
+  return [...bases].map(dir => (dir ? path.join(workspace, dir) : workspace));
+}
+
+/**
+ * A path reference is reported missing only when some base (the root or an
+ * anchor's ancestor) holds its first segment as a directory and no base holds
+ * the whole path. Prose with slashes (`and/or`, `owner/repo`,
+ * `application/json`), package names and Git refs never qualify.
+ */
+function missingPath(bases, token) {
+  const first = token.split('/')[0];
+  let checkable = false;
+  for (const base of bases) {
+    if (pathState(base, token) !== 'absent') return false;
+    try { if (fs.lstatSync(path.join(base, first)).isDirectory()) checkable = true; } catch { /* absent */ }
+  }
+  return checkable;
 }
 
 /**
  * Inline code spans in a learning body that name another learning (`domain/slug`
  * with a known domain) or a repository path that no longer exists. Learning
- * references are checked against every learning in the store, active or not.
+ * references are checked against every golden and branch learning, active or not.
  */
 function brokenReferences(workspace, learnings, allLearnings) {
   const ids = new Set(allLearnings.map(l => l.id));
@@ -216,15 +292,16 @@ function brokenReferences(workspace, learnings, allLearnings) {
   const out = [];
   for (const learning of learnings) {
     const refs = [];
+    const bases = referenceBases(workspace, learning.fm);
     for (const [, span] of String(learning.body || '').matchAll(CODE_SPAN)) {
       const token = span.trim();
       if (refs.some(ref => ref.ref === token)) continue;
       const asLearning = token.match(LEARNING_REF);
       if (asLearning && domains.has(asLearning[1]) && !/\.[a-z0-9]{1,8}$/i.test(token)) {
-        if (!ids.has(token) && !pathExists(workspace, token)) refs.push({ kind: 'learning', ref: token });
+        if (!ids.has(token) && pathState(workspace, token) === 'absent') refs.push({ kind: 'learning', ref: token });
         continue;
       }
-      if (pathLike(token) && !pathExists(workspace, token)) refs.push({ kind: 'path', ref: inertLine(token) });
+      if (pathLike(token) && missingPath(bases, token)) refs.push({ kind: 'path', ref: inertLine(token) });
     }
     if (refs.length) out.push({ id: learning.id, references: refs.slice(0, REF_LIST_CAP) });
   }
@@ -238,9 +315,9 @@ const plansAtLeast = n => row => row.plans.size >= n;
  * of learnings judged `wrong` in their current version, shared with the
  * feedback section. Each list is capped with an omission count.
  */
-export function recheckSummary({ workspace, learnings, allLearnings = learnings, reviewRequired = [] }) {
-  const evidence = evidenceClusters(workspace);
-  const failures = [...evidence.clusters, ...journalClusters(workspace)].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
+export function recheckSummary({ workspace, learnings, allLearnings = learnings, reviewRequired = [], resolved = new Map() }) {
+  const evidence = evidenceClusters(workspace, resolved);
+  const failures = [...evidence.clusters, ...journalClusters(workspace, resolved)].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
   const findings = findingClusters(workspace);
   const findingRows = findings.clusters.filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
   const stale = staleExposed(workspace, learnings);
@@ -259,11 +336,11 @@ export function recheckSummary({ workspace, learnings, allLearnings = learnings,
       stale_exposed: over(stale), review_required: over(reviewRequired), failure_clusters: over(failures), finding_clusters: over(findingRows), broken_references: over(broken),
       ...(evidence.omitted || findings.omitted ? { scannedRecords: evidence.omitted + findings.omitted } : {}),
     },
-    max_cluster_plans: failures.reduce((n, row) => Math.max(n, row.plan_count), 0),
+    max_cluster_plans: failures.filter(row => row.source === 'evidence').reduce((n, row) => Math.max(n, row.plan_count), 0),
   };
 }
 
-/** Only with `knowledge.recheck=on`: three stale exposed learnings, or one failure cluster across three plans. */
+/** Only with `knowledge.recheck=on`: three stale exposed learnings, or one named-check failure cluster across three plans. */
 export function recheckDue(summary) {
   return summary.counts.stale_exposed >= RECHECK_DUE_STALE_EXPOSED || summary.max_cluster_plans >= RECHECK_DUE_CLUSTER_PLANS;
 }

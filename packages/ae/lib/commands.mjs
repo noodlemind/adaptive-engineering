@@ -1363,6 +1363,7 @@ export async function cmdConsolidate(argv) {
   const workspace = path.resolve(flags.workspace);
   const copilotHome = resolveCopilotHome(flags.copilotHome);
   const logger = (m) => log(flags, m);
+  if (hasFlag(argv, '--recheck') && !hasFlag(argv, '--candidates')) console.error('hint: --recheck applies only with --candidates; it was ignored');
 
   if (hasFlag(argv, '--apply')) {
     if (!flags.ops) {
@@ -1420,6 +1421,7 @@ export async function cmdConsolidate(argv) {
   if (hasFlag(argv, '--candidates')) {
     const packet = prepareConsolidationPacket({ workspace, copilotHome, home: flags.harnessHome || process.env.HARNESS_HOME, dryRun: flags.dryRun, layer: flags.layer, ...(hasFlag(argv, '--recheck') ? { recheck: true } : {}) });
     writeEvent(workspace, flags, { type: 'consolidate', command: 'consolidate', result: 'pass', exitCode: 0 });
+    if (hasFlag(argv, '--recheck') && !packet.recheck) console.error('hint: --recheck added nothing because knowledge recheck is off (or the knowledge mode reads it as off); run ae knowledge recheck suggest');
     if (flags.json) {
       emitJson(flags, packet);
     } else {

@@ -47,6 +47,16 @@ export function redactSecrets(text) {
   return `[redacted: ${[...new Set(hits.map((h) => h.id))].join(', ')}]`;
 }
 
+/**
+ * Replace each matched secret span with a marker naming its pattern, keeping
+ * the surrounding text. Same regex-grade caveat as scanSecrets.
+ */
+export function maskSecrets(text) {
+  let out = String(text ?? '');
+  for (const { id, re } of PATTERNS) out = out.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`), `[redacted: ${id}]`);
+  return out;
+}
+
 const RECALL_UNTRUSTED_STRING_FIELDS = ['docid', 'path', 'title', 'summary', 'snippet'];
 
 export function redactRecallEntry(entry) {

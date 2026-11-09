@@ -8,7 +8,12 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { failureClusterId, recheckState, RECHECK_EXCERPT_CAP, RECHECK_SECTION_CAP } from '../lib/knowledge/recheck.mjs';
+import { failureClusterId, failureExcerpt, recheckState, RECHECK_EXCERPT_CAP, RECHECK_SECTION_CAP } from '../lib/knowledge/recheck.mjs';
+import { parseFlags } from '../lib/flags.mjs';
+import { spawnSync } from 'node:child_process';
+import { initGit } from './helpers/cli-fixtures.mjs';
+import { deriveGitContext } from '../lib/git-context.mjs';
+import { ensureBucket } from '../lib/knowledge/layer.mjs';
 
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const PLAN_A = 'docs/plans/2026-11-01-a-plan.md', PLAN_B = 'docs/plans/2026-11-02-b-plan.md', PLAN_C = 'docs/plans/2026-11-03-c-plan.md';
@@ -151,7 +156,7 @@ test('suggest: --recheck adds every signal from Harness-owned records and leaves
 
   const status = f.status();
   assert.equal(status.due, false, 'suggest never changes due');
-  assert.deepEqual(status.recheck, { state: 'suggest', counts: recheck.counts });
+  assert.deepEqual(status.recheck, { state: 'suggest' }, 'suggest status names the state without paying for the scan');
 });
 
 test('failure clusters need two distinct plans, are capped per packet and report omissions', t => {
@@ -165,7 +170,7 @@ test('failure clusters need two distinct plans, are capped per packet and report
   for (let n = 0; n < total; n++) {
     const id = `check-${String(n).padStart(2, '0')}`;
     f.evidence(PLAN_A, [{ id, status: 'failed', stderr: 'a' }]);
-    f.evidence(PLAN_B, [{ id, status: 'timeout', message: 'Timed out after 60s' }]);
+    f.evidence(PLAN_B, [{ id, status: 'timeout', message: 'Timed out after 60s', stdout: '' }]);
   }
   const { recheck } = f.packet({ recheck: true });
   assert.equal(recheck.failure_clusters.length, RECHECK_SECTION_CAP);
@@ -184,7 +189,7 @@ test('failing-output excerpts are bounded and secret-scanned', t => {
   const text = JSON.stringify(recheck);
   assert.equal(text.includes(GITHUB_TOKEN), false);
   assert.equal(text.includes('z'.repeat(30)), false);
-  assert.match(recheck.failure_clusters.find(c => c.check === 'leaky').excerpt, /^\[redacted: /);
+  assert.match(recheck.failure_clusters.find(c => c.check === 'leaky').excerpt, /\[redacted: (github-token|bearer-token)\]/, 'secrets are masked in place');
   const noisy = recheck.failure_clusters.find(c => c.check === 'noisy').excerpt;
   assert.ok(noisy.length <= RECHECK_EXCERPT_CAP);
   assert.match(noisy, /tail$/, 'the tail of the output is kept');
@@ -210,10 +215,10 @@ test('on: three stale exposed learnings or a failure cluster across three plans 
   const g = fixture(t);
   g.learn('runtime', 'baseline');
   writeRecheckConfig(g.ws, { home: g.home, recheck: 'on' });
-  g.evidence(PLAN_A, [{ id: 'unit', status: 'failed' }]);
-  g.evidence(PLAN_B, [{ id: 'unit', status: 'failed' }]);
+  g.evidence(PLAN_A, [{ id: 'unit', status: 'failed', exitCode: 1 }]);
+  g.evidence(PLAN_B, [{ id: 'unit', status: 'failed', exitCode: 1 }]);
   assert.equal(g.status().due, false, 'a two-plan cluster is evidence, not debt');
-  g.evidence(PLAN_C, [{ id: 'unit', status: 'failed' }]);
+  g.evidence(PLAN_C, [{ id: 'unit', status: 'failed', exitCode: 1 }]);
   assert.equal(g.status().due, true);
 });
 
@@ -235,4 +240,118 @@ test('recheck config ladder: unknown values are refused and read as off, knowled
   assert.equal(readRecheckConfig(f.ws, { home: f.home }), 'suggest', 'a mode switch keeps the recheck key');
   fs.writeFileSync(config, JSON.stringify({ mode: 'on', recheck: 'maybe' }));
   assert.equal(recheckState({ workspace: f.ws, home: f.home }), 'off');
+});
+
+// Independent review regressions (R1-R7 from the PR #126 review).
+
+test('R1: built-in gate rows are not failure evidence, so they never make consolidation due', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.evidence(plan, [{ id: 'phase-tasks', status: 'failed', message: '2 current phase tasks remain open' }, { id: 'required-reviews', status: 'failed', message: 'missing' }]);
+  const status = f.status();
+  assert.equal(status.due, false);
+  assert.equal(status.recheck.counts.failure_clusters, 0);
+});
+
+test('R2: a long evidence history keeps its newest records under the scan cap', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const past = new Date('2026-01-01T00:00:00Z');
+  for (let i = 0; i < 520; i++) {
+    const rel = `.harness/evidence/history/0${sha(`filler${i}`).slice(1)}.json`;
+    f.put(rel, { plan: `docs/plans/p${i}.md`, verifiedAt: '2026-10-01T00:00:00.000Z', checks: [{ id: 'lint', status: 'passed' }] });
+    fs.utimesSync(path.join(f.ws, rel), past, past);
+  }
+  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) f.put(`.harness/evidence/history/${'f'.repeat(63)}${n}.json`, { plan, verifiedAt: `2026-11-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', stderr: 'boom' }] });
+  const status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 1, 'the newest records are read even though their names sort last');
+  assert.equal(status.due, true);
+});
+
+test('R3: prose, refs and package names are not broken paths; anchors resolve package-relative paths', t => {
+  const f = fixture(t);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  f.put('packages/ae/test/foo.test.mjs', 'x');
+  f.learn('runtime', 'prose', {}, 'Rebase on `origin/main`, import `@anthropic-ai/sdk`, send `application/json`, use `and/or`, see `noodlemind/adaptive-engineering`, run in `packages/ae` with `test/foo.test.mjs`.');
+  assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, []);
+  const anchored = f.put('packages/ae/lib/thing.mjs', 'export const thing = 1;\n');
+  const id = f.learn('runtime', 'anchored', { anchors: [anchored.path] }, 'Cover it in `test/foo.test.mjs`, not `test/gone.test.mjs`.');
+  assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, [{ id, references: [{ kind: 'path', ref: 'test/gone.test.mjs' }] }]);
+});
+
+test('R4: excerpts are masked over the whole output before the tail is taken', () => {
+  const password = 'S3cr3tPassw0rdValue';
+  const cut = failureExcerpt({ stderr: `${'x'.repeat(1000)} connecting postgres://admin:${password}@db.internal:5432/app ${'y'.repeat(355)}` });
+  assert.equal(cut.includes(password.slice(-6)), false, 'no fragment survives the cut');
+  assert.ok(cut.length <= RECHECK_EXCERPT_CAP);
+  const whole = failureExcerpt({ stderr: `failed: postgres://admin:${password}@db.internal:5432/app` });
+  assert.match(whole, /^failed: \[redacted: connection-string\]/, 'the surrounding text is kept');
+  assert.equal(whole.includes(password), false);
+  const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIEowIBAAKCAQEA'.repeat(60)}\n-----END RSA PRIVATE KEY-----`;
+  assert.equal(failureExcerpt({ stderr: key }), '[withheld: private-key]');
+});
+
+test('R5: --derived-from without a value parses as empty and is refused, not dropped', () => {
+  assert.equal(parseFlags(['--insight', '--title', 't', '--derived-from']).derivedFrom, '');
+});
+
+test('R6: a symlinked run journal is not followed', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const outside = path.join(f.root, 'outside.jsonl');
+  const lines = [];
+  for (const [i, plan] of [PLAN_A, PLAN_B].entries()) {
+    lines.push({ type: 'run.start', run: `x${i}`, command: 'OUTSIDE-FILE-CONTENT', plan, ts: '2026-11-01T00:00:00Z' });
+    lines.push({ type: 'run.result', run: `x${i}`, status: 'failed', ts: '2026-11-01T00:00:01Z' });
+  }
+  fs.writeFileSync(outside, `${lines.map(line => JSON.stringify(line)).join('\n')}\n`);
+  fs.mkdirSync(path.join(f.ws, '.harness'), { recursive: true });
+  fs.symlinkSync(outside, path.join(f.ws, '.harness/runs.jsonl'));
+  assert.deepEqual(f.packet({ recheck: true }).recheck.failure_clusters, []);
+});
+
+test('R7: clusters rank by full plan count, so the widest is never the one omitted', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  for (let p = 0; p < 30; p++) f.evidence(`docs/plans/wide-${p}.md`, [{ id: 'wide', status: 'failed', stderr: 'wide' }], `2026-01-01T00:00:${String(p).padStart(2, '0')}.000Z`);
+  for (let c = 0; c < 10; c++) for (let p = 0; p < 5; p++) f.evidence(`docs/plans/n${c}-${p}.md`, [{ id: `narrow-${c}`, status: 'failed', stderr: 'n' }], `2026-11-01T00:00:${String(c * 5 + p).padStart(2, '0')}.000Z`);
+  const { recheck } = f.packet({ recheck: true });
+  assert.deepEqual([recheck.failure_clusters[0].check, recheck.failure_clusters[0].plan_count], ['wide', 30]);
+  assert.equal(recheck.failure_clusters[0].plans.length, 5, 'the listed plans stay bounded');
+  assert.equal(recheck.omitted.failure_clusters, 1);
+  assert.equal(recheck.max_cluster_plans, 30);
+});
+
+test('run-journal clusters are context only and never make consolidation due', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  f.journal([PLAN_A, PLAN_B, PLAN_C].flatMap((plan, i) => [
+    { schema: 1, type: 'run.start', run: `j${i}`, ts: `2026-11-0${i + 1}T00:00:00.000Z`, command: 'verify', plan },
+    { schema: 1, type: 'run.result', run: `j${i}`, ts: `2026-11-0${i + 1}T00:01:00.000Z`, status: 'failed', exitCode: 1, plan },
+  ]));
+  const status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 1);
+  assert.equal(status.due, false);
+});
+
+test('status and packet see the same golden plus branch learnings', t => {
+  const f = fixture(t);
+  initGit(f.ws);
+  assert.equal(spawnSync('git', ['switch', '-c', 'feature/recheck-layers'], { cwd: f.ws }).status, 0);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  f.learn('runtime', 'golden-claim');
+  const context = deriveGitContext({ workspace: f.ws, home: f.home });
+  const bucket = ensureBucket(f.dir, { key: context.branchKey, branch: context.branch });
+  const file = path.join(bucket, 'learnings/runtime/branch-claim.md');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeLearning({ trigger: 'branch work', status: 'active', source: 'auto', episodes: [{ path: 'docs/solutions/fix.md', sha256: 'a'.repeat(64), kind: 'fix', plan: PLAN_A }], anchors: [], origin: repoId(f.ws) },
+    'Builds on `runtime/golden-claim`; see `runtime/missing-claim`.'));
+  const packet = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true, writeLayer: true });
+  assert.deepEqual(packet.recheck.broken_references, [{ id: 'runtime/branch-claim', references: [{ kind: 'learning', ref: 'runtime/missing-claim' }] }], 'a branch learning citing a golden learning is not broken');
+  assert.deepEqual(f.status().recheck.counts, packet.recheck.counts);
 });

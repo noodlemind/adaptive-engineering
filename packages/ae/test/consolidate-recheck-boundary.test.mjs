@@ -89,6 +89,8 @@ test('re-check reads only Harness-owned records, never host transcripts', t => {
 
 test('no knowledge-store write happens outside --apply', t => {
   const f = fixture(t);
+  const offHint = f.cli(['consolidate', '--candidates', '--recheck', '--dry-run']);
+  assert.match(offHint.stderr, /--recheck added nothing/, 'a hint names the off key');
   const set = f.cli(['knowledge', 'recheck', 'on']);
   assert.equal(set.status, 0, set.stderr + set.stdout);
   assert.deepEqual(JSON.parse(set.stdout), { pass: true, recheck: 'on' });
@@ -100,6 +102,7 @@ test('no knowledge-store write happens outside --apply', t => {
     const result = f.cli(args);
     assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
   }
+  assert.match(f.cli(['consolidate', '--status', '--recheck']).stderr, /applies only with --candidates/);
   const packet = JSON.parse(f.cli(['consolidate', '--candidates', '--recheck']).stdout);
   assert.equal(packet.schema, 2, 'the frozen packet keeps schema 2');
   assert.equal(packet.recheck.state, 'on');
@@ -135,7 +138,18 @@ test('a derived_from insight is traceable from the applied learning back to the 
   assert.ok(file, 'the cited episode resolves');
   const derived = fs.readFileSync(file, 'utf8').match(/^derived_from: (failure-cluster:[a-f0-9]{16})$/m)?.[1];
   assert.equal(derived, `failure-cluster:${cluster.id}`);
-  const after = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.find(c => `failure-cluster:${c.id}` === derived);
-  assert.deepEqual(after.evidence.toSorted(), f.evidence.toSorted(), 'the cluster ID recomputes to the same evidence records');
-  for (const rel of after.evidence) assert.equal(JSON.parse(fs.readFileSync(path.join(f.ws, rel), 'utf8')).checks[0].id, 'unit');
+  const traced = before.recheck.failure_clusters.find(c => `failure-cluster:${c.id}` === derived);
+  assert.deepEqual(traced.evidence.toSorted(), f.evidence.toSorted(), 'the cited cluster names the evidence records it was built from');
+  for (const rel of traced.evidence) assert.equal(JSON.parse(fs.readFileSync(path.join(f.ws, rel), 'utf8')).checks[0].id, 'unit');
+
+  // Consuming the citing episode answers the cluster: it clears until the failure recurs.
+  const cleared = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
+  assert.equal(cleared.some(c => c.id === cluster.id), false, 'an answered cluster no longer appears');
+  const recurred = PLANS.map((plan, n) => {
+    const record = { plan, outcome: 'failed', verifiedAt: `2099-01-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', stderr: 'retry count wrong again' }] };
+    return f.put(`.harness/evidence/history/${sha(JSON.stringify(record))}.json`, record);
+  });
+  const reopened = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.find(c => c.id === cluster.id);
+  assert.ok(reopened, 'failures after the consolidation reopen the cluster');
+  assert.deepEqual(reopened.evidence.toSorted(), recurred.toSorted(), 'only failures after the answer count');
 });
