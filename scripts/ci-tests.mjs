@@ -14,6 +14,17 @@ export const GIT_REGRESSION_FILES = Object.freeze([
   'package-standalone.test.mjs', 'unchanged-retry.test.mjs', 'domain-commands.test.mjs',
 ]);
 
+// The pull-request tier: every file whose recorded Windows duration is at most
+// this long, plus every file with no recorded duration yet (new tests always
+// run). It covers about two thirds of the files in a few Linux minutes. The
+// complete suite runs locally before a PR (scripts/full-suite.mjs) and in CI
+// only on manual dispatch.
+export const FAST_FILE_LIMIT_MS = 30_000;
+
+export function readCosts(repoRoot) {
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, '.github/ci/windows-test-costs.json'), 'utf8')).files;
+}
+
 export function readTestFiles(repoRoot) {
   const directory = path.join(repoRoot, 'packages/ae/test');
   const files = fs.readdirSync(directory).filter(name => name.endsWith('.test.mjs')).sort();
@@ -24,6 +35,10 @@ export function readTestFiles(repoRoot) {
 export function readSuiteFiles(repoRoot, suite = 'source') {
   const all = readTestFiles(repoRoot);
   if (suite === 'source') return all;
+  if (suite === 'fast') {
+    const costs = readCosts(repoRoot);
+    return all.filter(file => !Object.hasOwn(costs, file) || costs[file] <= FAST_FILE_LIMIT_MS);
+  }
   if (suite !== 'git') throw new Error('Unknown test suite');
   if (GIT_REGRESSION_FILES.some(file => !all.includes(file))) throw new Error('Git regression inventory is missing a required file');
   return sorted(GIT_REGRESSION_FILES);
@@ -63,16 +78,16 @@ export function verifyShardManifests(manifests, { files, sourceSha, shards, suit
   return { files: files.length, shards };
 }
 
-export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs, suite = 'source', env = process.env }) {
+export async function runShard({ repoRoot = repositoryRoot, shard, shards, costs, suite = 'source', env = process.env, concurrency = 2 }) {
   const allFiles = readSuiteFiles(repoRoot, suite);
-  const selectedCosts = costs ?? JSON.parse(fs.readFileSync(path.join(repoRoot, '.github/ci/windows-test-costs.json'), 'utf8')).files;
+  const selectedCosts = costs ?? readCosts(repoRoot);
   const groups = partitionTests(allFiles, selectedCosts, shards);
   if (!Number.isInteger(shard) || shard < 1 || shard > shards) throw new Error('Invalid shard index');
   const files = groups[shard - 1].files;
   const directory = path.join(repoRoot, 'ci-test-results');
   fs.mkdirSync(directory, { recursive: true });
   const timingFile = path.join(directory, 'timings.jsonl');
-  const argv = ['--import', './test/helpers/isolate-runtime-env.mjs', '--test', '--test-concurrency=2',
+  const argv = ['--import', './test/helpers/isolate-runtime-env.mjs', '--test', `--test-concurrency=${concurrency}`,
     '--test-reporter=tap', `--test-reporter=${reporter}`, '--test-reporter-destination=stdout', `--test-reporter-destination=${timingFile}`,
     ...files.map(file => `./test/${file}`)];
   console.log(`CI ${suite} test shard ${shard}/${shards}: ${files.length}/${allFiles.length} files, estimated ${Math.round(groups[shard - 1].estimatedMs / 1000)} aggregate test-seconds`);

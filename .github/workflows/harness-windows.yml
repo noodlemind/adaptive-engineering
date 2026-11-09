@@ -5,6 +5,21 @@
 # resolves LOCALAPPDATA/USERPROFILE, style.mjs only enables Unicode glyphs when
 # a modern terminal announces itself, and global-bin.mjs writes a .cmd shim.
 #
+# Cost model. The complete source suite costs roughly two Windows runner-hours
+# per revision (twelve shards of about ten minutes each), and Windows minutes
+# bill at twice the Linux rate. Running it on every push to every pull request
+# was the dominant CI cost, including for docs-only changes. So:
+#
+#   pull_request   One `windows` job: the Windows-sensitive test subset below
+#                  (hooks, install, runner, paths, trust, redaction, Git and
+#                  shell boundaries) plus the native probes. Skipped entirely
+#                  when nothing under packages/ae or the Windows CI inputs
+#                  changed. A skipped job still satisfies a required check.
+#   dispatch       The complete twelve-shard suite on demand, on any branch.
+#
+# The complete suite is otherwise run on the machine that opens the PR
+# (`node scripts/full-suite.mjs`); see .github/CI.md.
+#
 # Output is captured verbatim to artifacts so the real console rendering — not
 # a reconstruction of it — can be read after the fact.
 name: Harness on Windows
@@ -21,8 +36,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap Linux job that decides how much Windows work this revision needs.
+  scope:
+    name: windows-scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      # A pull_request checkout is the merge commit, so depth 2 holds the base
+      # tip as HEAD^1.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Decide Windows scope
+        id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          relevant='^(packages/ae/|scripts/ci-tests\.mjs$|scripts/ci-test-reporter\.mjs$|\.github/workflows/harness-windows\.yml$|\.github/ci/|\.npmrc$)'
+          case "$EVENT" in
+            workflow_dispatch)
+              changed='(manual run)'
+              run=true; full=true ;;
+            *)
+              changed=$( { git diff --name-only HEAD^1 HEAD | grep -E "$relevant"; } || true)
+              if [ -n "$changed" ]; then run=true; else run=false; fi
+              full=false ;;
+          esac
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Windows scope"
+            echo ""
+            echo "event: \`$EVENT\` · run Windows: \`$run\` · complete suite: \`$full\`"
+            echo ""
+            echo "Windows-relevant changes:"
+            echo '```'
+            echo "${changed:-(none)}" | head -50
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "run=$run full=$full"
+
   tests:
     name: windows-tests (${{ matrix.shard }}/12)
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -69,11 +133,35 @@ jobs:
             delivery-transcripts.jsonl
             .harness/diagnostics/windows-parent-full/
 
+
   windows:
-    needs: tests
-    if: always()
+    needs: [scope, tests]
+    # Fails closed: if the scope job itself breaks, run the subset rather than
+    # skip Windows.
+    if: always() && (needs.scope.result != 'success' || needs.scope.outputs.run == 'true')
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      FULL_SUITE: ${{ needs.scope.outputs.full == 'true' }}
+      # Files whose behavior differs on win32 and that guard what users hit
+      # first: hook dispatch, install targets and locks, the process runner,
+      # path and home resolution, trust, redaction, and Git/shell boundaries.
+      # The exact archive install on Windows is proven by package-candidate.
+      # About 14 aggregate test-minutes; the job finishes in ~4-5 minutes.
+      # The inventory step fails if a listed file disappears.
+      WINDOWS_SUBSET: >-
+        ci-workflows.test.mjs cli-help.test.mjs
+        cli-vscode-hooks.test.mjs exec-policy.test.mjs
+        fs-safe-toctou.test.mjs git-executable.test.mjs home-migration.test.mjs
+        hook-policy-observation.test.mjs hook-runtime.test.mjs host-native-hooks.test.mjs
+        host-setup.test.mjs install-boundaries.test.mjs install-lock-ownership.test.mjs
+        install-runtime-transaction.test.mjs install-targets.test.mjs
+        knowledge-path-safety.test.mjs listing-redaction.test.mjs
+        paths.test.mjs process-identity.test.mjs redact.test.mjs
+        runner-output.test.mjs runner-settlement.test.mjs runner.test.mjs
+        setup-git-hygiene.test.mjs style.test.mjs
+        test-process-isolation.test.mjs trust-boundaries.test.mjs trust-recovery.test.mjs
+        trust.test.mjs windows-authority.test.mjs windows-workflow.test.mjs
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -86,15 +174,45 @@ jobs:
       - name: Install harness dependencies
         run: npm ci --prefix packages/ae
       - name: Collect shard manifests
+        if: env.FULL_SUITE == 'true'
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: windows-tests-*
           path: windows-shards
+      # Complete suite: every discovered file ran exactly once at this revision.
+      # Subset: every listed file still exists, so a rename cannot silently
+      # shrink Windows coverage.
       - name: Require complete same-revision test inventory
         id: inventory
         continue-on-error: true
-        run: node scripts/ci-tests.mjs --verify-manifests windows-shards --shards 12 --platform win32 --node-major 22
+        shell: pwsh
+        run: |
+          if ($env:FULL_SUITE -eq 'true') {
+            node scripts/ci-tests.mjs --verify-manifests windows-shards --shards 12 --platform win32 --node-major 22
+            exit $LASTEXITCODE
+          }
+          $files = @($env:WINDOWS_SUBSET -split '\s+' | Where-Object { $_ })
+          $missing = @($files | Where-Object { -not (Test-Path -LiteralPath (Join-Path 'packages/ae/test' $_) -PathType Leaf) })
+          if ($files.Count -eq 0 -or $missing.Count -gt 0) {
+            Write-Host "::error title=Windows subset inventory::missing test files: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "Windows subset: all $($files.Count) listed test files are present"
+          exit 0
+
+      - name: Windows-sensitive test subset
+        id: subset
+        if: env.FULL_SUITE != 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $files = @($env:WINDOWS_SUBSET -split '\s+' | Where-Object { $_ } | ForEach-Object { "./test/$_" })
+          Push-Location packages/ae
+          node --import ./test/helpers/isolate-runtime-env.mjs --test --test-concurrency=2 @files 2>&1 | Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'windows-subset.log')
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
 
       - name: CLI scenarios
         continue-on-error: true
@@ -353,6 +471,7 @@ jobs:
           include-hidden-files: true
           path: |
             win-output/
+            windows-subset.log
             windows-shards/*/ci-test-results/manifest.json
 
       # The one step that decides whether this job is green. It runs LAST, and
@@ -369,7 +488,8 @@ jobs:
         if: always()
         shell: pwsh
         env:
-          SUITE_OUTCOME: ${{ needs.tests.result }}
+          SUITE_OUTCOME: ${{ needs.scope.outputs.full == 'true' && needs.tests.result || steps.subset.outcome }}
+          SUITE_SCOPE: ${{ needs.scope.outputs.full == 'true' && 'full' || 'subset' }}
           INVENTORY_OUTCOME: ${{ steps.inventory.outcome }}
           REDACTION_RESULT: ${{ steps.redaction.outputs.result }}
           REDACTION_REASON: ${{ steps.redaction.outputs.reason }}
@@ -377,11 +497,13 @@ jobs:
           CANCELLATION_REASON: ${{ steps.cancellation.outputs.reason }}
         run: |
           $ErrorActionPreference = 'Continue'
+          $subset = $env:SUITE_SCOPE -eq 'subset'
+          $suiteLabel = if ($subset) { 'Windows-sensitive subset outcome: ' } else { 'shard outcome: ' }
           $suiteResult = if ($env:SUITE_OUTCOME -eq 'success') { 'pass' } else { 'fail' }
           $inventoryResult = if ($env:INVENTORY_OUTCOME -eq 'success') { 'pass' } else { 'fail' }
           $names = @('Harness test suite (Windows)', 'Complete same-revision test inventory', 'Redaction on Windows', 'Runner cancellation terminates the owned process')
           $results = @($suiteResult, $inventoryResult, $env:REDACTION_RESULT, $env:CANCELLATION_RESULT)
-          $reasons = @(('shard outcome: ' + $env:SUITE_OUTCOME), ('inventory outcome: ' + $env:INVENTORY_OUTCOME), $env:REDACTION_REASON, $env:CANCELLATION_REASON)
+          $reasons = @(($suiteLabel + $env:SUITE_OUTCOME), ('inventory outcome: ' + $env:INVENTORY_OUTCOME), $env:REDACTION_REASON, $env:CANCELLATION_REASON)
 
           $rows = @()
           $failed = @()
@@ -414,6 +536,8 @@ jobs:
           $lines += ''
           if ($failed.Count -gt 0) {
             $lines += ('**GATE FAILED** - ' + ($failed -join ', ') + '. Full console capture is in the harness-windows-output artifact.')
+          } elseif ($subset) {
+            $lines += 'The Windows-sensitive test subset and both gating probes passed. Every listed subset file is present. The complete suite runs locally before the PR and here on manual dispatch.'
           } else {
             $lines += 'The full test suite and both gating probes passed. The same-revision inventory is complete.'
           }

@@ -19,13 +19,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pull requests install the exact archive on Linux with Node 24; the Windows
+# `windows` job in harness-windows.yml covers install targets and locks on
+# win32. Manual qualification (workflow_dispatch) installs on both systems with
+# Node 20 and 24 and adds the Git integration regressions. On pull requests those regressions would only repeat files of
+# the complete suite, which runs locally before the PR (scripts/full-suite.mjs).
 jobs:
   archive:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        node: ['20', '24']
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24"]' || '["20", "24"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -76,9 +81,10 @@ jobs:
           name: ae-candidate-${{ matrix.os }}-node${{ matrix.node }}-${{ github.sha }}
           path: artifacts/
 
-  # The same nine source regressions still run on every supported OS/runtime.
-  # They no longer delay archive feedback and Windows runs three bounded batches.
+  # The nine Git integration regressions on every supported OS/runtime, in
+  # three bounded batches on Windows. Manual qualification only (see above).
   git-regressions:
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +122,10 @@ jobs:
             git-regressions.log
 
   # Preserve the existing required package check names. A green archive alone
-  # cannot satisfy them: all same-revision Git batches and their inventory must pass.
+  # cannot satisfy them: all same-revision Git batches and their inventory must
+  # pass. On pull requests only the Linux Node 24 archive and no Git batches run, so
+  # the gate requires the archive job and skips the Git inventory; a skipped Git
+  # job outside pull requests still fails it.
   package:
     name: package (${{ matrix.os }}, ${{ matrix.node }})
     needs: [archive, git-regressions]
@@ -138,14 +147,16 @@ jobs:
         with:
           node-version: '22'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: github.event_name != 'pull_request'
         with:
           pattern: git-regressions-${{ matrix.os }}-node${{ matrix.node }}-*
           path: git-shards
       - name: Require complete same-revision Git inventory
+        if: github.event_name != 'pull_request'
         run: node scripts/ci-tests.mjs --verify-manifests git-shards --suite git --shards ${{ matrix.shards }} --platform ${{ matrix.platform }} --node-major ${{ matrix.node }}
       - name: Require archive and Git regression success
         if: always()
         env:
           ARCHIVE_RESULT: ${{ needs.archive.result }}
-          GIT_RESULT: ${{ needs['git-regressions'].result }}
+          GIT_RESULT: ${{ github.event_name == 'pull_request' && 'success' || needs['git-regressions'].result }}
         run: node --input-type=module -e "if (process.env.ARCHIVE_RESULT !== 'success' || process.env.GIT_RESULT !== 'success') process.exit(1)"
