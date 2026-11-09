@@ -72,6 +72,44 @@ Use `--split development` for tuning. Run held-out cases only after freezing the
 
 The pilot has insufficient held-out attempts for its promotion threshold. Missing model access, mixed models or incomplete usage makes the comparison inconclusive. Keep experimental policies opt-in until an expanded independent corpus and reviewed results support a default change.
 
+## Memory ablation
+
+`memory/` measures whether AE memory improves sequential coding work, per model. It reuses the context pilot's fixture preparation, private checker, provenance and output-directory rule.
+
+`memory/cases.json` holds two development and two held-out JavaScript task series. Each series has four ordered tasks on one small repository. Each series also plants one recurring trap, a repository gotcha such as case-insensitive display order or text that must be normalized before comparison. The obvious implementation of task 1 passes the public verifier but fails a private trap check. A later task repeats the trap in a different form. No held-out series shares a trap with a development series. Every task records its naive and reference implementations outside the workspace. `test/memory-eval-cases.test.mjs` uses them to prove that each baseline fails, that the naive fix is trapped and that a reference fix passes.
+
+`memory/protocol.json` fixes arms, repeats, budgets and the promotion rule:
+
+| Arm | Knowledge mode | Baseline |
+| --- | --- | --- |
+| `stateless` | `off` | none |
+| `capture-only` | `capture-only` | `stateless` |
+| `recall` | `on` | `stateless` |
+| `recall+feedback` | `on` with `knowledge.feedback=on` | `recall` |
+| `recall+recheck` | `on` with `knowledge.recheck=on` | `recall`. Declared but not runnable until memory plan phase 2 adds the key |
+| `frozen-seed` | `freeze`, with one seed learning written before task 1 | `stateless` |
+
+```bash
+node eval/memory/run.mjs --out /absolute/new/external/directory
+node eval/memory/run.mjs --out /absolute/new/live/directory --live --provider <provider> --model <exact-available-id>
+node eval/memory/run.mjs --out /absolute/new/dir --split development --arms stateless,recall --repeats 1
+```
+
+Each (series, arm, repeat) gets its own harness home, and that home is shared by the series's tasks. Each task still gets a fresh checkout of the series's next state. Before any `ae` command runs, every checkout sets `origin` to `https://eval.invalid/ae-memory/<series-id>.git`. That URL pins one repository identity, so every task resolves the same project store. Arms and repeats differ only in their harness home and knowledge mode. Each attempt records its `repoId`, store directory and knowledge mode. An attempt whose identity or mode drifts from the series's first task is invalid, not failed, and is left out of scoring. The private check also confirms that the agent left `origin` unchanged. Files under `docs/solutions/` are carried into the next checkout and committed there, as they would be in a real repository. Each attempt lists the files it inherited this way.
+
+Each attempt records private-check pass, trap recurrence (the primary metric), the `lib/repeat-mistake.mjs` verdict, turns, observed tokens, `learningsBytes`, injected learnings and episodes written. Injected learnings come from a dry `ae orient` for the task, computed before the agent runs. A dry run makes no model calls. It validates broken baselines, identity pinning, arm configuration and planned injection.
+
+An arm is compared with its declared baseline on held-out attempts. It counts as an improvement only if all of these hold:
+- trap recurrence falls by at least 30% relative to the baseline
+- the pass rate does not fall by more than 2 percentage points
+- episodes per series do not rise unless recurrence also falls
+- both arms have at least 30 held-out attempts in the same batch
+- observed usage is complete
+
+An incremental arm must also pass against `stateless`. It cannot be promoted when its baseline fails against `stateless`.
+
+Limits. Each held-out series has one recurrence task, so an arm sees few recurrence observations even when it has enough held-out attempts. The live path uses the `deliver` profile so that compound can write episodes. Turning episodes into learnings still depends on the agent running consolidation, and this pilot has no recorded live run yet. Dry runs, scripted tests and Auto-routed models never qualify for promotion. A result applies only to the model and runtime that produced it.
+
 ## Mechanical extraction comparison
 
 `node eval/mechanics/run.mjs --root <package-root> --out <new-external-directory> --label <revision-label> --lane common --runs 3` executes the maintained common regression fixtures repeatedly. The output argument is required and must be outside the candidate checkout, so receipts cannot make later comparisons dirty. Move any old in-checkout receipts outside before retrying; the evaluator never deletes them. Use lane `phase2` for the added record/proposal/report/install contracts. Run revisions sequentially with the same Node runtime and test concurrency; compare `fixtureHashes` before comparing shared trials. No paid/model calls occur.

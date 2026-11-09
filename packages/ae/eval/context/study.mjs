@@ -33,14 +33,14 @@ export function resolveStudyOutput({ checkout, output }) {
   return resolved;
 }
 
-function safePath(file) {
+export function safePath(file) {
   if (typeof file !== 'string' || !file || file.includes('\\') || path.posix.isAbsolute(file) || file.split('/').some(part => ['.', '..', '.git', '.harness', ''].includes(part))) {
     throw new TypeError(`invalid fixture path: ${file}`);
   }
   return file;
 }
 
-function writeFiles(workspace, files = {}) {
+export function writeFiles(workspace, files = {}) {
   for (const [file, content] of Object.entries(files)) {
     const target = path.join(workspace, safePath(file));
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -48,7 +48,7 @@ function writeFiles(workspace, files = {}) {
   }
 }
 
-function trialEnvironment({ trial, copilotHome, harnessHome }) {
+export function trialEnvironment({ trial, copilotHome, harnessHome }) {
   const bin = path.resolve(here, '../../bin/ae.mjs');
   const directory = path.join(trial, 'runtime-bin');
   fs.mkdirSync(directory);
@@ -65,7 +65,7 @@ function trialEnvironment({ trial, copilotHome, harnessHome }) {
   return env;
 }
 
-function snapshot(workspace) {
+export function snapshot(workspace) {
   const files = {};
   const walk = dir => {
     for (const entry of fs.readdirSync(path.join(workspace, dir), { withFileTypes: true })) {
@@ -140,7 +140,7 @@ export async function runChecks(fixture) {
   return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
 }
 
-function runPublicChecks(fixture) {
+export function runPublicChecks(fixture) {
   if (!fixture.verifyCmd) return null;
   const result = spawnSync(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
   return { pass: !result.error && result.status === 0, exitCode: result.status, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || null };
@@ -171,7 +171,7 @@ function undoMetadata(fixture, after) {
   }
 }
 
-function scopeResult(fixture) {
+export function scopeResult(fixture) {
   const after = snapshot(fixture.workspace);
   const metadata = new Set(undoMetadata(fixture, after));
   const changed = [...new Set([...Object.keys(fixture.before), ...Object.keys(after)])].filter(file => !metadata.has(file) && fixture.before[file] !== after[file]);
