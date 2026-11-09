@@ -64,16 +64,20 @@ function compactLines(form) {
 //   - no break falls between the `://` and the password (a break inside the
 //     scheme word only means the previous line ended in a word character;
 //     the scheme proper starts at that break);
-//   - what sits in the user position looks like a host: `localhost`, a dotted
-//     name or address, or a bracketed IPv6 address, not a bare user name;
+//   - what sits in the user position looks like a host: `localhost` or a
+//     dotted name or address, not a bare user name. A dotless host (`api`,
+//     `cache`, a compose service) cannot be told from a user name, so it
+//     fails closed; so does a bracketed IPv6 host, whose first `:` ends the
+//     user position;
 //   - the first break inside the password (or right after its `@`) comes
 //     straight after a 1-5 digit run that opens it;
 //   - the text after that break is an `@scope/` package or a dotted email.
 // Everything else fails closed. The remaining gap is a dotted user name with
-// a password that opens with 1-5 digits wrapped before an email-like rest.
+// a password that opens with 1-5 digits, wrapped before an email-like rest
+// or before an `@host/path` that reads as an `@scope/` package.
 const SPLIT_SCOPE = /^@[A-Za-z0-9][\w.-]*\//;
 const SPLIT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])/;
-const HOST_LIKE = /^(?:localhost|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\[[0-9A-Fa-f:.]+\])$/;
+const HOST_LIKE = /^(?:localhost|[\w-]+(?:\.[\w-]+)+)$/;
 const CONNECTION_PARTS = /^(\w+):\/\/([^\s:@/]+):([^\s@/]+)@/;
 
 // Returns where the benign shape's `@` sits in the compacted text, so the

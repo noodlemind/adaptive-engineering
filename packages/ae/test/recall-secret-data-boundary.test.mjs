@@ -317,6 +317,7 @@ test('a URL ending one line and an email or @scope starting the next is ordinary
     'Request failed\nhttp://localhost:8080\nadmin@example.com not authorized',
     'GET\nhttp://registry.local:4873\n@types/node/-/node-1.0.0.tgz',
     'listening http://10.0.0.5:9000\nops@corp.example.com',
+    'listening http://my_svc.local:8080\nadmin@example.com',
     'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@acme%2fwidget - Not found\nnpm ERR! 404 \n@acme/widget@1.2.3 is not in this registry.',
     'Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n    at file:///srv/app/db.mjs:12:7\n    at async main (file:///srv/app/index.mjs:4:3)',
   ]) {
