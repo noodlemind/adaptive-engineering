@@ -238,9 +238,11 @@ test('acceptance timeout remains a failure when source exits zero on termination
     checks: [{ module: 'src/value.mjs', export: 'value', args: [], expected: 2 }],
   } });
   const result = await runChecks(fixture);
-  assert.equal(result.error, 'ETIMEDOUT');
-  // Checked code runs in a probe child; its SIGTERM handler can no longer turn the checker's own exit into zero.
-  if (process.platform !== 'win32') assert.notEqual(result.exitCode, 0);
+  // Checked code runs in a probe child under the checker's own budget: the hang becomes a failed verdict before the
+  // outer timeout, and its SIGTERM handler cannot turn the checker's exit into zero.
+  assert.equal(result.error, null);
+  assert.notEqual(result.exitCode, 0);
+  assert.deepEqual(result.verdicts, [false]);
   assert.equal(result.pass, false);
 });
 

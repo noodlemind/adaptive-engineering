@@ -9,6 +9,7 @@ import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
 import { repeatEvidenceFromServed } from '../../lib/repeat-mistake.mjs';
 import { ensureHarnessDir } from '../../lib/session.mjs';
+import { publicVerifierSource } from '../context/check.mjs';
 
 export { resolveStudyOutput };
 
@@ -99,6 +100,7 @@ export function validateCatalog(catalog = CATALOG) {
       if (task.trap && !task.checks.some(check => check.trap)) throw new TypeError(`trap task ${task.id} needs a private trap check`);
       if (task.trap && !task.checks.some(check => !check.trap)) throw new TypeError(`trap task ${task.id} needs a non-trap private check, so an unsolved task is not scored as a recurrence`);
       if (task.publicChecks.some(check => check.trap)) throw new TypeError(`task ${task.id} must keep trap checks private`);
+      if (task.publicChecks.some(check => check.throws || check.absent || check.synchronous)) throw new TypeError(`task ${task.id} public checks must be plain value checks`);
       for (const file of [...task.editable, ...task.seeds, ...Object.keys(task.files || {}), ...task.checks.map(check => check.module)]) safePath(file);
     }
   }
@@ -152,35 +154,15 @@ function restoreOrigin(workspace, expected) {
   return fixed.status === 0 && after.configured === expected && after.effective === expected;
 }
 
-/** Public verifier copied into the workspace. It holds only public checks and never references the AE checkout. */
-function publicVerifierSource(checks) {
-  return `import assert from 'node:assert/strict';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-const checks = ${JSON.stringify(checks)};
-for (const check of checks) {
-  const module = await import(pathToFileURL(path.join(process.cwd(), check.module)));
-  const value = Object.hasOwn(check, 'args') ? await module[check.export](...check.args) : module[check.export];
-  assert.deepEqual(value, check.expected);
-}
-`;
-}
-
-function writeCheckFile(file, checks) {
-  const text = JSON.stringify({ checks });
-  fs.writeFileSync(file, text, { mode: 0o444 });
-  return hash(text);
-}
-
 /** Arms whose knowledge mode writes memory. Only they inherit earlier tasks' docs/solutions notes. */
 export const capturesMemory = arm => arm.mode === 'on' || arm.mode === 'suggest' || arm.mode === 'capture-only';
 
 /**
  * Fresh checkout of the series state for one task, with carried-forward episodes committed and origin pinned before any ae command.
- * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`; private checks live under `privateDir`,
- * which is outside `runRoot` and outside the agent's HOME.
+ * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`. Private checks stay in this
+ * process's memory and reach the checker on stdin, so no file holds them while an agent runs.
  */
-export function prepareTask({ series, index, runRoot, privateDir, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
+export function prepareTask({ series, index, runRoot, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
   const task = series.tasks[index];
   const trial = path.join(runRoot, `t${index + 1}`);
   fs.mkdirSync(trial);
@@ -196,10 +178,8 @@ export function prepareTask({ series, index, runRoot, privateDir, carried = {}, 
   ensureHarnessDir(workspace, false);
   const control = path.join(workspace, '.harness');
   fs.writeFileSync(path.join(control, 'context-verify.mjs'), publicVerifierSource(task.publicChecks), { mode: 0o444 });
-  const checks = path.join(privateDir, `t${index + 1}`);
-  fs.mkdirSync(checks, { recursive: true });
   const checkerHash = hash(fs.readFileSync(checker));
-  const subset = (name, list) => ({ workspace, task: { checks: list }, checkFile: path.join(checks, name), checkHash: writeCheckFile(path.join(checks, name), list), checkerHash });
+  const checkText = JSON.stringify({ checks: task.checks });
   const env2 = trialEnvironment({ trial, copilotHome, harnessHome });
   // The agent gets an empty HOME and its own temporary directory for this task only; the ae wrapper keeps its pinned homes.
   const agentHome = path.join(trial, 'home');
@@ -207,11 +187,10 @@ export function prepareTask({ series, index, runRoot, privateDir, carried = {}, 
   fs.mkdirSync(agentHome); fs.mkdirSync(agentTemp);
   env2.HOME = agentHome; env2.USERPROFILE = agentHome;
   env2.TMPDIR = agentTemp; env2.TMP = agentTemp; env2.TEMP = agentTemp;
-  const all = subset('checks.json', task.checks);
   const fixture = {
     series, task, index, trial, workspace, copilotHome, harnessHome, origin, env: env2,
     verifyCmd: `"${process.execPath}" .harness/context-verify.mjs`,
-    checkFile: all.checkFile, checkHash: all.checkHash, checkerHash,
+    checkText, checkHash: hash(checkText), checkerHash,
     carriedForward: Object.keys(carried).sort(),
   };
   fixture.before = snapshot(workspace);
@@ -363,7 +342,7 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
     corpusHash: hash(JSON.stringify(catalog)), checkerHash: hash(fs.readFileSync(checker)), protocolHash: hash(JSON.stringify(protocol)),
     runtime: process.version, platform: process.platform, arch: process.arch, host, model,
     modelSelection: model?.trim().toLowerCase() === 'auto' ? 'automatic' : 'fixed',
-    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-run-temporary-root-v1',
+    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-run-temporary-root-v2',
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(),
     sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim()),
     profile: protocol.profile, publicVerifier: protocol.publicVerifier, maxTurns: protocol.maxTurns, maxSeconds: protocol.maxSeconds,
@@ -376,33 +355,45 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
 }
 
 const STUDY_PREFIX = 'aem-study-';
+const STUDY_NAME = /^aem-study-(\d+)-[A-Za-z0-9]{6}$/;
 
-/** Removes study parents left by runner processes that no longer exist (for example after SIGKILL). */
+/**
+ * Removes study parents left by runner processes that no longer exist (for example after SIGKILL). The owner PID is part of
+ * the folder name, so there is no window in which a fresh parent lacks an owner. Folders that cannot be removed (for example
+ * another user's) are skipped, never fatal.
+ */
 export function sweepStaleStudies(base = os.tmpdir()) {
   const swept = [];
-  for (const name of fs.existsSync(base) ? fs.readdirSync(base) : []) {
-    if (!name.startsWith(STUDY_PREFIX)) continue;
-    const dir = path.join(base, name);
-    let pid = null;
-    try { pid = Number(fs.readFileSync(path.join(dir, 'owner.pid'), 'utf8')); } catch { /* unreadable owner: treat as stale */ }
+  let names = [];
+  try { names = fs.readdirSync(base); } catch { return swept; }
+  for (const name of names) {
+    const match = STUDY_NAME.exec(name);
+    if (!match) continue;
+    const pid = Number(match[1]);
     let alive = false;
-    if (Number.isInteger(pid) && pid > 0) {
+    if (Number.isSafeInteger(pid) && pid > 0) {
       try { process.kill(pid, 0); alive = true; } catch (error) { alive = error.code === 'EPERM'; }
     }
     if (alive) continue;
-    fs.rmSync(dir, { recursive: true, force: true });
-    swept.push(dir);
+    const dir = path.join(base, name);
+    try { fs.rmSync(dir, { recursive: true, force: true }); swept.push(dir); } catch { /* not ours to remove */ }
   }
   return swept;
 }
 
-/** One temporary parent per study, removed on normal exit and on SIGINT/SIGTERM. Run roots are created inside it. */
-function openStudyParent() {
-  sweepStaleStudies();
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), STUDY_PREFIX));
-  fs.writeFileSync(path.join(parent, 'owner.pid'), String(process.pid));
-  const remove = () => fs.rmSync(parent, { recursive: true, force: true });
-  const onSignal = signal => { remove(); process.exit(signal === 'SIGINT' ? 130 : 143); };
+/**
+ * One temporary parent per study, removed on normal exit and on SIGINT/SIGTERM. Run roots are created inside it.
+ * `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
+ */
+function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
+  sweepStaleStudies(base);
+  const parent = fs.mkdtempSync(path.join(base, `${STUDY_PREFIX}${process.pid}-`));
+  const remove = () => { try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
+  const onSignal = signal => {
+    remove();
+    try { onAbort(signal); } catch { /* best effort */ }
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  };
   process.on('exit', remove);
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
@@ -410,13 +401,32 @@ function openStudyParent() {
 }
 
 /**
+ * Writes attempt records and results. Attempt records carry checker diagnostics with expected values, so this runs only after
+ * the study parent (every checkout and agent-facing file) is gone. A partial write follows a crash or signal; it has no summary.
+ */
+function writeStudyOutput({ root, provenance, runs, attempts, protocol, partial }) {
+  for (const attempt of attempts) {
+    const dir = path.join(root, 'attempts', attempt.run);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `t${attempt.taskIndex}-${attempt.task}.json`), JSON.stringify(attempt, null, 2));
+  }
+  const output = partial
+    ? { schema: 1, partial: true, provenance, runs, attempts, summary: null }
+    : { schema: 1, provenance, runs, attempts, summary: summarizeStudy({ attempts, runs, provenance, protocol }) };
+  fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(output, null, 2));
+  return output;
+}
+
+/**
  * Runs every (series, arm, repeat) with one harness home shared across the series's tasks and a fresh checkout per task.
  * Each run's agent-facing files live in a fresh temporary root outside `root`, deleted after the run; each task's checkout
- * is deleted after its attempt, so no agent can list sibling runs, earlier tasks or private checks.
+ * is deleted after its attempt, so an agent cannot casually list sibling runs, earlier tasks or private checks. This guards
+ * against casual leakage only: an agent running as this user can read this process's memory. Real protection needs a
+ * separate user ID or a sandbox. `studyBase` sets where the study parent is created (tests use a private directory).
  * `originFor(series, index)` lets tests prove identity drift is caught; `inspect(fixture, attempt)` lets tests look at a
  * task before its checkout is removed. Production runs use neither.
  */
-export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, arms = runnableArms(protocol), repeats = protocol.repeats, split = 'all', dryRun = false, execute, model = null, host = null, originFor = series => seriesOrigin(series.id), inspect = null }) {
+export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, arms = runnableArms(protocol), repeats = protocol.repeats, split = 'all', dryRun = false, execute, model = null, host = null, originFor = series => seriesOrigin(series.id), inspect = null, studyBase = os.tmpdir() }) {
   validateProtocol(protocol);
   validateCatalog(catalog);
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) throw new TypeError('repeats must be 1..20');
@@ -430,18 +440,21 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   const series = catalog.series.filter(item => split === 'all' || item.split === split);
   fs.mkdirSync(root, { recursive: true });
   const provenance = provenanceFor({ catalog, protocol, arms, repeats, model, host, series });
-  fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
   const attempts = [];
   const runs = [];
-  const study = openStudyParent();
+  let finished = false, owned = false;
+  // The study parent opens first, so a failure there leaves no provenance.json behind to block a retry into the same root.
+  // Partial output is written only into a root this study claimed with provenance.json, never over another study's results.
+  const study = openStudyParent({ base: studyBase, onAbort: () => { if (owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } });
   try {
+  fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
+  owned = true;
   for (const [seriesIndex, item] of series.entries()) {
     for (let repeat = 0; repeat < repeats; repeat++) {
       const offset = (seriesIndex + repeat) % arms.length;
       for (const armId of [...arms.slice(offset), ...arms.slice(0, offset)]) {
         const arm = armById(protocol, armId);
         const runId = `${item.id}-${armSlug(armId)}-r${repeat + 1}`;
-        const privateDir = path.join(root, 'private', runId);
         const runRoot = fs.mkdtempSync(path.join(study.parent, 'run-'));
         const copilotHome = path.join(runRoot, 'copilot');
         const harnessHome = path.join(runRoot, 'state');
@@ -454,7 +467,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
           for (let index = 0; index < item.tasks.length; index++) {
             const task = item.tasks[index];
             const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
-            const fixture = prepareTask({ series: item, index, runRoot, privateDir, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
+            const fixture = prepareTask({ series: item, index, runRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
             const configured = configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 });
             if (index === 0) seeded = configured.seeded;
             const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
@@ -546,18 +559,13 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
       }
     }
   }
+  finished = true;
   } finally {
     study.close();
+    // A crash still saves every finished attempt, marked partial; a normal end writes the full results below.
+    if (!finished && owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true });
   }
-  // Attempt records carry checker diagnostics with expected values, so they are written only after every agent has stopped.
-  for (const attempt of attempts) {
-    const dir = path.join(root, 'attempts', attempt.run);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `t${attempt.taskIndex}-${attempt.task}.json`), JSON.stringify(attempt, null, 2));
-  }
-  const output = { schema: 1, provenance, runs, attempts, summary: summarizeStudy({ attempts, runs, provenance, protocol }) };
-  fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(output, null, 2));
-  return output;
+  return writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false });
 }
 
 function rate(numerator, denominator) {

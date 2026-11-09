@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { buildTaskContext } from '../../lib/context-policy.mjs';
 import { buildStructuralIndex } from '../../lib/repo-map/structural-index.mjs';
 import { lexicalV2 } from '../../lib/repo-map/treesitter-extractor.mjs';
 import { ensureHarnessDir, writeSession } from '../../lib/session.mjs';
 import { readOrientSlice } from '../../lib/orient-read.mjs';
+import { publicVerifierSource } from './check.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const here = import.meta.dirname;
@@ -116,8 +116,8 @@ export async function prepareCase({ task, root, id }) {
     const control = path.join(workspace, '.harness');
     fs.mkdirSync(control, { recursive: true });
     fs.writeFileSync(path.join(control, 'context-public-checks.json'), JSON.stringify({ checks: task.publicChecks }), { mode: 0o444 });
-    const source = `import fs from 'node:fs';\nimport { checkCases } from ${JSON.stringify(pathToFileURL(checker).href)};\nconst task = JSON.parse(fs.readFileSync(new URL('./context-public-checks.json', import.meta.url), 'utf8'));\nawait checkCases(process.cwd(), task.checks);\n`;
-    fs.writeFileSync(path.join(control, 'context-verify.mjs'), source, { mode: 0o444 });
+    // The verifier embeds the public checks and the check function, so it never names the AE checkout.
+    fs.writeFileSync(path.join(control, 'context-verify.mjs'), publicVerifierSource(task.publicChecks), { mode: 0o444 });
     verifyCmd = `"${process.execPath}" .harness/context-verify.mjs`;
   }
   const checkFile = path.join(trial, 'checks.json');
@@ -127,7 +127,7 @@ export async function prepareCase({ task, root, id }) {
 }
 
 function integrity(fixture) {
-  try { return hash(fs.readFileSync(fixture.checkFile)) === fixture.checkHash && hash(fs.readFileSync(checker)) === fixture.checkerHash; }
+  try { return (fixture.checkText !== undefined || hash(fs.readFileSync(fixture.checkFile)) === fixture.checkHash) && hash(fs.readFileSync(checker)) === fixture.checkerHash; }
   catch { return false; }
 }
 
@@ -135,10 +135,16 @@ export async function runChecks(fixture) {
   if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
   const challenge = randomBytes(16).toString('hex');
   // The checks travel on stdin, so the check-file path never appears in a command line the checked code could read.
-  let checkText;
-  try { checkText = fs.readFileSync(fixture.checkFile, 'utf8'); } catch { return { pass: false, integrity: false, reason: 'check content unreadable' }; }
+  // A fixture may hold its checks in memory (`checkText`), so no private file exists for checked code to find.
+  let checkText = fixture.checkText;
+  if (checkText === undefined) {
+    try { checkText = fs.readFileSync(fixture.checkFile, 'utf8'); } catch { return { pass: false, integrity: false, reason: 'check content unreadable' }; }
+  }
   if (hash(checkText) !== fixture.checkHash) return { pass: false, integrity: false, reason: 'check content changed' };
-  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge}\n${checkText}`, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
+  // The checker gets a budget below the outer timeout, so a hang or exit in checked code still yields per-check verdicts.
+  // spawnSync blocks this event loop: a SIGINT or SIGTERM sent meanwhile is handled only after the checker returns (at most checkerTimeoutMs).
+  const budget = Math.max(1000, PROTOCOL.checkerTimeoutMs - 3000);
+  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 256_000 });
   const intact = integrity(fixture);
   const lines = (result.stdout || '').split(/\r?\n/);
   const completed = lines.includes(`harness-context-checked-v1:${challenge}:${fixture.task.checks.length}`);

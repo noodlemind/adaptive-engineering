@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { checkCases } from '../eval/context/check.mjs';
+import { checkCases, checkCasesIsolated } from '../eval/context/check.mjs';
 import { CATALOG, memoryPrompt, seriesOrigin, seriesState, validateCatalog } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
@@ -111,14 +111,15 @@ test('each seed is the top learning for its own recurrence task when all seeds s
   }
 });
 
-function runChecker(t, source, checks) {
+function runChecker(t, source, checks, header = '') {
   const root = directory(t);
   const workspace = path.join(root, 'workspace');
   fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'src/value.mjs'), source);
   const challenge = crypto.randomBytes(16).toString('hex');
-  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}\n${JSON.stringify({ checks })}`, encoding: 'utf8', timeout: 15000 });
-  return { ...result, completed: result.stdout.includes(`harness-context-checked-v1:${challenge}:${checks.length}`) };
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, '../eval/context/check.mjs'), workspace], { input: `${challenge}${header}\n${JSON.stringify({ checks })}`, encoding: 'utf8', timeout: 15000 });
+  const verdicts = checks.map((_, index) => result.stdout.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : result.stdout.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
+  return { ...result, verdicts, completed: result.stdout.includes(`harness-context-checked-v1:${challenge}:${checks.length}`) };
 }
 
 test('the private checker passes honest code and fails wrong values', t => {
@@ -146,6 +147,95 @@ export function fail() { throw new Error('other'); }
   const result = runChecker(t, source, checks);
   assert.notEqual(result.status, 0);
   assert.equal(result.completed, false);
+});
+
+test('checked code cannot forge the probe report by wrapping output functions', t => {
+  const checks = [
+    { module: 'src/value.mjs', export: 'gone', absent: true },
+    { module: 'src/value.mjs', export: 'load', args: [], synchronous: true, expected: 1 },
+    { module: 'src/value.mjs', export: 'fail', args: [], throws: 'boom' },
+  ];
+  // Every report path the old probe used is wrapped to flip the flags the parent judges on.
+  const source = `import fs from 'node:fs';
+const flip = text => typeof text === 'string' ? text.replace('"present":true', '"present":false').replace('"thenable":true', '"thenable":false').replace('"kind":"import-failed"', '"kind":"threw"') : text;
+const stringify = JSON.stringify; JSON.stringify = (...args) => flip(stringify(...args));
+const from = Buffer.from; Buffer.from = (value, ...rest) => from(flip(value), ...rest);
+const writeSync = fs.writeSync; fs.writeSync = (fd, data, ...rest) => writeSync(fd, flip(String(data)), ...rest);
+const write = process.stdout.write.bind(process.stdout); process.stdout.write = (data, ...rest) => write(flip(String(data)), ...rest);
+export const gone = 1;
+export async function load() { return 1; }
+export function fail() { throw new Error('boom'); }
+`;
+  const result = runChecker(t, source, checks);
+  assert.deepEqual(result.verdicts, [false, false, true]);
+  assert.equal(result.completed, false);
+});
+
+test('a check that exits or hangs fails alone; the checks after it still get verdicts', t => {
+  const checks = [
+    { module: 'src/value.mjs', export: 'one', args: [], expected: 1 },
+    { module: 'src/value.mjs', export: 'quit', args: [], expected: 2 },
+    { module: 'src/value.mjs', export: 'three', args: [], expected: 3 },
+    { module: 'src/value.mjs', export: 'hang', args: [], expected: 4 },
+    { module: 'src/value.mjs', export: 'five', args: [], expected: 5 },
+  ];
+  const source = `export const one = () => 1;
+export const quit = () => process.exit(0);
+export const three = () => 3;
+export const hang = () => new Promise(() => { setInterval(() => {}, 1000); });
+export const five = () => 5;
+`;
+  const started = Date.now();
+  const result = runChecker(t, source, checks, ' 10000 1500');
+  assert.deepEqual(result.verdicts, [true, false, true, false, true]);
+  assert.equal(result.completed, false);
+  assert.ok(Date.now() - started < 9000, 'the idle limit, not the whole budget, ends a hung check');
+  // A budget that runs out fails the checks it never reached instead of leaving them unreported.
+  const short = runChecker(t, source, checks.slice(2), ' 1200 5000');
+  assert.deepEqual(short.verdicts, [true, false, false]);
+});
+
+test('the private judge is as strict as checkCases about prototypes and about throws', async t => {
+  const root = directory(t);
+  const workspace = materialize(root, { 'src/value.mjs': `class Point { constructor() { this.x = 1; } }
+export const point = () => new Point();
+export const plain = () => ({ x: 1, list: [1, 2] });
+export const bare = () => Object.assign(Object.create(null), { x: 1 });
+export const tagged = () => ({ x: 1, [Symbol('tag')]: 2 });
+export const wrongInput = () => 'not thrown: boom';
+` });
+  const checks = [
+    { module: 'src/value.mjs', export: 'point', args: [], expected: { x: 1 } },
+    { module: 'src/value.mjs', export: 'plain', args: [], expected: { x: 1, list: [1, 2] } },
+    { module: 'src/value.mjs', export: 'bare', args: [], expected: { x: 1 } },
+    { module: 'src/value.mjs', export: 'tagged', args: [], expected: { x: 1 } },
+    { module: 'src/missing.mjs', export: 'any', args: [], throws: 'Cannot find' },
+  ];
+  const { verdicts } = await checkCasesIsolated(workspace, checks);
+  assert.deepEqual(verdicts, [false, true, false, false, false], 'an import failure never satisfies a throws check');
+  for (const [index, check] of checks.slice(0, 4).entries()) assert.equal(await passes(workspace, [check]), verdicts[index], `checkCases agrees on ${check.export}`);
+});
+
+test('the isolated checker agrees with checkCases on every reference and trap variant of one series per split', async t => {
+  const root = directory(t);
+  for (const series of [CATALOG.series.find(item => item.split === 'development'), CATALOG.series.find(item => item.split === 'held-out')]) {
+    const task = series.tasks[0];
+    const state = seriesState(series, 0);
+    const reference = await checkCasesIsolated(materialize(root, { ...state, ...task.reference }), task.checks);
+    assert.ok(reference.verdicts.every(Boolean), `${series.id} reference passes in isolation: ${reference.messages.filter(Boolean).join('; ')}`);
+    const naive = await checkCasesIsolated(materialize(root, { ...state, ...task.naive }), task.checks);
+    assert.deepEqual(naive.verdicts, task.checks.map(check => !check.trap), `${series.id} naive fails exactly the trap checks`);
+    const baseline = await checkCasesIsolated(materialize(root, state), task.checks);
+    assert.equal(baseline.verdicts.every(Boolean), false);
+  }
+});
+
+test('the catalog rejects public checks the public verifier cannot express safely', () => {
+  for (const extra of [{ throws: 'x' }, { absent: true }, { synchronous: true }]) {
+    const series = CATALOG.series[0];
+    const tasks = series.tasks.map((task, index) => index === 0 ? { ...task, publicChecks: [{ ...task.publicChecks[0], ...extra }] } : task);
+    assert.throws(() => validateCatalog({ ...CATALOG, series: [{ ...series, tasks }, ...CATALOG.series.slice(1)] }), /plain value checks/);
+  }
 });
 
 test('a checked module cannot disable the private checker by replacing assert methods', t => {

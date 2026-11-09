@@ -10,7 +10,7 @@ import {
   CATALOG, PROTOCOL, armById, armStatistics, baselineChain, clearExternalPlans, compareArms, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
-import { writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { storeDir, writeStoreConfig } from '../lib/knowledge/store.mjs';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const LEARNING_ID = 'javascript/eval-scripted-trap';
@@ -98,7 +98,7 @@ function main() {
         observations[`${fixture.arm.id}:${fixture.index}`] = {
           home: fs.readdirSync(fixture.env.HOME), homePath: fixture.env.HOME, tmp: fixture.env.TMPDIR, trial: fixture.trial,
           runRoot: fs.readdirSync(runRoot).sort(), runRootPath: runRoot, studyParent: path.dirname(runRoot),
-          checkFile: fixture.checkFile, trapFile: fixture.trap?.checkFile ?? null, outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
+          checkFile: fixture.checkFile ?? null, hasCheckText: typeof fixture.checkText === 'string', outFiles: fs.readdirSync(root).sort(), outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
           planPresent: fs.existsSync(path.join(fixture.harnessHome, 'projects')) && fs.readdirSync(path.join(fixture.harnessHome, 'projects')).some(id => fs.existsSync(path.join(fixture.harnessHome, 'projects', id, 'plans', 'scripted-plan.md'))),
         };
         return executor(fixture);
@@ -222,15 +222,16 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
     assert.ok(seen.tmp.startsWith(seen.trial + path.sep), `${key} TMPDIR belongs to this task only`);
     assert.deepEqual(fs.existsSync(seen.studyParent) ? fs.readdirSync(seen.studyParent) : [], [], `${key} study parent is removed`);
     assert.ok(seen.outsideOut, `${key} workspace is outside the output root`);
-    for (const file of [seen.checkFile, seen.trapFile].filter(Boolean)) {
-      assert.ok(path.relative(seen.runRootPath, file).startsWith('..'), `${key} private checks are outside the run root`);
-      assert.ok(file.startsWith(path.join(root, 'private') + path.sep));
-    }
+    // Private checks stay in the runner's memory: no check file exists anywhere while an agent runs.
+    assert.equal(seen.checkFile, null, `${key} has no private check file`);
+    assert.equal(seen.hasCheckText, true);
+    assert.deepEqual(seen.outFiles, ['provenance.json'], `${key} output root holds no private checks or attempt records during the run`);
     assert.equal(fs.existsSync(seen.runRootPath), false, `${key} run root is removed after the run`);
   }
   const runRoots = new Set(Object.entries(observations).map(([key, seen]) => `${key.split(':')[0]}=${seen.runRootPath}`));
   assert.equal(new Set([...runRoots].map(entry => entry.split('=')[1])).size, ARMS.length, 'each run gets its own temporary root');
   assert.ok(result.attempts.every(row => !JSON.stringify(row).includes('trap-checks.json')));
+  assert.equal(fs.existsSync(path.join(root, 'private')), false);
 });
 
 test('the harness home persists across a series and is isolated between arms and repeats', async () => {
@@ -441,17 +442,38 @@ test('external plan clearing refuses a planted symlink and never deletes outside
   assert.ok(fs.existsSync(path.join(victim, 'plans', 'keep.md')));
 });
 
-test('stale study parents from dead runners are swept; live ones are kept', t => {
-  const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-study-'));
-  const live = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-study-'));
-  t.after(() => { fs.rmSync(stale, { recursive: true, force: true }); fs.rmSync(live, { recursive: true, force: true }); });
-  const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
-  fs.writeFileSync(path.join(stale, 'owner.pid'), dead);
-  fs.writeFileSync(path.join(live, 'owner.pid'), String(process.pid));
-  const swept = sweepStaleStudies();
-  assert.ok(swept.includes(stale));
+test('stale study parents from dead runners are swept; live, foreign and unremovable ones are kept', t => {
+  const base = directory(t);
+  const dead = Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout);
+  const stale = fs.mkdtempSync(path.join(base, `aem-study-${dead}-`));
+  const live = fs.mkdtempSync(path.join(base, `aem-study-${process.pid}-`));
+  const unnamed = fs.mkdtempSync(path.join(base, 'aem-study-'));
+  fs.writeFileSync(path.join(stale, 'leftover'), 'x');
+  const swept = sweepStaleStudies(base);
+  assert.deepEqual(swept, [stale]);
   assert.equal(fs.existsSync(stale), false);
   assert.equal(fs.existsSync(live), true);
+  assert.equal(fs.existsSync(unnamed), true, 'a folder without an owner PID in its name is never swept');
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    // A stale parent this user cannot remove is skipped instead of aborting the sweep.
+    const locked = fs.mkdtempSync(path.join(base, `aem-study-${dead}-`));
+    fs.mkdirSync(path.join(locked, 'inner'));
+    fs.writeFileSync(path.join(locked, 'inner', 'file'), 'x');
+    fs.chmodSync(path.join(locked, 'inner'), 0o500);
+    t.after(() => fs.chmodSync(path.join(locked, 'inner'), 0o700));
+    assert.doesNotThrow(() => sweepStaleStudies(base));
+  }
+});
+
+test('a crash mid-study saves finished attempt records and a partial results file', async t => {
+  const root = path.join(directory(t), 'out');
+  await assert.rejects(runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t),
+    inspect: (fixture, attempt) => { if (attempt.taskIndex === 2) throw new Error('runner crashed'); } }), /runner crashed/);
+  const results = JSON.parse(fs.readFileSync(path.join(root, 'results.json'), 'utf8'));
+  assert.equal(results.partial, true);
+  assert.equal(results.summary, null);
+  assert.equal(results.attempts.length, 2);
+  assert.equal(fs.readdirSync(path.join(root, 'attempts', results.attempts[0].run)).length, 2);
 });
 
 test('SIGTERM during a run removes the agent-facing temporary root', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
@@ -460,7 +482,7 @@ test('SIGTERM during a run removes the agent-facing temporary root', { skip: pro
   const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
   fs.writeFileSync(script, `import { CATALOG, runStudy } from ${JSON.stringify(study)};
 await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...CATALOG, series: [CATALOG.series[0]] }, arms: ['stateless'], repeats: 1, host: 'scripted-test',
-  execute: async fixture => { setInterval(() => {}, 1000); process.stdout.write('READY ' + fixture.trial + '\\n'); await new Promise(() => {}); } });
+  execute: async fixture => { if (fixture.index === 0) return { status: 'ok' }; setInterval(() => {}, 1000); process.stdout.write('READY ' + fixture.trial + '\\n'); await new Promise(() => {}); } });
 `);
   const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -475,6 +497,11 @@ await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...
   const { code } = await exited;
   assert.equal(code, 143);
   assert.equal(fs.existsSync(parent), false, 'the study parent and its run root are gone');
+  // The finished first attempt survives the signal, marked partial.
+  const results = JSON.parse(fs.readFileSync(path.join(root, 'out', 'results.json'), 'utf8'));
+  assert.equal(results.partial, true);
+  assert.deepEqual(results.attempts.map(row => row.taskIndex), [1]);
+  assert.ok(fs.existsSync(path.join(root, 'out', 'attempts', results.attempts[0].run)));
 });
 
 test('same-batch enforcement compares the batch stamped on scored rows', () => {
@@ -492,6 +519,36 @@ test('compareArms reports unscored rates and rejects arms whose unscored rates d
   assert.equal(close.candidateUnscoredRate, 0.1);
   const wide = compareArms(stat(0.1, { unscoredRate: 0.4 }), stat(0.5, { unscoredRate: 0.1 }));
   assert.ok(wide.reasons.includes('unscored-rates-differ'));
+});
+
+test('an origin rewrite the runner cannot undo and a refused plan clear each invalidate their attempt', async t => {
+  const victim = path.join(directory(t), 'victim');
+  fs.mkdirSync(victim);
+  fs.writeFileSync(path.join(victim, 'keep.md'), 'outside\n');
+  const calls = [];
+  const hooks = {
+    // An included config file is outside `git config --local`, so the runner cannot remove this rewrite.
+    'stateless:1': ({ workspace }) => {
+      fs.writeFileSync(path.join(workspace, '.git', 'rewrite.cfg'), '[url "https://eval.invalid/other/"]\n\tinsteadOf = https://eval.invalid/ae-memory/\n');
+      spawnSync('git', ['config', '--local', 'include.path', 'rewrite.cfg'], { cwd: workspace });
+    },
+    // A planted symlink for the project's plans folder makes the next task's plan clear refuse.
+    'stateless:2': ({ workspace, harnessHome }) => {
+      const project = path.join(harnessHome, 'projects', path.basename(storeDir(workspace, { home: harnessHome })));
+      fs.mkdirSync(project, { recursive: true });
+      fs.rmSync(path.join(project, 'plans'), { recursive: true, force: true });
+      fs.symlinkSync(victim, path.join(project, 'plans'), process.platform === 'win32' ? 'junction' : 'dir');
+    },
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor(calls, hooks) });
+  const [first, second, third, fourth] = result.attempts;
+  assert.equal(first.valid, true);
+  assert.equal(second.valid, false);
+  assert.deepEqual(second.invalidReasons, ['origin-restore-failed']);
+  assert.equal(third.valid, true, 'each task gets a fresh checkout, so the rewrite does not carry over');
+  assert.equal(fourth.valid, false);
+  assert.ok(fourth.invalidReasons.includes('external-plans-not-cleared'));
+  assert.equal(fs.readFileSync(path.join(victim, 'keep.md'), 'utf8'), 'outside\n');
 });
 
 test('output directory must be new and outside the checkout', t => {
