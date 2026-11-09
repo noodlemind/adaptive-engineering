@@ -55,20 +55,33 @@ function compactLines(form) {
   return { text, joins };
 }
 
-// A split connection-string match is credentials only when a break falls in
-// the scheme or userinfo, at or before the `@`, and the password's first
-// unbroken piece is not digits only. A line ending in `host:port` followed by
-// an email or `@scope` line reads as `scheme://host:port...@...` once
-// compacted; there the password's first piece is the port.
-function splitConnectionCredentials(match, start, joins) {
+// A split connection-string match counts as credentials unless it has the
+// one benign shape that compacting manufactures: a line ending in
+// `scheme://host:port` followed by a line that starts with an email address
+// (`admin@example.com`) or an `@scope` (`@types/node`). Compacted, that reads
+// as `scheme://host:port...@...`, with the port as the start of the password.
+// So the match is let through only when no break falls before the password,
+// the first break inside it (or right after its `@`) comes straight after a
+// 1-5 digit run that opens the password, and the text after that break is an
+// `@scope/` package name or a dotted email address. Every other split (a
+// break in the scheme or user, inside a password, or right after the `@`)
+// fails closed. The
+// remaining gap is a password of 1-5 digits wrapped before something that
+// reads as an email address or a scoped package name.
+const SPLIT_SCOPE = /^@[A-Za-z0-9][\w.-]*\//;
+const SPLIT_EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])/;
+function splitConnectionCredentials(match, start, joins, text) {
   const parts = match.match(/^(\w+:\/\/[^\s:@/]+:)([^\s@/]+)@/);
-  if (!parts) return false;
+  if (!parts) return true;
   const passStart = start + parts[1].length;
   const at = passStart + parts[2].length;
-  if (!joins.some(j => j > start && j <= at)) return false;
-  const cuts = joins.filter(j => j > passStart && j < at).map(j => j - passStart);
-  const pieces = [0, ...cuts].map((from, i, all) => parts[2].slice(from, all[i + 1])).filter(Boolean);
-  return !/^\d+$/.test(pieces[0]);
+  if (joins.some(j => j > start && j <= passStart)) return true;
+  const first = joins.find(j => j > passStart && j <= at + 1);
+  if (first === undefined) return true;
+  const port = parts[2].slice(0, first - passStart).match(/^\d{1,5}$/);
+  if (!port) return true;
+  const rest = text.slice(first);
+  return !(SPLIT_SCOPE.test(rest) || SPLIT_EMAIL.test(rest));
 }
 
 // Pattern ids that match a compacted form only across a join point.
@@ -83,7 +96,7 @@ function splitIds(form) {
       const end = start + m[0].length;
       const spans = joins.some(j => j > start && j < end);
       if (!spans) continue;
-      if (id === 'connection-string' && !splitConnectionCredentials(m[0], start, joins)) continue;
+      if (id === 'connection-string' && !splitConnectionCredentials(m[0], start, joins, text)) continue;
       ids.push(id);
       break;
     }

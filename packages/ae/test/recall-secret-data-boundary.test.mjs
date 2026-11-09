@@ -11,7 +11,7 @@ import { buildContextPack } from '../lib/context-pack.mjs';
 import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
-import { inertEvidenceQuote, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
+import { inertEvidenceQuote, evidenceQuoteError, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
@@ -321,7 +321,21 @@ test('a URL ending one line and an email or @scope starting the next is ordinary
 });
 
 test('a connection string wrapped inside its credentials is still withheld as a split secret', () => {
-  for (const quote of ['postgres://reader:pw\r\n@db.invalid', 'postgres://reader:hunter2pass\n@db.example', 'postgres://reader:hun\nter2pass@db.example', `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`]) {
+  for (const quote of [
+    'postgres://reader:pw\r\n@db.invalid',
+    'postgres://reader:hunter2pass\n@db.example',
+    'postgres://reader:hun\nter2pass@db.example',
+    'postgres://rea\nder:hunter2pass@db.example',
+    // A break right after the `@`, with and without blanks around it.
+    'connect failed: postgres://admin:s3cretpass@\nprod-db.internal:5432/app',
+    'postgres://admin:s3cretpass@ \n  prod-db.internal',
+    // A password that opens with digits, wrapped after them: only an email
+    // address or an `@scope/` package on the next line is the benign shape.
+    'postgres://admin:2024\nWinterPass@prod-db',
+    'postgres://admin:2024\n@db.example',
+    `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`,
+  ]) {
+    assert.equal(evidenceQuoteError(quote)?.includes('split across lines'), true, JSON.stringify(quote));
     assert.deepEqual(screenSecrets(quote)?.split, true, JSON.stringify(quote));
     assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
   }
