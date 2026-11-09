@@ -64,11 +64,14 @@ function capBytes(text, max) {
 }
 
 /**
- * Quoted evidence as inert data for an agent-facing packet: joined to one line
- * by inertLine (which also blanks C1 and bidirectional controls) before the
- * secret screen, so a split credential is caught, then capped in bytes at a
- * code-point boundary.
+ * Quoted evidence as inert data for an agent-facing packet: screened as
+ * written, joined to one line by inertLine (which also blanks C1, bidi and
+ * invisible format characters), screened again so a split credential is
+ * caught, then capped in bytes at a code-point boundary.
  */
 export function inertEvidenceQuote(value) {
-  return capBytes(redactSecrets(inertLine(value)), EVIDENCE_QUOTE_CAP);
+  // Screen the original too: blanking a control character can break a
+  // pattern that matched before, such as a connection string whose password
+  // is wrapped in terminal color codes.
+  return capBytes(redactSecrets(inertLine(redactSecrets(value))), EVIDENCE_QUOTE_CAP);
 }

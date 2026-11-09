@@ -214,6 +214,18 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   assert.equal(equalsForm.status, 0, equalsForm.stdout + equalsForm.stderr);
   const captured = JSON.parse(equalsForm.stdout);
   assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, captured.path), 'utf8')), '--dry-run', 'the = form keeps a flag-like value as the quote');
+  // The space form also catches a swallowed --flag=value or one-letter alias.
+  for (const value of ['--category=logic', '-h']) {
+    const swallowedValue = ae('--insight', '--title', `swallowed ${value}`, '--body', 'body', '--evidence-quote', value);
+    assert.equal(swallowedValue.status, 2, swallowedValue.stdout + swallowedValue.stderr);
+    assert.match(swallowedValue.stdout + swallowedValue.stderr, new RegExp(`needs a value but got the flag ${value}`));
+  }
+  // Diff lines are still quotes in the space form.
+  for (const value of ['--- a/src/retry.mjs', '-  removed line']) {
+    const diff = ae('--insight', '--title', `diff ${value.length}`, '--body', 'body', '--evidence-quote', value);
+    assert.equal(diff.status, 0, diff.stdout + diff.stderr);
+    assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, JSON.parse(diff.stdout).path), 'utf8')), value);
+  }
 });
 
 test('an insight without an evidence quote keeps the exact pre-quote episode bytes', () => {

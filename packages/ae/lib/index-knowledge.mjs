@@ -26,7 +26,7 @@ function summaryFromBody(text) {
   if (prob) return prob[1].trim().slice(0, 200);
   return (
     text
-      .replace(/^---[\s\S]*?---\n/, '')
+      .replace(/^---[\s\S]*?---\r?\n/, '')
       .trim()
       .split('\n')
       .find((l) => l.trim())
@@ -35,7 +35,7 @@ function summaryFromBody(text) {
 }
 
 function excerptFromBody(text) {
-  const body = text.replace(/^---[\s\S]*?---\n/, '').trim();
+  const body = text.replace(/^---[\s\S]*?---\r?\n/, '').trim();
   const prob = body.match(/## Problem\s*\n+([\s\S]*?)(?=\n## |\n# |$)/i);
   const source = prob ? prob[1].trim() : body;
   return source.replace(/\s+/g, ' ').slice(0, 400);

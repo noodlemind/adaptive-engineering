@@ -471,7 +471,9 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     // The value is taken literally, so a forgotten value swallows the next flag.
     // Only the space form can swallow a flag; --evidence-quote=--dry-run is a deliberate value.
     if (flags.evidenceQuoteForm === 'missing') throw usage('--evidence-quote needs a value', 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
-    if (flags.evidenceQuoteForm === 'space' && /^--[a-z][a-z0-9-]*$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    // A long flag, a long flag with =value, or a one-letter alias such as -h.
+    // Diff text such as `--- a/x` or `-  removed line` does not match.
+    if (flags.evidenceQuoteForm === 'space' && /^(?:--[a-z][a-z0-9-]*(?:=.*)?|-[a-zA-Z])$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

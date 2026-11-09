@@ -258,6 +258,31 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   assert.ok(!/[\ud800-\udbff]$/.test(emoji), 'the cut never leaves a lone surrogate');
 });
 
+test('a CRLF episode without a Problem section keeps its quote out of recall and the consolidation excerpt', () => {
+  const workspace = tmp('quote-crlf-ws-');
+  const copilotHome = tmp('quote-crlf-ch-');
+  const harnessHome = tmp('quote-crlf-hh-');
+  const dir = path.join(copilotHome, 'knowledge', 'solutions', 'perf');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'crlf.md'), '---\r\ntitle: "orders timeout crlf"\r\nkind: insight\r\ndate: 2026-11-01\r\nevidence_quote: "QUOTE_MARKER orders timeout"\r\n---\r\n\r\nOrders timeout under retry load.\r\n');
+  ensureStore(workspace, { home: harnessHome });
+  const [entry] = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+  assert.equal(entry.excerpt, 'Orders timeout under retry load.', 'the excerpt is the body only');
+  assert.match(entry.evidence_quote, /QUOTE_MARKER/, 'the quote reaches consolidation only as its own field');
+  runIndexKnowledge({ workspace, copilotHome, flags: {}, log: () => {}, home: harnessHome });
+  assert.equal(fs.readFileSync(path.join(copilotHome, 'knowledge', 'manifest.yaml'), 'utf8').includes('QUOTE_MARKER'), false, 'the manifest summary and excerpt skip CRLF frontmatter');
+  const recalled = runRecall({ workspace, copilotHome, flags: { query: 'orders timeout', limit: 5, harnessHome }, argv: [] });
+  assert.ok(recalled.recall.some(r => r.path.endsWith('perf/crlf.md')), JSON.stringify(recalled.recall));
+  assert.ok(!JSON.stringify(recalled).includes('QUOTE_MARKER'), 'no quote text rides through recall');
+});
+
+test('a hand-edited quote whose secret is wrapped in terminal codes is redacted before and after normalization', () => {
+  const quote = 'postgres://reader:\x1b[31mpw\x1b[0m@db.invalid';
+  const rendered = inertEvidenceQuote(quote);
+  assert.ok(!rendered.includes('pw'), rendered);
+  assert.match(rendered, /\[redacted: connection-string\]/);
+});
+
 test('a consolidation packet entry for an episode without a quote has no evidence_quote key', () => {
   const { workspace, copilotHome, harnessHome } = seedQuotedEpisodes();
   fs.writeFileSync(path.join(copilotHome, 'knowledge', 'solutions', 'perf', 'plain.md'), '---\ntitle: "orders timeout plain"\nkind: insight\ndate: 2026-11-01\n---\n\nPlain.\n');

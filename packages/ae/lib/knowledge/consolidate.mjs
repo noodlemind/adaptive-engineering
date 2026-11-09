@@ -51,7 +51,7 @@ function capTags(tags, totalCap) {
 }
 
 function excerpt(text) {
-  const body = text.replace(/^---[\s\S]*?---\n/, '').trim();
+  const body = text.replace(/^---[\s\S]*?---\r?\n/, '').trim();
   // inertLine (store.mjs) runs AFTER the \s+ collapse: \s only covers
   // whitespace control chars (tab/newline/CR/FF/VT) — a NUL byte or another
   // non-whitespace C0 control char embedded in the body would otherwise
