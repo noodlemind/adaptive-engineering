@@ -89,20 +89,26 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
   }
 }
 
-/** Places the hint after isolation and readiness steps and replaces the plain verify entry. */
+/**
+ * Replaces the plain verify entry with the hint. A failed or changed run goes
+ * after any readiness step; a configuration change stays in the plain verify
+ * slot, ahead of compound and completion, preceded by any trust recovery step.
+ * Nothing changes while the gate or worktree isolation is blocked, since the
+ * isolation step is only listed then.
+ */
 export function withResumeVerification(nextTools, check, { planPath, gatePass, isolationBlocked }) {
   if (!check || check.state === 'expired' || !gatePass || isolationBlocked) return nextTools;
   const hint = check.state === 'config'
     ? `ae verify --plan ${planPath}  # prior verification no longer matches configuration: ${check.reason}; first use trust.recovery or repair checks if listed`
     : `ae verify --plan ${planPath}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
-  const rest = nextTools.filter(tool => tool !== 'ae verify');
   if (check.state === 'config') {
-    // In the plain verify slot, so it stays ahead of compound and completion.
-    // Trust recovery steps listed later are named in the hint's own note.
-    const at = nextTools.indexOf('ae verify');
-    return at === -1 ? [...rest, hint] : [...rest.slice(0, at), hint, ...rest.slice(at)];
+    const recovery = nextTools.filter(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
+    const rest = nextTools.filter(tool => tool !== 'ae verify' && !recovery.includes(tool));
+    const at = nextTools.filter(tool => !recovery.includes(tool)).indexOf('ae verify');
+    return at === -1 ? [...rest, ...recovery, hint] : [...rest.slice(0, at), ...recovery, hint, ...rest.slice(at)];
   }
-  const lead = rest.findIndex(tool => !tool.startsWith('Use checkReadiness.') && !tool.startsWith('ae worktree '));
+  const rest = nextTools.filter(tool => tool !== 'ae verify');
+  const lead = rest.findIndex(tool => !tool.startsWith('Use checkReadiness.'));
   const at = lead === -1 ? rest.length : lead;
   return [...rest.slice(0, at), hint, ...rest.slice(at)];
 }

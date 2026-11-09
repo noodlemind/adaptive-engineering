@@ -16,6 +16,7 @@ import { recordSkillUsage } from './telemetry.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { readStoreConfig } from './knowledge/store.mjs';
 import { evidenceQuoteError, evidenceQuoteLine } from './knowledge/evidence-quote.mjs';
+import { EXIT } from './style.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
@@ -464,7 +465,12 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
 }
 
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
-  if (flags.evidenceQuote != null && !flags.insight) throw new Error('--evidence-quote applies to --insight; put evidence_quote in a learning decision instead');
+  if (flags.evidenceQuote != null) {
+    const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
+    if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
+    // The value is taken literally, so a forgotten value swallows the next flag.
+    if (/^--[a-z][a-z0-9-]*$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+  }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });
     if (result.pass) {

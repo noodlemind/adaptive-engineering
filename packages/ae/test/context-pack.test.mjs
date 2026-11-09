@@ -465,10 +465,12 @@ for (const enforcement of ['warn', 'observe']) {
     assert.ok(hint !== -1 && compound !== -1 && hint < compound, JSON.stringify(out.nextTools));
     assert.ok(!out.nextTools[hint].includes('leftover breakage'));
     assert.equal(out.nextTools.filter(tool => tool.startsWith('ae verify')).length, 1);
+    const recovery = out.nextTools.findIndex(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
+    assert.equal(recovery, hint - 1, 'the trust recovery step comes just before the hint');
   });
 }
 
-test('the resume hint follows isolation and readiness steps, takes the verify slot for configuration changes, and is omitted when blocked', () => {
+test('the resume hint follows readiness steps, takes the verify slot for configuration changes, and is omitted when blocked', () => {
   const opts = { planPath: 'docs/plans/p.md', gatePass: true, isolationBlocked: false };
   const passing = ['ae gate --phase implement', 'read plan ## Impacted Files', 'ae review prepare --plan p', 'ae verify', 'ae compound'];
   const changed = { state: 'changed', reason: 'Workspace files changed after verification' };
@@ -480,9 +482,12 @@ test('the resume hint follows isolation and readiness steps, takes the verify sl
   assert.deepEqual(withResumeVerification(passing, changed, { ...opts, isolationBlocked: true }), passing);
   assert.deepEqual(withResumeVerification(passing, { state: 'expired', reason: 'Verification evidence is stale' }, opts), passing);
   const config = withResumeVerification([...passing, 'Use trust.recovery'], { state: 'config', reason: 'Policy or trust changed after verification; refresh trust and reverify' }, opts);
-  assert.match(config[3], /# prior verification no longer matches configuration: Policy or trust changed.*first use trust\.recovery/, 'a configuration hint takes the plain verify slot');
-  assert.ok(config.indexOf(config[3]) < config.indexOf('ae compound'), 'it stays ahead of compound');
-  assert.equal(config.at(-1), 'Use trust.recovery');
-  assert.ok(!config[3].includes('leftover breakage'));
+  assert.deepEqual(config.slice(0, 3), passing.slice(0, 3));
+  assert.equal(config[3], 'Use trust.recovery', 'trust recovery moves just ahead of the hint, matching its note');
+  assert.match(config[4], /# prior verification no longer matches configuration: Policy or trust changed.*first use trust\.recovery/, 'a configuration hint takes the plain verify slot');
+  assert.equal(config[5], 'ae compound', 'it stays ahead of compound');
+  assert.ok(!config[4].includes('leftover breakage'));
   assert.equal(config.length, passing.length + 1, 'the plain verify step is replaced, not repeated');
+  const configNoRecovery = withResumeVerification(passing, { state: 'config', reason: 'Required named check is missing' }, opts);
+  assert.match(configNoRecovery[3], /no longer matches configuration/, 'without trust recovery it takes the plain verify slot');
 });

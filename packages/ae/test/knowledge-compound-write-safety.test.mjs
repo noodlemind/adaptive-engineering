@@ -115,7 +115,8 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 
 // Quoted evidence (memory plan phase 5a) -----------------------------------
 // Line and paragraph separators and the bidirectional marks (LRM, RLM, ALM).
-const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c];
+// Also the zero-width and invisible format characters, BOM and tag characters.
+const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -163,7 +164,7 @@ test('an insight evidence quote with a secret or terminal control codes is refus
   for (const quote of ['\x1b[31mFAIL\x1b[0m retry.test.mjs', '\u009b31mFAIL\u009b0m retry.test.mjs', 'ok \u202eevil', 'ok \u2066isolate\u2069', ...INVISIBLE.map(point => `ok ${String.fromCodePoint(point)} x`)]) {
     const refused = captureInsight({ evidenceQuote: quote });
     assert.equal(refused.result.pass, false, JSON.stringify(quote));
-    assert.match(refused.result.blockedReason, /control, bidirectional formatting or line separator/);
+    assert.match(refused.result.blockedReason, /control, bidirectional formatting, line separator, zero-width or tag/);
     assert.deepEqual(refused.written, []);
   }
   assert.equal(captureInsight({ evidenceQuote: 'line one\r\nline two' }).result.pass, true, 'CRLF output is accepted, as documented');
@@ -196,7 +197,13 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   const ae = (...args) => spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json', ...args],
     { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
   const noInsight = ae('--evidence-quote', 'Error: boom');
-  assert.match(noInsight.stdout + noInsight.stderr, /--evidence-quote applies to --insight/);
+  assert.equal(noInsight.status, 2, 'a usage error');
+  assert.match(noInsight.stdout + noInsight.stderr, /--evidence-quote is accepted only with --insight/);
+  const swallowed = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'swallowed', '--body', 'body', '--evidence-quote', '--json', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome],
+    { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(swallowed.status, 2, swallowed.stdout + swallowed.stderr);
+  assert.match(swallowed.stdout + swallowed.stderr, /E_USAGE/);
+  assert.match(swallowed.stdout + swallowed.stderr, /--evidence-quote needs a value but got the flag --json/);
   const noValue = ae('--insight', '--title', 'empty quote', '--body', 'body', '--evidence-quote');
   assert.match(noValue.stdout + noValue.stderr, /evidence_quote must be nonempty text/);
   const target = solutionsWriteTarget(ws, { home });

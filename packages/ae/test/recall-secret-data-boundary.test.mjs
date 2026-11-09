@@ -246,7 +246,7 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   assert.match(split, /\[redacted:/);
   const controls = inertEvidenceQuote('\u009b31mFAIL\u009b0m ok \u202eevil\u2066x\u2069');
   assert.ok(!/[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/.test(controls), 'C1 and bidi controls are blanked');
-  for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c]) {
+  for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f]) {
     const ch = String.fromCodePoint(point);
     assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
     assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
