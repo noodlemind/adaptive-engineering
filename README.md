@@ -95,7 +95,7 @@ Issues and pull requests are welcome. Open an issue before a large change. See [
 
 ## Acknowledgements
 
-AE's planning, review and compounding loop builds on ideas from [Compound Engineering](https://github.com/EveryInc/compound-engineering-plugin). Its retained-evidence diagram compiler learns from [Lauren Tan's pstack `/statechart`](https://github.com/cursor/plugins/tree/4dd1d05818d19792e7cd6e818f1667f95f7e1dbe/pstack/skills/statechart), version 0.15.36. AE does not ship pstack's parser, runner, installer or view modules; retained upstream test fixtures keep their [MIT license and copyright notice](packages/ae/test/fixtures/formal-diagrams/LICENSE.pstack). See [third-party notices](packages/ae/THIRD-PARTY-NOTICES.md).
+AE's planning, review and compounding loop builds on ideas from [Compound Engineering](https://github.com/EveryInc/compound-engineering-plugin). Its Node-only state-model checker's report, with a shortest path for each broken rule and a chart that marks where it breaks, learns from [Lauren Tan's pstack `/statechart`](https://github.com/cursor/plugins/tree/main/pstack/skills/statechart). AE ships its own implementation and no pstack source. See [third-party notices](packages/ae/THIRD-PARTY-NOTICES.md).
 
 ## License
 

@@ -93,6 +93,6 @@ checks:
     proof: behavior
   verify-formal-delivery:
     command: ["node", ".cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs"]
-    artifacts: ["delivery-evidence-model.json"]
+    artifacts: ["state-model.json"]
     timeout_seconds: 60
     proof: behavior

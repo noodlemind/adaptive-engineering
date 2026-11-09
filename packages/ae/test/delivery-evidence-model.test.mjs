@@ -34,7 +34,7 @@ test('a reviewed state that can no longer reach Compound is a violation', () => 
 });
 
 test('the parser rejects unknown actions and unsupported syntax', () => {
-  assert.throws(() => parseStateDiagram('stateDiagram-v2\n  A --> B : Deploy\n'), /unknown action/);
+  assert.throws(() => parseStateDiagram('stateDiagram-v2\n  [*] --> A\n  A --> B : Deploy\n'), /unknown action/);
   assert.throws(() => parseStateDiagram('stateDiagram-v2\n  state A { B }\n'), /unsupported model line/);
   assert.throws(() => parseStateDiagram('flowchart TD\n  A --> B\n'), /stateDiagram-v2/);
 });

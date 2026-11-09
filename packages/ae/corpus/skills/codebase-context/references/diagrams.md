@@ -11,7 +11,7 @@ The Engineer chooses the question, inspects evidence, authors the explanation, a
 | Explain an architecture boundary or proposed design | Authored `.d2` or `.mmd` and explicit source paths with `diagrams render` | Agent-authored inference; name assumptions and uncertainty |
 | Inspect module dependencies or dependents | Current repository file with `diagrams graph` | Bounded observed import relationships, not runtime calls |
 | Visualize a published descriptive statechart | Existing exact flow ID with `diagrams flow` | The recorded committed-default-branch model, with its freshness and limitations |
-| Inspect retained formal model evidence | AE `formal-verification.json` and an exact recorded module with `diagrams formal` | Counterexample replay, or a positive model's bound explored graph; no new checker execution |
+| Show a state-model check result | The check's `chart.mmd` with `diagrams render --renderer pele` | Marks where each rule breaks and numbers the shortest path; the receipt, not the chart, is evidence |
 
 For an architecture view, inspect entry points, configuration, state writers, and the relevant dependencies. Record which relationships are directly observed, inferred, proposed, or unresolved in the accompanying explanation. A declared product or harness delegation graph is not a runtime architecture map. Do not silently convert an import edge into a request, event, or data-flow assertion.
 
@@ -44,27 +44,15 @@ Dependency views reuse the current worktree import query. Read coverage, unresol
 
 Flow views reuse the published model from [flow-models.md](flow-models.md); they do not author or regenerate one. Its baseline is the locally observed committed default branch, not dirty files or an unseen remote tip. Preserve the returned generation and freshness when explaining it. An absent or stale model is not repaired by rendering. Regeneration is a separate explicit source-inspection and publication procedure.
 
-## Replay recorded formal evidence
+## Show a state-model check result
 
-Use a retained AE formal-check receipt inside the workspace and select the exact module recorded in it:
+The state-model checker from `create-primitive` writes `chart.mmd`, `report.md` and `state-model.json`. The chart labels each state where a rule breaks, such as `Verified - BREAKS current-evidence`, and numbers each step of the shortest path to it. Render it like any authored Mermaid file:
 
 ```bash
-ae diagrams formal --file evidence/formal-verification.json --model UnsafeDeliveryEvidence.tla --png --json
+ae diagrams render --file evidence/chart.mmd --sources docs/verification/checkout --renderer pele --json
 ```
 
-The command reads framed TLC stdout already in that receipt. It runs no Java, TLC, JAR, shell, installer or remote service, and accepts no executable view module. It uses the same bundled renderer and artifact publication as other diagrams. AE's native evidence compiler is informed by Lauren Tan's pstack `/statechart` architecture; no upstream parser, runner or view implementation ships in AE.
-
-Violating runs retain every witness state occurrence and transition. Temporal failures keep their back edge or stuttering witness. Expected safety/liveness negative controls are labeled `expected-negative-control`; an unexpected model failure and a mismatched control are labeled separately. Even when a violating run retained a partial graph, its witness remains the default view so an infinite behavior is not lost. A receipt's old `passed` field cannot turn a view into fresh verification.
-
-A positive run can draw its exported explored graph. For a product checker based on the current formal-check starter, request `--capture-graph` on that existing checker command. This deliberately uses its already configured Java/TLC; it does not install tools or rerun a modified model. The same model invocation writes `Module.graph.dot` next to `formal-verification.json`, referenced by a hash and complete/partial exploration label. Copy both files when moving the bundle. Existing copied product runners require their ordinary reviewed maintenance update before using the new option.
-
-The graph reader preserves concrete checker IDs, distinct same-label states, initial states and distinct transitions. Only identical duplicate transition triples are coalesced. States remain neutral: no unchecked state is colored safe, and no rule-specific marks are inferred. Complete coverage requires completed positive output, an empty exploration queue and matching recorded state count. A partial graph is explicitly partial. No state merging, executable label view, parallel region abstraction, or hidden transition is performed. A positive receipt without an exported graph refuses with capture guidance; a `.tla` file alone is not a source of explored states.
-
-Keep `recordedTool`, `recordedSource`, the original receipt hash, exact file bindings, recorded expectation, and reported source freshness when explaining the view. `current` means recorded bound bytes still match, `stale` means they changed, and `unknown` means relevant files are unavailable. The retained trace remains inspectable when its current correspondence is stale or unknown. Newly added writers outside the recorded inventory are not detected. The producer's `<copied-runner>` identity is retained as provenance; it is not interpreted as a workspace filename or compared with the viewer's installed runner.
-
-Only framed stdout and a selected hash-bound graph are interpreted. Stderr presence is recorded as diagnostic context and its text is not rendered. Missing/truncated frames, damaged values, inconsistent state variables, absent temporal loops and cancellation refuse a chart. TLC values remain opaque text; large integers, intervals, sets and functions are never numerically converted or evaluated. The default limit is 50 states; `--max-nodes` can raise it to 200. States and counterexample paths are never silently clipped. Input receipts remain bounded to 1 MiB, selected stdout and graph input to 512 KiB each, and covered source observations to 16 MiB. Graphs permit at most 2,000 distinct transitions.
-
-The output remains `authority: descriptive-context` and `verification: not-verified`. It visualizes recorded model evidence and does not authenticate that evidence, prove model/code equivalence, or satisfy a named correctness check. Reproduce a modeled product bug against real code through the selected verification recipe.
+Show the rendered chart beside `report.md`, which tells each bug path as numbered steps in the model's plain-word labels. The chart is descriptive: `verification: not-verified`. The check's receipt, its rules digest and its caught broken variants remain the evidence, and a modeled bug still needs a real-code repro.
 
 ## Review artifacts and freshness
 

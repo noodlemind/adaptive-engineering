@@ -7,7 +7,6 @@ import { queryGraph } from './graph.mjs';
 import { showFlowModel } from './flow-model.mjs';
 import { projectGraph, projectFlow } from './diagrams/projections.mjs';
 import { renderDiagram } from './diagrams/render.mjs';
-import { formalGraphReference, formalReceiptBindings, projectFormalEvidence } from './diagrams/formal.mjs';
 
 const MAX_FILE = 1024 * 1024, MAX_TOTAL = 16 * 1024 * 1024, MAX_ARTIFACT = 8 * 1024 * 1024;
 const RESERVED = new Set(['.git', '.harness', 'node_modules']);
@@ -44,7 +43,7 @@ function fields(value, required, label) {
 // A checksum is public identity, not authority. Validate receipt data before it
 // can select a query or a filesystem observation, even if its checksum matches.
 function validateSnapshot(snapshot) {
-  const extra = { files: ['watchPaths', 'diagramFile', 'files'], graph: ['query'], flow: ['flow', 'modelDigest', 'preparationDigest'], formal: ['receiptFile', 'receiptSha256', 'bindings'] }[snapshot?.kind];
+  const extra = { files: ['watchPaths', 'diagramFile', 'files'], graph: ['query'], flow: ['flow', 'modelDigest', 'preparationDigest'] }[snapshot?.kind];
   if (!extra) throw fail('invalid source snapshot kind');
   fields(snapshot, ['version', 'kind', 'project', 'scope', 'digest', ...extra], 'source snapshot fields');
   if (snapshot.version !== 1 || !HASH.test(snapshot.digest) || typeof snapshot.project !== 'string'
@@ -64,18 +63,6 @@ function validateSnapshot(snapshot) {
     }
     const { digest: expected, ...body } = snapshot;
     if (!paths.has(snapshot.diagramFile) || digest(body) !== expected) throw fail('changed file source snapshot digest');
-  } else if (snapshot.kind === 'formal') {
-    if (snapshot.scope !== 'recorded-formal-evidence' || !HASH.test(snapshot.receiptSha256)
-      || !Array.isArray(snapshot.bindings) || snapshot.bindings.length > 2048) throw fail('invalid formal source snapshot');
-    diagramPath(snapshot.receiptFile);
-    const names = new Set();
-    for (const binding of snapshot.bindings) {
-      fields(binding, ['path', 'sha256'], 'formal file binding'); diagramPath(binding.path, { scope: true });
-      if (names.has(binding.path) || !HASH.test(binding.sha256)) throw fail('invalid formal file binding');
-      names.add(binding.path);
-    }
-    const { digest: expected, ...body } = snapshot;
-    if (digest(body) !== expected) throw fail('changed formal source snapshot digest');
   } else if (snapshot.kind === 'graph') {
     fields(snapshot.query, ['operation', 'files', 'depth', 'limit'], 'graph snapshot query');
     const query = snapshot.query;
@@ -129,7 +116,7 @@ function capture(workspace, watchPaths, diagramFile) {
   return { ...snapshot, digest: digest(snapshot) };
 }
 
-function selectView({ workspace, home, verb, file, sources = [], root, operation = 'deps', depth = 2, limit = 50, flow, model: module, maxNodes = 50 }) {
+function selectView({ workspace, home, verb, file, sources = [], root, operation = 'deps', depth = 2, limit = 50, flow, maxNodes = 50 }) {
   if (verb === 'render') {
     const snapshot = capture(workspace, sources, file);
     const source = read(workspace, file, 50000), captured = snapshot.files.find(f => f.path === file)?.sha256;
@@ -144,60 +131,10 @@ function selectView({ workspace, home, verb, file, sources = [], root, operation
     return { ...view, diagram: { sha256: sha(view.source) }, projection: view.metadata,
       snapshot: { version: 1, kind: 'graph', project: repoId(workspace), scope: 'worktree', query, digest: graph.snapshot } };
   }
-  if (verb === 'formal') {
-    const decode = bytes => {
-      try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-      catch { throw fail('formal evidence must contain valid UTF-8 bytes'); }
-    };
-    const bytes = read(workspace, file, MAX_FILE, true), receipt = JSON.parse(decode(bytes));
-    const bindings = formalReceiptBindings(receipt);
-    const reference = formalGraphReference(receipt, module);
-    let graph;
-    if (reference) {
-      const graphFile = path.posix.join(path.posix.dirname(file), reference.file);
-      diagramPath(graphFile);
-      const graphBytes = read(workspace, graphFile, 512 * 1024, true);
-      if (sha(graphBytes) !== reference.sha256) throw fail('recorded graph hash does not match its receipt binding');
-      graph = decode(graphBytes);
-      const prior = bindings.find(binding => binding.path === graphFile);
-      if (prior && prior.sha256 !== reference.sha256) throw fail('conflicting graph file binding');
-      if (!prior) bindings.push({ path: graphFile, sha256: reference.sha256 });
-      bindings.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-    }
-    bindings.forEach(binding => diagramPath(binding.path, { scope: true }));
-    const body = { version: 1, kind: 'formal', project: repoId(workspace), scope: 'recorded-formal-evidence', receiptFile: file, receiptSha256: sha(bytes), bindings };
-    const snapshot = { ...body, digest: digest(body) };
-    const observed = observeFormal(workspace, snapshot), view = projectFormalEvidence(receipt, module, { maxNodes, graph });
-    view.metadata.sourceFreshness = { state: observed.state, ...(observed.reason ? { reason: observed.reason } : {}) };
-    view.source += `  note left of s0 : Recorded source freshness ${observed.state}\n`;
-    return { ...view, diagram: { file, sha256: sha(view.source) }, projection: view.metadata, snapshot, formalObservationDigest: observed.observationDigest };
-  }
   const model = showFlowModel({ workspace, home });
   const view = projectFlow(model, flow, { maxNodes, maxEdges: limit });
   return { ...view, diagram: { sha256: sha(view.source) }, projection: view.metadata, flowObservationDigest: digest(model),
     snapshot: { version: 1, kind: 'flow', project: repoId(workspace), scope: 'committed-default-branch', flow, modelDigest: digest(model.model), preparationDigest: digest(model.preparation), digest: digest({ model: model.model, preparation: model.preparation }) } };
-}
-
-function observeFormal(workspace, snapshot) {
-  const observations = [];
-  let missing = false, changed = false, total = 0;
-  for (const binding of [{ path: snapshot.receiptFile, sha256: snapshot.receiptSha256 }, ...snapshot.bindings]) {
-    let observed = null;
-    try {
-      const bytes = read(workspace, binding.path, MAX_FILE, true);
-      total += bytes.length;
-      if (total > MAX_TOTAL) throw fail('formal source bytes exceed 16 MiB; use a narrower recorded property');
-      observed = sha(bytes);
-    } catch (error) {
-      if (total > MAX_TOTAL) throw error;
-      missing = true;
-    }
-    observations.push({ path: binding.path, sha256: observed });
-    if (observed !== null && observed !== binding.sha256) changed = true;
-  }
-  return { state: missing || !snapshot.bindings.length ? 'unknown' : changed ? 'stale' : 'current',
-    ...(missing || !snapshot.bindings.length ? { reason: 'recorded source or verification files are unavailable; only the retained trace can be inspected' }
-      : changed ? { reason: 'recorded receipt, model, configuration or implementation bytes changed' } : {}), observationDigest: digest(observations) };
 }
 
 function flowFreshness(model, snapshot) {
@@ -221,10 +158,6 @@ function currentness({ workspace, home }, snapshot) {
       return graph.snapshot === snapshot.digest ? { state: 'current' } : { state: 'stale', reason: 'tracked graph sources or resolver inputs changed' };
     }
     if (snapshot.kind === 'flow') return flowFreshness(showFlowModel({ workspace, home }), snapshot);
-    if (snapshot.kind === 'formal') {
-      const { observationDigest: _observed, ...freshness } = observeFormal(workspace, snapshot);
-      return freshness;
-    }
   } catch (error) { return { state: 'unknown', reason: String(error.message).slice(0, 500) }; }
   return { state: 'unknown', reason: 'unsupported source snapshot' };
 }
@@ -268,17 +201,12 @@ export async function renderDiagramView(options) {
   if (view.format === 'd2' && engine !== 'd2' || view.format === 'mermaid' && engine !== 'pele') throw fail('diagram syntax must match renderer; Mermaid uses pele and D2 uses d2');
   const rendered = await renderDiagram({ source: view.source, engine, layout, timeoutMs, pngScale: png ? scale : undefined });
   let now;
-  if (view.snapshot.kind === 'formal') {
-    const observed = observeFormal(workspace, view.snapshot);
-    if (observed.observationDigest !== view.formalObservationDigest) throw fail('recorded formal evidence or covered sources changed during rendering; retry from current inputs');
-    const { observationDigest: _observed, ...freshness } = observed;
-    now = freshness;
-  } else if (view.snapshot.kind === 'flow') {
+  if (view.snapshot.kind === 'flow') {
     const after = showFlowModel({ workspace, home });
     if (digest(after) !== view.flowObservationDigest) throw fail('flow source or status changed during rendering; inspect the current flow and retry');
     now = flowFreshness(after, view.snapshot);
   } else now = currentness({ workspace, home }, view.snapshot);
-  if (!['flow', 'formal'].includes(view.snapshot.kind) && now.state !== 'current') throw fail(`sources changed during rendering: ${now.reason || now.state}`);
+  if (view.snapshot.kind !== 'flow' && now.state !== 'current') throw fail(`sources changed during rendering: ${now.reason || now.state}`);
   if (view.snapshot.kind === 'flow' && now.state === 'unknown') throw fail(`flow sources unavailable after rendering: ${now.reason}`);
   const record = { schema: 'ae.diagram.v1', kind: view.kind, authority: 'descriptive-context', verification: 'not-verified', diagram: { ...view.diagram, format: view.format }, snapshot: view.snapshot,
     renderer: { engine: rendered.engine, version: rendered.version, layout: rendered.layout || null, settings: rendered.settings }, projection: view.projection };
