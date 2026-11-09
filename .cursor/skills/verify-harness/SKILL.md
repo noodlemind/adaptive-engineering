@@ -42,7 +42,7 @@ Use isolated temp git repos. Do not drive the operator checkout.
 3. Spawn `node packages/ae/bin/ae.mjs <command> --json`.
 4. Parse stdout JSON and the written plan file. Assert the observable values named in the feature map.
 
-Bind the affected feature's named checks to the accepted plan. Harness runs their configured helper argv. Each helper owns readiness, drive, evidence, and cleanup. Run doctor before selecting a drive. These helpers do not start a long-lived server. Shared flow-map verification and workflow conformance need only the ordinary doctor. The separate optional formal pilot requires its own explicit Java and TLC prerequisites.
+Bind the affected feature's named checks to the accepted plan. Harness runs their configured helper argv. Each helper owns readiness, drive, evidence, and cleanup. Run doctor before selecting a drive. These helpers do not start a long-lived server. Shared flow-map verification and workflow conformance need only the ordinary doctor. The delivery-evidence model check needs only Node.
 
 ## Evidence
 
@@ -57,7 +57,7 @@ Write artifacts to `.cursor/skills/verify-harness/evidence/<feature>/`. The help
 
 The installed-release drive requires the verification controller's `HARNESS_CHECK_ARTIFACT_DIR`. It writes `installed-release.json` there and preserves its archive, command receipts, completed plan, numerical artifacts, and final evidence in `build/` and `drive/`. The receipt records the source SHA and dirty state. It distinguishes the preceding source-package fixture from a published release and makes no native editor or model-quality claim.
 
-The formal-flow and workflow-invariant drives write `formal-flows/drive.json`, `workflow-invariants/drive.json`, or `workflow-invariants-negative/drive.json` beneath `HARNESS_CHECK_ARTIFACT_DIR`. Their manual runs use private invocation directories when no artifact root is selected. The optional deep pilot writes `formal-verification.json`; its [repo-local skill](./formal/delivery-evidence/SKILL.md) distinguishes bounded model checking, implementation conformance, and deliberate-break detection. None of these receipts establishes model quality or native editor activation.
+The formal-flow and workflow-invariant drives write `formal-flows/drive.json`, `workflow-invariants/drive.json`, or `workflow-invariants-negative/drive.json` beneath `HARNESS_CHECK_ARTIFACT_DIR`. Their manual runs use private invocation directories when no artifact root is selected. The delivery-evidence model check writes `state-model.json`, `report.md` and `chart.mmd`; its [repo-local skill](./formal/delivery-evidence/SKILL.md) separates the diagram check from the behavior checks that drive the real code. None of these receipts establishes model quality or native editor activation.
 
 A proof includes the action and the resulting state. Example for intent lock: `plan-new` stdout path, the plan's `intent_sources[0].path`, `intent_sources[0].sha256` equal to the sha256 of the spec bytes at lock, then `gate --phase implement` exits `1` after the spec file is rewritten and exits `0` only after an accepted source amendment.
 

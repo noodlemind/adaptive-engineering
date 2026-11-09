@@ -19,7 +19,8 @@ export function learningRendered(packBody, l) {
   const mark = learningLayerMark(l);
   const prefix = `- [${l.id}]${mark}`;
   for (let i = packBody.indexOf(prefix); i !== -1; i = packBody.indexOf(prefix, i + 1)) {
-    if (mark || !packBody.startsWith(' [branch-local', i + prefix.length)) return true;
+    // A twin line, even one truncated to `- [id] [b`, never credits the golden.
+    if (mark || !packBody.startsWith(' [b', i + prefix.length)) return true;
   }
   return false;
 }

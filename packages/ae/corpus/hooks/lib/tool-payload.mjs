@@ -809,7 +809,7 @@ export function harnessControlCommand(tokens, workspace) {
       render: ['--file', '--sources', '--renderer', '--layout', '--timeout', '--scale'],
       graph: ['--root', '--operation', '--depth', '--limit', '--max-nodes', '--timeout', '--scale'],
       flow: ['--flow', '--limit', '--max-nodes', '--timeout', '--scale'],
-      formal: ['--file', '--model', '--max-nodes', '--timeout', '--scale'], status: ['--receipt'],
+      status: ['--receipt'],
     };
     if (!Object.hasOwn(options, verb)) return null;
     const boolean = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v', ...(verb === 'status' ? [] : ['--png'])]);
@@ -825,9 +825,8 @@ export function harnessControlCommand(tokens, workspace) {
       if (!value || value.startsWith('-') || Buffer.byteLength(value) > 4096 || /[\x00-\x1f\x7f]/.test(value)) return null;
       values.set(name, value);
     }
-    const required = { render: '--file', graph: '--root', flow: '--flow', formal: '--file', status: '--receipt' }[verb];
+    const required = { render: '--file', graph: '--root', flow: '--flow', status: '--receipt' }[verb];
     if (!values.has(required)) return null;
-    if (verb === 'formal' && (!values.has('--model') || !/^[A-Za-z][A-Za-z0-9_]*\.tla$/.test(values.get('--model')))) return null;
     const contained = (value, scope = false) => {
       if (scope && value === '.') return true;
       return value.length <= 1024 && !/[\x00-\x1f\x7f\\:]/.test(value) && !path.isAbsolute(value) && !path.win32.isAbsolute(value)
@@ -836,7 +835,7 @@ export function harnessControlCommand(tokens, workspace) {
     for (const key of ['--file', '--root', '--receipt']) if (values.has(key) && !contained(values.get(key))) return null;
     if (values.has('--sources') && values.get('--sources').split(',').some(value => !contained(value.trim(), true))) return null;
     const file = values.get('--file');
-    if (file && !(verb === 'formal' ? /\.json$/ : /\.(?:mmd|mermaid|d2)$/).test(file)) return null;
+    if (file && !/\.(?:mmd|mermaid|d2)$/.test(file)) return null;
     const renderer = values.get('--renderer') || (file?.endsWith('.d2') ? 'd2' : undefined);
     if (renderer && !['pele', 'd2'].includes(renderer)) return null;
     if (values.has('--layout') && (renderer !== 'd2' || !['tala', 'elk', 'dagre'].includes(values.get('--layout')))) return null;

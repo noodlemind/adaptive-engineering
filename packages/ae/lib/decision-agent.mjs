@@ -10,12 +10,13 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, READINESS_INDEX_FAULT } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
 const ID = /^[a-f0-9]{64}$/;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
+const MAX_STATE_WARNINGS = 16;
 const DEFAULT_BUDGETS = Object.freeze({ maxDecisions: 24, maxRepairs: 3, maxAcquisitions: 3, maxSeconds: 900 });
 const LOCAL_INSPECTION = new Set(['read', 'Read', 'read_file', 'readFile', 'copilot_readFile', 'read_skill', 'readSkill', 'grep_search', 'file_search', 'list_dir', 'semantic_search', 'list_code_usages', 'get_errors', 'get_changed_files', 'get_search_view_results', 'test_search', 'open_file', 'codebase', 'search', 'usages', 'changes', 'problems', 'terminalLastCommand', 'get_terminal_output', 'think', 'todos']);
 const NATIVE_LOCAL_INSPECTION = new Set([...LOCAL_INSPECTION, 'ReadFile', 'Glob', 'Grep', 'ListDir', 'view', 'glob', 'grep', 'rg']);
@@ -118,6 +119,25 @@ function readState(loc) {
   return state;
 }
 
+/**
+ * Well-formed warnings, the newest per request, at most MAX_STATE_WARNINGS. A
+ * warning about a request leaves with it, except a readiness-index fault, which
+ * stays at state level (requestId null) until an index write succeeds.
+ */
+function stateWarnings(state) {
+  const byRequest = new Map();
+  for (const item of Array.isArray(state.warnings) ? state.warnings : []) {
+    if (!object(item) || !Number.isFinite(item.at) || typeof item.message !== 'string') continue;
+    const fault = item.fault === READINESS_INDEX_FAULT;
+    const live = ID.test(item.requestId || '') && Object.hasOwn(state.requests, item.requestId);
+    if (!live && !(fault && (item.requestId === null || ID.test(item.requestId || '')))) continue;
+    const requestId = live ? item.requestId : null, key = requestId ?? 'state';
+    byRequest.delete(key);
+    byRequest.set(key, { at: item.at, requestId, ...(fault ? { fault: READINESS_INDEX_FAULT } : {}), message: Array.from(item.message).slice(0, 500).join('') });
+  }
+  return [...byRequest.values()].slice(-MAX_STATE_WARNINGS);
+}
+
 function mutate(loc, callback) {
   fs.mkdirSync(loc.home, { recursive: true });
   const directory = path.join(loc.home, 'decisions');
@@ -129,7 +149,14 @@ function mutate(loc, callback) {
   catch (error) { if (error.code === 'EEXIST') throw fail('decision state is busy; retry without resetting its budget'); throw error; }
   try {
     const state = readState(loc), result = callback(state);
-    compactDecisions(loc, state);
+    // Compaction warnings stay in the state, quietly, for decision status to
+    // report. Index-fault warnings clear on the next successful index write;
+    // this pass's own faults stay.
+    const report = {};
+    const fresh = compactDecisions(loc, state, report).map(item => ({ at: loc.now, requestId: item.requestId, ...(item.fault ? { fault: item.fault } : {}), message: item.message }));
+    const prior = (Array.isArray(state.warnings) ? state.warnings : []).filter(item => !(report.indexRetained && item?.fault === READINESS_INDEX_FAULT));
+    const warnings = stateWarnings({ ...state, warnings: [...prior, ...fresh] });
+    if (warnings.length) state.warnings = warnings; else delete state.warnings;
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
     if (!writeFileContained(loc.home, loc.relative, `${bytes}\n`, { mode: 0o600 })) throw fail('decision state publication refused');
@@ -438,10 +465,11 @@ export function decisionStatus(options) {
   const loc = locations(options), state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false };
+  const live = stateWarnings(state), warnings = live.length ? { warnings: live } : {};
+  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }
-  return { schema: 1, status: result.current ? 'current' : 'stale', taskId, counts: task.counts, budgets: policy.budgets, ...result, receipt: request ? state.receipts[request.requestId] || null : null };
+  return { schema: 1, status: result.current ? 'current' : 'stale', taskId, counts: task.counts, budgets: policy.budgets, ...result, receipt: request ? state.receipts[request.requestId] || null : null, ...warnings };
 }
 
 export function inspectDecisionAction(options) {
@@ -601,5 +629,10 @@ export function latestReadinessReceipt(options) {
     if (state.requests[receipt.requestId]?.planPath !== options.planPath) continue;
     if (!latest || receipt.recordedAt > latest.recordedAt) latest = receipt;
   }
-  return latest ? { id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
+  // Compaction moves terminal receipts out of live state; its retained index still names the newest one.
+  try {
+    const archived = latestArchivedReadiness(loc, options.planPath);
+    if (archived && (!latest || archived.recordedAt > latest.recordedAt)) latest = archived;
+  } catch { /* retained evidence unreadable: cite live state only */ }
+  return latest ?{ id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
 }

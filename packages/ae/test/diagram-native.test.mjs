@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { harnessControlCommand, normalizeToolPayload } from '../corpus/hooks/lib/tool-payload.mjs';
 import { parseDiagramArguments } from '../lib/diagram-cmd.mjs';
@@ -24,8 +23,6 @@ test('diagram controls admit exact CLI grammar without broad command authority',
     ['render', '--file', 'docs/view.d2', '--renderer', 'd2', '--layout', 'elk', '--png', '--scale', '2'],
     ['graph', '--root', 'src/app.ts', '--png'],
     ['flow', '--flow', 'order-recovery', '--png', '--scale=1'],
-    ['formal', '--file', 'evidence/formal-verification.json', '--model', 'Unsafe.tla', '--png', '--scale', '2', '--max-nodes', '200', '--timeout', '1', '--json'],
-    ['formal', '--file=evidence/receipt.json', '--model=CounterJump.tla', '--dry-run'],
     ['graph', '--root', 'src/app.ts', '--operation', 'dependents', '--depth', '32', '--limit', '200', '--max-nodes', '200', '--timeout', '1'],
     ['flow', '--flow', 'order-recovery', '--limit', '1', '--max-nodes', '1', '--no-events', '--no-color'],
     ['status', '--receipt', '.harness/diagrams/example/receipt.json', '--workspace', workspace, '--ae-home', '/private/state', '--copilot-home', '/private/copilot'],
@@ -39,15 +36,7 @@ test('diagram controls admit exact CLI grammar without broad command authority',
   }
   const refused = [
     [], ['install'], ['render'], ['graph'], ['flow'], ['status'],
-    ['formal'], ['formal', '--file', 'receipt.json'], ['formal', '--model', 'Unsafe.tla'],
-    ['formal', '--file', 'receipt.tla', '--model', 'Unsafe.tla'], ['formal', '--file', '../receipt.json', '--model', 'Unsafe.tla'],
-    ['formal', '--file', 'receipt.json', '--model', '../Unsafe.tla'], ['formal', '--file', 'receipt.json', '--model', 'Unsafe.cfg'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--view', 'execute.mjs'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--renderer', 'pele'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--sources', 'src'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--model', 'Other.tla'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--max-nodes', '201'],
-    ['formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--scale', '2'],
+    ['formal', '--file', 'evidence/receipt.json', '--model', 'Unsafe.tla'],
     ['render', '--file', 'view.svg'], ['render', '--file', '/absolute.mmd'], ['render', '--file', 'C:/view.d2'],
     ['render', '--file', 'src\\view.mmd'], ['render', '--file', './view.mmd'], ['render', '--file', 'src/../view.d2'],
     ['render', '--file', 'view.mmd', '--sources', 'src,,config'], ['render', '--file', 'view.mmd', '--sources', 'node_modules'],
@@ -96,7 +85,6 @@ test('diagram controls remain available through native hooks without granting mi
     'ae diagrams render --file docs/view.d2 --layout tala --json',
     'ae diagrams graph --root src/app.ts --operation deps --depth 2 --limit 40 --json',
     'ae diagrams flow --flow orders --json',
-    'ae diagrams formal --file evidence/receipt.json --model Unsafe.tla --png --json',
     'ae diagrams status --receipt .harness/diagrams/example/receipt.json --json',
     `node "${bin}" diagrams status --receipt .harness/diagrams/example/receipt.json --json`,
   ];
@@ -116,9 +104,7 @@ test('diagram controls remain available through native hooks without granting mi
     'ae diagrams render --file view.mmd; ae status --json',
     'env ae diagrams graph --root src/app.ts',
     'ae diagrams status --receipt receipt.json > product.txt',
-    'ae diagrams formal --file evidence/receipt.json --model ../Unsafe.tla',
-    'ae diagrams formal --file evidence/receipt.json --model Unsafe.tla --view execute.mjs',
-    'ae diagrams formal --file evidence/receipt.json --model Unsafe.tla; node opaque.mjs',
+    'ae diagrams formal --file evidence/receipt.json --model Unsafe.tla --png --json',
   ]) assert.equal(hook(command).hookSpecificOutput?.permissionDecision, 'deny', command);
   assert.equal(fs.existsSync(path.join(workspace, 'product.txt')), false);
 });
@@ -129,7 +115,6 @@ test('native lifecycle admission accepts only exact diagrams controls', () => {
     ['diagrams', 'render', '--file', 'view.mmd', '--sources', 'src', '--renderer', 'pele'],
     ['diagrams', 'graph', '--root', 'src/app.mjs', '--operation', 'dependents'],
     ['diagrams', 'flow', '--flow', 'order-recovery'],
-    ['diagrams', 'formal', '--file', 'evidence/receipt.json', '--model', 'Unsafe.tla', '--png'],
     ['diagrams', 'status', '--receipt', '.harness/diagrams/example/receipt.json'],
   ]) assert.equal(beforeDeliveryTool({ name: 'harness', input: { argv } }, options).pass, true, argv.join(' '));
   for (const argv of [
@@ -137,9 +122,7 @@ test('native lifecycle admission accepts only exact diagrams controls', () => {
     ['diagrams', 'render', '--file', 'view.mmd', '--file', 'other.mmd'],
     ['diagrams', 'status', '--receipt', 'receipt.json', '--', 'node', 'opaque.mjs'],
     ['diagrams', 'graph', '--root', '../outside.mjs'],
-    ['diagrams', 'formal', '--file', 'receipt.json'],
-    ['diagrams', 'formal', '--file', 'receipt.json', '--model', '../Unsafe.tla'],
-    ['diagrams', 'formal', '--file', 'receipt.json', '--model', 'Unsafe.tla', '--view', 'execute.mjs'],
+    ['diagrams', 'formal', '--file', 'evidence/receipt.json', '--model', 'Unsafe.tla', '--png'],
   ]) assert.equal(beforeDeliveryTool({ name: 'harness', input: { argv } }, options).pass, false, argv.join(' '));
   for (const selector of [['--copilot-home', '/other/control'], ['--ae-home=/other/control'], ['--workspace', process.cwd()]]) {
     const result = beforeDeliveryTool({ name: 'harness', input: { argv: ['diagrams', 'status', '--receipt', 'receipt.json', ...selector] } }, options);
@@ -173,18 +156,6 @@ test('native lifecycle renders a local view and checks its receipt before an imp
   assert.equal(fs.existsSync(path.join(f.ws, rendered.artifacts.svg)), true);
   assert.equal(fs.existsSync(path.join(f.ws, rendered.artifacts.html)), true);
   assert.equal((await run(['diagrams', 'status', '--receipt', rendered.artifacts.receipt])).state, 'current');
-  const stdout = fs.readFileSync(path.resolve(import.meta.dirname, 'fixtures/formal-diagrams/pstack-counterjump.txt'), 'utf8');
-  const sha256 = createHash('sha256').update(productBefore).digest('hex');
-  fs.writeFileSync(path.join(f.ws, 'formal-verification.json'), JSON.stringify({
-    schema: 1, feature: 'formal-verification', status: 'passed', passed: true,
-    source: { files: [{ path: 'src/example.js', sha256 }] },
-    verificationBindings: [{ path: '<copied-runner>', sha256: 'a'.repeat(64) }],
-    models: [{ module: 'CounterJump.tla', expected: 'safety-violation', property: 'NotThree', pass: true,
-      execution: { status: 12, signal: null, error: null, stdout, stderr: '' } }],
-  }));
-  const formal = await run(['diagrams', 'formal', '--file', 'formal-verification.json', '--model', 'CounterJump.tla']);
-  assert.equal(formal.kind, 'formal-trace'); assert.equal(formal.verification, 'not-verified');
-  assert.equal((await run(['diagrams', 'status', '--receipt', formal.artifacts.receipt])).state, 'current');
   assert.equal(fs.readFileSync(path.join(f.ws, f.plan), 'utf8'), planBefore);
   assert.equal(fs.readFileSync(path.join(f.ws, 'src/example.js'), 'utf8'), productBefore);
 });

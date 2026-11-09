@@ -560,6 +560,8 @@ function knowledgeChecks({ workspace, copilotHome }) {
  * PRUNING_EXPOSURE_THRESHOLD times with no `helped` verdict. Reported only
  * under knowledge.feedback suggest|on; it never retires or disputes anything.
  */
+const PRUNING_CANDIDATE_LIST_CAP = 20;
+
 export function feedbackPruningCheck({ workspace, home } = {}) {
   try {
     if (feedbackState({ workspace, home }) === 'off') return null;
@@ -573,7 +575,8 @@ export function feedbackPruningCheck({ workspace, home } = {}) {
         ? `pruning hint, advisory only: ${candidates.slice(0, 5).map((c) => `${c.id} (exposed ${c.exposed}, helped 0)`).join(', ')}${candidates.length > 5 ? ` and ${candidates.length - 5} more` : ''} — review with ae learnings --why <id>; retire only through ae learning retire`
         : `no learning exposed ${PRUNING_EXPOSURE_THRESHOLD}+ times without a helped verdict`,
       optional: true,
-      ...(candidates.length ? { pruningCandidates: candidates.map((c) => c.id) } : {}),
+      ...(candidates.length ? { pruningCandidates: candidates.slice(0, PRUNING_CANDIDATE_LIST_CAP).map((c) => c.id) } : {}),
+      ...(candidates.length > PRUNING_CANDIDATE_LIST_CAP ? { omittedPruningCandidates: candidates.length - PRUNING_CANDIDATE_LIST_CAP } : {}),
     };
   } catch {
     return null; // Advisory; never fail doctor on a knowledge-check error.
@@ -689,8 +692,8 @@ export function prerequisiteChecks({ resolveGit = gitExecutable } = {}) {
       pass: noLazyFetch,
       optional: true,
       hint: noLazyFetch
-        ? 'flow models and formal verification can read Git metadata without automatic fetches'
-        : `flow models and formal verification stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
+        ? 'flow models can read Git metadata without automatic fetches'
+        : `flow models stay disabled until Git ${MIN_GIT_NO_LAZY_FETCH} or newer is on PATH`,
     },
   ];
 }

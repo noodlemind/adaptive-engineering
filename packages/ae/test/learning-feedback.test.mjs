@@ -8,7 +8,7 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { readFeedbackConfig, storeDir, writeFeedbackConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import {
-  EXPOSURE_ENTRY_CAP, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
+  EXPOSURE_ENTRY_CAP, exposureRel, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
 } from '../lib/learning-feedback.mjs';
 import { feedbackPruningCheck } from '../lib/doctor.mjs';
 import { publishReviewRecord, recordHash } from '../lib/review.mjs';
@@ -107,7 +107,7 @@ test('consolidation output is byte-identical with feedback off and gains evidenc
   assert.deepEqual(suggested.feedback.learnings, [{ id: c.id, helped: 1, irrelevant: 0, wrong: 1, plans: ['docs/plans/b.md', PLAN].sort() }]);
   assert.deepEqual(suggested.feedback.review_required, [c.id]);
   assert.deepEqual(suggested.feedback.reviewers, [{ reviewer: 'correctness', fixed: 1, dismissed: 1, contradicted: 1, resolutionRate: 0.5 }], 'a fixed claim the latest review still reports is counted as contradicted');
-  const suggestStatus = consolidateStatus({ workspace: c.ws, home: c.home });
+  const suggestStatus = consolidateStatus({ workspace: c.ws, home: c.home, withFeedback: true });
   assert.equal(suggestStatus.due, false, 'suggest never changes due');
   assert.deepEqual(suggestStatus.feedback.review_required, [c.id]);
 
@@ -392,4 +392,68 @@ test('second pass 6: delivery detection matches the layer mark, so a twin-only l
   const goldenOnly = '- [sql/dup] [applicability: current; source bindings only] t → c\n';
   assert.equal(learningRendered(goldenOnly, golden), true);
   assert.equal(learningRendered(goldenOnly, twin), false);
+});
+
+// Third review pass regressions (PR #123).
+
+test('third pass A: a retired protected golden does not hide its active branch twin from status or K8', t => {
+  const c = twins(t);
+  const goldenFile = path.join(storeDir(c.ws, { home: c.home }), 'learnings', 'sql', 'dup.md');
+  fs.writeFileSync(goldenFile, fs.readFileSync(goldenFile, 'utf8').replace('status: active', 'status: retired'));
+  const layered = loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings;
+  assert.deepEqual(layered.map(l => [l.fm.status, Boolean(l.subordinate)]), [['retired', false], ['active', true]], 'precondition: retired golden plus active subordinate twin');
+  const twin = layered[1];
+  for (let i = 0; i < 5; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [twin] });
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  assert.deepEqual(knowledgeFeedbackStatus({ workspace: c.ws, home: c.home }).learnings.map(r => [r.id, r.exposed]), [['sql/dup', 5]], 'the active twin keeps its status row');
+  assert.deepEqual(feedbackPruningCheck({ workspace: c.ws, home: c.home }).pruningCandidates, ['sql/dup'], 'and its K8 candidacy');
+});
+
+test('third pass D: a twin line truncated after the layer mark opens does not credit the golden', () => {
+  const golden = { id: 'sql/dup' };
+  assert.equal(learningRendered('## Learnings (memory)\n- [sql/dup] [b', golden), false);
+  assert.equal(learningRendered('- [sql/dup] [branch-local, sub', golden), false);
+  assert.equal(learningRendered('- [sql/dup] [unverified memory — advisory] t → c\n', golden), true, 'a golden fence is not a twin mark');
+});
+
+test('third pass E: an exposure record of 32 KiB plus its trailing newline is still read', t => {
+  const c = seeded(t);
+  const plan = 'docs/plans/edge.md';
+  const rel = `.harness/learning/exposures/plan-${recordHash(plan)}.json`;
+  const entries = [{ id: c.id, count: 3, lastExposedAt: '2026-11-01T00:00:00.000Z' }];
+  const text = () => `${JSON.stringify({ version: 1, plan, entries }, null, 2)}\n`;
+  for (let i = 0; Buffer.byteLength(text()) < 32 * 1024 + 1 - 400; i++) entries.push({ id: `logic/f-${String(i).padStart(4, '0')}`, count: 1, lastExposedAt: '2026-11-01T00:00:00.000Z' });
+  const last = entries.at(-1);
+  while (Buffer.byteLength(text()) < 32 * 1024 + 1) last.id += 'x';
+  assert.equal(Buffer.byteLength(text()), 32 * 1024 + 1, 'precondition: a file one byte over the cap, as earlier writers produced');
+  fs.mkdirSync(path.dirname(path.join(c.ws, rel)), { recursive: true });
+  fs.writeFileSync(path.join(c.ws, rel), text());
+  assert.equal(exposureTotals(c.ws).get(c.id).exposed, 3);
+});
+
+test('third pass F: the K8 candidate list is capped at 20 with a count of the rest', t => {
+  const c = seeded(t);
+  for (let i = 0; i < 24; i++) {
+    fs.writeFileSync(path.join(path.dirname(c.learnings[0].file), `cap-${String(i).padStart(2, '0')}.md`),
+      `---\nschema: 1\ntrigger: "t cap ${i}"\nstatus: active\nsource: auto\nepisodes:\nanchors: []\nsuperseded_by: null\nlast_confirmed: null\norigin: test\n---\n\nBody ${i}.\n`);
+  }
+  const learnings = loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings;
+  assert.equal(learnings.length, 25);
+  publishReviewRecord(c.ws, exposureRel(PLAN), { version: 1, plan: PLAN, entries: learnings.map(l => ({ id: l.id, layer: l.layer === 'branch' ? 'branch' : 'golden', count: 5, lastExposedAt: '2026-11-01T00:00:00.000Z' })) });
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  const k8 = feedbackPruningCheck({ workspace: c.ws, home: c.home });
+  assert.equal(k8.pruningCandidates.length, 20);
+  assert.equal(k8.omittedPruningCandidates, 5);
+  assert.match(k8.hint, /and 20 more/);
+});
+
+test('third pass J: an existing feedback record over the read limit reports written:false instead of throwing', t => {
+  const c = seeded(t);
+  const op = operation('oversized');
+  const file = path.join(projectStoreDir(c.ws, { home: c.home }), 'feedback', `${op}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ version: 1, operation: op, plan: PLAN, note: 'x'.repeat(300 * 1024) }));
+  const result = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: op, planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } });
+  assert.deepEqual(result, { path: file, written: false });
+  assert.ok(fs.statSync(file).size > 256 * 1024, 'the hand-made file is left as it is');
 });

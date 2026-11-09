@@ -1,5 +1,13 @@
 stateDiagram-v2
-  %% Delivery-evidence workflow. Transition labels are the actions checked by scripts/check.mjs.
+  %% Delivery-evidence workflow. Transition labels are the actions checked against rules.json.
+  state "Answering a question" as AnswerMode
+  state "Investigating" as InvestigateMode
+  state "Reviewing" as ReviewMode
+  state "Delivering, intent not yet locked" as Deliver
+  state "Intent locked, changes in progress" as Locked
+  state "Reviewed, proof not yet current" as Reviewed
+  state "Verified, proof current" as Verified
+  state "Learning recorded" as Compounded
   [*] --> AnswerMode
   [*] --> InvestigateMode
   [*] --> ReviewMode
