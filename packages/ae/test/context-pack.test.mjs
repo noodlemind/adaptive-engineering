@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { approveProject } from '../lib/trust.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
 import { packageRoot } from './helpers/cli.mjs';
+import { withResumeVerification } from '../lib/orient.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -402,15 +403,66 @@ test('a resumed plan with stale or failed verification evidence puts ae verify f
   const current = f.orient().out.nextTools;
   f.source('export const value = 2; // edited after verification\n');
   const stale = f.orient();
-  assert.equal(stale.out.resumeVerification.state, 'stale');
-  assert.equal(stale.out.nextTools[0], `ae verify --plan ${f.plan}  # prior verification is stale; check for leftover breakage before new work`);
-  assert.deepEqual(stale.out.nextTools.slice(1), current, 'the hint only adds a first step');
+  assert.equal(stale.out.resumeVerification.state, 'changed');
+  assert.equal(stale.out.nextTools[0], `ae verify --plan ${f.plan}  # prior verification changed: ${stale.out.resumeVerification.reason}; check for leftover breakage before new work`);
+  assert.match(stale.out.resumeVerification.reason, /changed after verification/);
+  assert.deepEqual(stale.out.nextTools.slice(1), current.filter(tool => tool !== 'ae verify'), 'the hint replaces the plain verify step and adds nothing else');
+  assert.equal(stale.out.nextTools.filter(tool => tool.startsWith('ae verify')).length, 1, 'verify is listed once');
   assert.equal(stale.nextInPack, `- \`${stale.out.nextTools[0]}\``, 'the pack lists the verify hint first');
 
   f.source('export const value = 1;\n');
   assert.notEqual(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
   const failed = f.orient();
   assert.equal(failed.out.resumeVerification.state, 'failed');
-  assert.match(failed.out.nextTools[0], /^ae verify --plan .+ # prior verification is failed;/);
+  assert.match(failed.out.nextTools[0], /^ae verify --plan .+ # prior verification failed: Latest ae verify outcome is failed;/);
   assert.equal(failed.out.gateStatus, stale.out.gateStatus, 'the hint is advisory; the gate is unchanged');
+});
+
+function rewriteEvidence(ws, change) {
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
+  for (const file of walk(path.join(ws, '.harness')).filter(p => /evidence/.test(p) && p.endsWith('.json'))) {
+    const evidence = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (evidence.verifiedAt) fs.writeFileSync(file, JSON.stringify(change(evidence)));
+  }
+}
+
+test('evidence that is only older than its TTL is reported as expired without reordering next tools', t => {
+  const f = resumeFixture(t);
+  f.source('export const value = 2;\n');
+  assert.equal(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+  const current = f.orient().out.nextTools;
+  rewriteEvidence(f.ws, evidence => ({ ...evidence, verifiedAt: new Date(Date.now() - 48 * 3600e3).toISOString() }));
+  const expired = f.orient();
+  assert.equal(expired.out.resumeVerification.state, 'expired');
+  assert.deepEqual(expired.out.nextTools, current, 'plain expiry is not presented as leftover breakage');
+});
+
+test('a policy change after verification blocks the gate, so no verify hint is offered', t => {
+  const f = resumeFixture(t);
+  f.source('export const value = 2;\n');
+  assert.equal(f.cli('verify', '--plan', f.plan, '--base', 'HEAD', '--json').status, 0);
+  writeChecks(f.ws, { other: { command: [process.execPath, '-e', '0'] } });
+  const out = f.orient().out;
+  assert.equal(out.resumeVerification.state, 'config');
+  assert.equal(out.gateStatus, 'blocked');
+  assert.ok(!out.nextTools.some(tool => tool.includes('prior verification')), 'a blocked gate comes first; verify would only fail and loop');
+});
+
+test('the resume hint follows isolation and readiness steps, follows trust recovery for configuration changes, and is omitted when blocked', () => {
+  const opts = { planPath: 'docs/plans/p.md', gatePass: true, isolationBlocked: false };
+  const passing = ['ae gate --phase implement', 'read plan ## Impacted Files', 'ae review prepare --plan p', 'ae verify', 'ae compound'];
+  const changed = { state: 'changed', reason: 'Workspace files changed after verification' };
+  const withReadiness = withResumeVerification(['Use checkReadiness.inspectionCommand', ...passing], changed, opts);
+  assert.equal(withReadiness[0], 'Use checkReadiness.inspectionCommand');
+  assert.match(withReadiness[1], /^ae verify --plan docs\/plans\/p\.md {2}# prior verification changed: Workspace files changed after verification; check for leftover breakage/);
+  assert.equal(withReadiness.includes('ae verify'), false, 'the plain verify step is dropped');
+  assert.deepEqual(withResumeVerification(passing, changed, { ...opts, gatePass: false }), passing);
+  assert.deepEqual(withResumeVerification(passing, changed, { ...opts, isolationBlocked: true }), passing);
+  assert.deepEqual(withResumeVerification(passing, { state: 'expired', reason: 'Verification evidence is stale' }, opts), passing);
+  const config = withResumeVerification([...passing, 'Use trust.recovery'], { state: 'config', reason: 'Policy or trust changed after verification; refresh trust and reverify' }, opts);
+  assert.equal(config.at(-2), 'Use trust.recovery');
+  assert.match(config.at(-1), /# prior verification no longer matches configuration: Policy or trust changed/);
+  assert.ok(!config.at(-1).includes('leftover breakage'));
+  const configNoRecovery = withResumeVerification(passing, { state: 'config', reason: 'Required named check is missing' }, opts);
+  assert.match(configNoRecovery[3], /no longer matches configuration/, 'without trust recovery it takes the plain verify slot');
 });

@@ -379,6 +379,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
 
 async function runLearningDecision({ workspace, copilotHome, flags, log, domainContext = null }) {
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
+  if (flags.evidenceQuote != null) throw new Error('--evidence-quote applies to --insight; put evidence_quote in the learning decision instead');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
   const decision = JSON.parse(text);

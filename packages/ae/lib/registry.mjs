@@ -1132,7 +1132,7 @@ registerCommand({
       { name: '--tags', type: 'string', valueName: 'a,b', description: 'comma-separated tags', required: false, default: null, tui: 'prompt' },
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
-      { name: '--evidence-quote', type: 'string', valueName: 'text', description: 'verbatim error, test or diff text (at most 600 bytes, secret-scanned)', required: false, default: null, tui: 'prompt' },
+      { name: '--evidence-quote', type: 'string', valueName: 'text', description: 'verbatim error, test or diff text for --insight (at most 600 bytes, secret-scanned)', required: false, default: null, tui: 'prompt', valueIsLiteral: true },
             { name: '--enforcement', type: 'string', valueName: 'mode', description: 'observe | warn | enforce (default enforce)', required: false, default: null, tui: 'prompt', choices: ['observe', 'warn', 'enforce'] },
     ],
   },

@@ -658,11 +658,13 @@ function yamlQuote(v) {
  * into a single-line markdown bullet (`- [id] trigger → claim`) would inject
  * extra "lines" — fake headings, extra bullets, anything — into what is
  * otherwise a trusted context surface. Collapses every C0 control char
- * (0x00-0x1F) and DEL (0x7F) to a single space so the text always renders as
- * ONE line, wherever it's interpolated.
+ * (0x00-0x1F), DEL (0x7F), every C1 control (0x80-0x9F, such as the CSI
+ * terminal escape) and the bidirectional overrides and isolates
+ * (U+202A-U+202E, U+2066-U+2069) to a single space so the text always renders
+ * as ONE line in its stored order, wherever it's interpolated.
  */
 export function inertLine(text) {
-  return String(text ?? '').replace(/[\x00-\x1f\x7f]/g, ' ');
+  return String(text ?? '').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ');
 }
 
 /**

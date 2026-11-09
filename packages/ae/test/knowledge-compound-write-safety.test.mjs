@@ -8,6 +8,8 @@ import { runRemember } from '../lib/knowledge/remember.mjs';
 import { solutionsWriteTarget } from '../lib/project-layout.mjs';
 import { trackWorkspaceSolutions } from './helpers/workspace.mjs';
 import { EVIDENCE_QUOTE_CAP, readEvidenceQuote } from '../lib/knowledge/evidence-quote.mjs';
+import { spawnSync } from 'node:child_process';
+import { packageRoot } from './helpers/cli.mjs';
 
 const tempDir = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -156,10 +158,33 @@ test('an insight evidence quote with a secret or terminal control codes is refus
   assert.match(secret.result.blockedReason, /secret/);
   assert.ok(!secret.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
   assert.deepEqual(secret.written, []);
-  const ansi = captureInsight({ evidenceQuote: '\x1b[31mFAIL\x1b[0m retry.test.mjs' });
-  assert.equal(ansi.result.pass, false);
-  assert.match(ansi.result.blockedReason, /control characters/);
-  assert.deepEqual(ansi.written, []);
+  for (const quote of ['\x1b[31mFAIL\x1b[0m retry.test.mjs', '\u009b31mFAIL\u009b0m retry.test.mjs', 'ok ‮evil', 'ok ⁦isolate⁩']) {
+    const refused = captureInsight({ evidenceQuote: quote });
+    assert.equal(refused.result.pass, false, JSON.stringify(quote));
+    assert.match(refused.result.blockedReason, /control or bidirectional/);
+    assert.deepEqual(refused.written, []);
+  }
+  assert.equal(captureInsight({ evidenceQuote: 'line one\r\nline two' }).result.pass, true, 'CRLF output is accepted, as documented');
+});
+
+test('an insight evidence quote with a secret split across lines is refused', () => {
+  const split = captureInsight({ evidenceQuote: `request failed\nAuthorization: Bearer\n${'abcdefghijklmnopqrstuvwxyz012345'}` });
+  assert.equal(split.result.pass, false);
+  assert.match(split.result.blockedReason, /secret/);
+  assert.deepEqual(split.written, []);
+});
+
+test('ae compound --insight takes an --evidence-quote that starts with a diff header', () => {
+  const ws = tempDir('quote-cli-ws-');
+  const home = tempDir('quote-cli-hh-');
+  const copilotHome = tempDir('quote-cli-ch-');
+  const quote = '--- a/src/retry.mjs\n+++ b/src/retry.mjs\n@@ -1 +1 @@\n-retries = 0\n+retries = 3';
+  const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'diff quote', '--body', 'retries matter', '--evidence-quote', quote, '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
+    { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  const out = JSON.parse(run.stdout);
+  const text = fs.readFileSync(path.join(solutionsWriteTarget(ws, { home }).base, out.path), 'utf8');
+  assert.equal(readEvidenceQuote(text), quote);
 });
 
 test('an insight without an evidence quote keeps the exact pre-quote episode bytes', () => {

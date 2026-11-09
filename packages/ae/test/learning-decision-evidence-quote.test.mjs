@@ -60,6 +60,12 @@ test('a publish decision stores a verbatim evidence quote in the episode and ref
   assert.match(noLearning.stdout + noLearning.stderr, /only to a publish decision/);
   assert.equal(fs.existsSync(path.join(f.ws, '.harness/learning')) && fs.readdirSync(path.join(f.ws, '.harness/learning')).some(name => name !== '.ready.json'), false, 'refused decisions leave no learning record');
 
+  const decisionFile = path.join(f.ws, '.harness', 'decision-quote-flag.json');
+  fs.writeFileSync(decisionFile, JSON.stringify(publish('quote-flag')));
+  const flagged = f.cli('compound', '--plan', f.plan, '--learning-decision', decisionFile, '--evidence-quote', QUOTE, '--json');
+  assert.notEqual(flagged.status, 0, 'the CLI flag is refused rather than silently ignored');
+  assert.match(flagged.stdout + flagged.stderr, /applies to --insight/);
+
   const accepted = decide(f, publish('quote-accepted', { evidence_quote: QUOTE }));
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
   const out = JSON.parse(accepted.stdout);

@@ -11,6 +11,7 @@ import { buildContextPack } from '../lib/context-pack.mjs';
 import { ensureStore, storeDir, serializeLearning } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
+import { inertEvidenceQuote, EVIDENCE_QUOTE_CAP } from '../lib/knowledge/evidence-quote.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
@@ -236,6 +237,20 @@ test('the consolidation packet shows an evidence quote as one inert line with se
   const secret = entries.find(e => e.title === 'orders timeout secret');
   assert.ok(!secret.evidence_quote.includes(AWS), 'a hand-edited secret is redacted');
   assert.match(secret.evidence_quote, /\[redacted:/);
+});
+
+test('a hand-edited quote is joined before the secret screen, loses C1 and bidi controls, and is capped in bytes at a code point', () => {
+  const token = 'abcdefghijklmnopqrstuvwxyz012345';
+  const split = inertEvidenceQuote(`request failed\nAuthorization: Bearer\n${token}`);
+  assert.ok(!split.includes(token), 'a credential split across lines is redacted once joined');
+  assert.match(split, /\[redacted:/);
+  const controls = inertEvidenceQuote('\u009b31mFAIL\u009b0m ok ‮evil⁦x⁩');
+  assert.ok(!/[\u0080-\u009f‪-‮⁦-⁩]/.test(controls), 'C1 and bidi controls are blanked');
+  const euros = inertEvidenceQuote('€'.repeat(1000));
+  assert.equal(Buffer.byteLength(euros), EVIDENCE_QUOTE_CAP);
+  const emoji = inertEvidenceQuote(`a${'😀'.repeat(400)}`);
+  assert.ok(Buffer.byteLength(emoji) <= EVIDENCE_QUOTE_CAP);
+  assert.ok(!/[\ud800-\udbff]$/.test(emoji), 'the cut never leaves a lone surrogate');
 });
 
 test('a consolidation packet entry for an episode without a quote has no evidence_quote key', () => {

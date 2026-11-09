@@ -10,14 +10,19 @@ import { inertLine } from './store.mjs';
  */
 export const EVIDENCE_QUOTE_CAP = 600;
 
+// Tab, newline and carriage return are escaped on write. Every other C0 or C1
+// control and every bidirectional override or isolate is refused: they would
+// land raw in frontmatter or reorder what a reader or model sees.
+const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‪-‮⁦-⁩]/;
+
 /** Returns null when the quote is acceptable, otherwise the reason it is not. */
 export function evidenceQuoteError(value) {
   if (typeof value !== 'string' || !value.trim()) return 'evidence_quote must be nonempty text';
   if (Buffer.byteLength(value, 'utf8') > EVIDENCE_QUOTE_CAP) return `evidence_quote must be at most ${EVIDENCE_QUOTE_CAP} bytes of verbatim error, test or diff text`;
-  // Tab, newline and CR are escaped on write. Other control characters, such
-  // as terminal color codes, would land raw in frontmatter.
-  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) return 'evidence_quote must not contain control characters other than tab and newline; strip terminal color codes';
-  const secrets = scanSecrets(value);
+  if (DISALLOWED.test(value)) return 'evidence_quote may contain tabs, newlines and carriage returns but no other control or bidirectional formatting characters; strip terminal color codes';
+  // Scan the line-joined form too: a credential split across lines must not
+  // pass here and then reassemble when the quote is rendered as one line.
+  const secrets = [...scanSecrets(value), ...scanSecrets(inertLine(value))];
   if (secrets.length) return `evidence_quote looks like it contains a secret (${[...new Set(secrets.map(s => s.id))].join(', ')}); redact it`;
   return null;
 }
@@ -41,7 +46,24 @@ export function readEvidenceQuote(text) {
   }
 }
 
-/** Quoted evidence as inert data for an agent-facing packet: one line, secrets redacted, capped. */
+function capBytes(text, max) {
+  let out = '';
+  let used = 0;
+  for (const ch of text) {
+    const size = Buffer.byteLength(ch, 'utf8');
+    if (used + size > max) break;
+    out += ch;
+    used += size;
+  }
+  return out;
+}
+
+/**
+ * Quoted evidence as inert data for an agent-facing packet: joined to one line
+ * by inertLine (which also blanks C1 and bidirectional controls) before the
+ * secret screen, so a split credential is caught, then capped in bytes at a
+ * code-point boundary.
+ */
 export function inertEvidenceQuote(value) {
-  return inertLine(redactSecrets(value)).slice(0, EVIDENCE_QUOTE_CAP);
+  return capBytes(redactSecrets(inertLine(value)), EVIDENCE_QUOTE_CAP);
 }

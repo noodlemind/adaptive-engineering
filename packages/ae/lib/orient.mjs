@@ -46,19 +46,50 @@ function jsonGitContext(gitContext) {
  * the work may hide breakage left by the previous session. Advisory only: it
  * reorders next tools and never changes a gate. Null when there is no active
  * plan, no evidence yet, or the evidence is current.
+ *
+ * States: `failed` (the last run failed), `changed` (head, plan or workspace
+ * moved since the run), `config` (policy, trust or check configuration moved;
+ * re-verifying cannot reveal leftover breakage and may first need trust or
+ * check repair) and `expired` (only older than the evidence TTL).
  */
 function resumeVerification({ workspace, copilotHome, flags, active }) {
   if (!active?.path) return null;
   try {
     const evidence = readEvidence(planRecordRoot(workspace, active), active.path);
     if (!evidence) return null;
-    if (evidence.outcome !== 'passed') return { state: 'failed', reason: `Latest ae verify outcome is ${inertLine(evidence.outcome || 'unknown')}` };
+    const reason = message => inertLine(message || 'verification evidence is not current').replace(/`/g, "'").slice(0, 160);
+    if (evidence.outcome !== 'passed') return { state: 'failed', reason: reason(`Latest ae verify outcome is ${evidence.outcome || 'unknown'}`) };
     const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
     const fresh = validateEvidence({ workspace, plan: active, evidence, maxAgeHours, copilotHome });
-    return fresh.pass ? null : { state: 'stale', reason: inertLine(fresh.message || 'verification evidence is not current').slice(0, 200) };
+    if (fresh.pass) return null;
+    // The age check runs before the binding checks, so look past it once to
+    // tell plain expiry from a real change.
+    const unbounded = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
+    if (unbounded.pass) return { state: 'expired', reason: reason(fresh.message) };
+    const message = unbounded.message || fresh.message;
+    const config = /policy|trust|named check|checks?\.yaml|playbook|intent source|gap/i.test(message || '');
+    return { state: config ? 'config' : 'changed', reason: reason(message) };
   } catch {
     return null;
   }
+}
+
+/** Places the hint after isolation and readiness steps and replaces the plain verify entry. */
+export function withResumeVerification(nextTools, check, { planPath, gatePass, isolationBlocked }) {
+  if (!check || check.state === 'expired' || !gatePass || isolationBlocked) return nextTools;
+  const hint = check.state === 'config'
+    ? `ae verify --plan ${planPath}  # prior verification no longer matches configuration: ${check.reason}; repair trust or checks first if needed`
+    : `ae verify --plan ${planPath}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
+  const rest = nextTools.filter(tool => tool !== 'ae verify');
+  if (check.state === 'config') {
+    // After any trust recovery step, otherwise where the plain verify step was.
+    const recovery = rest.findLastIndex(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
+    const at = recovery !== -1 ? recovery + 1 : nextTools.indexOf('ae verify');
+    return at === -1 ? [...rest, hint] : [...rest.slice(0, at), hint, ...rest.slice(at)];
+  }
+  const lead = rest.findIndex(tool => !tool.startsWith('Use checkReadiness.') && !tool.startsWith('ae worktree '));
+  const at = lead === -1 ? rest.length : lead;
+  return [...rest.slice(0, at), hint, ...rest.slice(at)];
 }
 
 export function runOrient({ workspace, copilotHome, flags, query, files }) {
@@ -171,7 +202,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
   }
 
   const resumeCheck = resumeVerification({ workspace, copilotHome, flags, active });
-  if (resumeCheck) nextTools.unshift(`ae verify --plan ${active.path}  # prior verification is ${resumeCheck.state}; check for leftover breakage before new work`);
+  if (resumeCheck) nextTools.splice(0, nextTools.length, ...withResumeVerification(nextTools, resumeCheck, { planPath: active.path, gatePass: gatePreview.pass, isolationBlocked: isolation.blocked }));
 
   if (gatePreview.pass && routingLines) {
     for (const line of routingLines) if (line.startsWith('read ') && !nextTools.includes(line)) nextTools.push(line);
