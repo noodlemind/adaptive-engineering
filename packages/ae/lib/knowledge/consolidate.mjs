@@ -7,6 +7,7 @@ import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor } from './overlay.mjs';
 import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
+import { recheckState, recheckSummary, recheckDue } from './recheck.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -230,7 +231,9 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
   const feedback = feedbackView({ workspace, home, learnings: active });
-  const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0));
+  const recheck = recheckView({ workspace, home, learnings: active, allLearnings: learnings });
+  const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
+  const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0) || recheckIsDue);
   return {
     mode,
     debt,
@@ -242,10 +245,11 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
     ...(feedback ? { feedback: { state: feedback.state, records: feedback.records, review_required: feedback.review_required } } : {}),
+    ...(recheck ? { recheck: { state: recheck.state, counts: recheck.counts, ...(recheck.unavailable ? { unavailable: recheck.unavailable } : {}) } } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),
-    nextTools: due ? ['ae consolidate --candidates'] : [],
+    nextTools: due ? [recheckIsDue ? 'ae consolidate --candidates --recheck' : 'ae consolidate --candidates'] : [],
   };
 }
 
@@ -261,7 +265,26 @@ function feedbackView({ workspace, home, learnings }) {
   }
 }
 
-export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null }) {
+/**
+ * Re-check evidence (plan Phase 2); absent when the effective state is `off`,
+ * so output stays byte-identical. `review_required` is shared with feedback
+ * and read here whatever the feedback key says: enabling re-check opts in.
+ */
+function recheckView({ workspace, home, learnings, allLearnings }) {
+  let state = 'off';
+  try { state = recheckState({ workspace, home }); } catch { state = 'off'; }
+  if (state === 'off') return null;
+  let reviewRequired = [];
+  try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
+  try {
+    return { state, ...recheckSummary({ workspace, learnings, allLearnings, reviewRequired }) };
+  } catch (error) {
+    const counts = { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
+    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: inertLine(error.message).slice(0, 200) };
+  }
+}
+
+export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null, recheck: recheckRequested = false }) {
   const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
@@ -306,10 +329,12 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
 
     const dir = storeDir(workspace, { home });
   const view = layerView({ workspace, home, dir, writeLayer, layerOverride });
-  const active = activeLearnings(listLearnings(view.layerRoot));
+  const allLearnings = listLearnings(view.layerRoot);
+  const active = activeLearnings(allLearnings);
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
   const feedback = feedbackView({ workspace, home, learnings: active });
+  const recheck = recheckRequested ? recheckView({ workspace, home, learnings: active, allLearnings }) : null;
   const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
   const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
   const learnings = ordered.map((l) => ({
@@ -337,6 +362,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
     domains: status.domains,
     governed,
     ...(feedback ? { feedback } : {}),
+    ...(recheck ? { recheck } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),

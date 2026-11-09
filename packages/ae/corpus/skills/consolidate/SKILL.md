@@ -32,6 +32,10 @@ Run `ae consolidate --candidates --json`. Read its episode clusters, active lear
 
 When the packet has a `feedback` section, it records whether recalled learnings helped and whether review findings were fixed. Its purpose is to keep memory honest: a learning listed in `review_required` was judged wrong in its current form, so check it against evidence before anything else. The right answer may be SUPERSEDE, a dispute recommended to the human, or NOOP. Counts alone never justify a change; `learning-operations.md` has the contract.
 
+### Re-check
+
+When `ae knowledge recheck` is `suggest` or `on`, run `ae consolidate --candidates --recheck --json`. Its `recheck` section re-checks active learnings against later Harness evidence: exposed learnings whose source bindings changed, learnings judged wrong, checks and review findings that failed in at least two plans, and learning bodies that cite missing learnings or paths. Each entry is a question to answer with evidence, not a defect to fix; NOOP is often right. Inspect a failure cluster's history with `ae run list --plan <path> --status failed --json` for each listed plan, and read its evidence records. To turn a cluster into a learning, capture an insight with `ae compound --insight --derived-from failure-cluster:<id>`, then cite that episode in an ordinary ADD or STRENGTHEN. Fix a broken reference or stale claim through SUPERSEDE.
+
 A cluster is a category group and a grouping hint. Choose multiple ops when it contains unrelated claims. The agent decides `ADD`, `STRENGTHEN`, `SUPERSEDE`, `MERGE` or `NOOP` for each supported claim. Compare nearest existing learnings before adding. Re-derive a strengthened or merged claim from raw evidence, and preserve its meaning and applicability. A derivable code fact often warrants NOOP. A cap never justifies a lossy merge or discarding a valuable claim: defer it and explain the pressure when no sound change fits.
 
 ## Submit the semantic proposal

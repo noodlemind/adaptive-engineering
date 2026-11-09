@@ -26,6 +26,7 @@ import { capabilityOptions, capabilityContext, adaptationContext, loadedResource
 import { retainVerifiedPublication } from './resource-recurrence.mjs';
 import { discoveryPolicy } from './capability-catalog.mjs';
 import { decisionPolicyFromDiscovery, inspectMemoryDecision } from './decision-agent.mjs';
+import { FAILURE_CLUSTER_REF } from './knowledge/recheck.mjs';
 
 import { buildStructuralIndex } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';
@@ -176,6 +177,16 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       nextTools: ['ae compound --insight --title "..." --body "..."'],
     };
   }
+  // A failure-cluster reference (plan Phase 2b) keeps a failure-derived learning
+  // traceable to its evidence. Only the format is checked: the ID is a digest of
+  // the cluster key that `consolidate --candidates --recheck` recomputes, and
+  // evidence history may be pruned or live in another checkout by the time the
+  // insight is written.
+  if (flags.derivedFrom != null && (kind !== 'insight' || !FAILURE_CLUSTER_REF.test(flags.derivedFrom))) {
+    return { pass: false, exitCode: 2, kind, path: null, indexed: null,
+      blockedReason: kind !== 'insight' ? '--derived-from is accepted only on an insight' : '--derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck',
+      nextTools: ['ae consolidate --candidates --recheck --json'] };
+  }
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);
   // Category is one safe path segment — never a traversal vector.
   const category = slugify(flags.category || 'insights');
@@ -193,6 +204,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
+  if (flags.derivedFrom != null) fmLines.push(`derived_from: ${flags.derivedFrom}`);
   // Git provenance (blueprint P1/P9): optional commit/branch/base stamped at
   // capture time from the CURRENT workspace HEAD. This is the sole CLI
   // episode writer — `compound --insight` (kind: insight) and

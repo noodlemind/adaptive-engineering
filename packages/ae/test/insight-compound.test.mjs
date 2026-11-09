@@ -486,3 +486,23 @@ test('verified compound lane still requires a plan (unchanged)', () => {
   const out = JSON.parse(res.stdout);
   assert.match(out.blockedReason, /plan/i);
 });
+
+test('compound --insight records a well-formed derived_from failure-cluster reference and refuses others', () => {
+  const ws = keepSolutionsInWorkspace(tempDir('insight-derived-'));
+  const home = tempDir('insight-derivedh-');
+  const capture = (ref, title) => run(['compound', '--insight', '--title', title, '--body', 'The unit check failed on the retry count in two plans.', '--derived-from', ref, '--workspace', ws, '--copilot-home', home, '--json']);
+  const ok = capture('failure-cluster:0123456789abcdef', 'Retry count drift');
+  assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+  const doc = fs.readFileSync(cliEpisode(ws, home, JSON.parse(ok.stdout).path), 'utf8');
+  assert.match(doc, /^derived_from: failure-cluster:0123456789abcdef$/m);
+  for (const ref of ['failure-cluster:XYZ', 'failure-cluster:0123456789abcdef0', 'finding-cluster:0123456789abcdef', 'failure-cluster:0123456789abcdef\nkind: fix', '']) {
+    const refused = capture(ref, `Refused ${ref.length}`);
+    assert.equal(refused.status, 2, ref);
+    assert.match(JSON.parse(refused.stdout).blockedReason, /failure-cluster:<id>/);
+  }
+  const teaching = runInsightCompound({ workspace: ws, copilotHome: home, home: path.join(home, 'hh'), kind: 'human-teaching', log: () => {}, flags: { title: 'Taught', body: 'A taught claim.', derivedFrom: 'failure-cluster:0123456789abcdef' } });
+  assert.equal(teaching.pass, false);
+  assert.match(teaching.blockedReason, /only on an insight/);
+  const episodes = collectEpisodes({ workspace: ws, copilotHome: home, home: path.join(home, 'hh') });
+  assert.equal(episodes.length, 1, 'refused captures write nothing');
+});

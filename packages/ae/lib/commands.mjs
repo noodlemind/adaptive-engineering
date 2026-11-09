@@ -61,7 +61,7 @@ import { indexStatus } from './index-status.mjs';
 import { buildStructuralIndex, readStructuralIndex, renderStructuralDigest, validateSinceRef } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';
 import { writeCodebaseMap } from './repo-map/index.mjs';
-import { KNOWLEDGE_COMMIT_MODES, KNOWLEDGE_MODES, inertLine, listLearnings, readStoreConfig, storeDir, writeStaleExclusions, writeStoreConfig, writeFeedbackConfig } from './knowledge/store.mjs';
+import { KNOWLEDGE_COMMIT_MODES, KNOWLEDGE_MODES, inertLine, listLearnings, readStoreConfig, storeDir, writeStaleExclusions, writeStoreConfig, writeFeedbackConfig, writeRecheckConfig } from './knowledge/store.mjs';
 import { assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { readOrientSlice } from './orient-read.mjs';
 import { prepareGraph } from './graph.mjs';
@@ -1418,7 +1418,7 @@ export async function cmdConsolidate(argv) {
   }
 
   if (hasFlag(argv, '--candidates')) {
-    const packet = prepareConsolidationPacket({ workspace, copilotHome, home: flags.harnessHome || process.env.HARNESS_HOME, dryRun: flags.dryRun, layer: flags.layer });
+    const packet = prepareConsolidationPacket({ workspace, copilotHome, home: flags.harnessHome || process.env.HARNESS_HOME, dryRun: flags.dryRun, layer: flags.layer, ...(hasFlag(argv, '--recheck') ? { recheck: true } : {}) });
     writeEvent(workspace, flags, { type: 'consolidate', command: 'consolidate', result: 'pass', exitCode: 0 });
     if (flags.json) {
       emitJson(flags, packet);
@@ -2015,6 +2015,27 @@ export async function cmdKnowledge(argv) {
     }
     if (flags.json) emitJson(flags, { pass: true, feedback: feedbackValue });
     else console.log(ui.line({ state: feedbackValue === 'off' ? 'warn' : 'ok', key: 'knowledge', value: `feedback ${feedbackValue}` }));
+    return 0;
+  }
+
+  if (subcommand === 'recheck') {
+    const recheckValue = argv[1];
+    const recheckResult = writeRecheckConfig(workspace, { recheck: recheckValue });
+    writeEvent(workspace, flags, {
+      type: 'knowledge',
+      command: 'knowledge',
+      decision: `recheck ${recheckValue || '(none)'}`,
+      result: recheckResult.pass ? 'pass' : 'fail',
+      exitCode: recheckResult.pass ? 0 : recheckResult.code === 'E_USAGE' ? EXIT.usage : 1,
+      blockedReason: recheckResult.blockedReason,
+    });
+    if (!recheckResult.pass) {
+      if (flags.json) emitJson(flags, recheckResult);
+      else for (const l of ui.errorBlock({ code: recheckResult.code, message: recheckResult.blockedReason, fix: 'ae knowledge recheck <off|suggest|on>', exit: recheckResult.code === 'E_USAGE' ? EXIT.usage : 1 })) console.error(l);
+      return recheckResult.code === 'E_USAGE' ? EXIT.usage : 1;
+    }
+    if (flags.json) emitJson(flags, { pass: true, recheck: recheckValue });
+    else console.log(ui.line({ state: recheckValue === 'off' ? 'warn' : 'ok', key: 'knowledge', value: `recheck ${recheckValue}` }));
     return 0;
   }
 

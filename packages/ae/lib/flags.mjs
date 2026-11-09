@@ -149,6 +149,7 @@ export function parseFlags(argv) {
     tags: null,
     trigger: null,
     claim: null,
+    derivedFrom: null,
     body: null,
     bodyFile: null,
     ops: null,
@@ -323,6 +324,8 @@ export function parseFlags(argv) {
     else if (a === '--trigger') flags.trigger = scan[++i];
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
+    else if (a.startsWith('--derived-from=')) flags.derivedFrom = a.split('=').slice(1).join('=');
+    else if (a === '--derived-from') flags.derivedFrom = scan[++i];
     else if (a.startsWith('--body=')) flags.body = a.split('=').slice(1).join('=');
     else if (a === '--body') flags.body = scan[++i];
     else if (a.startsWith('--body-file=')) flags.bodyFile = a.split('=').slice(1).join('=');

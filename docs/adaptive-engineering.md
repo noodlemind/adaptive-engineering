@@ -158,6 +158,14 @@ AE records which learnings each context pack delivered for a plan. When the work
 
 `ae knowledge feedback <off|suggest|on>` controls who reads those records. `off`, the default, only records them. `suggest` shows them to `/consolidate` as evidence, including learnings judged wrong in their current form and each reviewer's fixed and dismissed counts. `on` also lets an unresolved `wrong` verdict make consolidation due. No state grants authority: feedback never retires, disputes, confirms or promotes a learning. Knowledge modes `off`, `freeze` and `capture-only` read feedback as `off`.
 
+### Re-checking learnings
+
+`ae consolidate --candidates --recheck` asks `/consolidate` to re-check active learnings against later evidence. It reads only Harness records: exposure records, verification evidence, the run journal, review observations, feedback records and the learning store. It never reads host transcripts, because they are not authenticated. The `recheck` section lists exposed learnings whose source bindings changed, learnings judged wrong in their current form, checks or commands that failed in at least two plans, review findings that recur by perspective and file across at least two plans, and learning bodies that cite a learning or path that no longer exists. Each list is capped at 10 entries with omission counts, and failing-output excerpts are bounded and secret-screened.
+
+A cluster is evidence, not an episode. To turn one into a learning, the agent captures an insight with `ae compound --insight --derived-from failure-cluster:<id>` and cites it in an ordinary ADD or STRENGTHEN, so `ae consolidate --apply` stays the sole writer and the learning stays traceable to the cluster's evidence. `ae run list --plan <path> --status failed` shows a cluster's history.
+
+`ae knowledge recheck <off|suggest|on>` controls who reads re-check signals. `off`, the default, leaves packets and status byte-identical. `suggest` lets `--recheck` add the section and shows counts in status; due is unchanged. `on` also makes consolidation due when three exposed learnings have stale bindings or one failure cluster spans three plans. No state grants authority, and knowledge modes `off`, `freeze` and `capture-only` read re-check as `off`.
+
 A person can confirm, dispute, retire or promote a learning with `ae learning`. The governance ledger records each decision and reapplies it when learnings are rebuilt. Episodes from unverified investigation (`ae compound --insight`) stay separate and are never promoted automatically.
 
 ## Where state lives

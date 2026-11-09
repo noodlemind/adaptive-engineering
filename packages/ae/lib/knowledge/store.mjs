@@ -426,6 +426,41 @@ export function writeFeedbackConfig(workspace, { home, feedback } = {}) {
   return { feedback, committed: tx.committed, pass: true, blockedReason: null };
 }
 
+/** Re-check read ladder (plan: Configuration states). Same values and store field shape as feedback; unknown or absent read as `off`. */
+export const KNOWLEDGE_RECHECK_STATES = KNOWLEDGE_FEEDBACK_STATES;
+
+export function readRecheckConfig(workspace, { home } = {}) {
+  try {
+    const parsed = JSON.parse(readStoreFile(path.join(storeDir(workspace, { home }), 'config.json')));
+    if (parsed && KNOWLEDGE_RECHECK_STATES.has(parsed.recheck)) return parsed.recheck;
+  } catch {
+    // absent, unreadable, or corrupt — off
+  }
+  return 'off';
+}
+
+export function writeRecheckConfig(workspace, { home, recheck } = {}) {
+  if (!KNOWLEDGE_RECHECK_STATES.has(recheck)) return { recheck, committed: false, pass: false, code: 'E_USAGE', blockedReason: `unknown recheck state: ${recheck || '(none)'}; use off, suggest or on` };
+  const tx = withStoreTransaction(workspace, { home }, ({ dir }) => {
+    let raw = {};
+    try {
+      const parsed = JSON.parse(readStoreFile(path.join(dir, 'config.json')));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) raw = parsed;
+    } catch {
+      // absent/corrupt — nothing extra to preserve
+    }
+    if (!writeStoreFile(path.join(dir, 'config.json'), JSON.stringify({ ...raw, recheck }) + '\n')) {
+      throw new Error('refused to write config.json — the path does not resolve safely inside the knowledge store');
+    }
+    return { commitMessage: `knowledge: recheck ${recheck}` };
+  });
+  if (!tx.ok) {
+    return { recheck, committed: false, pass: false, code: tx.locked ? 'E_LOCKED' : 'E_STORE_TRANSACTION_FAILED',
+      blockedReason: tx.locked ? 'E_LOCKED: another operation holds the store lock' : `store transaction failed: ${tx.error?.message || 'unknown error'}` };
+  }
+  return { recheck, committed: tx.committed, pass: true, blockedReason: null };
+}
+
 export function writeStoreConfig(workspace, { home, mode, commit } = {}) {
   const tx = withStoreTransaction(workspace, { home }, ({ dir }) => {
     const current = readStoreConfig(workspace, { home });
