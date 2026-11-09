@@ -114,7 +114,7 @@ function fixture(t) {
 
 function manifestFixture(t) {
   const f = fixture(t);
-  const pilot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../.cursor/skills/verify-harness/formal/delivery-evidence');
+  const pilot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/formal-verification');
   const manifest = JSON.parse(fs.readFileSync(path.join(pilot, 'manifest.json'), 'utf8'));
   for (const name of new Set(manifest.models.flatMap(model => [model.module, model.config]))) fs.copyFileSync(path.join(pilot, name), path.join(f.root, name));
   fs.writeFileSync(path.join(f.root, 'intent.md'), 'The exported fixture value is one.\n');

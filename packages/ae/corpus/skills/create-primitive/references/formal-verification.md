@@ -39,13 +39,7 @@ Install tools deliberately outside the repository's source artifacts. The starte
 
 The optional checker also requires Git supporting the global `--no-lazy-fetch` option. If Git rejects that option, upgrade Git before rerunning. Safe metadata inspection refuses to retry without the no-fetch guard and leaves synchronization unchanged.
 
-Run the copied helper with `--manifest <repo-relative manifest.json>` from the product root. The specialized skill should give its real filled-in command. The library pilot runs:
-
-```bash
-node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs
-```
-
-Register that argv as a named check through the existing trusted check configuration and accepted plan. Declare `formal-verification.json` in its artifacts. Each invocation receives its own `HARNESS_CHECK_ARTIFACT_DIR`; manual runs use a unique private temporary directory and return its evidence path. Receipt collection does not itself establish semantic truth or authority to execute an unreviewed helper.
+Run the copied helper with `--manifest <repo-relative manifest.json>` from the product root. The specialized skill should give its real filled-in command. Register that argv as a named check through the existing trusted check configuration and accepted plan. Declare `formal-verification.json` in its artifacts. Each invocation receives its own `HARNESS_CHECK_ARTIFACT_DIR`; manual runs use a unique private temporary directory and return its evidence path. Receipt collection does not itself establish semantic truth or authority to execute an unreviewed helper.
 
 The receipt separates completed finite model checking, actual expected counterexamples, implementation observations, tool identity, source/verification bindings and synchronization. Missing tools, checksum mismatch, stale inputs, timeout, parse/evaluation error, malformed output or incomplete exploration never become a pass. The runner does not use `-continue`, simulation, or a skipped check to establish model checking. It preserves errors and actual traces, not just a success-shaped exit status.
 
@@ -90,7 +84,7 @@ These sixteen cases are selection/evaluation fixtures for the Engineer; they do 
 | --- | --- |
 | Prove retry ordering cannot publish twice | Create one property-specific model/check for the accepted promise |
 | Model-check the lease takeover race | Include failure, fencing and interleaving assumptions |
-| Verify current evidence before learning | Select the delivery-evidence skill and its actual conformance check |
+| Verify current evidence before learning | Use the project's existing workflow conformance check before adding a model |
 | An agent changed the guarded state writer | Maintain, review drift and rerun current code |
 | A merge moved a covered function | Follow its new location; preserve identity and old result |
 | A new untracked file writes guarded state | Inventory changes; block stale proof until reviewed |

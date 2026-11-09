@@ -1,13 +1,13 @@
 ---
 name: verify-delivery-evidence
-description: Check the bounded delivery-evidence model plus actual AE CLI/hook behavior after relevant gate, intent, proof, learning or recovery changes. Not for general code review, ordinary sessions or automatic tool installation.
+description: Check the delivery-evidence workflow diagram against AE's delivery rules after gate, intent, proof, learning or recovery changes, and update the diagram when the workflow changes. Not for general code review, ordinary sessions or changing rules merely to pass.
 ---
 
 # Verify delivery evidence
 
-Read this skill explicitly from the selected verify-harness recipe. It is a repo-local specialized skill, not a new global entry or a claim of native editor registration.
+Read this skill explicitly from the selected verify-harness recipe. It is a repo-local maintainer check, not a shipped skill.
 
-The promise is that governed product edits require accepted intent, verified-delivery learning requires current source/intent-bound proof, and recovery controls do not authorize mixed product mutations. Violations can allow unintended edits or certify stale work. Accepted authority is `docs/adaptive-engineering.md`, `docs/reference/plans-and-proof.md` and the shipped Harness tool contract, recorded in `manifest.json`.
+The promise: governed product edits require accepted intent, verified-delivery learning requires current proof, and recovery or insight capture does not complete delivery. The workflow is modeled as a Mermaid state diagram in [workflow.mmd](workflow.mmd). Each transition label is an action: `EnterDeliver`, `Lock`, `Edit`, `Amend`, `Review`, `Verify`, `Compound` or `CaptureInsight`.
 
 Run from the repository root:
 
@@ -15,28 +15,33 @@ Run from the repository root:
 node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs
 ```
 
-Set `AE_TLC_JAR` explicitly to the official v1.7.4 `tla2tools.jar` with SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`. It reports TLC `2.19 of 08 August 2024`; Java 17+, Node 20+ and Git supporting the global `--no-lazy-fetch` option are prerequisites. Upgrade Git if it rejects that option; the checker blocks and preserves synchronization instead of retrying without its no-fetch guard. The checker never downloads tools or approves a project. Use an explicit absolute `AE_TLC_JAVA` only to select another installed Java executable.
+The checker needs only Node. It follows every path through the diagram and checks five rules:
 
-`manifest.json` records the exact watched roots, explicit sources and last successful synchronization commit/digests. Every regular file under those roots is inventoried, including untracked writers. Files outside that declared inventory remain outside source coverage. A stale result must go through [maintenance](maintain/SKILL.md) before claiming current proof.
+| Rule | Meaning |
+| --- | --- |
+| `intent-before-edit` | Every `Edit` follows a `Lock`. |
+| `deliver-only-edits` | Every `Edit` follows `EnterDeliver`; Answer, Investigate and Review never edit. |
+| `current-evidence` | `Compound` follows a `Verify` with no `Edit` or `Amend` since. |
+| `insight-is-inert` | `CaptureInsight` never changes the delivery state. |
+| `progress` | After a `Review`, `Compound` stays reachable. |
 
-The command runs real TLC on `DeliveryEvidence.tla`, checks the safety-negative model produces its actual counterexample, and checks the no-progress model produces its actual liveness counterexample. It then drives the real CLI/hooks and a deliberately weakened guard on an owned disposable copy. Expected implementation negative detection is distinct from a tool/setup failure.
+It then builds two broken variants, one with an unguarded `Compound` and one with no `Verify`, and fails unless each is caught. The receipt is `delivery-evidence-model.json` under `HARNESS_CHECK_ARTIFACT_DIR`, and is also printed to stdout.
 
-The mathematical model covers a baseline plus at most two edits and two accepted intent versions. Progress assumes successful available tools, fair scheduling and the finite edit/amend bound. It does not assert that cancelled, abandoned or permanently blocked work completes. `mode` represents the Engineer's documented obligation; Harness does not authenticate a declared semantic mode. Actual AE-I3 correspondence concerns operation/recovery authority. The unverified `--insight` lane remains distinct from verified-delivery learning and completion.
+The diagram describes the intended workflow; it does not prove the code follows it. The [workflow-invariant checks](../../features/workflow-invariants.md), `verify-workflow-invariants` and `verify-workflow-invariants-negative`, drive the real CLI and hooks on a disposable copy and confirm a deliberately weakened guard is detected. Run them together with this check. The diagram has no counters or data, so bounds such as the number of edits are covered by those behavior checks, not here.
 
-`formal-verification.json` retains results, finite scope, tool identity, traces, actual observations and bindings. Named checks use `HARNESS_CHECK_ARTIFACT_DIR`; manual runs return a unique temporary evidence path. A completed finite model pass and observed traces are not full implementation refinement or semantic completeness. The receipt says so explicitly. Missing tools, drift and incomplete runs return nonzero, not a skip or pass.
+## When the workflow changes
 
-Treat failures as evidence. A model step that cannot occur in code indicates a modeling problem; a reachable violation indicates a possible product bug. Do not weaken the accepted property to obtain green output. Do not edit production code while maintaining verification unless the accepted Deliver scope authorizes that fix.
+Update `workflow.mmd` in the same change as the code. Keep to the supported syntax: `A --> B` with an optional `: Action` label, `[*]` for start and end, and `%%` comments. Rerun the check and the workflow-invariant checks. If the new diagram breaks a rule, treat it as a possible product defect; do not weaken a rule to get a pass. Changing a rule needs accepted intent, such as an updated spec.
 
 ## Trigger Examples
 
 **Should trigger:**
 
-- Prove that changed locked intent blocks implementation.
-- Check source changes invalidate verified-delivery learning authority.
-- Model-check failed-gate recovery without admitting mixed mutations.
+- Check that changed locked intent still blocks implementation.
+- A new step was added between review and verification.
+- Recovery code moved and the workflow needs rechecking.
 
 **Should not trigger:**
 
 - Explain an ordinary CLI flag.
-- Review unrelated UI styling.
-- Install a formal methods tool without an explicit setup task.
+- Make a failing rule disappear without an accepted fix.

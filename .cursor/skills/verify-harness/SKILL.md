@@ -78,7 +78,7 @@ Delete temp workspaces, temp `AE_HOME` dirs, and linked git worktrees the drive 
 - Self-contained diagrams: `ae checks run adaptive-diagram-tests --json`; see [diagram rendering](./features/diagrams.md) for real CLI, native tool, offline installation, freshness and negative-control coverage.
 - Workflow conformance: `node .cursor/skills/verify-harness/scripts/prove-workflow-invariants.mjs`, named check `verify-workflow-invariants`.
 - Deliberate-break detection: `node .cursor/skills/verify-harness/scripts/prove-workflow-invariants.mjs --negative-control`, named check `verify-workflow-invariants-negative`; see [workflow invariants](./features/workflow-invariants.md).
-- Optional deep model check: `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`, named check `verify-formal-delivery`. Read the [pilot skill](./formal/delivery-evidence/SKILL.md) first; Java 17+ and the exact approved `AE_TLC_JAR` are separate prerequisites. Maintenance uses the [companion skill](./formal/delivery-evidence/maintain/SKILL.md).
+- Delivery-evidence workflow model: `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`, named check `verify-formal-delivery`. It checks every path through a Mermaid state diagram and needs only Node; read the [skill](./formal/delivery-evidence/SKILL.md) first.
 
 ## Trigger Examples
 
