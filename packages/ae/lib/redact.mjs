@@ -73,8 +73,9 @@ const DEFAULT_PATTERNS = [
   {
     // `key=value`, `key: value` and JSON `"key": "value"` for secret-named keys,
     // including prefixed names such as DB_PASSWORD or aws_secret_access_key.
+    // Literal undefined/null/true/false values carry no secret and stay readable.
     kind: 'kv-secret',
-    re: /\b((?:[A-Za-z0-9]+[_-])*(?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«)[^\s&"',;}]{1,500}/i,
+    re: /\b((?:[A-Za-z0-9]+[_-])*(?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\s&"',;}]))[^\s&"',;}]{1,500}/i,
     mask: (_match, key, sep) => `${key}${sep}${mask('kv-secret')}`,
   },
 ];

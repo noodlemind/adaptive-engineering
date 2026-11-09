@@ -110,7 +110,8 @@ test('kv-secret: masks colon, JSON and prefixed secret keys without touching loo
     ['client_secret: abc123', 'client_secret: «redacted:kv-secret»'],
   ];
   for (const [input, expected] of masked) assert.equal(redactText(input), expected, input);
-  for (const clean of ['tokens: 1200', 'TOKEN_BUDGET=5', 'secrets are never committed']) assert.equal(redactText(clean), clean);
+  for (const clean of ['tokens: 1200', 'TOKEN_BUDGET=5', 'secrets are never committed', 'SECRET=undefined', '"token": null']) assert.equal(redactText(clean), clean);
+  assert.equal(redactText('secret=nullable-value'), 'secret=«redacted:kv-secret»');
 });
 
 test('provider token shapes are masked by kind', () => {
