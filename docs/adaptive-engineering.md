@@ -152,6 +152,12 @@ Knowledge has three tiers. Each tier has a single writer.
 2. **Learnings.** `/consolidate` clusters episodes into learnings, stored in a local Git repository at `~/.ae/knowledge/<repo-id>/`, outside your working tree. Only `ae` commands write that store: `ae consolidate --apply` and `ae remember` add learnings, and `ae learning` changes their status. `ae orient` injects the best-matching learnings into the next task's context.
 3. **Behavior.** A pattern that should change how every task runs becomes a skill, agent or instruction, through a reviewed change to the corpus.
 
+### Feedback on recall and review
+
+AE records which learnings each context pack delivered for a plan. When the work finishes, the learning decision can say whether each one `helped`, was `irrelevant` or was `wrong`, and whether each review finding was `fixed` or `dismissed`. Harness checks every ID against what the plan actually saw and writes the verdicts to an immutable record in `~/.ae/projects/<repo-id>/feedback/`, so verdicts from every worktree reach consolidation.
+
+`ae knowledge feedback <off|suggest|on>` controls who reads those records. `off`, the default, only records them. `suggest` shows them to `/consolidate` as evidence, including learnings judged wrong in their current form and each reviewer's fixed and dismissed counts. `on` also lets an unresolved `wrong` verdict make consolidation due. No state grants authority: feedback never retires, disputes, confirms or promotes a learning. Knowledge modes `off`, `freeze` and `capture-only` read feedback as `off`.
+
 A person can confirm, dispute, retire or promote a learning with `ae learning`. The governance ledger records each decision and reapplies it when learnings are rebuilt. Episodes from unverified investigation (`ae compound --insight`) stay separate and are never promoted automatically.
 
 ## Where state lives
@@ -163,6 +169,7 @@ A person can confirm, dispute, retire or promote a learning with `ae learning`. 
 | Learnings | `~/.ae/knowledge/<repo-id>/` |
 | Knowledge search index | `~/.ae/index/<repo-id>/knowledge/` |
 | Trust approvals | `~/.ae/trust.yaml` |
+| Recall and review feedback records | `~/.ae/projects/<repo-id>/feedback/` |
 | Runtime evidence for one checkout | `.harness/` in the checkout, excluded from Git |
 | Shared team configuration (optional) | `.github/harness/` in the repository |
 

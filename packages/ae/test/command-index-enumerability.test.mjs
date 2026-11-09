@@ -139,7 +139,7 @@ const DECLARED_VERBS = Object.freeze({
   host: ['list', 'setup', 'status', 'remove', 'export'],
   mcp: ['serve'],
   graph: ['deps', 'dependents', 'path', 'explain', 'impact'],
-  knowledge: ['on', 'suggest', 'off', 'freeze', 'capture-only', 'status', 'promote', 'prune', 'purge', 'commit', 'migrate-store'],
+  knowledge: ['on', 'suggest', 'off', 'freeze', 'capture-only', 'status', 'promote', 'prune', 'purge', 'commit', 'feedback', 'migrate-store'],
   learning: ['retire', 'dispute', 'confirm', 'promote'],
   // `lookup`'s eleven entity kinds are verbs rather than a free-text
   // positional. As free text the palette filled the slot with any word and
@@ -197,7 +197,7 @@ const VERB_FLAGS = Object.freeze({
  */
 const VERB_POSITIONALS = Object.freeze({
   graph: { deps: ['file'], dependents: ['file'], path: ['file', 'target'], explain: ['file', 'target'], impact: ['file'] },
-  knowledge: { purge: ['target'], commit: ['target'] },
+  knowledge: { purge: ['target'], commit: ['target'], feedback: ['target'] },
   learning: { retire: ['id'], dispute: ['id'], confirm: ['id'], promote: ['id'] },
   // Every lookup kind names exactly one entity, so all eleven consume the
   // identifier slot — a kind row without it is a row no answer can complete.

@@ -19,6 +19,8 @@ import { collectOrientationFacts } from './orientation-facts.mjs';
 import { buildContextRecord } from './context-record.mjs';
 import { accountContext } from './token-meter.mjs';
 import { writeFileContained } from './fs-safe.mjs';
+import { recordExposure } from './learning-feedback.mjs';
+import { planRecordRoot } from './domain-context.mjs';
 
 const ORIENT_BRANCH_CAP = 80;
 function writeContextFile(workspace, rel, content) {
@@ -193,6 +195,13 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
 
   const packRel = '.harness/context-pack.md';
   if (!flags.dryRun && !writeContextFile(workspace, packRel, packBody)) throw Object.assign(new Error('context pack target is unsafe or unavailable; no context pack was written'), { code: 'E_ORIENT_WRITE', exit: 1 });
+  if (!flags.dryRun && active?.path && deliveredLearnings.length) {
+    try {
+      recordExposure({ recordRoot: planRecordRoot(workspace, active), workspace, home, planPath: active.path, delivered: learnings.filter((l) => deliveredLearnings.includes(l.id)) });
+    } catch {
+      // Exposure is bookkeeping for the feedback loop; never fail orientation on it.
+    }
+  }
 
   const newSession = {
     ...session,

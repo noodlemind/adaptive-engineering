@@ -6,6 +6,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor } from './overlay.mjs';
+import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -228,7 +229,8 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     const learnings = listLearnings(view.layerRoot);
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
-    const due = ['on', 'suggest'].includes(mode) && debt >= CONSOLIDATION_THRESHOLD;
+  const feedback = feedbackView({ workspace, home, learnings: active });
+  const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0));
   return {
     mode,
     debt,
@@ -239,11 +241,24 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     learnings: { active: active.length, total: learnings.length },
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
+    ...(feedback ? { feedback: { state: feedback.state, records: feedback.records, review_required: feedback.review_required } } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),
     nextTools: due ? ['ae consolidate --candidates'] : [],
   };
+}
+
+/** Feedback evidence for packets and status; absent when the effective state is `off`, so output stays byte-identical. */
+function feedbackView({ workspace, home, learnings }) {
+  let state = 'off';
+  try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
+  if (state === 'off') return null;
+  try {
+    return { state, ...feedbackSummary({ workspace, home, learnings }) };
+  } catch (error) {
+    return { state, records: 0, learnings: [], review_required: [], reviewers: [], unavailable: inertLine(error.message).slice(0, 200) };
+  }
 }
 
 export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null }) {
@@ -294,7 +309,10 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const active = activeLearnings(listLearnings(view.layerRoot));
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
-  const learnings = active.map((l) => ({
+  const feedback = feedbackView({ workspace, home, learnings: active });
+  const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
+  const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
+  const learnings = ordered.map((l) => ({
     id: l.id,
         trigger: inertLine(l.fm.trigger || ''),
     status: l.fm.status || 'active',
@@ -318,6 +336,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
     learnings,
     domains: status.domains,
     governed,
+    ...(feedback ? { feedback } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),

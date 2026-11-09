@@ -68,6 +68,8 @@ Supply a learning decision to Harness with an approved private/global publicatio
 
 Use `decision: "no-learning"` with a rationale when no durable lesson exists. It produces no episode. Operation IDs support safe replay; reuse an ID only for the same decision and proof. Promotion recommendations are proposals, never activation authority.
 
+Report whether memory held up, so it can improve. When this plan's context pack listed learnings, add `recalled` with a `helped`, `irrelevant` or `wrong` verdict for each one you can judge. When review raised findings, add `findings` with `fixed` or `dismissed` for each one you resolved. Both fields are optional, work on `publish` and `no-learning` decisions, and are evidence for consolidation only. The field contract is in `learning-operations.md`.
+
 ## Continuous memory and recurring work
 
 Explicit user instructions and corrections can be captured during work through the existing memory writer under recorded authority; do not postpone them until this success gate. Preserve source attribution, scope, and instruction authority. Inferred lessons remain provisional and cannot silently override explicit user instructions. The native decision-agent can assess conflicts, evidence, and a proposed scoped update, but cannot grant memory-write authority. Revoked grants stop subsequent autonomous updates.
