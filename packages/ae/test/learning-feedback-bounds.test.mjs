@@ -10,7 +10,7 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { ensureStore, writeFeedbackConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { compactDecisions, latestArchivedReadiness } from '../lib/decision-archive.mjs';
+import { compactDecisions, hydrateArchivedDecision, latestArchivedReadiness } from '../lib/decision-archive.mjs';
 import { decisionStatus, prepareDecision } from '../lib/decision-agent.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import {
@@ -344,6 +344,7 @@ test('decision status reports only well-formed warnings about live requests, one
   const ids = Object.keys(requests);
   const warnings = [
     ...ids.map((requestId, i) => ({ at: i, requestId, message: `old ${i}` })),
+    { at: 98, requestId: ids[18], message: `${'a'.repeat(499)}\u{1F600}tail` },
     { at: 99, requestId: ids[19], message: 'newest for 19' },
     { at: 'soon', requestId: ids[0], message: 'bad time' },
     { at: 1, requestId: ids[0], message: 7 },
@@ -357,4 +358,38 @@ test('decision status reports only well-formed warnings about live requests, one
   assert.ok(status.warnings.every(item => typeof item.at === 'number' && typeof item.message === 'string' && Object.hasOwn(requests, item.requestId)));
   assert.equal(new Set(status.warnings.map(item => item.requestId)).size, 16, 'one warning per request');
   assert.equal(status.warnings.at(-1).message, 'newest for 19');
+  assert.equal(status.warnings.at(-2).message, `${'a'.repeat(499)}\u{1F600}`, 'truncation keeps a surrogate pair whole');
+});
+
+test('under an index fault a hydrated request is never kept live, and an older request\'s warning rides on the newest live one', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const r1 = d.readiness('escalate', 1), r2 = d.readiness('blocked', 2);
+  const archived = d.state([r1, r2]);
+  assert.deepEqual(compactDecisions(loc, archived), []);
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2);
+  fs.renameSync(path.join(d.archive, 'readiness'), path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'readiness'), 'dir');
+
+  // R1 comes back from the archive (re-prepare or inspect); it must not be kept live as "newest".
+  const hydrated = d.state([]);
+  assert.equal(hydrateArchivedDecision(loc, hydrated, r1.requestId).requestId, r1.requestId);
+  compactDecisions(loc, hydrated);
+  assert.deepEqual(Object.keys(hydrated.requests), [], 'the hydrated request is retired again');
+
+  // An older terminal request archived under the fault reports through the plan's newest live request.
+  const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+  const hash = value => crypto.createHash('sha256').update(stable(value)).digest('hex');
+  const r3 = d.readiness('escalate', 3);
+  const packet = { schema: 1, type: 'readiness', planPath: PLAN, nonce: 4 };
+  const value = { schema: 1, requestId: hash(packet), type: 'readiness', verdict: 'ready', authorized: true, recordedAt: 4, consumedAt: null };
+  const r4 = { requestId: hash(packet), request: { ...packet, requestId: hash(packet), createdAt: 4 }, receipt: { ...value, id: hash(value) } };
+  const undated = d.readiness('escalate', 5);
+  undated.receipt.recordedAt = null;
+  const live = d.state([r3, r4, undated]);
+  const warnings = compactDecisions(loc, live);
+  assert.deepEqual(Object.keys(live.requests), [r4.requestId], 'the older and undated terminal requests compact; the open newest stays');
+  assert.ok(warnings.length >= 1 && warnings.every(item => item.requestId === r4.requestId), 'warnings name the live newest request');
+  assert.ok(warnings.some(item => item.message.includes(`older request ${r3.requestId}`)));
 });

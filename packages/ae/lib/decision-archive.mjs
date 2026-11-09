@@ -103,11 +103,14 @@ export function compactDecisions(loc, state) {
   const warnings = [];
   if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return warnings;
   const now = loc.now ?? Date.now(), touched = new Set();
-  // The newest live readiness receipt per plan; only it is kept live when its index write is refused.
+  // The newest live readiness receipt per plan; only it is kept live when its
+  // index write is refused, so a lasting fault retains at most one request per
+  // plan (there is no cross-plan cap). A request hydrated from the archive is
+  // never a candidate: a newer receipt may already be archived.
   const newestReadiness = new Map();
   for (const [requestId, request] of Object.entries(state.requests)) {
     const receipt = state.receipts[requestId];
-    if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string') continue;
+    if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !Number.isFinite(receipt.recordedAt) || state.archivedHydrated?.has(requestId)) continue;
     const current = state.receipts[newestReadiness.get(request.planPath)];
     if (!current || receipt.recordedAt > current.recordedAt) newestReadiness.set(request.planPath, requestId);
   }
@@ -127,8 +130,9 @@ export function compactDecisions(loc, state) {
     // readiness request stays live for a retry; older ones compact normally,
     // so live state stays bounded at one request per plan.
     try { retainLatestReadiness(loc, request, receipt); } catch (error) {
-      const keep = newestReadiness.get(request.planPath) === requestId;
-      warnings.push({ requestId, message: `readiness index not retained${keep ? '; request stays live' : ''}: ${error.message}` });
+      const newest = newestReadiness.get(request.planPath), keep = newest === requestId;
+      // A warning lives as long as its request; an archived request's warning rides on the plan's newest live one.
+      if (newest) warnings.push({ requestId: newest, message: keep ? `readiness index not retained; request stays live: ${error.message}` : `readiness index not retained for older request ${requestId}: ${error.message}` });
       if (keep) continue;
     }
     touched.add(request.budgetKey);

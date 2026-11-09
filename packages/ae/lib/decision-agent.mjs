@@ -125,7 +125,7 @@ function stateWarnings(state) {
   for (const item of Array.isArray(state.warnings) ? state.warnings : []) {
     if (!object(item) || !Number.isFinite(item.at) || typeof item.message !== 'string' || !ID.test(item.requestId || '') || !Object.hasOwn(state.requests, item.requestId)) continue;
     byRequest.delete(item.requestId);
-    byRequest.set(item.requestId, { at: item.at, requestId: item.requestId, message: item.message.slice(0, 500) });
+    byRequest.set(item.requestId, { at: item.at, requestId: item.requestId, message: Array.from(item.message).slice(0, 500).join('') });
   }
   return [...byRequest.values()].slice(-MAX_STATE_WARNINGS);
 }
