@@ -20,6 +20,8 @@ export const RECHECK_DUE_STALE_EXPOSED = 3;
 export const RECHECK_DUE_CLUSTER_PLANS = 3;
 export const RECHECK_EXCERPT_CAP = 400;
 const RECHECK_MASK_WINDOW = 8 * RECHECK_EXCERPT_CAP;
+const RECHECK_LONG_TOKEN = 1024;
+const ANSI_CSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
 /** `derived_from` reference to a failure cluster. The ID is a stable digest of the cluster key. */
 export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
 const SCAN_CAP = 512;
@@ -86,18 +88,24 @@ function readJson(root, rel) {
 
 /**
  * Bounded, secret-screened tail of a failing check's retained output. Any
- * private-key header withholds it. Control characters and whitespace runs are
- * collapsed first, so padding cannot push a keyword such as `client_secret=`
- * or `Authorization: Bearer` out of the masking window while its value stays
- * in the tail. Masking then runs over a bounded window (some patterns are
- * superlinear on long output), well wider than the tail, before the last
- * characters are kept and screened once more.
+ * private-key header withholds it. ANSI CSI sequences are stripped, so a
+ * colour code cannot sit between a keyword and its value. Control characters
+ * and whitespace runs are then collapsed, so padding cannot push a keyword
+ * such as `client_secret=` or `Authorization: Bearer` out of the masking
+ * window while its value stays in the tail. Any unbroken run of
+ * `RECHECK_LONG_TOKEN` or more non-space characters is withheld whole, so the
+ * tail of a secret longer than the window cannot survive without its keyword.
+ * Masking then runs over a bounded window (some patterns are superlinear on
+ * long output), well wider than the tail, before the last characters are kept
+ * and screened once more.
  */
 export function failureExcerpt(check) {
   const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
   if (!raw) return null;
   if (/PRIVATE KEY/.test(raw)) return '[withheld: private-key]';
-  const flat = raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Split rather than match `\S{1024,}`: that regex rescans every run just under the threshold.
+  const flat = raw.replace(ANSI_CSI, '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim()
+    .split(' ').map(run => (run.length >= RECHECK_LONG_TOKEN ? '[withheld: long-token]' : run)).join(' ');
   const masked = maskSecrets(flat.slice(-RECHECK_MASK_WINDOW));
   return redactSecrets(masked.slice(-RECHECK_EXCERPT_CAP));
 }

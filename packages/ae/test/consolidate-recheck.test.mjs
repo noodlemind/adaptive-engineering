@@ -417,7 +417,8 @@ test('an oversized run journal contributes its newest records and says it was tr
 
 test('excerpt masking stays fast on very long output', () => {
   // `a-a-a-...api` backtracks superlinearly in the generic-api-key pattern; 8k chars already take tens of milliseconds unbounded.
-  const long = `${'a-'.repeat(500_000)}api`;
+  // Spaces split it into 1,000-char runs so the long-token rule does not withhold it before masking.
+  const long = `${`${'a-'.repeat(500)} `.repeat(1000)}api`;
   const started = performance.now();
   const excerpt = failureExcerpt({ stderr: long });
   assert.ok(performance.now() - started < 1000, 'masking is bounded');
@@ -492,4 +493,30 @@ test('evidence written by a real named check and writeEvidence clusters across p
   assert.equal(cluster.id, failureClusterId('check:unit'));
   assert.equal(cluster.plan_count, 2);
   assert.match(cluster.excerpt, /retry count wrong/);
+});
+
+test('ANSI colour codes between a keyword and its value do not defeat masking', () => {
+  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
+  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
+  const apiKey = failureExcerpt({ stderr: `failed: api_key=\x1b[1m${key}\x1b[0m done` });
+  assert.equal(apiKey.includes(key), false, apiKey);
+  const bearer = failureExcerpt({ stderr: `failed: Bearer \x1b[33m${token}\x1b[0m done` });
+  assert.equal(bearer.includes(token), false, bearer);
+  assert.equal(/\x1b/.test(apiKey + bearer), false, 'no escape bytes reach the excerpt');
+});
+
+test('a secret longer than the masking window is withheld whole, not leaked by its tail', () => {
+  const clientSecret = failureExcerpt({ stderr: `client_secret=${'Zx9'.repeat(1100)} done` });
+  assert.equal(clientSecret.includes('Zx9Zx9'), false, clientSecret);
+  assert.match(clientSecret, /\[withheld: long-token\] done$/);
+  const bearer = failureExcerpt({ stderr: `Authorization: Bearer ${'q'.repeat(3300)} done` });
+  assert.equal(bearer.includes('qqqq'), false, bearer);
+  assert.match(bearer, /\[withheld: long-token\] done$/);
+  assert.equal(failureExcerpt({ stderr: `short ${'w'.repeat(1023)} ok` }).includes('w'.repeat(300)), true, 'runs under the threshold are kept');
+});
+
+test('masking catches a connection string whose user part looks like another secret', () => {
+  const password = 'S3cr3tPassw0rdValue';
+  const excerpt = failureExcerpt({ stderr: `failed: postgres://AKIAABCDEFGHIJKLMNOP:${password}@db.internal/app` });
+  assert.equal(excerpt.includes(password), false, excerpt);
 });
