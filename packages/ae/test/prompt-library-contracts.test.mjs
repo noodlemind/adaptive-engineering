@@ -861,8 +861,8 @@ test('knowledge layer surface: consolidate command and insight lane stay documen
   assert.equal(hasCommand('eval-knowledge'), true, 'eval-knowledge command registered');
     assert.equal(
     describeCommand('knowledge')?.usage,
-    '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | migrate-store',
-    'help documents the knowledge suggest mode, opt-in commit mode, and stranded-store migration'
+    '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | feedback <off|suggest|on> | migrate-store',
+    'help documents the knowledge suggest mode, opt-in commit mode, feedback ladder, and stranded-store migration'
   );
   assert.equal(
     describeCommand('learning')?.usage,

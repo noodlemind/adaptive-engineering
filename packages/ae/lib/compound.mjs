@@ -21,6 +21,7 @@ import { withPlanUpdateLock } from './plan-update.mjs';
 import { proofPrerequisites } from './completion.mjs';
 import { recordHash, readReviewRecord, publishReviewRecord } from './review.mjs';
 import { learningPointerRel, publicationTarget, learningPublicationCurrent } from './learning-record.mjs';
+import { validateFeedbackFields, publishFeedbackRecord } from './learning-feedback.mjs';
 import { capabilityOptions, capabilityContext, adaptationContext, loadedResourceUses } from './adaptive-context.mjs';
 import { retainVerifiedPublication } from './resource-recurrence.mjs';
 import { discoveryPolicy } from './capability-catalog.mjs';
@@ -377,12 +378,21 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
   const decision = JSON.parse(text);
   if (!decision || typeof decision !== 'object' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(decision.operation || '') || !['no-learning', 'publish'].includes(decision.decision)
-    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
+    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
   const selected = selectPlan(workspace, { planPath: flags.plan, session: readSession(workspace), requireUnique: true, home: flags.harnessHome, domainContext });
   if (!selected.plan) throw new Error('Learning decision requires an unambiguous plan');
   const recordRoot = planRecordRoot(workspace, selected.plan);
   const home = planHome(workspace, selected.plan, flags.harnessHome || process.env.HARNESS_HOME);
+  const feedback = validateFeedbackFields(decision, { recordRoot, planPath: selected.plan.path });
+  const recordFeedback = record => {
+    if (!feedback) return {};
+    try {
+      return { feedbackRecord: publishFeedbackRecord({ workspace, home, operation: record.operation, planPath: selected.plan.path, captureDate: record.captureDate, feedback }) };
+    } catch (error) {
+      return { feedbackRecord: { written: false, reason: error.message } };
+    }
+  };
   const checked = proofPrerequisites({ workspace, plan: selected.plan, copilotHome });
   if (!checked.pass) return { pass: false, exitCode: 2, blockedReason: checked.message, plan: selected.plan.path, path: null };
   const operation = recordHash(decision.operation);
@@ -415,7 +425,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
           blockedReason: `Memory decision required: ${authority.reason}`, memoryDecision: memory, learningRecord: rel };
       }
       publishReviewRecord(recordRoot, pointer, { version: 1, operation, record: rel });
-      return { ...prior.result, learningRecord: rel, replayed: true };
+      return { ...prior.result, learningRecord: rel, replayed: true, ...recordFeedback(prior) };
     }
     const pending = prior ? { ...prior, digest, ...(destination ? { destination } : {}) } : { version: 1, operation, digest, decision, ...(destination ? { destination } : {}), proof: checked.value, captureDate: new Date().toISOString().slice(0, 10), state: 'pending' };
     const fresh = proofPrerequisites({ workspace, plan: selected.plan, copilotHome });
@@ -439,7 +449,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
         return { ...failure, learningRecord: rel };
       }
     }
-    return { ...result, learningRecord: rel, ...(retainedEvidence ? { retainedEvidence } : {}) };
+    return { ...result, learningRecord: rel, ...(retainedEvidence ? { retainedEvidence } : {}), ...(result.pass ? recordFeedback(completed) : {}) };
   }));
 }
 

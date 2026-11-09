@@ -61,7 +61,7 @@ import { indexStatus } from './index-status.mjs';
 import { buildStructuralIndex, readStructuralIndex, renderStructuralDigest, validateSinceRef } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';
 import { writeCodebaseMap } from './repo-map/index.mjs';
-import { KNOWLEDGE_COMMIT_MODES, KNOWLEDGE_MODES, inertLine, listLearnings, readStoreConfig, storeDir, writeStaleExclusions, writeStoreConfig } from './knowledge/store.mjs';
+import { KNOWLEDGE_COMMIT_MODES, KNOWLEDGE_MODES, inertLine, listLearnings, readStoreConfig, storeDir, writeStaleExclusions, writeStoreConfig, writeFeedbackConfig } from './knowledge/store.mjs';
 import { assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { readOrientSlice } from './orient-read.mjs';
 import { prepareGraph } from './graph.mjs';
@@ -1994,6 +1994,27 @@ export async function cmdKnowledge(argv) {
         ui.line({ state: commitValue === 'repo' ? 'ok' : 'warn', key: 'knowledge', value: `commit ${commitValue}` })
       );
     }
+    return 0;
+  }
+
+  if (subcommand === 'feedback') {
+    const feedbackValue = argv[1];
+    const feedbackResult = writeFeedbackConfig(workspace, { feedback: feedbackValue });
+    writeEvent(workspace, flags, {
+      type: 'knowledge',
+      command: 'knowledge',
+      decision: `feedback ${feedbackValue || '(none)'}`,
+      result: feedbackResult.pass ? 'pass' : 'fail',
+      exitCode: feedbackResult.pass ? 0 : feedbackResult.code === 'E_USAGE' ? EXIT.usage : 1,
+      blockedReason: feedbackResult.blockedReason,
+    });
+    if (!feedbackResult.pass) {
+      if (flags.json) emitJson(flags, feedbackResult);
+      else for (const l of ui.errorBlock({ code: feedbackResult.code, message: feedbackResult.blockedReason, fix: 'ae knowledge feedback <off|suggest|on>', exit: feedbackResult.code === 'E_USAGE' ? EXIT.usage : 1 })) console.error(l);
+      return feedbackResult.code === 'E_USAGE' ? EXIT.usage : 1;
+    }
+    if (flags.json) emitJson(flags, { pass: true, feedback: feedbackValue });
+    else console.log(ui.line({ state: feedbackValue === 'off' ? 'warn' : 'ok', key: 'knowledge', value: `feedback ${feedbackValue}` }));
     return 0;
   }
 

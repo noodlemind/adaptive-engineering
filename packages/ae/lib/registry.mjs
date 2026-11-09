@@ -1918,7 +1918,7 @@ registerCommand({
   summary: 'knowledge layer mode switch and purge (human deletion always wins)',
   group: 'knowledge',
   sideEffect: 'mutate',
-    usage: '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | migrate-store',
+    usage: '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | feedback <off|suggest|on> | migrate-store',
     extraOptions: [
     ['status', 'layer-aware report: golden domain counts, branch buckets, recall-index drift (read-only)'],
     ['promote [--branch <key>] [--ids a,b] [--all]', 'emit a reviewable branch→golden promotion op-set (.harness/promote-ops.json)'],
@@ -1926,6 +1926,7 @@ registerCommand({
     ['purge <file>', 'cascade-delete an episode and dependent learnings'],
     ['purge --all', 'reset the learnings store (episodes remain, become debt)'],
     ['commit <none|repo>', 'repo mirrors ACTIVE learnings into docs/knowledge/learnings (opt-in, never git-commits the product repo); none is the default'],
+    ['feedback <off|suggest|on>', 'learning-feedback read ladder: off records only (default), suggest shows feedback evidence in consolidation, on also lets it make consolidation due'],
     ['migrate-store [--from-id <id>]', 'copy missing files from other ids of this checkout into the stable id and keep every source; --from-id preserves old knowledge and plans in place'],
   ],
     verbs: [
@@ -1949,6 +1950,11 @@ registerCommand({
       positionals: ['target'],
     },
     {
+      verb: 'feedback',
+      summary: 'learning-feedback read ladder: off records only (default), suggest shows feedback evidence in consolidation, on also lets it make consolidation due',
+      positionals: ['target'],
+    },
+    {
       verb: 'migrate-store',
       summary:
         'copy missing learnings into the current store and keep every source; --from-id preserves old knowledge and plans in place',
@@ -1958,11 +1964,11 @@ registerCommand({
     positionals: [
       {
         name: 'subcommand',
-        description: 'on|suggest|off|freeze|capture-only|status|promote|prune|purge|commit|migrate-store',
+        description: 'on|suggest|off|freeze|capture-only|status|promote|prune|purge|commit|feedback|migrate-store',
         required: false,
         default: null,
       },
-      { name: 'target', description: 'purge target, or the commit mode (none|repo)', required: false, default: null },
+      { name: 'target', description: 'purge target, the commit mode (none|repo), or the feedback state (off|suggest|on)', required: false, default: null },
     ],
     flags: [
       { name: '--from-id', type: 'string', valueName: 'id', description: 'adopt an existing local or canonical remote storage ID without moving records; refuses conflicts', required: false, default: null, tui: 'prompt', verbs: ['migrate-store'] },

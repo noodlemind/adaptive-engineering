@@ -590,3 +590,16 @@ export function guardDecisionTool(options) {
     return { permissionDecision: 'deny', permissionDecisionReason: `${checked.reason}. Prepare an action packet using the host setup's absolute installed Node/package argv for resources decision --file, invoke native decision-agent, and record its observed verdict before retrying.`, continue: false };
   } catch (error) { return { permissionDecision: 'deny', permissionDecisionReason: error.message, continue: false }; }
 }
+
+/** Read-only: the newest recorded readiness receipt for a plan, for feedback records to cite. Never authority. */
+export function latestReadinessReceipt(options) {
+  let state, loc;
+  try { loc = locations(options); state = readState(loc); } catch { return null; }
+  let latest = null;
+  for (const receipt of Object.values(state.receipts)) {
+    if (receipt?.type !== 'readiness' || !ID.test(receipt.id || '')) continue;
+    if (state.requests[receipt.requestId]?.planPath !== options.planPath) continue;
+    if (!latest || receipt.recordedAt > latest.recordedAt) latest = receipt;
+  }
+  return latest ? { id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
+}

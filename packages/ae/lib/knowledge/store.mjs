@@ -391,6 +391,41 @@ export function readStoreConfig(workspace, { home } = {}) {
   return { mode, commit };
 }
 
+/** Learning-feedback read ladder (plan: Configuration states). Unknown or absent values read as `off`. */
+export const KNOWLEDGE_FEEDBACK_STATES = new Set(['off', 'suggest', 'on']);
+
+export function readFeedbackConfig(workspace, { home } = {}) {
+  try {
+    const parsed = JSON.parse(readStoreFile(path.join(storeDir(workspace, { home }), 'config.json')));
+    if (parsed && KNOWLEDGE_FEEDBACK_STATES.has(parsed.feedback)) return parsed.feedback;
+  } catch {
+    // absent, unreadable, or corrupt — off
+  }
+  return 'off';
+}
+
+export function writeFeedbackConfig(workspace, { home, feedback } = {}) {
+  if (!KNOWLEDGE_FEEDBACK_STATES.has(feedback)) return { feedback, committed: false, pass: false, code: 'E_USAGE', blockedReason: `unknown feedback state: ${feedback || '(none)'}; use off, suggest or on` };
+  const tx = withStoreTransaction(workspace, { home }, ({ dir }) => {
+    let raw = {};
+    try {
+      const parsed = JSON.parse(readStoreFile(path.join(dir, 'config.json')));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) raw = parsed;
+    } catch {
+      // absent/corrupt — nothing extra to preserve
+    }
+    if (!writeStoreFile(path.join(dir, 'config.json'), JSON.stringify({ ...raw, feedback }) + '\n')) {
+      throw new Error('refused to write config.json — the path does not resolve safely inside the knowledge store');
+    }
+    return { commitMessage: `knowledge: feedback ${feedback}` };
+  });
+  if (!tx.ok) {
+    return { feedback, committed: false, pass: false, code: tx.locked ? 'E_LOCKED' : 'E_STORE_TRANSACTION_FAILED',
+      blockedReason: tx.locked ? 'E_LOCKED: another operation holds the store lock' : `store transaction failed: ${tx.error?.message || 'unknown error'}` };
+  }
+  return { feedback, committed: tx.committed, pass: true, blockedReason: null };
+}
+
 export function writeStoreConfig(workspace, { home, mode, commit } = {}) {
   const tx = withStoreTransaction(workspace, { home }, ({ dir }) => {
     const current = readStoreConfig(workspace, { home });
