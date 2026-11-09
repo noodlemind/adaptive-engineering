@@ -268,7 +268,9 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
  * answers it. Apply records `answers` and `answeredAt` on the ledger entry, so
  * the answer survives edits or purges of the episode and is read from the
  * golden ledger and every branch bucket. NOOP and quarantine entries carry no
- * learning and never answer a cluster.
+ * learning and never answer a cluster. Bucket ancestry is not checked: an
+ * answer recorded on any branch clears the cluster everywhere, because the
+ * cluster is keyed by check name rather than by branch.
  */
 function answeredClusters(dir) {
   const answered = new Map();
@@ -308,7 +310,8 @@ function recheckView({ workspace, home, state, resolved }) {
     const dir = storeDir(workspace, { home });
     const key = layered.context?.branchKey;
     // Reference targets include inactive learnings from both layers.
-    allLearnings = [...listLearnings(dir), ...(key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
+    // Only a bucket the overlay accepted (not one excluded for ancestry).
+    allLearnings = [...listLearnings(dir), ...(layered.layered && key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
   } catch { learnings = []; allLearnings = []; }
   let reviewRequired = [];
   try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }

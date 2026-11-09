@@ -12,6 +12,8 @@ import { failureClusterId, failureExcerpt, recheckState, RECHECK_EXCERPT_CAP, RE
 import { parseFlags } from '../lib/flags.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
+import { writeEvidence } from '../lib/evidence.mjs';
+import { runNamedCheck } from '../lib/checks.mjs';
 import { deriveGitContext } from '../lib/git-context.mjs';
 import { ensureBucket } from '../lib/knowledge/layer.mjs';
 
@@ -420,4 +422,74 @@ test('excerpt masking stays fast on very long output', () => {
   const excerpt = failureExcerpt({ stderr: long });
   assert.ok(performance.now() - started < 1000, 'masking is bounded');
   assert.ok(excerpt.length <= RECHECK_EXCERPT_CAP);
+});
+
+test('whitespace padding cannot push a secret keyword out of the masking window while its value stays in the tail', () => {
+  const secret = 'Zq8xY7wV6uT5sR4qP3oN2m';
+  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
+  for (const pad of [' ', '\n', '\t \r\n']) {
+    const clientSecret = failureExcerpt({ stderr: `client_secret=${pad.repeat(5000)}${secret} done` });
+    assert.equal(clientSecret.includes(secret), false, `client_secret value leaked with ${JSON.stringify(pad)} padding`);
+    assert.match(clientSecret, /\[redacted: [a-z-]+\] done$/);
+    const bearer = failureExcerpt({ stderr: `Authorization: Bearer${pad.repeat(5000)}${token} done` });
+    assert.equal(bearer.includes(token), false, `bearer token leaked with ${JSON.stringify(pad)} padding`);
+    assert.match(bearer, /\[redacted: [a-z-]+\] done$/);
+  }
+});
+
+test('the history preselect reads the newest 1,024 names by mtime and counts the rest as omitted', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const old = new Date('2026-01-01T00:00:00Z'), recent = new Date('2026-06-01T00:00:00Z');
+  const failing = [PLAN_A, PLAN_B, PLAN_C].map((plan, n) => f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`));
+  const fillers = [];
+  for (let i = 0; i < 1100; i++) fillers.push(f.evidence(`docs/plans/p${i}.md`, [{ id: 'lint', status: 'passed' }], `2026-10-01T00:00:${String(Math.floor(i / 1000)).padStart(2, '0')}.${String(i % 1000).padStart(3, '0')}Z`));
+  const total = failing.length + fillers.length;
+  const stamp = (rels, at) => { for (const rel of rels) fs.utimesSync(path.join(f.ws, rel), at, at); };
+
+  stamp(fillers, old);
+  stamp(failing, recent);
+  let status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 1, 'recently written failures are preselected and ranked first');
+  assert.equal(status.due, true);
+  assert.equal(f.packet({ recheck: true }).recheck.omitted.scannedRecords, total - 512, 'names past the preselect and records past the cap are both counted');
+
+  stamp(fillers, recent);
+  stamp(failing, old);
+  status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 0, 'names outside the newest 1,024 by mtime are never opened');
+  assert.equal(f.packet({ recheck: true }).recheck.omitted.scannedRecords, total - 512);
+});
+
+test('exposure records past the cap are reported as omitted', t => {
+  const f = fixture(t);
+  const id = f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  for (let i = 0; i < 515; i++) {
+    const plan = `docs/plans/e${i}.md`;
+    f.put(`.harness/learning/exposures/plan-${sha(plan)}.json`, { version: 1, plan, entries: [{ id, count: 1, lastExposedAt: `2026-10-01T00:00:00.${String(i).padStart(3, '0')}Z` }] });
+  }
+  assert.equal(f.packet({ recheck: true }).recheck.omitted.exposureRecords, 3);
+  const g = fixture(t);
+  g.learn('runtime', 'baseline');
+  writeRecheckConfig(g.ws, { home: g.home, recheck: 'suggest' });
+  assert.equal('exposureRecords' in g.packet({ recheck: true }).recheck.omitted, false, 'nothing omitted, no key');
+});
+
+test('evidence written by a real named check and writeEvidence clusters across plans', async t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  for (const plan of [PLAN_A, PLAN_B]) {
+    const check = await runNamedCheck(f.ws, 'unit', { command: [process.execPath, '-e', 'console.error("retry count wrong"); process.exit(3)'] }, { home: f.home });
+    assert.equal(check.status, 'failed', JSON.stringify(check));
+    assert.equal(check.exitCode, 3);
+    assert.ok(writeEvidence(f.ws, { plan, outcome: 'failed', checks: [check] }));
+  }
+  const [cluster, ...rest] = f.packet({ recheck: true }).recheck.failure_clusters;
+  assert.deepEqual(rest, []);
+  assert.equal(cluster.id, failureClusterId('check:unit'));
+  assert.equal(cluster.plan_count, 2);
+  assert.match(cluster.excerpt, /retry count wrong/);
 });

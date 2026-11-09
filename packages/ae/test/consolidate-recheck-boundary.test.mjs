@@ -9,9 +9,10 @@ import { initGit } from './helpers/cli-fixtures.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { prepareConsolidationPacket, applyConsolidationProposal } from '../lib/knowledge/packet-ops.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
-import { ensureStore, readRecheckConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { ensureStore, readRecheckConfig, repoId, serializeLearning, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { solutionsScanRoots } from '../lib/project-layout.mjs';
+import { purgeEpisode } from '../lib/knowledge/admin.mjs';
 import { failureClusterId } from '../lib/learning-recheck.mjs';
 
 const bin = path.resolve(import.meta.dirname, '../bin/ae.mjs');
@@ -168,7 +169,7 @@ function answerCluster(f, op, operation) {
   const applied = applyConsolidationProposal({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home, opsPath });
   assert.equal(applied.exitCode, 0, JSON.stringify(applied.rejected));
   const file = solutionsScanRoots(f.ws, { home: f.home }).map(root => path.join(root.base, insight.path)).find(candidate => fs.existsSync(candidate));
-  return { cluster, file };
+  return { cluster, file, rel: insight.path };
 }
 
 const ADD = { op: 'ADD', domain: 'testing', slug: 'retry-constant-load-order', trigger: 'reading the retry constant during startup', body: 'Load config before reading the retry constant.' };
@@ -184,7 +185,7 @@ test('a NOOP consumption does not answer a cluster', t => {
   assert.ok(clusterIds(f).includes(cluster.id), 'only a learning-writing op answers a cluster');
 });
 
-test('an answer is durable: it survives the episode being purged and a same-day recurrence still reopens it', t => {
+test('an answer is durable: it survives the episode file being deleted and a same-day recurrence still reopens it', t => {
   const f = fixture(t);
   const { cluster, file } = answerCluster(f, ADD, 'durable-answer');
   assert.equal(clusterIds(f).includes(cluster.id), false);
@@ -201,3 +202,38 @@ test('an answer recorded in a branch bucket is visible from other branches', t =
   assert.equal(spawnSync('git', ['switch', '-q', '-c', 'feature/other'], { cwd: f.ws }).status, 0);
   assert.equal(clusterIds(f).includes(cluster.id), false);
 });
+
+test('ae knowledge purge of the answering episode removes its ledger entry and reopens the cluster', t => {
+  const f = fixture(t);
+  const { cluster, rel } = answerCluster(f, ADD, 'purged-answer');
+  assert.equal(clusterIds(f).includes(cluster.id), false);
+  const purged = purgeEpisode({ workspace: f.ws, target: rel, copilotHome: f.copilotHome, home: f.home });
+  assert.equal(purged.pass, true, purged.blockedReason);
+  assert.ok(purged.removed.ledger >= 1, 'the consumption entry carrying the answer is removed');
+  assert.ok(clusterIds(f).includes(cluster.id), 'with its ledger entry gone the cluster is open again');
+});
+
+/** An active learning, in the layer the packet writes to, that STRENGTHEN, SUPERSEDE and MERGE ops can target. */
+function seedLearning(f, slug) {
+  const { layerDir } = prepareConsolidationPacket({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home }).binding;
+  const file = path.join(layerDir, 'learnings', 'testing', `${slug}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeLearning({
+    trigger: `working on ${slug}`, status: 'active', source: 'auto',
+    episodes: [{ path: `docs/solutions/${slug}.md`, sha256: 'a'.repeat(64), kind: 'fix', plan: PLANS[0] }],
+    anchors: [], origin: repoId(f.ws),
+  }, `Existing advice for ${slug}.`));
+  return `testing/${slug}`;
+}
+
+for (const [name, op] of [
+  ['STRENGTHEN', f => ({ op: 'STRENGTHEN', target: seedLearning(f, 'retry-existing') })],
+  ['SUPERSEDE', f => ({ op: 'SUPERSEDE', target: seedLearning(f, 'retry-old'), domain: 'testing', slug: 'retry-new', trigger: 'reading the retry constant during startup', body: 'Load config before reading the retry constant.' })],
+  ['MERGE', f => ({ op: 'MERGE', targets: [seedLearning(f, 'retry-a'), seedLearning(f, 'retry-b')], domain: 'testing', slug: 'retry-merged', trigger: 'reading the retry constant in either startup path', body: 'Load config before reading the retry constant in both startup paths.' })],
+]) {
+  test(`a ${name} consumption answers a cluster`, t => {
+    const f = fixture(t);
+    const { cluster } = answerCluster(f, op(f), `${name.toLowerCase()}-answer`);
+    assert.equal(clusterIds(f).includes(cluster.id), false, `${name} writes a learning, so it answers the cluster`);
+  });
+}

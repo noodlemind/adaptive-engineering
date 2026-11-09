@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { readFileNoFollow, readPrefixNoFollow, writeFileContained, assertRealpathContained, realpathParentContained, copyFileContainedExclusive } from '../lib/fs-safe.mjs';
+import { readFileNoFollow, readFileTailNoFollow, readPrefixNoFollow, writeFileContained, assertRealpathContained, realpathParentContained, copyFileContainedExclusive } from '../lib/fs-safe.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const SENTINEL = 'OUTSIDE_SECRET_SENTINEL must never be read through a swapped ancestor.\n';
@@ -273,4 +273,25 @@ test('copyFileContainedExclusive refuses a symlinked source and copies an empty 
   const empty = copyFileContainedExclusive(srcRoot, 'empty.bin', destRoot, 'empty.bin');
   assert.equal(empty, path.join(destRoot, 'empty.bin'));
   assert.equal(fs.readFileSync(empty).length, 0);
+});
+
+test('readFileTailNoFollow: returns the last bytes with a truncated flag, and refuses symlinked leaves and ancestors', () => {
+  const ws = tmp('tail-ws-');
+  const outside = tmp('tail-outside-');
+  fs.mkdirSync(path.join(ws, 'logs'));
+  fs.writeFileSync(path.join(ws, 'logs', 'run.jsonl'), 'abcdefghij', 'utf8');
+  const whole = readFileTailNoFollow(path.join(ws, 'logs', 'run.jsonl'), { root: ws, maxBytes: 64 });
+  assert.equal(whole.buffer.toString('utf8'), 'abcdefghij');
+  assert.equal(whole.truncated, false);
+  const tail = readFileTailNoFollow(path.join(ws, 'logs', 'run.jsonl'), { root: ws, maxBytes: 4 });
+  assert.equal(tail.buffer.toString('utf8'), 'ghij');
+  assert.equal(tail.truncated, true);
+
+  fs.writeFileSync(path.join(outside, 'secret.jsonl'), SENTINEL, 'utf8');
+  fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(ws, 'logs', 'leaf.jsonl'));
+  assert.equal(readFileTailNoFollow(path.join(ws, 'logs', 'leaf.jsonl'), { root: ws }), null, 'a symlinked leaf is refused');
+  assert.equal(readFileTailNoFollow(path.join(ws, 'logs', 'leaf.jsonl')), null, 'even without a root');
+  fs.symlinkSync(outside, path.join(ws, 'away'));
+  assert.equal(readFileTailNoFollow(path.join(ws, 'away', 'secret.jsonl'), { root: ws }), null, 'an ancestor escaping the root is refused');
+  assert.equal(readFileTailNoFollow(path.join(ws, 'logs'), { root: ws }), null, 'a directory is not a regular file');
 });

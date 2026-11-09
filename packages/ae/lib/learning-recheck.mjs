@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readFileNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
+import { readFileNoFollow, readFileTailNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { redactSecrets, maskSecrets } from './secret-scan.mjs';
 import { foldRuns, RUNS_FILE } from './run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
@@ -85,16 +85,20 @@ function readJson(root, rel) {
 }
 
 /**
- * Bounded, secret-screened tail of a failing check's retained output. The whole
- * output is masked before the tail is taken, so a cut cannot leave a fragment
- * the patterns no longer recognize; any private-key header withholds it.
+ * Bounded, secret-screened tail of a failing check's retained output. Any
+ * private-key header withholds it. Control characters and whitespace runs are
+ * collapsed first, so padding cannot push a keyword such as `client_secret=`
+ * or `Authorization: Bearer` out of the masking window while its value stays
+ * in the tail. Masking then runs over a bounded window (some patterns are
+ * superlinear on long output), well wider than the tail, before the last
+ * characters are kept and screened once more.
  */
 export function failureExcerpt(check) {
   const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
   if (!raw) return null;
   if (/PRIVATE KEY/.test(raw)) return '[withheld: private-key]';
-  // Bound the masking input: some patterns are superlinear on long output.
-  const masked = maskSecrets(raw.slice(-RECHECK_MASK_WINDOW)).replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  const flat = raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  const masked = maskSecrets(flat.slice(-RECHECK_MASK_WINDOW));
   return redactSecrets(masked.slice(-RECHECK_EXCERPT_CAP));
 }
 
@@ -161,24 +165,11 @@ function evidenceClusters(workspace, resolved) {
 function readJournalBounded(workspace) {
   const rel = path.join('.harness', RUNS_FILE);
   const full = assertNoSymlinkAncestors(workspace, rel);
-  if (!full) return { records: [], truncated: false };
-  let fd;
-  try {
-    if (!fs.lstatSync(full).isFile()) return { records: [], truncated: false };
-    fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const { size } = fs.fstatSync(fd);
-    const length = Math.min(size, JOURNAL_BYTE_CAP);
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, size - length);
-    let text = buffer.toString('utf8');
-    const truncated = size > length;
-    if (truncated) text = text.slice(text.indexOf('\n') + 1);
-    return { records: text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean), truncated };
-  } catch {
-    return { records: [], truncated: false };
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+  const tail = full ? readFileTailNoFollow(full, { root: workspace, maxBytes: JOURNAL_BYTE_CAP }) : null;
+  if (!tail) return { records: [], truncated: false };
+  let text = tail.buffer.toString('utf8');
+  if (tail.truncated) text = text.slice(text.indexOf('\n') + 1);
+  return { records: text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean), truncated: tail.truncated };
 }
 
 /**
@@ -236,14 +227,19 @@ function findingClusters(workspace) {
   return { clusters: [...clusters.values()], omitted };
 }
 
-/** Exposure entries across every plan's record: learning ID -> last exposure, total count, plans. */
+/**
+ * Exposure entries across the newest plan records: learning ID -> last
+ * exposure, total count, plans. `omitted` counts the plan records left out by
+ * the preselect and the cap.
+ */
 function exposureIndex(workspace) {
   const listed = listRecordNames(workspace, '.harness/learning/exposures', /^plan-[a-f0-9]{64}\.json$/);
   const valid = listed.names.map(name => readJson(workspace, `.harness/learning/exposures/${name}`))
     .filter(record => record?.version === 1 && typeof record.plan === 'string' && Array.isArray(record.entries));
   const latest = record => record.entries.reduce((max, entry) => (typeof entry?.lastExposedAt === 'string' && entry.lastExposedAt > max ? entry.lastExposedAt : max), '');
   const index = new Map();
-  for (const record of newestRecords(valid, latest, 0).records) {
+  const kept = newestRecords(valid, latest, listed.omitted);
+  for (const record of kept.records) {
     for (const entry of record.entries) {
       if (typeof entry?.id !== 'string') continue;
       const row = index.get(entry.id) || { last: null, count: 0, plans: new Set() };
@@ -253,13 +249,13 @@ function exposureIndex(workspace) {
       index.set(entry.id, row);
     }
   }
-  return index;
+  return { index, omitted: kept.omitted };
 }
 
 /** Exposed learnings whose recorded source bindings no longer match the checkout. */
 function staleExposed(workspace, learnings) {
-  const exposed = exposureIndex(workspace);
-  if (!exposed.size) return [];
+  const { index: exposed, omitted } = exposureIndex(workspace);
+  if (!exposed.size) return { rows: [], omitted };
   const repository = learnings.some(l => String(l.fm.applicability_version) === String(APPLICABILITY_VERSION)) ? repoId(workspace) : null;
   const cache = new Map(), out = [];
   for (const learning of learnings) {
@@ -275,7 +271,7 @@ function staleExposed(workspace, learnings) {
       plan_count: exposure.plans.size,
     });
   }
-  return out.sort((a, b) => String(b.last_exposed || '').localeCompare(String(a.last_exposed || '')) || a.id.localeCompare(b.id));
+  return { rows: out.sort((a, b) => String(b.last_exposed || '').localeCompare(String(a.last_exposed || '')) || a.id.localeCompare(b.id)), omitted };
 }
 
 const CODE_SPAN = /`([^`\n]{1,300})`/g;
@@ -363,7 +359,7 @@ export function recheckSummary({ workspace, learnings, allLearnings = learnings,
   const failures = [...evidence.clusters, ...journal.clusters].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
   const findings = findingClusters(workspace);
   const findingRows = findings.clusters.filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
-  const stale = staleExposed(workspace, learnings);
+  const { rows: stale, omitted: exposureOmitted } = staleExposed(workspace, learnings);
   const broken = brokenReferences(workspace, learnings, allLearnings);
   const cap = list => list.slice(0, RECHECK_SECTION_CAP);
   const over = list => Math.max(0, list.length - RECHECK_SECTION_CAP);
@@ -378,6 +374,7 @@ export function recheckSummary({ workspace, learnings, allLearnings = learnings,
     omitted: {
       stale_exposed: over(stale), review_required: over(reviewRequired), failure_clusters: over(failures), finding_clusters: over(findingRows), broken_references: over(broken),
       ...(evidence.omitted || findings.omitted ? { scannedRecords: evidence.omitted + findings.omitted } : {}),
+      ...(exposureOmitted ? { exposureRecords: exposureOmitted } : {}),
       ...(journal.truncated ? { journal: `only the newest ${JOURNAL_BYTE_CAP / (1024 * 1024)} MiB of the run journal was read` } : {}),
     },
     max_cluster_plans: failures.filter(row => row.source === 'evidence').reduce((n, row) => Math.max(n, row.plan_count), 0),
