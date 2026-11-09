@@ -469,7 +469,9 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
     if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
     // The value is taken literally, so a forgotten value swallows the next flag.
-    if (/^--[a-z][a-z0-9-]*$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    // Only the space form can swallow a flag; --evidence-quote=--dry-run is a deliberate value.
+    if (flags.evidenceQuoteForm === 'missing') throw usage('--evidence-quote needs a value', 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    if (flags.evidenceQuoteForm === 'space' && /^--[a-z][a-z0-9-]*$/.test(flags.evidenceQuote)) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

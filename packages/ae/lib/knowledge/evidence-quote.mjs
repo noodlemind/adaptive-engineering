@@ -14,10 +14,11 @@ export const EVIDENCE_QUOTE_CAP = 600;
 // control, every bidirectional override, isolate or mark (U+200E, U+200F,
 // U+061C), the Unicode line and paragraph separators (U+2028, U+2029), the
 // zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
-// U+FEFF) and the tag characters (U+E0000-U+E007F) are refused: they would
+// U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB) and the tag
+// characters (U+E0000-U+E007F) are refused: they would
 // land raw in frontmatter, break a line, reorder what a reader or model sees,
 // or hide text from a reader while a model still reads it.
-const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}]/u;
+const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb]/u;
 
 /** Returns null when the quote is acceptable, otherwise the reason it is not. */
 export function evidenceQuoteError(value) {

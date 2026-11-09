@@ -325,7 +325,13 @@ export function parseFlags(argv) {
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
     else if (a.startsWith('--evidence-quote=')) flags.evidenceQuote = a.split('=').slice(1).join('=');
-    else if (a === '--evidence-quote') flags.evidenceQuote = scan[++i] ?? '';
+    else if (a === '--evidence-quote') {
+      // The value is taken literally; remember the form so a forgotten value
+      // that swallowed the next flag, or a missing trailing value, is a usage error.
+      const value = scan[++i];
+      flags.evidenceQuote = value ?? '';
+      flags.evidenceQuoteForm = value === undefined ? 'missing' : 'space';
+    }
     else if (a.startsWith('--body=')) flags.body = a.split('=').slice(1).join('=');
     else if (a === '--body') flags.body = scan[++i];
     else if (a.startsWith('--body-file=')) flags.bodyFile = a.split('=').slice(1).join('=');

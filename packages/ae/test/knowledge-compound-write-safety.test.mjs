@@ -116,7 +116,7 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 // Quoted evidence (memory plan phase 5a) -----------------------------------
 // Line and paragraph separators and the bidirectional marks (LRM, RLM, ALM).
 // Also the zero-width and invisible format characters, BOM and tag characters.
-const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f];
+const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -205,9 +205,15 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   assert.match(swallowed.stdout + swallowed.stderr, /E_USAGE/);
   assert.match(swallowed.stdout + swallowed.stderr, /--evidence-quote needs a value but got the flag --json/);
   const noValue = ae('--insight', '--title', 'empty quote', '--body', 'body', '--evidence-quote');
-  assert.match(noValue.stdout + noValue.stderr, /evidence_quote must be nonempty text/);
+  assert.equal(noValue.status, 2, 'a missing trailing value is a usage error');
+  assert.match(noValue.stdout + noValue.stderr, /E_USAGE/);
+  assert.match(noValue.stdout + noValue.stderr, /--evidence-quote needs a value/);
   const target = solutionsWriteTarget(ws, { home });
   assert.equal(fs.existsSync(path.join(target.base, 'docs/solutions/insights')), false, 'nothing is captured');
+  const equalsForm = ae('--insight', '--title', 'flag-like quote', '--body', 'body', '--evidence-quote=--dry-run');
+  assert.equal(equalsForm.status, 0, equalsForm.stdout + equalsForm.stderr);
+  const captured = JSON.parse(equalsForm.stdout);
+  assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, captured.path), 'utf8')), '--dry-run', 'the = form keeps a flag-like value as the quote');
 });
 
 test('an insight without an evidence quote keeps the exact pre-quote episode bytes', () => {
