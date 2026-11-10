@@ -195,17 +195,22 @@ const OPEN_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | 
  */
 function memoryTargets({ copilotHome, harnessHome, projectDir, feedback = false }) {
   const project = rel => path.relative(harnessHome, path.join(projectDir, ...rel));
-  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge', STORE_CONFIG], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
+  return [[copilotHome, 'knowledge', USAGE_LOCK], [harnessHome, 'index'], [harnessHome, 'knowledge', rel => STORE_CONFIG(rel) || STORE_LOCK(rel)], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
 }
 
 /** A learnings store's config file, `<storage id>/config.json` under harnessHome/knowledge, which is never carried. */
 const STORE_CONFIG = rel => /^[^/]+\/config\.json$/.test(rel);
 
 /**
- * Lock state a writer left behind: a store `.lock` (directory or file), any other `*.lock` such as `.git/index.lock`, and
- * `*.stale-*` tombstones of taken-over locks. Copied with fresh mtimes they would look live and wedge the next task's store.
+ * Lock state a writer left behind, which is never carried: copied with fresh mtimes it would look live and wedge the next
+ * task's store. Only what the lock code writes is skipped, so a note that merely has a lock-like name is still carried.
+ * In a learnings store under harnessHome/knowledge: the store lock `<storage id>/.lock` and the tombstone
+ * `<storage id>/.lock.stale-<16 hex>` a stale takeover renames it to (lib/knowledge/store.mjs), and git's own `*.lock` files
+ * anywhere under `<storage id>/.git/`. Under copilotHome/knowledge: the skill usage lock `skill-usage.yaml.lock`
+ * (lib/telemetry.mjs).
  */
-const isLockState = name => name === '.lock' || name.endsWith('.lock') || name.includes('.stale-');
+const STORE_LOCK = rel => /^[^/]+\/\.lock(?:\.stale-[0-9a-f]{16})?$/.test(rel) || /^[^/]+\/\.git\/(?:.+\/)?[^/]+\.lock$/.test(rel);
+const USAGE_LOCK = rel => rel === 'skill-usage.yaml.lock';
 
 const refusal = message => Object.assign(new Error(message), { refusal: true });
 
@@ -215,7 +220,7 @@ const refusal = message => Object.assign(new Error(message), { refusal: true });
  * still be its place under the home, and every file is opened without following a final symlink and checked again on the
  * open descriptor. A symlink, a special file, an unreadable entry, or a capture over the file count or byte limit refuses
  * its target: the target is left out and `refused` names it, which makes the next attempt invalid. An absent target is
- * recorded as absent. Lock state (see isLockState) is skipped, never carried.
+ * recorded as absent. Lock state (see STORE_LOCK) and store configs are skipped, never carried.
  */
 export function captureMemory(homes) {
   const refused = [];
@@ -240,7 +245,6 @@ export function captureMemory(homes) {
         const dir = path.join(root, rel, sub);
         if (fs.realpathSync(dir) !== path.join(rootReal, rel, sub)) throw refusal(`${sub || '.'} resolves outside the home`);
         for (const name of fs.readdirSync(dir).sort()) {
-          if (isLockState(name)) continue;
           const entryRel = sub ? path.join(sub, name) : name;
           if (skip(entryRel.split(path.sep).join('/'))) continue;
           const full = path.join(dir, name);
@@ -420,14 +424,21 @@ export function clearExternalPlans(harnessHome, projectDir) {
   return { cleared, refused };
 }
 
-/** Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. */
-export function collectCarryForward(workspace) {
+/**
+ * Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. Notes over
+ * CARRY_BYTE_LIMIT and files past the first CARRY_FILE_LIMIT (by path) are not carried; `dropped` counts them, so the
+ * attempt that wrote them can say so.
+ */
+export function collectCarryForward(workspace, dropped = { oversized: 0, overFileLimit: 0 }) {
   const carried = {};
-  for (const [rel, file] of Object.entries(filesInside(workspace, PROTOCOL.carryForward)).sort(([a], [b]) => a.localeCompare(b)).slice(0, CARRY_FILE_LIMIT)) {
+  const files = Object.entries(filesInside(workspace, PROTOCOL.carryForward)).sort(([a], [b]) => a.localeCompare(b));
+  dropped.overFileLimit += Math.max(0, files.length - CARRY_FILE_LIMIT);
+  for (const [rel, file] of files.slice(0, CARRY_FILE_LIMIT)) {
     const target = `${PROTOCOL.carryForward}/${rel}`;
     try { safePath(target); } catch { continue; }
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > CARRY_BYTE_LIMIT) continue;
+    if (!stat.isFile()) continue;
+    if (stat.size > CARRY_BYTE_LIMIT) { dropped.oversized++; continue; }
     carried[target] = fs.readFileSync(file);
   }
   return carried;
@@ -638,8 +649,8 @@ const LEGACY_STUDY_NAME = /^aem-study-[A-Za-z0-9]{6}$/;
 /**
  * Removes study parents left by runner processes that no longer exist (for example after SIGKILL). The owner PID is part of
  * the folder name, so there is no window in which a fresh parent lacks an owner. Only real directories this user owns are
- * touched: a symlink or another user's entry under a study name, or under a `run-` name inside one, is skipped before any
- * chmod or listing, so a planted link is never followed. Folders that cannot be removed are skipped, never fatal. Parents in the earlier format (no PID in the name) are swept only when their
+ * touched: a symlink or another user's entry under a study name is skipped before any chmod or listing, and inside a stale
+ * parent links are removed, never followed or chmodded. Folders that cannot be removed are skipped, never fatal. Parents in the earlier format (no PID in the name) are swept only when their
  * owner.pid names a dead process. PIDs are checked in this PID namespace: runners in other containers that share this
  * temporary directory look dead, so give each container its own temporary directory.
  */
@@ -667,13 +678,10 @@ export function sweepStaleStudies(base = os.tmpdir()) {
     }
     if (alive) continue;
     const dir = path.join(base, name);
-    // Restore read access only on the folders a study made unlisted (the parent and its run roots), never deeper.
-    try {
-      if (!ownDirectory(dir)) continue;
-      fs.chmodSync(dir, 0o700);
-      for (const entry of fs.readdirSync(dir)) if (entry.startsWith('run-') && ownDirectory(path.join(dir, entry))) fs.chmodSync(path.join(dir, entry), 0o700);
-    } catch { /* not ours */ }
-    try { fs.rmSync(dir, { recursive: true, force: true }); swept.push(dir); } catch { /* not ours to remove */ }
+    if (!ownDirectory(dir)) continue;
+    // removeTree restores owner access on every directory under the parent without following links (see unlockTree), so a
+    // directory an agent made read-only before the runner was killed cannot keep the parent from going.
+    if (removeTree(dir)) swept.push(dir);
   }
   return swept;
 }
@@ -683,7 +691,8 @@ const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGH
 
 /**
  * One temporary parent per study, removed on normal exit and on SIGINT, SIGTERM, SIGHUP or SIGQUIT. Run roots are created
- * inside it. `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
+ * inside it. `onAbort(signal, failures)` runs on a signal after the parent (and so every checkout) is gone, to save what the study
+ * has recorded, with the parent's removal failures.
  * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group. `groups`
  * holds the process groups this study started; removal kills those, then the stragglers still working under the parent
  * (see killStragglers), then removes the tree. `close()` returns removal failures.
@@ -700,7 +709,7 @@ function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   const onSignal = signal => {
     // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
-    try { onAbort(signal); } catch { /* best effort */ }
+    try { onAbort(signal, failures); } catch { /* best effort */ }
     process.exit(128 + (os.constants.signals[signal] ?? 15));
   };
   process.on('exit', remove);
@@ -756,7 +765,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   // directory or provenance.json behind to block a retry into the same root. A root this call created is removed again if
   // claiming it fails. Partial output is written only into a root this study claimed with provenance.json, never over
   // another study's results.
-  const study = openStudyParent({ base: studyBase, onAbort: () => { if (owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } });
+  const study = openStudyParent({ base: studyBase, onAbort: (signal, cleanupErrors) => { if (owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true, cleanupErrors }); } });
   try {
   let createdRoot = false;
   try {
@@ -944,6 +953,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, carriedMemoryRefused: memoryRefused, setupErrors, measurementErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
+              // Notes this task left that were too large or too many to carry into the next task (arms that read memory).
+              carryForwardDropped: { oversized: 0, overFileLimit: 0 },
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
               requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
@@ -952,7 +963,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             attempts.push(attempt);
             runAttempts.push(attempt);
             if (readsCapturedMemory(arm)) {
-              try { carried = collectCarryForward(fixture.workspace); }
+              try { carried = collectCarryForward(fixture.workspace, attempt.carryForwardDropped); }
               catch (caught) { carried = {}; carryRefused.push(`${protocol.carryForward}: unreadable (${caught?.code || caught?.message})`); }
               previousMemory = captureMemory(homes);
               carryRefused.push(...previousMemory.refused);

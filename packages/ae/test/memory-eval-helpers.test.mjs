@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { killLiveGroups, runGroupedProcess, trackStudyGroups } from '../eval/context/study.mjs';
-import { UNLISTED_DIR_MODE, killStragglers, processStartTicks, removeTree, sweepStaleStudies } from '../eval/memory/study.mjs';
+import { UNLISTED_DIR_MODE, captureMemory, collectCarryForward, killStragglers, processStartTicks, removeTree, sweepStaleStudies, writeMemory } from '../eval/memory/study.mjs';
 
 // Fast unit tests for the memory study's process and cleanup helpers. The study tests that exercise them end to end
 // (memory-eval.test.mjs, context-eval.test.mjs) are too slow for the pull-request tier, so these keep the helpers covered there.
@@ -123,6 +123,111 @@ test('sweepStaleStudies never follows or chmods a planted symlink, and skips ent
     assert.deepEqual(sweepStaleStudies(base), []);
     assert.equal(fs.existsSync(foreign), true);
     assert.equal(fs.lstatSync(foreign).mode & 0o7777, 0o755);
+  }
+});
+
+test('sweepStaleStudies removes a stale parent holding a read-only directory deep inside it', { skip: !posix && 'POSIX modes' }, t => {
+  const base = directory(t);
+  const stale = path.join(base, 'aem-study-999996-stuvwx');
+  const deep = path.join(stale, 'run-abcdef', 'task-ghijkl', 'workspace', 'src');
+  fs.mkdirSync(deep, { recursive: true });
+  fs.writeFileSync(path.join(deep, 'file.js'), 'x');
+  // An agent made src read-only, then the runner was SIGKILLed; the runner had made the parent and run root unlisted.
+  fs.chmodSync(deep, 0o555);
+  fs.chmodSync(path.join(stale, 'run-abcdef'), UNLISTED_DIR_MODE);
+  fs.chmodSync(stale, UNLISTED_DIR_MODE);
+  if (root) {
+    // Root ignores directory modes, so a stub makes removal fail the way it does for any other user: a directory without
+    // owner write permission cannot lose its entries.
+    const realRm = fs.rmSync;
+    const locked = dir => {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory()) return false;
+      return (stat.mode & 0o200) === 0 || fs.readdirSync(dir).some(name => locked(path.join(dir, name)));
+    };
+    t.mock.method(fs, 'rmSync', function (target, ...rest) {
+      if (fs.existsSync(target) && locked(String(target))) throw Object.assign(new Error(`EACCES: permission denied, rmdir '${target}'`), { code: 'EACCES' });
+      return realRm.call(this, target, ...rest);
+    });
+  }
+  const swept = sweepStaleStudies(base);
+  t.mock.restoreAll();
+  assert.deepEqual(swept, [stale]);
+  assert.equal(fs.existsSync(stale), false);
+});
+
+test('collectCarryForward counts the notes it drops for size and for the file limit', t => {
+  const workspace = directory(t);
+  const notes = path.join(workspace, 'docs', 'solutions', 'eval');
+  fs.mkdirSync(notes, { recursive: true });
+  const dropped = { oversized: 0, overFileLimit: 0 };
+  fs.writeFileSync(path.join(notes, 'a-large.md'), Buffer.alloc(256 * 1024 + 1, 'x'));
+  fs.writeFileSync(path.join(notes, 'a-small.md'), 'note\n');
+  assert.deepEqual(Object.keys(collectCarryForward(workspace, dropped)), ['docs/solutions/eval/a-small.md']);
+  assert.deepEqual(dropped, { oversized: 1, overFileLimit: 0 });
+  for (let i = 0; i < 205; i++) fs.writeFileSync(path.join(notes, `n${String(i).padStart(3, '0')}.md`), 'n\n');
+  const more = { oversized: 0, overFileLimit: 0 };
+  const carried = collectCarryForward(workspace, more);
+  // 207 files: the first 200 by path are considered (the large one among them), the last 7 are past the limit.
+  assert.equal(Object.keys(carried).length, 199);
+  assert.deepEqual(more, { oversized: 1, overFileLimit: 7 });
+  assert.equal(carried['docs/solutions/eval/n204.md'], undefined);
+});
+
+test('only lock state the lock code writes is skipped; notes with lock-like names are carried', t => {
+  const base = directory(t);
+  const make = name => {
+    const homes = { copilotHome: path.join(base, name, 'copilot'), harnessHome: path.join(base, name, 'state'), feedback: true };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(homes.copilotHome, { recursive: true });
+    fs.mkdirSync(homes.harnessHome, { recursive: true });
+    return homes;
+  };
+  const from = make('from');
+  const store = path.join(from.harnessHome, 'knowledge', 'repo-id');
+  const put = (file, text = 'x\n') => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
+  // Lock artifacts: the store lock and its takeover tombstone, git's lock files, and the skill usage lock.
+  put(path.join(store, '.lock', 'owner.json'));
+  put(path.join(store, '.lock.stale-0123456789abcdef', 'owner.json'));
+  put(path.join(store, '.git', 'index.lock'));
+  put(path.join(store, '.git', 'refs', 'heads', 'main.lock'));
+  put(path.join(store, '.git', 'HEAD'));
+  put(path.join(from.copilotHome, 'knowledge', 'skill-usage.yaml.lock'));
+  put(path.join(from.copilotHome, 'knowledge', 'skill-usage.yaml'));
+  // Legitimate notes whose names only look like locks.
+  const notes = [
+    path.join(store, 'learnings', 'javascript', 'db.stale-cache.md'),
+    path.join(store, 'learnings', 'javascript', 'package.lock'),
+    path.join(store, 'learnings', '.lock'),
+    path.join(from.projectDir, 'docs', 'solutions', 'eval', 'yarn.lock'),
+    path.join(from.projectDir, 'docs', 'solutions', 'eval', 'retry.stale-reads.md'),
+    path.join(from.projectDir, 'feedback', 'x.lock'),
+    path.join(from.copilotHome, 'knowledge', 'notes', 'skill-usage.yaml.lock'),
+  ];
+  for (const note of notes) put(note, 'note\n');
+  const captured = captureMemory(from);
+  assert.deepEqual(captured.refused, []);
+  const to = make('to');
+  writeMemory(to, captured);
+  const moved = file => file.startsWith(from.copilotHome + path.sep)
+    ? path.join(to.copilotHome, path.relative(from.copilotHome, file))
+    : path.join(to.harnessHome, path.relative(from.harnessHome, file));
+  for (const note of notes) assert.equal(fs.readFileSync(moved(note), 'utf8'), 'note\n', path.relative(base, note));
+  const toStore = path.join(to.harnessHome, 'knowledge', 'repo-id');
+  assert.deepEqual(fs.readdirSync(toStore).sort(), ['.git', 'learnings']);
+  assert.deepEqual(fs.readdirSync(path.join(toStore, '.git')).sort(), ['HEAD', 'refs']);
+  assert.deepEqual(fs.readdirSync(path.join(toStore, '.git', 'refs', 'heads')), []);
+  assert.deepEqual(fs.readdirSync(path.join(to.copilotHome, 'knowledge')).sort(), ['notes', 'skill-usage.yaml']);
+});
+
+test('run.mjs accepts only a plain positive decimal --repeats', t => {
+  const out = path.join(directory(t), 'fresh');
+  const run = path.join(import.meta.dirname, '..', 'eval', 'memory', 'run.mjs');
+  for (const value of ['0', '0x2', '1e1', ' 3 ', '2.0', '-1', '+2', '03']) {
+    const cli = spawnSync(process.execPath, [run, '--out', out, '--repeats', value], { encoding: 'utf8' });
+    assert.notEqual(cli.status, 0, value);
+    assert.match(cli.stderr, /--repeats must be a positive decimal integer/, value);
+    assert.equal(fs.existsSync(out), false, value);
   }
 });
 

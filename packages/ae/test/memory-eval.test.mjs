@@ -312,6 +312,7 @@ test('a learning added in task 1 is injected in task 3 under recall and absent u
   const note = `docs/solutions/eval/${ordering.trap.id}.md`;
   for (const arm of ARMS) assert.equal(rowsFor(result, arm)[0].episodesWritten, 1, `${arm} task 1 wrote one episode`);
   assert.ok(third('recall').carriedForward.includes(note), 'recall carried the episode forward');
+  for (const arm of ARMS) assert.deepEqual(rowsFor(result, arm)[0].carryForwardDropped, { oversized: 0, overFileLimit: 0 }, `${arm} task 1 dropped no notes`);
   assert.ok(inspected[third('recall').id].tracked.includes(note), 'carried episodes are committed in the next checkout');
   // capture-only writes memory but never reads it back, so its notes stay behind like stateless ones.
   for (const arm of ['stateless', 'capture-only']) {
@@ -1031,6 +1032,38 @@ await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...
   assert.equal(results.partial, true);
   assert.deepEqual(results.attempts.map(row => row.taskIndex), [1]);
   assert.ok(fs.existsSync(path.join(root, 'out', 'attempts', results.attempts[0].run)));
+});
+
+test('a study parent removal failure on a signal is recorded in the partial results', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const base = path.join(root, 'base');
+  fs.mkdirSync(base);
+  const script = path.join(root, 'hang.mjs');
+  const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
+  // The study parent cannot be removed (EBUSY on Windows, for example); the signal-time partial write must say so.
+  fs.writeFileSync(script, `import fs from 'node:fs';
+import path from 'node:path';
+import { CATALOG, runStudy } from ${JSON.stringify(study)};
+const realRm = fs.rmSync;
+fs.rmSync = function (target, ...rest) {
+  if (path.basename(String(target)).startsWith('aem-study-')) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+  return realRm.call(this, target, ...rest);
+};
+await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...CATALOG, series: [CATALOG.series[0]] }, arms: ['stateless'], repeats: 1, host: 'scripted-test', studyBase: ${JSON.stringify(base)},
+  execute: async fixture => { if (fixture.index === 0) return { status: 'ok' }; setInterval(() => {}, 1000); process.stdout.write('READY\\n'); await new Promise(() => {}); } });
+`);
+  const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  await new Promise((resolve, reject) => {
+    child.stdout.on('data', chunk => { output += chunk; if (output.includes('READY\n')) resolve(); });
+    child.on('exit', code => reject(new Error(`exited early: ${code}`)));
+  });
+  const exited = new Promise(resolve => child.on('exit', (code, signal) => resolve({ code, signal })));
+  child.kill('SIGTERM');
+  assert.equal((await exited).code, 143);
+  const results = JSON.parse(fs.readFileSync(path.join(root, 'out', 'results.json'), 'utf8'));
+  assert.equal(results.partial, true);
+  assert.deepEqual(results.cleanupErrors.map(row => [path.basename(row.path).slice(0, 10), row.code]), [['aem-study-', 'EBUSY']]);
 });
 
 test('same-batch enforcement compares the batch stamped on scored rows', () => {

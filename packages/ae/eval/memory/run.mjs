@@ -15,6 +15,8 @@ for (let i = 0; i < args.length; i++) {
   options[name] = args[++i];
 }
 if (!options.out) throw new Error('--out <new-external-directory> is required');
+// A plain positive decimal integer only: Number() would also take '0x2', '1e1' or ' 3 '.
+if (options.repeats !== undefined && !/^[1-9][0-9]*$/.test(options.repeats)) throw new Error('--repeats must be a positive decimal integer');
 const checkout = path.resolve(import.meta.dirname, '../../../..');
 const out = resolveStudyOutput({ checkout, output: options.out });
 if (options.live && (!Object.hasOwn(PROVIDERS, options.provider) || !options.model)) throw new Error('live runs require an explicit provider and model; no fallback is selected');
