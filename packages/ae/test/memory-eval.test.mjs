@@ -10,6 +10,8 @@ import {
   CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, episodeHashes, restoreEpisodeStore, runAgentProcess, snapshotEpisodeStore, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
+import { runInsightCompound } from '../lib/compound.mjs';
+import { runOrient } from '../lib/orient.mjs';
 import { storeDir, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { loadNamedChecks, runNamedCheck } from '../lib/checks.mjs';
 import { trustStatus } from '../lib/trust.mjs';
@@ -671,6 +673,148 @@ test('the agent runs in its own process group and nothing it leaves running outl
   assert.equal(alive, false, 'the grandchild was killed with the group');
   const slow = await runAgentProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: root, env: process.env, timeoutMs: 200 });
   assert.equal(slow.error?.code, 'ETIMEDOUT');
+});
+
+/** Whether `pid` is running; a killed process that no init reaps stays a zombie, which counts as dead. */
+async function waitDead(pid, tries = 100) {
+  const running = () => {
+    try { process.kill(pid, 0); } catch { return false; }
+    try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
+  };
+  let alive = true;
+  for (let i = 0; i < tries && (alive = running()); i++) await new Promise(done => setTimeout(done, 20));
+  return !alive;
+}
+
+test('a grandchild in its own session that holds the output pipes cannot delay the agent result', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const pids = [];
+  t.after(() => { for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  const script = (marker, tail) => `const { spawn } = require('node:child_process'); const c = spawn('sleep', ['6'], { detached: true, stdio: 'inherit' }); require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(c.pid)); c.unref(); ${tail}`;
+  // The agent hangs: the timeout kills its group, and the detached sleep still holding stdout cannot hold the result.
+  const hangMarker = path.join(root, 'hang.pid');
+  let started = Date.now();
+  const hung = await runAgentProcess(process.execPath, ['-e', script(hangMarker, 'setInterval(() => {}, 1000);')], { cwd: root, env: process.env, timeoutMs: 1000 });
+  pids.push(Number(fs.readFileSync(hangMarker, 'utf8')));
+  assert.equal(hung.error?.code, 'ETIMEDOUT');
+  assert.ok(Date.now() - started < 3000, `resolved after ${Date.now() - started} ms`);
+  // The agent exits 0 at once while the detached sleep holds the pipe: the result arrives promptly, with its output.
+  const exitMarker = path.join(root, 'exit.pid');
+  started = Date.now();
+  const done = await runAgentProcess(process.execPath, ['-e', script(exitMarker, `process.stdout.write('{"ok":true}');`)], { cwd: root, env: process.env, timeoutMs: 20_000 });
+  pids.push(Number(fs.readFileSync(exitMarker, 'utf8')));
+  assert.equal(done.status, 0);
+  assert.equal(done.error, null);
+  assert.deepEqual(JSON.parse(done.stdout), { ok: true });
+  assert.ok(Date.now() - started < 3000, `resolved after ${Date.now() - started} ms`);
+});
+
+test('agent output limits count bytes, not characters', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  // 600 three-byte characters are 1800 bytes: over a 1000-byte limit, though only 600 characters long.
+  const result = await runAgentProcess(process.execPath, ['-e', `process.stdout.write('\\u20ac'.repeat(600)); setInterval(() => {}, 1000);`], { cwd: root, env: process.env, timeoutMs: 10_000, maxBuffer: 1000 });
+  assert.equal(result.error?.code, 'ENOBUFS');
+});
+
+test('SIGTERM to the runner kills the detached agent process group', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'agent.pid');
+  const script = path.join(root, 'runner.mjs');
+  const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
+  const agent = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000);`;
+  fs.writeFileSync(script, `import { CATALOG, runAgentProcess, runStudy } from ${JSON.stringify(study)};
+await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...CATALOG, series: [CATALOG.series[0]] }, arms: ['stateless'], repeats: 1, host: 'scripted-test', studyBase: ${JSON.stringify(root)},
+  execute: async fixture => { if (fixture.index === 0) return { status: 'ok' }; process.stdout.write('READY\\n'); await runAgentProcess(process.execPath, ['-e', ${JSON.stringify(agent)}], { cwd: fixture.workspace, env: process.env, timeoutMs: 60_000 }); } });
+`);
+  const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  await new Promise((resolve, reject) => {
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; if (output.includes('READY')) resolve(); });
+    child.on('exit', code => reject(new Error(`exited early: ${code}`)));
+  });
+  for (let i = 0; i < 250 && !fs.existsSync(marker); i++) await new Promise(done => setTimeout(done, 20));
+  const pid = Number(fs.readFileSync(marker, 'utf8'));
+  t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } });
+  const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+  child.kill('SIGTERM');
+  assert.equal(await exited, 143);
+  assert.equal(await waitDead(pid), true, 'the agent was killed with the runner');
+});
+
+test('a stateless agent that turns knowledge on, compounds an insight and turns it off leaves nothing later tasks recall', async t => {
+  const insight = 'Stateless leak probe: zebra quartz lantern ordering';
+  const recalled = {};
+  const recallFor = ({ workspace, copilotHome, harnessHome }) => runOrient({ workspace, copilotHome, flags: { home: harnessHome, harnessHome, dryRun: true }, query: insight, files: [] }).recall;
+  const executor = scriptedExecutor([], {
+    'stateless:0': fixture => {
+      const { workspace, copilotHome, harnessHome } = fixture;
+      assert.equal(writeStoreConfig(workspace, { home: harnessHome, mode: 'on' }).pass, true);
+      const captured = runInsightCompound({ workspace, copilotHome, home: harnessHome, flags: { title: insight, body: `${insight}. Sort before you deduplicate.` } });
+      assert.equal(captured.pass, true, captured.blockedReason);
+      assert.equal(writeStoreConfig(workspace, { home: harnessHome, mode: 'off' }).pass, true);
+      recalled[0] = recallFor(fixture);
+    },
+  });
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['stateless'], repeats: 1,
+    model: 'scripted-test', host: 'scripted-test', studyBase: directory(t),
+    execute: async fixture => {
+      if (fixture.index > 0) recalled[fixture.index] = recallFor(fixture);
+      return executor(fixture);
+    } });
+  assert.ok(recalled[0].length > 0, 'the insight is recallable in the task that wrote it');
+  for (const index of [1, 2, 3]) assert.deepEqual(recalled[index], [], `task ${index + 1} recalls nothing`);
+  for (const row of rowsFor(result, 'stateless')) { assert.equal(row.valid, true); assert.deepEqual(row.episodeStoreRefused, []); }
+});
+
+test('an agent that swaps the store directory for a symlink invalidates later attempts without aborting the study', async t => {
+  const outside = directory(t);
+  const swap = ({ workspace, harnessHome, arm }) => {
+    const dir = storeDir(workspace, { home: harnessHome });
+    const moved = path.join(outside, arm.id);
+    fs.cpSync(dir, moved, { recursive: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.symlinkSync(moved, dir, 'dir');
+  };
+  const executor = scriptedExecutor([], { 'recall:0': swap, 'stateless:0': swap });
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['recall', 'stateless'], repeats: 1,
+    model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: executor });
+  assert.ok(result.summary, 'the study completes with a summary');
+  const recall = rowsFor(result, 'recall');
+  assert.equal(recall.length, 4);
+  for (const row of recall.slice(1)) {
+    assert.equal(row.valid, false);
+    assert.ok(row.invalidReasons.includes('arm-configuration-failed'), row.invalidReasons.join(','));
+    assert.equal(row.kind, 'setup-error');
+    assert.equal(row.setupErrors[0].step, 'configure');
+  }
+  // The stateless arm restores its stores before configuring, so the symlink is replaced and later tasks stay valid.
+  const stateless = rowsFor(result, 'stateless');
+  assert.equal(stateless.length, 4);
+  for (const row of stateless.slice(1)) { assert.equal(row.valid, true, row.invalidReasons.join(',')); assert.deepEqual(row.setupErrors, []); }
+});
+
+test('a failed removal during the store restore refuses that target', t => {
+  const root = directory(t);
+  const homes = { copilotHome: path.join(root, 'copilot'), harnessHome: path.join(root, 'state') };
+  homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+  fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
+  fs.mkdirSync(homes.copilotHome);
+  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
+  const snapshot = snapshotEpisodeStore(homes);
+  const realRm = fs.rmSync;
+  t.mock.method(fs, 'rmSync', (...args) => { if (String(args[0]).includes('.solutions.restore-')) throw Object.assign(new Error('busy'), { code: 'EBUSY' }); return realRm(...args); });
+  assert.deepEqual(restoreEpisodeStore(snapshot).refused, ['projects/repo-id/docs/solutions']);
+  t.mock.restoreAll();
+});
+
+test('episode hashes count .md, .MD and .markdown notes', t => {
+  const root = directory(t);
+  const workspace = path.join(root, 'workspace'), projectDir = path.join(root, 'project');
+  fs.mkdirSync(path.join(workspace, PROTOCOL.carryForward), { recursive: true });
+  fs.mkdirSync(path.join(projectDir, 'docs', 'solutions'), { recursive: true });
+  for (const name of ['a.md', 'b.MD', 'c.markdown', 'd.Markdown', 'e.txt']) fs.writeFileSync(path.join(workspace, PROTOCOL.carryForward, name), name);
+  assert.deepEqual(Object.keys(episodeHashes(workspace, projectDir)).sort(), ['workspace:a.md', 'workspace:b.MD', 'workspace:c.markdown', 'workspace:d.Markdown']);
 });
 
 test('stale study parents from dead runners are swept; live, foreign and unremovable ones are kept', t => {

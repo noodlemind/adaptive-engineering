@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { contextAgentArgs, prepareCase, resolveStudyOutput, runChecks, runStudy, summarizeStudy } from '../eval/context/study.mjs';
+import { contextAgentArgs, prepareCase, resolveStudyOutput, runChecks, runPublicChecks, runStudy, summarizeStudy } from '../eval/context/study.mjs';
 import { agentResultOf } from '../lib/agent-cmd.mjs';
 import { buildTaskHandoff, validateContextSnapshot } from '../lib/task-handoff.mjs';
 import { readSession, writeSession } from '../lib/session.mjs';
@@ -244,6 +244,31 @@ test('acceptance timeout remains a failure when source exits zero on termination
   assert.notEqual(result.exitCode, 0);
   assert.deepEqual(result.verdicts, [false]);
   assert.equal(result.pass, false);
+});
+
+test('a daemon that checked code starts at import does not outlive the private or public checks', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'daemons');
+  const source = `import { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nconst c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\nc.unref();\nfs.appendFileSync(${JSON.stringify(marker)}, c.pid + '\\n');\nexport const value = 2;\nexport const version = 1;\n`;
+  const fixture = await prepareCase({ root, id: 'daemon', task: { ...publicTask, files: { 'src/value.mjs': source } } });
+  const pids = () => fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).map(Number) : [];
+  t.after(() => { for (const pid of pids()) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  const running = pid => {
+    try { process.kill(pid, 0); } catch { return false; }
+    // A killed process that no init reaps stays a zombie; on Linux its /proc state says so.
+    try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
+  };
+  const allDead = async () => {
+    for (let i = 0; i < 100; i++) { if (!pids().some(running)) return true; await new Promise(done => setTimeout(done, 20)); }
+    return false;
+  };
+  assert.equal((await runChecks(fixture)).pass, true);
+  assert.ok(pids().length >= 1, 'the checked module started a daemon');
+  assert.equal(await allDead(), true, 'the private checker daemon was killed with its group');
+  const before = pids().length;
+  assert.equal(runPublicChecks(fixture).pass, true);
+  assert.ok(pids().length > before, 'the public verifier started a daemon');
+  assert.equal(await allDead(), true, 'the public verifier daemon was killed with its group');
 });
 
 test('source cannot pass acceptance by exiting before the assertions run', async t => {

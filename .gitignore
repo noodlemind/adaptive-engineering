@@ -1,6 +1,6 @@
 .worktrees
 .harness/
-node_modules/
+node_modules
 *.vsix
 .DS_Store
 .compound-engineering-plugin-analysis/

@@ -131,6 +131,17 @@ function integrity(fixture) {
   catch { return false; }
 }
 
+/**
+ * spawnSync in a new process group (POSIX), then a SIGKILL to the whole group once it returns, so a daemon that checked
+ * code starts at import cannot outlive the check and touch later state. A process that starts its own session escapes.
+ */
+export function spawnGrouped(command, args, options) {
+  const group = process.platform !== 'win32';
+  const result = spawnSync(command, args, { ...options, detached: group });
+  if (group && result.pid) { try { process.kill(-result.pid, 'SIGKILL'); } catch { /* group already gone */ } }
+  return result;
+}
+
 /** `timeoutMs` is the outer checker timeout; a study passes its own protocol's `checkerTimeoutMs`. */
 export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
@@ -147,7 +158,7 @@ export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs
   // The checker gets a budget below the outer timeout, so a hang or exit in checked code still yields per-check verdicts.
   // spawnSync blocks this event loop: a SIGINT or SIGTERM sent meanwhile is handled only after the checker returns (at most timeoutMs).
   const budget = Math.max(1000, timeoutMs - 3000);
-  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 256_000 });
+  const result = spawnGrouped(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 256_000 });
   const intact = integrity(fixture);
   const lines = (result.stdout || '').split(/\r?\n/);
   const completed = lines.includes(`harness-context-checked-v1:${challenge}:${count}`);
@@ -158,7 +169,7 @@ export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs
 
 export function runPublicChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!fixture.verifyCmd) return null;
-  const result = spawnSync(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64_000 });
+  const result = spawnGrouped(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64_000 });
   return { pass: !result.error && result.status === 0, exitCode: result.status, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || null };
 }
 

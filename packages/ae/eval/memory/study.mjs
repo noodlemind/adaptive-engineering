@@ -131,34 +131,66 @@ export function memoryAgentArgs({ task, workspace, copilotHome, harnessHome, mod
     ...task.seeds.flatMap(file => ['--file', file]), '--workspace', workspace, '--copilot-home', copilotHome, '--harness-home', harnessHome, '--no-events', '--json'];
 }
 
+/** Agent process groups still running, killed if the runner exits or is signalled mid-task. */
+const liveAgents = new Set();
+let exitHookInstalled = false;
+
+/** SIGKILLs every live agent process group. Best effort: a group that is already gone is skipped. */
+function killLiveAgents() {
+  for (const pid of liveAgents) {
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
+  }
+  liveAgents.clear();
+}
+
+/** How long the runner waits for the output pipes to close after the agent exits or is killed. */
+const CLOSE_GRACE_MS = 1500;
+
 /**
- * Runs an agent process to completion in its own process group (POSIX), then kills the whole group, so a background process
- * the agent started cannot outlive its task and touch the next task's stores. Resolves like spawnSync: { status, signal,
- * stdout, stderr, error }. A process that starts its own session escapes the group; the restore re-checks still hold then.
+ * Runs an agent process in its own process group (POSIX), then kills the whole group, so a background process the agent
+ * started cannot outlive its task and touch the next task's stores. Resolves like spawnSync: { status, signal, stdout,
+ * stderr, error }. When the agent exits, or is killed on timeout or overflow, the group is killed and the output pipes get
+ * a short grace period to close; a process that started its own session and still holds a pipe cannot delay the result
+ * past it. That process escapes the group kill; the restore re-checks still hold then.
  */
-export function runAgentProcess(command, args, { cwd, env, timeoutMs, maxBuffer = 20 * 1024 * 1024 } = {}) {
+export function runAgentProcess(command, args, { cwd, env, timeoutMs, maxBuffer = 20 * 1024 * 1024, closeGraceMs = CLOSE_GRACE_MS } = {}) {
   return new Promise(resolve => {
     const group = process.platform !== 'win32';
     const child = spawn(command, args, { cwd, env, detached: group, stdio: ['ignore', 'pipe', 'pipe'] });
-    const out = { stdout: '', stderr: '' };
-    let error = null, timer = null;
+    if (group && child.pid) {
+      liveAgents.add(child.pid);
+      if (!exitHookInstalled) { process.on('exit', killLiveAgents); exitHookInstalled = true; }
+    }
+    const out = { stdout: [], stderr: [] };
+    const size = { stdout: 0, stderr: 0 };
+    let error = null, timer = null, grace = null, exited = null, settled = false;
     const killGroup = () => {
       try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
     };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      killGroup();
+      liveAgents.delete(child.pid);
+      for (const name of ['stdout', 'stderr']) child[name].destroy();
+      resolve({ status: exited?.status ?? null, signal: exited?.signal ?? null, stdout: out.stdout.join(''), stderr: out.stderr.join(''), error });
+    };
+    const startGrace = () => { if (!grace && !settled) grace = setTimeout(finish, closeGraceMs); };
     for (const name of ['stdout', 'stderr']) {
       child[name].setEncoding('utf8');
       child[name].on('data', chunk => {
-        out[name] += chunk;
-        if (out[name].length > maxBuffer && !error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); killGroup(); }
+        if (settled) return;
+        out[name].push(chunk);
+        size[name] += Buffer.byteLength(chunk, 'utf8');
+        if (size[name] > maxBuffer && !error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); killGroup(); startGrace(); }
       });
     }
-    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('agent timed out'), { code: 'ETIMEDOUT' }); killGroup(); }, timeoutMs);
-    child.on('error', caught => { error ||= caught; });
-    child.on('close', (status, signal) => {
-      clearTimeout(timer);
-      killGroup();
-      resolve({ status, signal, stdout: out.stdout, stderr: out.stderr, error });
-    });
+    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('agent timed out'), { code: 'ETIMEDOUT' }); killGroup(); startGrace(); }, timeoutMs);
+    child.on('error', caught => { error ||= caught; startGrace(); });
+    child.on('exit', (status, signal) => { exited ||= { status, signal }; killGroup(); startGrace(); });
+    child.on('close', (status, signal) => { exited ||= { status, signal }; finish(); });
   });
 }
 
@@ -195,11 +227,13 @@ function restoreOrigin(workspace, expected) {
 export const readsCapturedMemory = arm => arm.mode === 'on' || arm.mode === 'suggest';
 
 /**
- * Arms whose recallable memory is fixed for the whole run: `capture-only` keeps the state it started with, and `frozen-seed`
- * (mode freeze) keeps its seeded state. Compound still writes episodes in both modes, and orient recalls episodes whatever the
- * knowledge mode, so the runner restores the episode store and retrieval index before every later task.
+ * Arms whose recallable memory is fixed for the whole run: every arm that does not read captured memory. `stateless` keeps
+ * the empty state it started with, `capture-only` keeps the state it started with, and `frozen-seed` (mode freeze) keeps
+ * its seeded state. Compound still writes episodes in capture-only and freeze, an agent in any arm can turn knowledge on and
+ * compound before turning it off again, and orient recalls episodes whatever the knowledge mode, so the runner restores the
+ * episode store, retrieval index and learnings store before every later task.
  */
-export const fixesRecallableMemory = arm => arm.mode === 'capture-only' || arm.mode === 'freeze';
+export const fixesRecallableMemory = arm => !readsCapturedMemory(arm);
 
 const EPISODE_STORE_FILE_LIMIT = 2000;
 const EPISODE_STORE_BYTE_LIMIT = 32 * 1024 * 1024;
@@ -217,7 +251,7 @@ function episodeStoreTargets({ copilotHome, harnessHome, projectDir }) {
 /**
  * Whether `root` and every component of `rel` under it that exists is a real directory, never a symlink, whose realpath is
  * still the expected place under `rootReal`; and whether the target exists. Called again immediately before every removal
- * and write, so a component swapped for a symlink after an earlier check is refused rather than followed.
+ * and write, which narrows the window in which a component swapped for a symlink would be followed; it cannot close it.
  */
 function realDirectoryPath(root, rel, rootReal = null) {
   const inside = (current, expected) => {
@@ -278,8 +312,9 @@ export function snapshotEpisodeStore(homes) {
  * Restores one target, failing closed: false leaves the attempt invalid. An existing target is first renamed to a random
  * sibling, the renamed path is re-verified (real directories all the way, realpath still inside the home) and only then
  * deleted. Every directory is created one component at a time and re-checked, and every file is re-checked and written
- * with an exclusive create, so a component a detached process swaps for a symlink between steps is refused, not followed.
- * `hooks` lets tests act between the steps.
+ * with an exclusive create. These re-checks narrow the window in which a detached process could swap a component for a
+ * symlink between steps; a swap the checks see is refused. A failed removal also refuses the target. `hooks` lets tests
+ * act between the steps.
  */
 function restoreTarget({ root, rootReal, rel, saved }, hooks = {}) {
   const checked = realDirectoryPath(root, rel, rootReal);
@@ -293,7 +328,7 @@ function restoreTarget({ root, rootReal, rel, saved }, hooks = {}) {
     hooks.afterRename?.(path.join(root, asideRel));
     const aside = realDirectoryPath(root, asideRel, rootReal);
     if (!aside.safe || !aside.exists) return false;
-    fs.rmSync(path.join(root, asideRel), { recursive: true, force: true });
+    try { fs.rmSync(path.join(root, asideRel), { recursive: true, force: true, maxRetries: 3 }); } catch { return false; }
   }
   if (!saved) return true;
   if (!makeRealDirectory(root, rel, rootReal)) return false;
@@ -307,7 +342,7 @@ function restoreTarget({ root, rootReal, rel, saved }, hooks = {}) {
 
 /**
  * Restores a snapshot: each target is removed and rewritten from memory, or left absent if it was absent. A target whose
- * path holds a symlink or a non-directory, before or during the restore, is refused, and the attempt becomes invalid.
+ * path is seen to hold a symlink or a non-directory, before or during the restore, is refused, and the attempt becomes invalid.
  */
 export function restoreEpisodeStore(snapshot, hooks = {}) {
   const refused = [];
@@ -413,12 +448,12 @@ function filesInside(base, rel) {
 /** Project-store directory for the series identity, independent of the workspace's current origin. */
 const projectDirFor = (home, identity) => path.join(home, 'projects', path.basename(identity.storeDir));
 
-/** Episode-shaped files (Markdown notes under docs/solutions) in the workspace and in the series project store. */
+/** Episode-shaped files (Markdown notes under docs/solutions, .md or .markdown in any case) in the workspace and in the series project store. */
 export function episodeHashes(workspace, projectDir) {
   const roots = { workspace: [workspace, PROTOCOL.carryForward], project: [projectDir, 'docs/solutions'] };
   const hashes = {};
   for (const [label, [base, sub]] of Object.entries(roots)) {
-    for (const [rel, file] of Object.entries(filesInside(base, sub))) if (rel.endsWith('.md')) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
+    for (const [rel, file] of Object.entries(filesInside(base, sub))) if (/\.(md|markdown)$/i.test(rel)) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
   }
   return hashes;
 }
@@ -608,8 +643,9 @@ export function sweepStaleStudies(base = os.tmpdir()) {
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
   const parent = fs.mkdtempSync(path.join(base, `${STUDY_PREFIX}${process.pid}-`));
-  const remove = () => { try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
+  const remove = () => { killLiveAgents(); try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
   const onSignal = signal => {
+    // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
     try { onAbort(signal); } catch { /* best effort */ }
     process.exit(signal === 'SIGINT' ? 130 : 143);
@@ -689,18 +725,27 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const task = item.tasks[index];
             const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
             const fixture = prepareTask({ series: item, index, runRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
-            const configured = configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 });
-            if (index === 0) seeded = configured.seeded;
             const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
             if (!first) first = identity;
             const projectDir = projectDirFor(harnessHome, first);
-            const plans = clearExternalPlans(harnessHome, projectDir);
-            // Arms with fixed recallable memory start every later task from the episode store their first task started with.
+            // What an earlier agent left behind can make setup fail; that fails this attempt, never the whole study.
+            const setupErrors = [];
+            const setupStep = (step, action, fallback) => {
+              try { return action(); } catch (caught) { setupErrors.push({ step, message: String(caught?.message ?? caught).slice(0, 500) }); return fallback; }
+            };
+            // Arms with fixed recallable memory start every later task from the stores their first task started with. The
+            // restore runs before configuration, so a store an agent broke (for example a symlinked store directory) is
+            // replaced from the snapshot first.
             let storeRestore = { refused: [] };
-            if (fixesRecallableMemory(arm)) {
-              if (index === 0) storeSnapshot = snapshotEpisodeStore({ copilotHome, harnessHome, projectDir });
-              else storeRestore = restoreEpisodeStore(storeSnapshot);
+            const fixed = fixesRecallableMemory(arm);
+            if (fixed && index > 0) {
+              storeRestore = storeSnapshot ? setupStep('restore', () => restoreEpisodeStore(storeSnapshot), { refused: ['(restore failed)'] }) : { refused: ['(no snapshot)'] };
             }
+            const configured = setupStep('configure', () => configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 }), { seeded: null });
+            if (index === 0) seeded = configured.seeded;
+            if (fixed && index === 0) storeSnapshot = setupStep('snapshot', () => snapshotEpisodeStore({ copilotHome, harnessHome, projectDir }), null);
+            const plans = setupStep('clear-plans', () => clearExternalPlans(harnessHome, projectDir), { cleared: 0, refused: ['(clear failed)'] });
+            const setupFailed = setupErrors.length > 0;
             const before = { ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) };
             // Both checkers run under this study's own protocol timeout, the value recorded in provenance.
             const checkerOptions = { timeoutMs: protocol.checkerTimeoutMs };
@@ -712,15 +757,18 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
             const startedAt = Date.now();
             let result = {}, error = null;
-            if (!dryRun) {
+            // A task whose setup failed is invalid whatever the agent does, so no agent runs for it.
+            const ran = !dryRun && !setupFailed;
+            if (setupFailed) error = `setup failed: ${setupErrors.map(row => `${row.step}: ${row.message}`).join('; ')}`.slice(0, 2000);
+            else if (!dryRun) {
               try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
               catch (caught) { error = String(caught.message).slice(0, 2000); }
             }
-            // A dry run changes nothing, so the baseline checks above already describe its workspace.
-            const checks = dryRun ? null : await runChecks(fixture, checkerOptions);
+            // A dry run (or a skipped task) changes nothing, so the baseline checks above already describe its workspace.
+            const checks = ran ? await runChecks(fixture, checkerOptions) : null;
             // One checker run scores the whole task; trap and non-trap results are subsets of its per-check verdicts.
-            const trapChecks = dryRun || !task.trap ? null : subsetResult(task, checks, true);
-            const otherChecks = dryRun || !task.trap ? null : subsetResult(task, checks, false);
+            const trapChecks = !ran || !task.trap ? null : subsetResult(task, checks, true);
+            const otherChecks = !ran || !task.trap ? null : subsetResult(task, checks, false);
             const scope = scopeResult(fixture);
             // Ordinary Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
             // Runner-supplied files under .harness/, such as the public verifier, stay protected.
@@ -732,7 +780,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const after = storedConfig(first.storeDir);
             const episodesAfter = episodeHashes(fixture.workspace, projectDir);
             const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
-            const kind = dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
+            const kind = setupFailed ? 'setup-error' : dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
             const executed = kind === 'live' || kind === 'scripted';
             const invalidReasons = [
               identity.repoId !== first.repoId && 'repo-identity-drift',
@@ -741,6 +789,10 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
               plans.refused.length > 0 && 'external-plans-not-cleared',
               storeRestore.refused.length > 0 && 'episode-store-not-restored',
+              setupErrors.some(row => row.step === 'restore') && 'episode-store-restore-failed',
+              setupErrors.some(row => row.step === 'snapshot') && 'episode-store-snapshot-failed',
+              setupErrors.some(row => row.step === 'configure') && 'arm-configuration-failed',
+              setupErrors.some(row => row.step === 'clear-plans') && 'external-plans-clear-failed',
               !originRestored && 'origin-restore-failed',
             ].filter(Boolean);
             const valid = invalidReasons.length === 0;
@@ -767,7 +819,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
               repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: before.observed, feedback: before.feedbackObserved,
               knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
-              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, episodeStoreRefused: storeRestore.refused,
+              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, episodeStoreRefused: storeRestore.refused, setupErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
