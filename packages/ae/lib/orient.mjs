@@ -69,17 +69,15 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
     if (!evidence) return null;
     const reason = message => inertLine(message || 'verification evidence is not current').replace(/`/g, "'").slice(0, 160);
     if (evidence.outcome !== 'passed') return { state: 'failed', reason: reason(`Latest ae verify outcome is ${evidence.outcome || 'unknown'}`) };
-    const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
-    const fresh = validateEvidence({ workspace, plan: active, evidence, maxAgeHours, copilotHome });
-    if (fresh.pass) return null;
-    let message = fresh.message;
-    if (message === EVIDENCE_AGE_MESSAGE) {
-      // The age check runs before the binding checks, so look past it once to
-      // tell plain expiry from a real change.
-      const unbounded = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
-      if (unbounded.pass) return { state: 'expired', reason: reason(message) };
-      message = unbounded.message || message;
+    // One validation, unbounded in age, tells a real change from plain expiry;
+    // the age is then checked here against the policy's evidence TTL.
+    const current = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
+    if (current.pass) {
+      const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
+      const verifiedAt = Date.parse(evidence.verifiedAt || '');
+      return Date.now() - verifiedAt > maxAgeHours * 60 * 60 * 1000 ? { state: 'expired', reason: reason(EVIDENCE_AGE_MESSAGE) } : null;
     }
+    const message = current.message;
     // Only policy, trust and named-check configuration count as `config`.
     // Intent-source, gap and playbook messages describe plan contract changes
     // and stay `changed`.

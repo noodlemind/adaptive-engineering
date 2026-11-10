@@ -75,7 +75,7 @@ import { buildGrowthReport, renderGrowthReport } from './growth-report.mjs';
 import { collectHostUsage, mergeHostUsage } from './host-telemetry/index.mjs';
 import * as store from './telemetry-store.mjs';
 import { runValidatePlan } from './validate-plan.mjs';
-import { runCompound, runEvidenceMatch } from './compound.mjs';
+import { runCompound, runEvidenceMatch, compoundStrayArgumentsError } from './compound.mjs';
 import { CONSOLIDATION_THRESHOLD, consolidateStatus } from './knowledge/consolidate.mjs';
 import { runCorrect, runRemember } from './knowledge/remember.mjs';
 import { setLearningStatus } from './knowledge/lifecycle.mjs';
@@ -1328,6 +1328,8 @@ export async function cmdCompound(argv, ctx = {}) {
   const workspace = path.resolve(flags.workspace);
   const copilotHome = resolveCopilotHome(flags.copilotHome);
   const logger = (m) => log(flags, m);
+  const stray = compoundStrayArgumentsError(argv, flags);
+  if (stray) throw stray;
   if (flags.matchEvidence != null || flags.checkOutput != null || flags.evidenceBytes != null) {
     // A read-only match of re-run check output against an evidence
     // fingerprint: no capture, so no compound event. A mismatch is an answer,

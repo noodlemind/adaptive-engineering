@@ -13,7 +13,6 @@ import { LEARNING_BYTE_CAP, consolidateCandidates } from '../lib/knowledge/conso
 import { normalizeEvidenceLine, evidenceLineError, evidenceFingerprint, matchEvidence, evidencePrefixError, evidenceBytesError, compoundJournalArgv, readEvidenceFingerprint, EVIDENCE_LINE_CAP } from '../lib/knowledge/evidence-fingerprint.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
 import { beforeDeliveryTool, runDeliveryCommand } from '../lib/agent-delivery.mjs';
-import { harnessStagedDecision } from '../lib/compound.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
@@ -53,6 +52,9 @@ test('normalisation strips a BOM and escapes, trims both ends, applies NFC, and 
 test('the compound journal argv replaces every evidence value, accepted or refused, in both forms', () => {
   assert.deepEqual(compoundJournalArgv(['--insight', '--title', 't', '--evidence-quote', `--- ${MARKER}`, '--json']), ['--insight', '--title', 't', '--evidence-quote', '<evidence>', '--json']);
   assert.deepEqual(compoundJournalArgv([`--evidence-quote=${MARKER}\nsecond`, '--evidence-quote', '-', '--evidence-quote']), ['--evidence-quote=<evidence>', '--evidence-quote', '-', '--evidence-quote']);
+  // An unquoted line splits into positionals, and `--` carries literal text: both are only counted.
+  assert.deepEqual(compoundJournalArgv(['--insight', '--evidence-quote', 'not', 'ok', MARKER, '--', `${MARKER} line`]), ['--insight', '--evidence-quote', '<evidence>', '<positionals:3>']);
+  assert.deepEqual(compoundJournalArgv(['--learning-decision', '-', MARKER]), ['--learning-decision', '-', '<positionals:1>']);
 });
 
 test('the evidence line is checked, normalised and fingerprinted the same way at capture and verification', () => {
@@ -168,7 +170,7 @@ test('a publish decision refuses an oversize, multi-line, control-holding or no-
     assert.ok(!(result.stdout + result.stderr).includes(MARKER), 'a refusal never echoes the line');
   }
   assert.equal(fs.existsSync(path.join(f.ws, '.harness/learning')) && fs.readdirSync(path.join(f.ws, '.harness/learning')).some(name => name !== '.ready.json'), false, 'refused decisions leave no learning record');
-  const flagged = f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', '--evidence-quote', QUOTE, '--json'], JSON.stringify(publish('quote-flag')));
+  const flagged = f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', '--evidence-quote', '-', '--json'], JSON.stringify(publish('quote-flag')));
   assert.equal(flagged.status, 2, 'the CLI flag beside a decision is a usage error');
   assert.match(flagged.stdout + flagged.stderr, /--evidence-quote cannot be combined with --learning-decision/);
   assert.deepEqual(filesHolding(f.dir, MARKER), []);
@@ -278,14 +280,19 @@ test('with events and the run journal on, no capture path leaves the evidence li
   const f = verifiedFixture(t, { events: true });
   const insight = (args, input) => f.cli(['compound', '--insight', '--title', `insight ${args.length}`, '--body', 'retries matter', ...args, '--json'], input);
   const accepted = [
-    insight(['--evidence-quote', QUOTE]),
-    insight([`--evidence-quote=${QUOTE} equals`]),
-    insight(['--evidence-quote', `--- a/${MARKER}.mjs\t2026-11-01`]),
     insight(['--evidence-quote', '-'], `${QUOTE} piped\n`),
+    insight(['--evidence-quote=-'], `--- a/${MARKER}.mjs\t2026-11-01\n`),
     decide(f, publish('quote-events', { evidence_quote: QUOTE })),
   ];
   for (const [i, run] of accepted.entries()) assert.equal(run.status, 0, `${i}: ${run.stdout}${run.stderr}`);
   const refused = [
+    // The line in argv, in any form, is refused and never journaled.
+    insight(['--evidence-quote', QUOTE]),
+    insight([`--evidence-quote=${QUOTE} equals`]),
+    insight(['--evidence-quote', `--- a/${MARKER}.mjs`]),
+    insight(['--evidence-quote', 'not', 'ok', MARKER]),
+    insight(['--evidence-quote', '-', '--', `${MARKER} after the boundary`], 'FAIL retry\n'),
+    insight(['--evidence-quote', '-', 'not', 'ok', MARKER], 'FAIL retry\n'),
     insight([`--evidence-quote=${MARKER} one\nline two`]),
     insight(['--evidence-quote', `${MARKER}${'x'.repeat(700)}`]),
     insight(['--evidence-quote', `${MARKER} bell \x07`]),
@@ -361,8 +368,9 @@ test('a capture over stdin and a later match agree across BOM, NFD, OSC and CRLF
   assert.equal(alone.status, 2, '--evidence-bytes without --match-evidence is a usage error');
   assert.match(alone.stdout + alone.stderr, /used only with --match-evidence/);
   const lane = f.cli(['compound', '--insight', '--title', 'lane', '--body', 'retries matter', '--evidence-quote', `--output=${MARKER}`, '--json']);
-  assert.equal(lane.status, 0, `a literal value that looks like --output is the evidence line: ${lane.stdout}${lane.stderr}`);
-  assert.equal(JSON.parse(lane.stdout).evidence.sha256_prefix, sha(`--output=${MARKER}`).slice(0, 12));
+  assert.equal(lane.status, 2, `a literal value that looks like --output is not an output lane: ${lane.stdout}${lane.stderr}`);
+  assert.match(lane.stdout + lane.stderr, /takes only -/);
+  assert.ok(!(lane.stdout + lane.stderr).includes(MARKER));
   const badLane = f.cli(['compound', '--output', `${MARKER}`, '--json']);
   assert.equal(badLane.status, 2);
   assert.match(badLane.stderr, /not a known lane/);
@@ -377,16 +385,58 @@ test('under ae agent delivery, --check-output is confined to the workspace', () 
   for (const value of [['--check-output', '/etc/passwd'], ['--check-output=../outside.txt'], ['--check-output', '.']]) assert.equal(call(value).pass, false, value.join(' '));
 });
 
-test('a decision Harness stages for ae agent delivery counts as stdin; other decision files do not', async () => {
-  let staged;
-  await runDeliveryCommand({ argv: ['compound', '--plan', 'p.md'], decision: publish('staged', { evidence_quote: QUOTE }) }, async argv => {
-    staged = argv[argv.indexOf('--learning-decision') + 1];
-    assert.equal(harnessStagedDecision(staged), true, staged);
+test('only stdin carries an evidence decision: spoofed, relative and symlinked staged paths are refused, and delivery pipes it', async t => {
+  const f = verifiedFixture(t);
+  const value = publish('quote-spoof', { evidence_quote: QUOTE });
+  const spoofDir = path.join(os.tmpdir(), `harness-agent-decision-${process.pid}`);
+  fs.mkdirSync(spoofDir, { recursive: true });
+  t.after(() => fs.rmSync(spoofDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(spoofDir, 'decision.json'), JSON.stringify(value));
+  const linked = path.join(f.ws, '.harness', 'harness-agent-decision-link');
+  fs.symlinkSync(spoofDir, linked);
+  fs.mkdirSync(path.join(f.ws, '.harness', 'harness-agent-decision-rel'), { recursive: true });
+  fs.writeFileSync(path.join(f.ws, '.harness', 'harness-agent-decision-rel', 'decision.json'), JSON.stringify(value));
+  for (const file of [path.join(spoofDir, 'decision.json'), path.join(linked, 'decision.json'), '.harness/harness-agent-decision-rel/decision.json']) {
+    const run = f.cli(['compound', '--plan', f.plan, '--learning-decision', file, '--json']);
+    assert.equal(run.status, 2, `${file}: ${run.stdout}${run.stderr}`);
+    assert.match(run.stdout + run.stderr, /accepted only from stdin/);
+  }
+  fs.rmSync(path.join(f.ws, '.harness', 'harness-agent-decision-rel'), { recursive: true });
+  fs.rmSync(linked);
+  fs.rmSync(spoofDir, { recursive: true, force: true });
+  // Delivery hands the decision to the child's stdin; nothing is staged on disk.
+  let piped;
+  await runDeliveryCommand({ argv: ['compound', '--plan', f.plan, '--json'], decision: value }, async (argv, options = {}) => {
+    assert.equal(argv[argv.indexOf('--learning-decision') + 1], '-');
+    piped = f.cli(argv, options.input);
     return { status: 'ok' };
   });
-  assert.equal(fs.existsSync(staged), false, 'the staged decision is deleted after the run');
-  for (const file of ['decision.json', path.join(os.tmpdir(), 'decision.json'), path.join(os.tmpdir(), 'other-dir', 'decision.json'),
-    path.join(os.tmpdir(), 'harness-agent-decision-x', 'nested', 'decision.json'), path.join(os.tmpdir(), 'harness-agent-decision-x', 'other.json')]) {
-    assert.equal(harnessStagedDecision(file), false, file);
-  }
+  assert.equal(piped.status, 0, piped.stdout + piped.stderr);
+  assert.deepEqual(JSON.parse(piped.stdout).evidence, { sha256_prefix: QUOTE_SHA.slice(0, 12), bytes: Buffer.byteLength(QUOTE) });
+  assert.deepEqual(filesHolding(f.dir, MARKER), []);
+});
+
+test('the exec runner feeds an input string to the child stdin', async t => {
+  const { execResultOf } = await import('../lib/exec-cmd.mjs');
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-exec-input-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const result = await execResultOf(['--workspace', dir, '--harness-home', dir, '--copilot-home', dir, '--', process.execPath, '-e', "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log('got:'+s.length))"], {}, { input: 'x'.repeat(10) });
+  assert.equal(result.status, 'ok', JSON.stringify(result));
+  assert.ok(JSON.stringify(result.output).includes('got:10'), JSON.stringify(result.output));
+});
+
+test('a relative --check-output cannot follow a symlinked directory out of the workspace', t => {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-match-link-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ws = path.join(dir, 'ws'), outside = path.join(dir, 'outside');
+  fs.mkdirSync(ws); fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'out.txt'), `${QUOTE}\n`);
+  fs.writeFileSync(path.join(ws, 'out.txt'), `${QUOTE}\n`);
+  fs.symlinkSync(outside, path.join(ws, 'linked'));
+  const ae = (...args) => spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), 'compound', '--match-evidence', QUOTE_SHA.slice(0, 12), ...args, '--workspace', ws, '--harness-home', dir, '--copilot-home', dir, '--json'],
+    { cwd: ws, env: { ...process.env, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(ae('--check-output', 'out.txt').status, 0);
+  const escaped = ae('--check-output', 'linked/out.txt');
+  assert.equal(escaped.status, 2, escaped.stdout + escaped.stderr);
+  assert.match(escaped.stdout + escaped.stderr, /--check-output is missing, not a regular file/);
 });

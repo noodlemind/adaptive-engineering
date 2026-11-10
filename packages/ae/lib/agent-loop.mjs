@@ -607,13 +607,13 @@ export async function dispatchToolCall(call, {
 
   if (call.name === 'harness') {
     timeout = resolveToolTimeout({ requested: remainingSeconds, ceiling: timeoutSeconds });
-    run = (_argv, runCtx) => runDeliveryCommand(input, command => execResultOf([
+    run = (_argv, runCtx) => runDeliveryCommand(input, (command, options = {}) => execResultOf([
       ...base, ...(timeout === null ? [] : ['--timeout', String(timeout)]), '--', process.execPath, DELIVERY_BIN, ...command,
       '--workspace', workspace, ...(copilotHome ? ['--copilot-home', copilotHome] : []),
       ...(runHarnessHome ? ['--harness-home', runHarnessHome] : []),
       ...(command.includes('--json') ? [] : ['--json']), ...(command.includes('--no-events') ? [] : ['--no-events']),
       ...(command[0] === 'todo' ? ['--verbose'] : []),
-    ], runCtx));
+    ], runCtx, options));
     fatalOnThrow = false;
   } else if (call.name === 'bash' || call.name === 'exec') {
     timeout = resolveToolTimeout({ requested: input.timeout, ceiling: timeoutSeconds });

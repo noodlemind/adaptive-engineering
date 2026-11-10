@@ -114,6 +114,7 @@ export function runProcess({
   onStdout,
   onStderr,
   onSpawn,
+  input = null,
   maxBuffer = DEFAULT_MAX_BUFFER,
   bufferMode = 'prefix',
   spawnFn = spawn,
@@ -225,7 +226,8 @@ export function runProcess({
         shell: false,
         detached: platform !== 'win32',
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // stdin is closed unless the caller hands the child an input string.
+        stdio: [input === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
     } catch {
       finish({ status: 'failed' });
@@ -281,6 +283,10 @@ export function runProcess({
       finish({ status: outcomeStatus || 'failed' });
     });
 
+    if (input !== null && child.stdin) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    }
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
 

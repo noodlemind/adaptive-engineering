@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isValueFlag } from '../positionals.mjs';
 
 /**
  * Evidence for an episode: the single failing line of check or test output
@@ -99,24 +100,28 @@ export function evidenceBytesError(value) {
 const placeholder = value => (value === '-' ? '-' : '<evidence>');
 
 /**
- * The run-journal argv of `ae compound`: every flag kept, the value of
- * --evidence-quote (either form) replaced by `<evidence>` (or kept when it is
- * `-`, which names stdin), so no evidence line, accepted or refused, is
- * journaled. The value is literal, so the token after the space form is
- * always the value, whatever it looks like.
+ * The run-journal argv of `ae compound` (defense in depth: --evidence-quote
+ * accepts only `-`): every flag and flag value kept, except that a
+ * --evidence-quote value other than `-` (either form) becomes `<evidence>`.
+ * Positionals and everything after `--` are recorded only as a count,
+ * `<positionals:N>`, never as text.
  */
 export function compoundJournalArgv(argv) {
   const out = [];
+  let positionals = 0;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--') { out.push(...argv.slice(i)); break; }
+    if (a === '--') { positionals += argv.length - i - 1; break; }
     if (a.startsWith('--evidence-quote=')) out.push(`--evidence-quote=${placeholder(a.slice('--evidence-quote='.length))}`);
     else if (a === '--evidence-quote') {
       out.push(a);
       if (i + 1 < argv.length) out.push(placeholder(argv[++i]));
-    } else out.push(a);
+    } else if (a.startsWith('-') && a !== '-') {
+      out.push(a);
+      if (isValueFlag(a) && i + 1 < argv.length && argv[i + 1] !== '--') out.push(argv[++i]);
+    } else positionals += 1;
   }
-  return out;
+  return positionals ? [...out, `<positionals:${positionals}>`] : out;
 }
 
 /**

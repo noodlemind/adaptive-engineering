@@ -1123,7 +1123,7 @@ registerCommand({
   args: {
     positionals: [],
     flags: [
-      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'Structured verified learning decision JSON file, or - for stdin' },
+      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'Structured verified learning decision JSON file, or - for stdin (a decision with evidence_quote must come on stdin)' },
       { name: '--plan', type: 'string', valueName: 'path', description: 'explicit plan file', required: false, default: null, tui: 'prompt', choices: 'plan' },
             { name: '--insight', type: 'boolean', description: 'evidence-free investigation capture (kind: insight, secret-scanned)', required: false, default: false, tui: 'verb' },
             { name: '--title', type: 'string', valueName: 't', description: 'insight title (required with --insight)', required: false, default: null, tui: 'prompt' },
@@ -1133,7 +1133,7 @@ registerCommand({
       { name: '--tags', type: 'string', valueName: 'a,b', description: 'comma-separated tags', required: false, default: null, tui: 'prompt' },
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
-      { name: '--evidence-quote', type: 'string', valueName: 'text', description: 'the one failing line of check output for --insight, or - to read it from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'prompt', valueIsLiteral: true },
+      { name: '--evidence-quote', type: 'string', valueName: '-', description: 'only -: read the one failing line of check output for --insight from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'cli-only', valueIsLiteral: true },
       { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix', required: false, default: null, tui: 'cli-only' },
       { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace), or - for stdin', required: false, default: null, tui: 'cli-only' },
       { name: '--evidence-bytes', type: 'string', valueName: 'n', description: 'optional stored evidence length for --match-evidence; a matching line must have it', required: false, default: null, tui: 'cli-only' },

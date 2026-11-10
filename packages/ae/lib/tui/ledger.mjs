@@ -12,6 +12,21 @@ import { createBlock, newBlockId, formatActor } from './block.mjs';
 import { detectActor } from '../event-registry.mjs';
 import { writeFileContained } from '../fs-safe.mjs';
 import { EXIT } from '../style.mjs';
+import { getCommand } from '../registry.mjs';
+
+/**
+ * The argv after the command name as the run journal records it: the
+ * command's journalArgv when it has one (so, for example, an agent task or
+ * an evidence value is never journaled), otherwise unchanged.
+ */
+export function journalArgvOf(argv) {
+  const [name, ...rest] = argv;
+  try {
+    return getCommand(name)?.journalArgv?.(rest) ?? rest;
+  } catch {
+    return [];
+  }
+}
 
 /** How many prior runs a fresh session restores. Enough that yesterday's work
  * is on screen; few enough that opening the ledger is not a history dump. */
@@ -136,7 +151,8 @@ export function createLedger({
       startRun(workspace, {
         run: block.run,
         command: block.argv?.[0] || block.command,
-        argv: block.argv?.slice(1) ?? [],
+        // A command's journalArgv decides what of its argv is recorded.
+        argv: journalArgvOf(block.argv ?? []),
         plan: block._plan ?? null,
         host: process.env.HARNESS_HOST || 'harness-tui',
         actor,

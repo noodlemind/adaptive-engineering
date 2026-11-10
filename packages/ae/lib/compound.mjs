@@ -4,7 +4,6 @@ import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
-import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
@@ -18,6 +17,7 @@ import { scanSecrets } from './secret-scan.mjs';
 import { readStoreConfig } from './knowledge/store.mjs';
 import { evidenceLineError, evidenceFingerprint, evidenceFrontmatterLines, evidencePrefixError, evidenceBytesError, evidenceSummary, matchEvidence, EVIDENCE_OUTPUT_CAP, EVIDENCE_RAW_CAP } from './knowledge/evidence-fingerprint.mjs';
 import { EXIT } from './style.mjs';
+import { positionalsOf } from './positionals.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
@@ -385,16 +385,6 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   });
 }
 
-// Under `ae agent` delivery Harness itself stages an inline decision in an
-// owned temporary directory (see runDeliveryCommand in agent-delivery.mjs)
-// and deletes it when the command ends, so that file is accepted too.
-const STAGED_DECISION_PREFIX = 'harness-agent-decision-';
-export function harnessStagedDecision(file) {
-  if (typeof file !== 'string' || path.basename(file) !== 'decision.json') return false;
-  const dir = path.dirname(path.resolve(file));
-  return path.basename(dir).startsWith(STAGED_DECISION_PREFIX) && path.dirname(dir) === path.resolve(os.tmpdir());
-}
-
 async function runLearningDecision({ workspace, copilotHome, flags, log, domainContext = null }) {
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
@@ -414,10 +404,10 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (decision.evidence_quote !== undefined) {
     // A decision file would leave the evidence line on disk, so a decision
     // carrying one must arrive on stdin.
-    if (flags.learningDecision !== '-' && !harnessStagedDecision(flags.learningDecision)) throw Object.assign(new Error('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file'), { code: 'E_USAGE', exit: EXIT.usage, hint: 'ae compound --plan <path> --learning-decision - --json' });
-    if (decision.decision !== 'publish') throw new Error('evidence_quote applies only to a publish decision');
+    if (flags.learningDecision !== '-') throw usageError('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file', 'ae compound --plan <path> --learning-decision - --json');
+    if (decision.decision !== 'publish') throw usageError('evidence_quote applies only to a publish decision');
     const quoteError = evidenceLineError(decision.evidence_quote);
-    if (quoteError) throw new Error(quoteError);
+    if (quoteError) throw usageError(quoteError);
     // The line is replaced by its fingerprint before anything is recorded, so
     // the stored decision, its digest and the episode never hold it.
     const { evidence_quote: line, ...rest } = decision;
@@ -516,6 +506,20 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
 const MATCH_EXCLUSIVE_FLAGS = [['learningDecision', '--learning-decision'], ['plan', '--plan'], ['insight', '--insight'], ['title', '--title'], ['body', '--body'], ['bodyFile', '--body-file'],
   ['category', '--category'], ['tags', '--tags'], ['trigger', '--trigger'], ['claim', '--claim'], ['evidenceQuote', '--evidence-quote'], ['enforcement', '--enforcement'], ['dryRun', '--dry-run']];
 
+const usageError = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
+
+/**
+ * Stray positionals or literal arguments after `--` beside --evidence-quote
+ * or --learning-decision are refused: an unquoted line would otherwise be
+ * split, part fingerprinted and the rest carried in argv.
+ */
+export function compoundStrayArgumentsError(argv, flags) {
+  if (flags.evidenceQuote == null && flags.learningDecision == null) return null;
+  if (argv.includes('--')) return usageError('ae compound takes no arguments after -- with --evidence-quote or --learning-decision', 'pipe the line or decision on stdin');
+  if (positionalsOf(argv).length) return usageError('ae compound takes no positional arguments with --evidence-quote or --learning-decision; quote nothing on the command line', 'pipe the line or decision on stdin');
+  return null;
+}
+
 export function runEvidenceMatch({ workspace, flags }) {
   const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
   const hint = 'ae compound --match-evidence <sha256_prefix> --check-output <path|->';
@@ -530,7 +534,9 @@ export function runEvidenceMatch({ workspace, flags }) {
   // A relative path resolves against --workspace, as --learning-decision does.
   const output = flags.checkOutput === '-'
     ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
-    : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP });
+    // A relative path is read under --workspace with every component
+    // checked, so a symlinked directory cannot lead outside it.
+    : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP, ...(path.isAbsolute(flags.checkOutput) ? {} : { root: workspace }) });
   // An unreadable input is a usage error (exit 2), never a mismatch (exit 1).
   if (output === null) throw usage(`--check-output is missing, not a regular file, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`, hint);
   const { matched, line } = matchEvidence(output, flags.matchEvidence, { bytes: flags.evidenceBytes == null ? null : Number(flags.evidenceBytes) });
@@ -545,36 +551,21 @@ export function runEvidenceMatch({ workspace, flags }) {
   };
 }
 
-// The flag names `ae compound` accepts, read from its registry definition.
-// Imported on use: the registry imports this module through commands.mjs.
-async function compoundFlagNames() {
-  const { getCommand, GLOBAL_FLAGS } = await import('./registry.mjs');
-  const defs = [...(getCommand('compound')?.args?.flags || []), ...GLOBAL_FLAGS];
-  return new Set(['-h', '--help', ...defs.flatMap(def => [def.name, ...(def.aliases || [])])]);
-}
-
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
   if (flags.evidenceQuote != null) {
-    const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
-    // The value is taken literally, so a forgotten value swallows the next flag.
-    // Only the space form can swallow a flag; --evidence-quote=--dry-run is a deliberate value.
-    // These come before the --insight check: a swallowed --insight is reported as swallowed.
-    if (flags.evidenceQuoteForm === 'missing') throw usage('--evidence-quote needs a value', 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
-    // Only a real flag of this command counts: its own or a global flag name or
-    // alias, alone or with =value, or -h/--help. Other dash-led text, such as
-    // `--- a/x`, `-  removed line`, `-x` or `--max-old-space-size=4096`, is a quote.
-    if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote.split('=')[0]}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    const hint = "pipe the single failing line on stdin: printf '%s\\n' \"<line>\" | ae compound --insight --evidence-quote -";
+    // The line is read only from stdin, so it never reaches argv, shell
+    // history, the run journal or the TUI ledger. The value is never echoed.
+    if (flags.evidenceQuoteCount > 1) throw usageError('--evidence-quote may be given only once', hint);
+    if (flags.evidenceQuote !== '-') throw usageError('--evidence-quote takes only - and reads the line from stdin', hint);
     // A learning decision carries its own evidence_quote; a flag beside it
     // would otherwise be dropped without a word.
-    if (flags.learningDecision) throw usage('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision file instead');
-    if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
-    if (flags.evidenceQuote === '-') {
-      // `-` reads the line from stdin, so it never appears in argv or shell
-      // history. One trailing line break (as echo or a pipe adds) is dropped.
-      const piped = readBoundedInput(0, { maxBytes: EVIDENCE_RAW_CAP + 2 });
-      if (piped === null) throw usage(`--evidence-quote - could not read stdin, or it holds more than ${EVIDENCE_RAW_CAP} bytes`, 'pipe the single failing line into ae compound --insight --evidence-quote -');
-      flags = { ...flags, evidenceQuote: piped.replace(/\r?\n$/, '') };
-    }
+    if (flags.learningDecision) throw usageError('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision piped to --learning-decision -');
+    if (!flags.insight) throw usageError('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
+    // One trailing line break (as echo or a pipe adds) is dropped.
+    const piped = readBoundedInput(0, { maxBytes: EVIDENCE_RAW_CAP + 2 });
+    if (piped === null) throw usageError(`--evidence-quote - could not read stdin, or it holds more than ${EVIDENCE_RAW_CAP} bytes`, hint);
+    flags = { ...flags, evidenceQuote: piped.replace(/\r?\n$/, '') };
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

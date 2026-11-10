@@ -174,65 +174,48 @@ test('an oversize, multi-line or control-holding insight evidence line is refuse
   assert.match(bodySecret.result.blockedReason, /github-token|secret/);
 });
 
-const aeCli = (ws, home, copilotHome) => (...args) => spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json', ...args],
-  { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+const aeCli = (ws, home, copilotHome) => (args, input) => spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json', ...args],
+  { cwd: ws, input, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
 
-test('ae compound --insight fingerprints an --evidence-quote that starts with a diff header', () => {
+test('ae compound --insight --evidence-quote - fingerprints a dash-led line read from stdin', () => {
   const ws = tempDir('quote-cli-ws-');
   const home = tempDir('quote-cli-hh-');
   const copilotHome = tempDir('quote-cli-ch-');
   const quote = '--- a/src/retry.mjs\t2026-11-01 12:00:00';
-  const run = aeCli(ws, home, copilotHome)('--insight', '--title', 'diff quote', '--body', 'retries matter', '--evidence-quote', quote);
-  assert.equal(run.status, 0, run.stderr || run.stdout);
-  const text = fs.readFileSync(path.join(solutionsWriteTarget(ws, { home }).base, JSON.parse(run.stdout).path), 'utf8');
-  assert.deepEqual(storedEvidence(text), { sha256: sha(quote), bytes: Buffer.byteLength(quote) });
+  for (const flag of [['--evidence-quote', '-'], ['--evidence-quote=-']]) {
+    const run = aeCli(ws, home, copilotHome)(['--insight', '--title', `diff quote ${flag.length}`, '--body', 'retries matter', ...flag], `${quote}\n`);
+    assert.equal(run.status, 0, run.stderr || run.stdout);
+    const text = fs.readFileSync(path.join(solutionsWriteTarget(ws, { home }).base, JSON.parse(run.stdout).path), 'utf8');
+    assert.deepEqual(storedEvidence(text), { sha256: sha(quote), bytes: Buffer.byteLength(quote) });
+  }
 });
 
-test('ae compound refuses --evidence-quote without --insight or without a value', () => {
+test('--evidence-quote takes only -, once, with --insight, and never echoes a refused value', () => {
   const ws = tempDir('quote-flag-ws-');
   const home = tempDir('quote-flag-hh-');
   const copilotHome = tempDir('quote-flag-ch-');
   const ae = aeCli(ws, home, copilotHome);
-  const noInsight = ae('--evidence-quote', 'Error: boom');
-  assert.equal(noInsight.status, 2, 'a usage error');
-  assert.match(noInsight.stdout + noInsight.stderr, /--evidence-quote is accepted only with --insight/);
-  const swallowed = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'swallowed', '--body', 'body', '--evidence-quote', '--json', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome],
-    { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
-  assert.equal(swallowed.status, 2, swallowed.stdout + swallowed.stderr);
-  assert.match(swallowed.stdout + swallowed.stderr, /--evidence-quote needs a value but got the flag --json/);
-  const noValue = ae('--insight', '--title', 'empty quote', '--body', 'body', '--evidence-quote');
-  assert.equal(noValue.status, 2, 'a missing trailing value is a usage error');
-  assert.match(noValue.stdout + noValue.stderr, /--evidence-quote needs a value/);
-  const target = solutionsWriteTarget(ws, { home });
-  assert.equal(fs.existsSync(path.join(target.base, 'docs/solutions/insights')), false, 'nothing is captured');
-  const equalsForm = ae('--insight', '--title', 'flag-like quote', '--body', 'body', '--evidence-quote=--dry-run');
-  assert.equal(equalsForm.status, 0, equalsForm.stdout + equalsForm.stderr);
-  assert.equal(storedEvidence(fs.readFileSync(path.join(target.base, JSON.parse(equalsForm.stdout).path), 'utf8')).sha256, sha('--dry-run'), 'the = form keeps a flag-like value as the line');
-  for (const value of ['--category=logic', '--tags', '--workspace=/x', '-v', '-h', '--help']) {
-    const swallowedValue = ae('--insight', '--title', `swallowed ${value}`, '--body', 'body', '--evidence-quote', value);
-    assert.equal(swallowedValue.status, 2, swallowedValue.stdout + swallowedValue.stderr);
-    assert.match(swallowedValue.stdout + swallowedValue.stderr, new RegExp(`needs a value but got the flag ${value.split('=')[0]}`));
+  const refused = [
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote', 'QX7MARKER boom'], /takes only - and reads the line from stdin/],
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote=QX7MARKER boom'], /takes only -/],
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote', '--json'], /takes only -/],
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote'], /takes only -/],
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote', '-', '--evidence-quote', '-'], /may be given only once/],
+    [['--evidence-quote', '-'], /accepted only with --insight/],
+    [['--insight', '--learning-decision', '-', '--evidence-quote', '-'], /cannot be combined with --learning-decision/],
+    [['--learning-decision', '-', '--evidence-quote', '-'], /cannot be combined with --learning-decision/],
+    // An unquoted line splits into positionals; `--` carries literal text.
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote', '-', 'not', 'ok', 'QX7MARKER'], /no positional arguments/],
+    [['--insight', '--title', 't', '--body', 'b', '--evidence-quote', '-', '--', 'QX7MARKER line'], /no arguments after --/],
+    [['--learning-decision', '-', 'QX7MARKER'], /no positional arguments/],
+  ];
+  for (const [args, message] of refused) {
+    const run = ae(args, 'FAIL retry\n');
+    assert.equal(run.status, 2, `${args.join(' ')}: ${run.stdout}${run.stderr}`);
+    assert.match(run.stdout + run.stderr, message, args.join(' '));
+    assert.ok(!(run.stdout + run.stderr).includes('QX7MARKER'), `the value is not echoed: ${args.join(' ')}`);
   }
-  for (const value of ['--- a/src/retry.mjs', '-  removed line', '--max-old-space-size=4096', '-x', '--insightful']) {
-    const diff = ae('--insight', '--title', `diff ${value.length}`, '--body', 'body', '--evidence-quote', value);
-    assert.equal(diff.status, 0, diff.stdout + diff.stderr);
-    assert.equal(storedEvidence(fs.readFileSync(path.join(target.base, JSON.parse(diff.stdout).path), 'utf8')).sha256, sha(value.trimEnd()));
-  }
-  const swallowedInsight = ae('--evidence-quote', '--insight', '--title', 'swallowed insight', '--body', 'body');
-  assert.equal(swallowedInsight.status, 2, swallowedInsight.stdout + swallowedInsight.stderr);
-  assert.match(swallowedInsight.stdout + swallowedInsight.stderr, /--evidence-quote needs a value but got the flag --insight/);
-});
-
-test('ae compound refuses --evidence-quote beside --learning-decision as a usage error, with or without --insight', () => {
-  const ws = tempDir('quote-decision-ws-');
-  const home = tempDir('quote-decision-hh-');
-  const copilotHome = tempDir('quote-decision-ch-');
-  fs.writeFileSync(path.join(ws, 'd.json'), JSON.stringify({ operation: 'op-1', decision: 'publish', rationale: 'r', title: 't', body: 'b' }));
-  for (const extra of [['--insight'], []]) {
-    const run = aeCli(ws, home, copilotHome)(...extra, '--learning-decision', 'd.json', '--evidence-quote', 'Error: boom');
-    assert.equal(run.status, 2, run.stdout + run.stderr);
-    assert.match(run.stdout + run.stderr, /--evidence-quote cannot be combined with --learning-decision/);
-  }
+  assert.equal(fs.existsSync(path.join(solutionsWriteTarget(ws, { home }).base, 'docs/solutions/insights')), false, 'nothing is captured');
 });
 
 test('an insight without an evidence line keeps the exact pre-evidence episode bytes', () => {

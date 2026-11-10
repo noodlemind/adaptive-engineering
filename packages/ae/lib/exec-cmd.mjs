@@ -155,7 +155,7 @@ function emitAudit(ctx, mode, p, result) {
   });
 }
 
-async function execute(argv, ctx, { shell }) {
+async function execute(argv, ctx, { shell, input = null }) {
   const p = plan(argv, { shell });
 
     if (p.flags.dryRun) {
@@ -193,6 +193,7 @@ async function execute(argv, ctx, { shell }) {
     signal: ctx?.signal,
     onStdout: (chunk) => streamer.onStdout(chunk),
     onStderr: (chunk) => streamer.onStderr(chunk),
+    input,
   });
   streamer.flush();
 
@@ -261,8 +262,9 @@ export function exitFor(result) {
     return result.exitCode === null || result.exitCode === 0 ? 1 : result.exitCode;
 }
 
-export async function execResultOf(argv, ctx = {}) {
-  return execute(argv, ctx, { shell: false });
+/** `input`, when given, is written to the child's stdin (an inline decision for `--learning-decision -`). */
+export async function execResultOf(argv, ctx = {}, { input = null } = {}) {
+  return execute(argv, ctx, { shell: false, input });
 }
 
 export async function cmdExec(argv, ctx = {}) {

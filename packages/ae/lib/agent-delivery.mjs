@@ -109,7 +109,7 @@ export function beforeDeliveryTool(call, options) {
     let decisionFlag;
     try { decisionFlag = inlineDecisionFlag(call.input); }
     catch (error) { return { pass: false, reason: error.message }; }
-    const effectiveArgv = decisionFlag ? [...argv, decisionFlag, path.join(os.tmpdir(), 'harness-agent-decision-placeholder', 'decision.json')] : argv;
+    const effectiveArgv = decisionFlag ? [...argv, decisionFlag, decisionFlag === '--learning-decision' ? '-' : path.join(os.tmpdir(), 'harness-agent-decision-placeholder', 'decision.json')] : argv;
     if (!(COMMANDS.has(argv[0]) || checkRecoveryInput(call.input) || ['todo', 'inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && harnessControlCommand(['harness', ...effectiveArgv], options.workspace) === argv[0])) return { pass: false, reason: 'ae requires argv for a supported lifecycle command or exact diagnostic/worklist control' };
     if (argv[0] === 'trust' && argv[1] && argv[1] !== 'status') return { pass: false, reason: 'Trust approval or revocation requires a person; the agent may read trust status only.' };
     if (argv.some(arg => /^--(?:workspace|copilot-home|ae-home|harness-home|home)(?:=|$)/.test(arg))) return { pass: false, reason: 'Lifecycle commands are bound to this run workspace and homes.' };
@@ -165,13 +165,22 @@ export function afterDeliveryTool(call, result, options) {
   }, options);
 }
 
-/** Stage authored decisions outside product scope; only Harness serializes them. */
+/**
+ * Stage authored decisions outside product scope; only Harness serializes
+ * them. A learning decision goes to the child's stdin as
+ * `--learning-decision -`, so no decision file (and no evidence line) is ever
+ * written; other inline decisions are staged in an owned temporary file.
+ */
 export async function runDeliveryCommand(input, run) {
   let directory;
   try {
     const argv = [...input.argv];
     const flag = inlineDecisionFlag(input);
     if (['inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && !argv.includes('--verbose') && !argv.includes('-v')) argv.push('--verbose');
+    if (flag === '--learning-decision') {
+      argv.push(flag, '-');
+      return await run(argv, { input: JSON.stringify(input.decision) });
+    }
     if (flag) {
       directory = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-agent-decision-'));
       const file = path.join(directory, 'decision.json');

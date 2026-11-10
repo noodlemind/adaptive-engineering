@@ -11,7 +11,11 @@ import { routeTypedLine } from './tui/typed-line.mjs';
 import { buildCommandIndex, orderPaletteRows } from './command-index.mjs';
 import { createTally, interpretLine, stripControl, tokenize } from './tui/session.mjs';
 import { createOverlay, splitPrefix, applyPrefix, treeRows, filterSectioned } from './tui/overlay.mjs';
-import { createLedger, statusForExit } from './tui/ledger.mjs';
+import { createLedger, statusForExit, journalArgvOf } from './tui/ledger.mjs';
+
+// What a ledger block shows for a typed command: the command name and its
+// journaled argv, so text a command keeps out of its journal is not shown.
+const journalDisplay = argv => (hasCommand(argv[0]) ? [argv[0], ...journalArgvOf(argv)] : argv).join(' ');
 import { renderBlock, foldState, createBlock } from './tui/block.mjs';
 import { renderHeader, renderExit } from './tui/chrome.mjs';
 import { completePath } from './tui/complete.mjs';
@@ -337,7 +341,7 @@ export async function runLedger({
     const commandArgv = withSessionContext(rawArgv);
     const [name, ...rest] = commandArgv;
     if (!hasCommand(name)) {
-      const block = ledger.open({ command: display ?? rawArgv.join(' '), argv: rawArgv });
+      const block = ledger.open({ command: display ?? journalDisplay(rawArgv), argv: rawArgv });
       ledger.append(block, ui.line({ state: 'error', key: 'unknown', value: name, note: 'type / to see what exists' }));
       ledger.close(block, { status: 'usage', exitCode: EXIT.usage, tally: ui.summary({ ok: 0, err: 1, exit: EXIT.usage }) });
       tally.record(EXIT.usage, {});
@@ -345,7 +349,7 @@ export async function runLedger({
       return block;
     }
 
-    const block = ledger.open({ command: display ?? rawArgv.join(' '), argv: rawArgv });
+    const block = ledger.open({ command: display ?? journalDisplay(rawArgv), argv: rawArgv });
     if (name === 'agent') block.keepTail = true;
     const listing = new Set(['config', 'model']);
     if (listing.has(name) && !rest.some((a) => a === 'set' || a === 'clear')) block.folded = false;

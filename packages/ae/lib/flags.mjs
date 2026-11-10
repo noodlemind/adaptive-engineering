@@ -328,16 +328,16 @@ export function parseFlags(argv) {
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
     else if (a.startsWith('--evidence-quote=')) {
-      // The last occurrence wins, so its form replaces any earlier one's.
+      // Only `-` (stdin) is accepted; compound refuses any other value and a
+      // repeated flag, so the count is kept.
       flags.evidenceQuote = a.split('=').slice(1).join('=');
-      flags.evidenceQuoteForm = 'equals';
+      flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
     }
     else if (a === '--evidence-quote') {
-      // The value is taken literally; remember the form so a forgotten value
-      // that swallowed the next flag, or a missing trailing value, is a usage error.
       const value = scan[++i];
       flags.evidenceQuote = value ?? '';
-      flags.evidenceQuoteForm = value === undefined ? 'missing' : 'space';
+      flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
+      if (value === undefined) flags.evidenceQuoteForm = 'missing';
     }
     else if (a.startsWith('--match-evidence=')) flags.matchEvidence = a.split('=').slice(1).join('=');
     else if (a === '--match-evidence') flags.matchEvidence = scan[++i] ?? '';

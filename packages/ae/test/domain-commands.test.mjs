@@ -57,7 +57,7 @@ test('opt-in parent profiling retains bounded safe evidence when its child is te
   assert.deepEqual(fs.readdirSync(log), profileFiles);
 });
 
-test('native parent decisions use the same owned temporary staging as ordinary delivery', async () => {
+test('native parent decisions use owned temporary staging, and a learning decision goes on stdin', async () => {
   for (const argv of [
     ['domain', 'plan-new', '--name', 'catalogue'],
     ['domain', 'plan-update', '--name', 'catalogue', '--plan', 'parent.hplan'],
@@ -70,13 +70,18 @@ test('native parent decisions use the same owned temporary staging as ordinary d
     const input = { argv, decision };
     const permission = beforeDeliveryTool({ name: 'harness', input }, { workspace: '/tmp/workspace' });
     assert.equal(permission.pass, true, `${verb}: ${permission.reason}`);
-    await runDeliveryCommand(input, async argv => {
-      const flag = verb === 'compound' ? '--learning-decision' : '--file';
-      staged = argv[argv.indexOf(flag) + 1];
+    await runDeliveryCommand(input, async (argv, options = {}) => {
+      if (verb === 'compound') {
+        // A learning decision is piped, so no decision file exists at all.
+        assert.equal(argv[argv.indexOf('--learning-decision') + 1], '-');
+        assert.deepEqual(JSON.parse(options.input), decision);
+        return { status: 'ok' };
+      }
+      staged = argv[argv.indexOf('--file') + 1];
       assert.deepEqual(JSON.parse(fs.readFileSync(staged, 'utf8')), decision);
       return { status: 'ok' };
     });
-    assert.equal(fs.existsSync(staged), false);
+    if (staged) assert.equal(fs.existsSync(staged), false);
   }
 });
 
@@ -144,20 +149,21 @@ function cliFixture(t) {
   }
   fs.mkdirSync(path.join(home, 'domains'), { recursive: true });
   fs.writeFileSync(path.join(home, 'domains/catalogue.yaml'), YAML.stringify({ domain_version: 2, name: 'catalogue', repos: ['producer', 'consumer'].map(id => ({ id, origin: `https://example.invalid/${id}.git` })), sources: [], bindings: { repos: { producer: roots.producer, consumer: roots.consumer }, sources: {} }, shared_specs: [], shared_conventions: [] }));
-  const cli = (command, ...args) => {
+  const cliWith = (stdin, command, ...args) => {
     const started = Date.now();
-    const result = spawnSync(process.execPath, [bin, command, ...args, '--workspace', roots.coordinator, '--harness-home', home, '--copilot-home', copilotHome, '--json'], { encoding: 'utf8', timeout: commandSeconds * 1000 });
+    const result = spawnSync(process.execPath, [bin, command, ...args, '--workspace', roots.coordinator, '--harness-home', home, '--copilot-home', copilotHome, '--json'], { encoding: 'utf8', input: stdin, timeout: commandSeconds * 1000 });
     const diagnostic = { elapsedMs: Date.now() - started, timeoutMs: commandSeconds * 1000, status: result.status, signal: result.signal, errorCode: result.error?.code || null };
     parentProfile.record('fixture-cli', { ...diagnostic, childPid: result.pid });
     return { ...result, diagnostic };
   };
+  const cli = (command, ...args) => cliWith(undefined, command, ...args);
   const input = path.join(root, 'decision.json');
   const invoke = (...args) => {
     const result = cli('domain', ...args, '--name', 'catalogue');
     assert.equal(result.status, 0, `${args.join(' ')}: ${JSON.stringify(result.diagnostic)} ${result.stdout} ${result.stderr}`);
     return JSON.parse(result.stdout);
   };
-  return { root, roots, home, copilotHome, cli, invoke, input, git, commandSeconds };
+  return { root, roots, home, copilotHome, cli, cliWith, invoke, input, git, commandSeconds };
 }
 
 test('domain commands retain opaque home authority and reject symlink selectors', t => {
@@ -224,6 +230,23 @@ test('actual parent CLI routes review, proof, learning, completion and journals 
   await native(['review', 'assemble', '--plan', plan, '--packet', packet.id], { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Deterministic fixture exercises record validation, without a model review claim.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Scripted CLI acceptance fixture.' } })) });
   const proof = f.invoke('verify', '--plan', plan, '--base', 'HEAD');
   assert.equal(proof.outcome, 'passed');
+  // Evidence lines reach domain compound only on stdin, by CLI or delivery.
+  const evidenceLine = 'not ok 1 - QX7MARKER schema versions differ';
+  const evidenceDecision = { operation: 'cli-evidence', decision: 'publish', rationale: 'Schema drift is reusable.', title: 'schema versions must match', body: 'Producer and consumer schemas must share a version.', category: 'logic', evidence_quote: evidenceLine };
+  fs.writeFileSync(f.input, JSON.stringify(evidenceDecision));
+  const fromFile = f.cli('domain', 'compound', '--plan', plan, '--learning-decision', f.input, '--name', 'catalogue');
+  assert.equal(fromFile.status, 2, fromFile.stdout + fromFile.stderr);
+  assert.match(fromFile.stdout + fromFile.stderr, /accepted only from stdin/);
+  fs.rmSync(f.input);
+  const piped = f.cliWith(JSON.stringify(evidenceDecision), 'domain', 'compound', '--plan', plan, '--learning-decision', '-', '--name', 'catalogue');
+  assert.equal(piped.status, 0, piped.stdout + piped.stderr);
+  const published = JSON.parse(piped.stdout);
+  assert.equal(published.evidence?.sha256_prefix, digest(evidenceLine).slice(0, 12), piped.stdout);
+  const nativeBad = await dispatchToolCall({ id: 'native-evidence', name: 'harness', input: { argv: ['domain', 'compound', '--plan', plan, '--name', 'catalogue'], decision: { ...evidenceDecision, operation: 'native-evidence', decision: 'no-learning' } } }, { workspace: f.roots.coordinator, harnessHome: f.home, copilotHome: f.copilotHome, profile: DELIVER_PROFILE, remainingSeconds: f.commandSeconds });
+  assert.match(JSON.stringify(nativeBad.result), /applies only to a publish decision/, 'the delivery decision reached compound on stdin');
+  for (const file of fs.readdirSync(f.root, { recursive: true }).map(rel => path.join(f.root, rel)).filter(file => fs.statSync(file).isFile())) {
+    assert.ok(!fs.readFileSync(file).includes('QX7MARKER'), `${file} holds the evidence line`);
+  }
   await native(['compound', '--plan', plan], { operation: 'cli-no-learning', decision: 'no-learning', rationale: 'Fixture behavior is fully captured by its tests.' });
   op('cli-complete', 'complete');
   assert.equal(YAML.parse(fs.readFileSync(plan, 'utf8').split('---')[1]).status, 'done');
