@@ -211,7 +211,7 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   for (const value of ['--category=logic', '--tags', '--workspace=/x', '-v', '-h', '--help']) {
     const swallowedValue = ae('--insight', '--title', `swallowed ${value}`, '--body', 'body', '--evidence-quote', value);
     assert.equal(swallowedValue.status, 2, swallowedValue.stdout + swallowedValue.stderr);
-    assert.match(swallowedValue.stdout + swallowedValue.stderr, new RegExp(`needs a value but got the flag ${value}`));
+    assert.match(swallowedValue.stdout + swallowedValue.stderr, new RegExp(`needs a value but got the flag ${value.split('=')[0]}`));
   }
   for (const value of ['--- a/src/retry.mjs', '-  removed line', '--max-old-space-size=4096', '-x', '--insightful']) {
     const diff = ae('--insight', '--title', `diff ${value.length}`, '--body', 'body', '--evidence-quote', value);

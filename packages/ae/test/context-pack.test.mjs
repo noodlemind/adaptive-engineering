@@ -488,6 +488,8 @@ test('the resume hint follows readiness steps, takes the verify slot for configu
   assert.equal(config[5], 'ae compound', 'it stays ahead of compound');
   assert.ok(!config[4].includes('leftover breakage'));
   assert.equal(config.length, passing.length + 1, 'the plain verify step is replaced, not repeated');
+  const odd = withResumeVerification(passing, changed, { ...opts, planPath: "docs/plans/it's #1 $x.md" });
+  assert.ok(odd.some(tool => tool.startsWith("ae verify --plan 'docs/plans/it'\\''s #1 $x.md'  # prior verification changed")), JSON.stringify(odd));
   const configNoRecovery = withResumeVerification(passing, { state: 'config', reason: 'Required named check is missing' }, opts);
   assert.match(configNoRecovery[3], /no longer matches configuration/, 'without trust recovery it takes the plain verify slot');
 });

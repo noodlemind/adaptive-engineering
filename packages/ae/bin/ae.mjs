@@ -142,7 +142,9 @@ function extractOutputLane(rawArgs) {
   const consumed = hasInlineValue ? 1 : 2;
   const lane = OUTPUT_LANES[value];
   if (!lane) {
-    const shown = value === undefined ? '(missing)' : JSON.stringify(value);
+    // Echo only a short single-word value: the token may be the literal value
+    // of another flag, such as an evidence line, that only looks like --output.
+    const shown = value === undefined ? '(missing)' : /^[\w.-]{1,16}$/.test(value) ? JSON.stringify(value) : '(value not shown)';
     throw Object.assign(new Error(`invalid --output: ${shown} — must be json-envelope, agent, or jsonl`), {
       code: 'E_USAGE',
       hint: 'ae help',

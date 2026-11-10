@@ -11,6 +11,8 @@ import crypto from 'node:crypto';
  * reaches an agent through Harness, so no secret screening of it is needed.
  */
 export const EVIDENCE_LINE_CAP = 600;
+/** The most raw input accepted before normalisation (colour codes can be long). */
+export const EVIDENCE_RAW_CAP = 4096;
 export const EVIDENCE_PREFIX_LENGTH = 12;
 /** The most check output a match reads. */
 export const EVIDENCE_OUTPUT_CAP = 8 * 1024 * 1024;
@@ -20,19 +22,23 @@ const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
 const LINE_SPLIT = /\r\n|[\r\n\u0085\u2028\u2029]/;
 // Every C0 and C1 control and DEL, except tab.
 const CONTROL = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/;
-// Whole terminal escape sequences: CSI (ESC [ or the C1 CSI byte) with its
-// parameters and final byte, OSC (ESC ] or the C1 OSC byte) up to its
-// terminator, and any other ESC-introduced sequence.
-const ANSI_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -/]*[0-~]?/g;
+// Terminal escape sequences, removed whole: an OSC (ESC ] or the C1 OSC byte)
+// only with its terminator (BEL, ESC \\ or ST), a CSI (ESC [ or the C1 CSI
+// byte) with its parameters and final byte, and any other ESC sequence except
+// an unterminated OSC. What is left of an unterminated OSC loses only its ESC,
+// so it cannot swallow the rest of the line; a C1 OSC byte stays and is
+// refused as a control character.
+const ANSI_SEQUENCE = /(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?!\])[ -/]*[0-~]?|\x1b/g;
 const SHA256 = /^[0-9a-f]{64}$/;
-const PREFIX = new RegExp(`^[0-9a-f]{${EVIDENCE_PREFIX_LENGTH},64}$`);
+const PREFIX = new RegExp(`^[0-9a-f]{${EVIDENCE_PREFIX_LENGTH},64}$`, 'i');
 
 /**
- * The one normalisation used at capture and at verification: terminal escape
- * sequences removed and trailing whitespace (including a CR) trimmed.
+ * The one normalisation used at capture and at verification: a leading BOM
+ * (U+FEFF) and terminal escape sequences removed, Unicode NFC applied, and
+ * whitespace at both ends trimmed.
  */
 export function normalizeEvidenceLine(line) {
-  return String(line ?? '').replace(ANSI_SEQUENCE, '').trimEnd();
+  return String(line ?? '').replace(/^\ufeff/, '').replace(ANSI_SEQUENCE, '').normalize('NFC').trim();
 }
 
 const digest = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
@@ -41,9 +47,10 @@ const digest = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 export function evidenceLineError(value) {
   if (typeof value !== 'string' || !value.trim()) return 'evidence_quote must be nonempty text';
   if (LINE_BREAK.test(value)) return 'evidence_quote must be a single line; pick the single most specific failing line of the check output';
-  if (Buffer.byteLength(value, 'utf8') > EVIDENCE_LINE_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
+  if (Buffer.byteLength(value, 'utf8') > EVIDENCE_RAW_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
   const normalized = normalizeEvidenceLine(value);
-  if (!normalized.trim()) return 'evidence_quote must be nonempty text';
+  if (!normalized) return 'evidence_quote must be nonempty text';
+  if (Buffer.byteLength(normalized, 'utf8') > EVIDENCE_LINE_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
   if (CONTROL.test(normalized)) return 'evidence_quote may contain tabs but no other control characters';
   return null;
 }
@@ -76,9 +83,38 @@ export function evidenceSummary({ sha256, bytes }) {
   return { sha256_prefix: sha256.slice(0, EVIDENCE_PREFIX_LENGTH), bytes };
 }
 
-/** Returns null when the value can name a fingerprint (12 to 64 lowercase hex characters), otherwise why not. */
+/** Returns null when the value can name a fingerprint (12 to 64 hex characters), otherwise why not. */
 export function evidencePrefixError(value) {
-  return PREFIX.test(String(value ?? '')) ? null : `--match-evidence takes ${EVIDENCE_PREFIX_LENGTH} to 64 lowercase hex characters of an evidence sha256`;
+  return PREFIX.test(String(value ?? '')) ? null : `--match-evidence takes ${EVIDENCE_PREFIX_LENGTH} to 64 hex characters of an evidence sha256`;
+}
+
+/** Returns null when the value can be a stored evidence length, otherwise why not. */
+export function evidenceBytesError(value) {
+  const n = Number(value);
+  return /^\d+$/.test(String(value ?? '')) && n >= 1 && n <= EVIDENCE_LINE_CAP ? null : `--evidence-bytes takes a whole number from 1 to ${EVIDENCE_LINE_CAP}`;
+}
+
+const placeholder = value => (value === '-' ? '-' : '<evidence>');
+
+/**
+ * The run-journal argv of `ae compound`: every flag kept, the value of
+ * --evidence-quote (either form) replaced by `<evidence>` (or kept when it is
+ * `-`, which names stdin), so no evidence line, accepted or refused, is
+ * journaled. The value is literal, so the token after the space form is
+ * always the value, whatever it looks like.
+ */
+export function compoundJournalArgv(argv) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') { out.push(...argv.slice(i)); break; }
+    if (a.startsWith('--evidence-quote=')) out.push(`--evidence-quote=${placeholder(a.slice('--evidence-quote='.length))}`);
+    else if (a === '--evidence-quote') {
+      out.push(a);
+      if (i + 1 < argv.length) out.push(placeholder(argv[++i]));
+    } else out.push(a);
+  }
+  return out;
 }
 
 /**

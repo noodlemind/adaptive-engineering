@@ -96,11 +96,15 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
  * Nothing changes while the gate or worktree isolation is blocked, since the
  * isolation step is only listed then.
  */
+// A plan path as one shell word: bare when it holds only safe characters,
+// otherwise single-quoted, so a space, `#` or `$` cannot split or end the command.
+const shellArg = value => (/^[\w./@:+-]+$/.test(value) ? value : `'${String(value).replace(/'/g, "'\\''")}'`);
+
 export function withResumeVerification(nextTools, check, { planPath, gatePass, isolationBlocked }) {
   if (!check || check.state === 'expired' || !gatePass || isolationBlocked) return nextTools;
   const hint = check.state === 'config'
-    ? `ae verify --plan ${planPath}  # prior verification no longer matches configuration: ${check.reason}; first use trust.recovery or repair checks if listed`
-    : `ae verify --plan ${planPath}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
+    ? `ae verify --plan ${shellArg(planPath)}  # prior verification no longer matches configuration: ${check.reason}; first use trust.recovery or repair checks if listed`
+    : `ae verify --plan ${shellArg(planPath)}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
   if (check.state === 'config') {
     const recovery = nextTools.filter(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
     const rest = nextTools.filter(tool => tool !== 'ae verify' && !recovery.includes(tool));

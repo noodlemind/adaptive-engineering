@@ -15,7 +15,7 @@ import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { readStoreConfig } from './knowledge/store.mjs';
-import { evidenceLineError, evidenceFingerprint, evidenceFrontmatterLines, evidencePrefixError, evidenceSummary, matchEvidence, EVIDENCE_OUTPUT_CAP } from './knowledge/evidence-fingerprint.mjs';
+import { evidenceLineError, evidenceFingerprint, evidenceFrontmatterLines, evidencePrefixError, evidenceBytesError, evidenceSummary, matchEvidence, EVIDENCE_OUTPUT_CAP, EVIDENCE_RAW_CAP } from './knowledge/evidence-fingerprint.mjs';
 import { EXIT } from './style.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
@@ -388,7 +388,15 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
-  let decision = JSON.parse(text);
+  let decision;
+  try {
+    decision = JSON.parse(text);
+  } catch (error) {
+    // The parser's message can quote the decision text, evidence line
+    // included, so only the position is reported.
+    const at = String(error?.message || '').match(/position (\d+)/);
+    throw new Error(`Learning decision is not valid JSON${at ? ` at position ${at[1]}` : ''}`);
+  }
   if (!decision || typeof decision !== 'object' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(decision.operation || '') || !['no-learning', 'publish'].includes(decision.decision)
     || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'evidence_quote'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
@@ -490,24 +498,34 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
  * the check matches an episode's evidence fingerprint (see matchEvidence).
  * Reads only; the output is never stored or echoed.
  */
+// The `ae compound` flags a read-only match refuses, as [flags key, flag name].
+const MATCH_EXCLUSIVE_FLAGS = [['learningDecision', '--learning-decision'], ['plan', '--plan'], ['insight', '--insight'], ['title', '--title'], ['body', '--body'], ['bodyFile', '--body-file'],
+  ['category', '--category'], ['tags', '--tags'], ['trigger', '--trigger'], ['claim', '--claim'], ['evidenceQuote', '--evidence-quote'], ['enforcement', '--enforcement'], ['dryRun', '--dry-run']];
+
 export function runEvidenceMatch({ workspace, flags }) {
   const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
   const hint = 'ae compound --match-evidence <sha256_prefix> --check-output <path|->';
-  if (flags.insight || flags.learningDecision || flags.evidenceQuote != null) throw usage('--match-evidence only reads check output; run it on its own', hint);
+  const other = MATCH_EXCLUSIVE_FLAGS.filter(([key]) => flags[key] != null && flags[key] !== false).map(([, name]) => name);
+  if (other.length) throw usage(`--match-evidence only reads check output; it cannot be combined with ${other.join(', ')}`, hint);
+  if (flags.matchEvidence == null) throw usage('--check-output is used only with --match-evidence', hint);
   const prefixError = evidencePrefixError(flags.matchEvidence);
   if (prefixError) throw usage(prefixError, hint);
+  const bytesError = flags.evidenceBytes == null ? null : evidenceBytesError(flags.evidenceBytes);
+  if (bytesError) throw usage(bytesError, hint);
   if (!flags.checkOutput) throw usage('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
+  // A relative path resolves against --workspace, as --learning-decision does.
   const output = flags.checkOutput === '-'
     ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
     : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP });
-  if (output === null) throw new Error(`Check output is missing, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`);
-  const { matched, line } = matchEvidence(output, flags.matchEvidence);
+  // An unreadable input is a usage error (exit 2), never a mismatch (exit 1).
+  if (output === null) throw usage(`--check-output is missing, not a regular file, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`, hint);
+  const { matched, line } = matchEvidence(output, flags.matchEvidence, { bytes: flags.evidenceBytes == null ? null : Number(flags.evidenceBytes) });
   return {
     pass: matched,
     exitCode: matched ? 0 : 1,
     matched,
     line,
-    sha256Prefix: flags.matchEvidence,
+    sha256Prefix: flags.matchEvidence.toLowerCase(),
     blockedReason: matched ? null : 'No line of the check output matches the evidence fingerprint',
     nextTools: matched ? [] : ['confirm the same check was re-run on the code the episode describes, or treat the evidence as unconfirmed'],
   };
@@ -531,11 +549,18 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     // Only a real flag of this command counts: its own or a global flag name or
     // alias, alone or with =value, or -h/--help. Other dash-led text, such as
     // `--- a/x`, `-  removed line`, `-x` or `--max-old-space-size=4096`, is a quote.
-    if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote.split('=')[0]}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
     // A learning decision carries its own evidence_quote; a flag beside it
     // would otherwise be dropped without a word.
     if (flags.learningDecision) throw usage('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision file instead');
     if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
+    if (flags.evidenceQuote === '-') {
+      // `-` reads the line from stdin, so it never appears in argv or shell
+      // history. One trailing line break (as echo or a pipe adds) is dropped.
+      const piped = readBoundedInput(0, { maxBytes: EVIDENCE_RAW_CAP + 2 });
+      if (piped === null) throw usage(`--evidence-quote - could not read stdin, or it holds more than ${EVIDENCE_RAW_CAP} bytes`, 'pipe the single failing line into ae compound --insight --evidence-quote -');
+      flags = { ...flags, evidenceQuote: piped.replace(/\r?\n$/, '') };
+    }
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

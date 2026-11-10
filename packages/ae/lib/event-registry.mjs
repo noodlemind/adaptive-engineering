@@ -44,7 +44,12 @@ export function summarizeArgFlags(argv = [], knownFlags = null) {
     const next = argv[i + 1];
     const nextLooksLikeValue = next !== undefined && typeof next === 'string' && !next.startsWith('--');
     const def = knownFlags ? knownFlags.get(flagName) : undefined;
-    const consumesNext = def ? def.type !== 'boolean' && nextLooksLikeValue : nextLooksLikeValue;
+    // A literal-valued flag takes the next token whatever it looks like, as
+    // validateArgs and commandHelpRequested read it, so a dash-led value is
+    // never recorded as a flag name.
+    const consumesNext = def
+      ? def.type !== 'boolean' && typeof next === 'string' && (def.valueIsLiteral === true || nextLooksLikeValue)
+      : nextLooksLikeValue;
     if (consumesNext) i++; // skip the value — never inspected as a potential name
   }
   return names;

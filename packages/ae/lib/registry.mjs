@@ -73,6 +73,7 @@ import { resolveCopilotHome } from './paths.mjs';
 import { createEnvelope, createErrorEnvelope, STATUS } from './envelope.mjs';
 import { renderAgentLane, recordAgentLaneBytes } from './agent-lane.mjs';
 import { EVENT_TYPE, summarizeArgFlags } from './event-registry.mjs';
+import { compoundJournalArgv } from './knowledge/evidence-fingerprint.mjs';
 import { createRedactor, redactedJson } from './redact.mjs';
 import { cmdModel, modelResultOf, MODEL_VERBS } from './model-cmd.mjs';
 import { cmdInspect, inspectResultOf, inspectExitFor, INSPECT_VERBS } from './inspect-cmd.mjs';
@@ -1132,13 +1133,16 @@ registerCommand({
       { name: '--tags', type: 'string', valueName: 'a,b', description: 'comma-separated tags', required: false, default: null, tui: 'prompt' },
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
-      { name: '--evidence-quote', type: 'string', valueName: 'text', description: 'the one failing line of check output for --insight (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'prompt', valueIsLiteral: true },
+      { name: '--evidence-quote', type: 'string', valueName: 'text', description: 'the one failing line of check output for --insight, or - to read it from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'prompt', valueIsLiteral: true },
       { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix', required: false, default: null, tui: 'cli-only' },
-      { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence, or - for stdin', required: false, default: null, tui: 'cli-only' },
+      { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace), or - for stdin', required: false, default: null, tui: 'cli-only' },
+      { name: '--evidence-bytes', type: 'string', valueName: 'n', description: 'optional stored evidence length for --match-evidence; a matching line must have it', required: false, default: null, tui: 'cli-only' },
             { name: '--enforcement', type: 'string', valueName: 'mode', description: 'observe | warn | enforce (default enforce)', required: false, default: null, tui: 'prompt', choices: ['observe', 'warn', 'enforce'] },
     ],
   },
   handler: cmdCompound,
+  // The evidence line is never journaled, accepted or refused.
+  journalArgv: compoundJournalArgv,
 });
 
 registerCommand({

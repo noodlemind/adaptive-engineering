@@ -12,7 +12,7 @@ import { readEvidenceFingerprint, evidenceSummary } from './evidence-fingerprint
 export const CONSOLIDATION_THRESHOLD = 5;
 // How an agent checks an episode's `evidence` fingerprint: the evidence line
 // itself is never stored, so it re-runs the check and matches the output.
-export const EVIDENCE_MATCH_CONTRACT = 'An episode evidence entry is a fingerprint of one failing check line, never its text. To confirm it, re-run the check and run ae compound --match-evidence <sha256_prefix> --check-output <file>.';
+export const EVIDENCE_MATCH_CONTRACT = 'An episode evidence entry is a fingerprint of one failing check line, never its text. To confirm it, re-run the check and run ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <file>.';
 export const MAX_OPS_PER_RUN = 5;
 export const LEARNING_BYTE_CAP = 1200;
 export const QUARANTINE_THRESHOLD = 3;

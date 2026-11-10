@@ -10,7 +10,7 @@ import { approveProject } from '../lib/trust.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { storeDir, ensureStore } from '../lib/knowledge/store.mjs';
 import { LEARNING_BYTE_CAP, consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
-import { normalizeEvidenceLine, evidenceLineError, evidenceFingerprint, matchEvidence, evidencePrefixError, readEvidenceFingerprint, EVIDENCE_LINE_CAP } from '../lib/knowledge/evidence-fingerprint.mjs';
+import { normalizeEvidenceLine, evidenceLineError, evidenceFingerprint, matchEvidence, evidencePrefixError, evidenceBytesError, compoundJournalArgv, readEvidenceFingerprint, EVIDENCE_LINE_CAP } from '../lib/knowledge/evidence-fingerprint.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,6 +29,29 @@ function walk(dir) {
   });
 }
 const filesHolding = (dir, needle) => walk(dir).filter(file => fs.readFileSync(file).includes(needle));
+
+test('normalisation strips a BOM and escapes, trims both ends, applies NFC, and caps the normalised line', () => {
+  assert.equal(normalizeEvidenceLine('\ufeff  FAIL retry \t '), 'FAIL retry');
+  assert.equal(normalizeEvidenceLine('Cafe\u0301 failed'), 'Caf\u00e9 failed', 'NFC composes combining marks');
+  assert.equal(evidenceFingerprint('Cafe\u0301 failed').sha256, sha('Caf\u00e9 failed'));
+  assert.deepEqual(matchEvidence('\ufeffCafe\u0301 failed  \n', sha('Caf\u00e9 failed')), { matched: true, line: 1 }, 'match normalises identically');
+  assert.deepEqual(matchEvidence(`   ${QUOTE}`, QUOTE_SHA), { matched: true, line: 1 }, 'leading blanks are trimmed at match too');
+  // An unterminated OSC loses only its ESC; it does not swallow the line.
+  assert.equal(normalizeEvidenceLine(`\x1b]0;title ${QUOTE}`), `]0;title ${QUOTE}`);
+  assert.equal(normalizeEvidenceLine('\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ ok'), 'link ok', 'a terminated OSC is removed whole');
+  assert.match(evidenceLineError(`\u009d0;title ${QUOTE}`), /no other control characters/, 'an unterminated C1 OSC is a control character');
+  // The 600-byte cap applies to the normalised line; raw input may carry colour codes up to 4 KB.
+  const coloured = `\x1b[31m${'x'.repeat(EVIDENCE_LINE_CAP)}\x1b[0m`;
+  assert.equal(evidenceLineError(coloured), null);
+  assert.equal(evidenceFingerprint(coloured).bytes, EVIDENCE_LINE_CAP);
+  assert.match(evidenceLineError(`${'x'.repeat(EVIDENCE_LINE_CAP)}y`), /at most 600 bytes/);
+  assert.match(evidenceLineError(`${'\x1b[0m'.repeat(1100)}x`), /at most 600 bytes/, 'raw input over 4 KB is refused');
+});
+
+test('the compound journal argv replaces every evidence value, accepted or refused, in both forms', () => {
+  assert.deepEqual(compoundJournalArgv(['--insight', '--title', 't', '--evidence-quote', `--- ${MARKER}`, '--json']), ['--insight', '--title', 't', '--evidence-quote', '<evidence>', '--json']);
+  assert.deepEqual(compoundJournalArgv([`--evidence-quote=${MARKER}\nsecond`, '--evidence-quote', '-', '--evidence-quote']), ['--evidence-quote=<evidence>', '--evidence-quote', '-', '--evidence-quote']);
+});
 
 test('the evidence line is checked, normalised and fingerprinted the same way at capture and verification', () => {
   assert.equal(normalizeEvidenceLine('\x1b[31mFAIL\x1b[0m retry  \r'), 'FAIL retry');
@@ -53,14 +76,18 @@ test('the evidence line is checked, normalised and fingerprinted the same way at
   assert.deepEqual(matchEvidence(output.replace('actual: 1', 'actual: 3'), QUOTE_SHA.slice(0, 12)), { matched: false, line: null }, 'a changed line does not match');
   assert.equal(evidencePrefixError(QUOTE_SHA.slice(0, 12)), null);
   assert.equal(evidencePrefixError(QUOTE_SHA), null);
-  for (const bad of ['', 'abc', QUOTE_SHA.slice(0, 11), QUOTE_SHA.toUpperCase(), `${QUOTE_SHA}0`, 'zzzzzzzzzzzz']) assert.ok(evidencePrefixError(bad), bad);
+  assert.equal(evidencePrefixError(QUOTE_SHA.toUpperCase()), null, 'upper-case hex is accepted');
+  assert.deepEqual(matchEvidence(output, QUOTE_SHA.slice(0, 12).toUpperCase()), { matched: true, line: 2 });
+  for (const bad of ['', 'abc', QUOTE_SHA.slice(0, 11), `${QUOTE_SHA}0`, 'zzzzzzzzzzzz']) assert.ok(evidencePrefixError(bad), bad);
+  assert.equal(evidenceBytesError('57'), null);
+  for (const bad of ['0', '601', '-1', '1.5', 'x', '']) assert.ok(evidenceBytesError(bad), bad);
   assert.deepEqual(readEvidenceFingerprint({ evidence_sha256: QUOTE_SHA, evidence_bytes: '57' }), { sha256: QUOTE_SHA, bytes: 57 });
   assert.equal(readEvidenceFingerprint({ evidence_sha256: 'abc', evidence_bytes: '5' }), null);
   assert.equal(readEvidenceFingerprint({ evidence_sha256: QUOTE_SHA, evidence_bytes: '601' }), null);
   assert.equal(readEvidenceFingerprint({ evidence_quote: QUOTE }), null, 'an evidence_quote key is never read');
 });
 
-function verifiedFixture(t) {
+function verifiedFixture(t, { events = false } = {}) {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-quote-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ws = path.join(dir, 'product'), home = path.join(dir, 'home'), copilot = path.join(dir, 'copilot');
@@ -74,6 +101,7 @@ function verifiedFixture(t) {
   approveProject({ workspace: ws, copilotHome: copilot, home });
   const env = { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilot, HARNESS_NO_EVENTS: '1', HARNESS_BIN: path.join(root, 'bin/ae.mjs') };
   delete env.HARNESS_ENFORCEMENT;
+  if (events) delete env.HARNESS_NO_EVENTS;
   const cli = (args, input) => spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), ...args, '--workspace', ws, '--harness-home', home, '--copilot-home', copilot], { cwd: ws, env, input, encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
   const plan = writeVersionedPlan(ws, { required: ['behavior'], criteria: { AC1: ['behavior'] } });
   fs.writeFileSync(path.join(ws, 'src/example.js'), 'export const value = 2;\n');
@@ -177,11 +205,17 @@ test('ae compound --match-evidence matches re-run check output by fingerprint an
   assert.equal(missed.status, 1, missed.stdout + missed.stderr);
   assert.equal(JSON.parse(missed.stdout).matched, false);
   assert.match(JSON.parse(missed.stdout).blockedReason, /No line of the check output matches/);
-  for (const args of [['--match-evidence', 'abc', '--check-output', 'out.txt'], ['--match-evidence', prefix], ['--match-evidence', prefix, '--check-output', 'out.txt', '--insight']]) {
+  const sized = ae(['--match-evidence', prefix.toUpperCase(), '--evidence-bytes', String(Buffer.byteLength(QUOTE)), '--check-output', 'out.txt']);
+  assert.equal(sized.status, 0, sized.stdout + sized.stderr);
+  assert.equal(ae(['--match-evidence', prefix, '--evidence-bytes', '7', '--check-output', 'out.txt']).status, 1, 'a different stored length does not match');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  for (const args of [['--match-evidence', 'abc', '--check-output', 'out.txt'], ['--match-evidence', prefix], ['--match-evidence', prefix, '--check-output', 'out.txt', '--insight'],
+    ['--match-evidence', prefix, '--check-output', 'missing.txt'], ['--match-evidence', prefix, '--check-output', 'sub'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--title', 't'],
+    ['--match-evidence', prefix, '--check-output', 'out.txt', '--category=logic'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--evidence-bytes', '0'], ['--check-output', 'out.txt']]) {
     const usage = ae(args);
     assert.equal(usage.status, 2, `${args.join(' ')}: ${usage.stdout}${usage.stderr}`);
   }
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['out.txt'], 'a match writes nothing');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['out.txt', 'sub'], 'a match writes nothing');
 });
 
 test('a hand-written evidence_quote key in an episode is never read or shown', () => {
@@ -236,4 +270,35 @@ test('an evidence fingerprint never reaches the learning, so the claim byte cap 
   assert.equal(/evidence_/.test(quotedAtCap.learning), false, 'the learning carries no evidence field');
   const over = add('quoted.md', quoted, `${atCap}b`);
   assert.equal(over.result.rejected[0]?.code, 'E_BYTE_CAP', 'one byte over the claim cap is still refused');
+});
+
+test('with events and the run journal on, no capture path leaves the evidence line in any file', t => {
+  const f = verifiedFixture(t, { events: true });
+  const insight = (args, input) => f.cli(['compound', '--insight', '--title', `insight ${args.length}`, '--body', 'retries matter', ...args, '--json'], input);
+  const accepted = [
+    insight(['--evidence-quote', QUOTE]),
+    insight([`--evidence-quote=${QUOTE} equals`]),
+    insight(['--evidence-quote', `--- a/${MARKER}.mjs\t2026-11-01`]),
+    insight(['--evidence-quote', '-'], `${QUOTE} piped\n`),
+    decide(f, publish('quote-events', { evidence_quote: QUOTE })),
+  ];
+  for (const [i, run] of accepted.entries()) assert.equal(run.status, 0, `${i}: ${run.stdout}${run.stderr}`);
+  const refused = [
+    insight([`--evidence-quote=${MARKER} one\nline two`]),
+    insight(['--evidence-quote', `${MARKER}${'x'.repeat(700)}`]),
+    insight(['--evidence-quote', `${MARKER} bell \x07`]),
+    insight(['--evidence-quote', '-'], `${MARKER} one\ntwo\n`),
+    decide(f, publish('quote-events-bad', { evidence_quote: `${MARKER}\nsecond` })),
+    f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', '--json'], `{"operation":"bad-json","evidence_quote":"${MARKER}" oops}`),
+  ];
+  for (const [i, run] of refused.entries()) {
+    assert.notEqual(run.status, 0, `${i}: ${run.stdout}`);
+    assert.ok(!(run.stdout + run.stderr).includes(MARKER), `refusal ${i} echoes the line: ${run.stdout}${run.stderr}`);
+  }
+  assert.match(refused.at(-1).stdout + refused.at(-1).stderr, /Learning decision is not valid JSON/);
+  const journals = walk(f.dir).filter(file => file.endsWith('.jsonl'));
+  assert.ok(journals.some(file => path.basename(file) === 'runs.jsonl'), `the run journal is on: ${journals.join(', ')}`);
+  assert.ok(journals.some(file => fs.readFileSync(file, 'utf8').includes('<evidence>')), 'the journal records the placeholder');
+  assert.ok(journals.some(file => fs.readFileSync(file, 'utf8').includes('command.start')), 'events are on');
+  assert.deepEqual(filesHolding(f.dir, MARKER), [], 'no file anywhere, journal and events included, holds the line');
 });

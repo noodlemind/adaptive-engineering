@@ -152,6 +152,7 @@ export function parseFlags(argv) {
     evidenceQuote: null,
     matchEvidence: null,
     checkOutput: null,
+    evidenceBytes: null,
     body: null,
     bodyFile: null,
     ops: null,
@@ -340,6 +341,8 @@ export function parseFlags(argv) {
     }
     else if (a.startsWith('--match-evidence=')) flags.matchEvidence = a.split('=').slice(1).join('=');
     else if (a === '--match-evidence') flags.matchEvidence = scan[++i] ?? '';
+    else if (a.startsWith('--evidence-bytes=')) flags.evidenceBytes = a.split('=').slice(1).join('=');
+    else if (a === '--evidence-bytes') flags.evidenceBytes = scan[++i] ?? '';
     else if (a.startsWith('--check-output=')) flags.checkOutput = a.split('=').slice(1).join('=');
     else if (a === '--check-output') flags.checkOutput = scan[++i] ?? '';
     else if (a.startsWith('--body=')) flags.body = a.split('=').slice(1).join('=');
