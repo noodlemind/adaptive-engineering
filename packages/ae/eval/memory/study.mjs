@@ -186,15 +186,20 @@ const OPEN_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | 
 /**
  * The memory carried from one task's homes into the next task's fresh homes, as [root, path under root]: the project
  * store's episodes (docs/solutions), the recall manifest, its postings index and the learnings store (harnessHome/knowledge,
- * every storage id), which holds the learnings and the knowledge mode and feedback config. With `feedback` (arms that read
+ * every storage id), which holds the learnings. A store's own config.json (knowledge mode, feedback, commit mode and any
+ * other key) is never carried: an agent may have changed it, so every task rebuilds it from the arm's configuration
+ * alone (see STORE_CONFIG and configureArm). With `feedback` (arms that read
  * captured memory) the project store's feedback records are carried too, since recall+feedback reads them back; without
  * them recall+feedback would measure the same memory as recall. Nothing else in the homes is carried: storage aliases,
  * plans, todos, trust and check configuration all start fresh in every task.
  */
 function memoryTargets({ copilotHome, harnessHome, projectDir, feedback = false }) {
   const project = rel => path.relative(harnessHome, path.join(projectDir, ...rel));
-  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge'], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
+  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge', STORE_CONFIG], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
 }
+
+/** A learnings store's config file, `<storage id>/config.json` under harnessHome/knowledge, which is never carried. */
+const STORE_CONFIG = rel => /^[^/]+\/config\.json$/.test(rel);
 
 /**
  * Lock state a writer left behind: a store `.lock` (directory or file), any other `*.lock` such as `.git/index.lock`, and
@@ -216,7 +221,7 @@ export function captureMemory(homes) {
   const refused = [];
   const targets = [];
   let entries = 0, bytes = 0;
-  for (const [slot, [root, rel]] of memoryTargets(homes).entries()) {
+  for (const [slot, [root, rel, skip = () => false]] of memoryTargets(homes).entries()) {
     const key = rel.split(path.sep).join('/');
     try {
       const rootStat = fs.lstatSync(root);
@@ -237,6 +242,7 @@ export function captureMemory(homes) {
         for (const name of fs.readdirSync(dir).sort()) {
           if (isLockState(name)) continue;
           const entryRel = sub ? path.join(sub, name) : name;
+          if (skip(entryRel.split(path.sep).join('/'))) continue;
           const full = path.join(dir, name);
           const stat = fs.lstatSync(full);
           if (++entries > MEMORY_FILE_LIMIT) throw refusal('more files than the memory limit');
@@ -470,12 +476,20 @@ function subsetResult(task, result, trap) {
 
 /** Knowledge mode and feedback state stored for an identity, read by directory so an agent-changed origin cannot redirect the read. */
 function storedConfig(dir) {
+  let raw = null;
+  try { raw = fs.readFileSync(path.join(dir, 'config.json'), 'utf8'); } catch { /* absent or unreadable */ }
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
-    return { mode: KNOWLEDGE_MODES.has(parsed?.mode) ? parsed.mode : 'on', feedback: KNOWLEDGE_FEEDBACK_STATES.has(parsed?.feedback) ? parsed.feedback : 'off' };
+    const parsed = JSON.parse(raw);
+    return { mode: KNOWLEDGE_MODES.has(parsed?.mode) ? parsed.mode : 'on', feedback: KNOWLEDGE_FEEDBACK_STATES.has(parsed?.feedback) ? parsed.feedback : 'off', full: canonicalConfig(parsed) };
   } catch {
-    return { mode: 'on', feedback: 'off' };
+    return { mode: 'on', feedback: 'off', full: raw === null ? null : `(unparsed) ${hash(raw)}` };
   }
+}
+
+/** The whole stored config as canonical JSON (keys sorted at every level), so any agent change to any key is visible. */
+function canonicalConfig(value) {
+  const sort = item => Array.isArray(item) ? item.map(sort) : item && typeof item === 'object' ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sort(item[key])])) : item;
+  return JSON.stringify(sort(value));
 }
 
 /** What `ae orient` would inject for this task, computed without writing orientation artifacts or calling a model. */
@@ -529,11 +543,12 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
 }
 
 /**
- * Mode for the study parent and run roots while a study runs: owner write and search, no read, so a process left running
- * from an earlier task cannot list the unpredictable names of later run and task roots. It is a mitigation, not a boundary:
- * a process running as the same user can change the mode back. Removal restores read access first.
+ * Mode for the study parent and run roots while a study runs: owner write and search only (0300), no read and nothing for
+ * group or other, so a process left running from an earlier task cannot list the unpredictable names of later run and task
+ * roots. It is a mitigation, not a boundary: a process running as the same user can change the mode back. Removal restores
+ * read access first.
  */
-const UNLISTED_DIR_MODE = 0o311;
+export const UNLISTED_DIR_MODE = 0o300;
 const unlist = dir => { try { fs.chmodSync(dir, UNLISTED_DIR_MODE); } catch { /* best effort */ } };
 
 /**
@@ -557,21 +572,37 @@ function unlockTree(dir) {
  * Removes a temporary tree and never throws: directory modes are restored first, and a failure (for example EBUSY on
  * Windows, or a mode the runner could not change) is appended to `failures` as { path, code } for the results.
  */
-function removeTree(dir, failures = []) {
+export function removeTree(dir, failures = []) {
   unlockTree(dir);
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); return true; }
   catch (error) { failures.push({ path: dir, code: error?.code || String(error?.message ?? error).slice(0, 200) }); return false; }
 }
 
 /**
- * Before each task, on Linux, SIGKILLs every process of this user whose working directory is under `root` (the study
- * parent, which then holds only earlier task roots), so a daemon an earlier agent detached from its process group cannot
- * reach the next task. Best effort: skipped without /proc, and a process that changed its directory elsewhere escapes it.
- * Returns the killed PIDs.
+ * Start time of a process from /proc/<pid>/stat (field 22), in clock ticks since boot, or null where it cannot be read.
+ * The fields are read after the last ')', since the command name may itself hold spaces and parentheses.
  */
-export function killStragglers(root) {
+export function processStartTicks(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const ticks = Number(fields[19]);
+    return Number.isSafeInteger(ticks) && ticks >= 0 ? ticks : null;
+  } catch { return null; }
+}
+
+/**
+ * On Linux, SIGKILLs every process of this user whose working directory is under `root` (the study parent) and that started
+ * at or after `since` (clock ticks since boot; by default this runner's own start time). The study runs it before each task,
+ * when the parent holds only earlier task roots, so a daemon an earlier agent detached from its process group cannot reach
+ * the next task, and again when the study ends or is signalled, so a daemon from the last task does not outlive the study.
+ * The start-time guard spares processes older than the runner, such as an operator's shell that changed into a task root.
+ * A shell started while the study runs is not spared. Best effort: skipped without /proc, and a process that changed its
+ * directory elsewhere escapes it. Returns the killed PIDs.
+ */
+export function killStragglers(root, { since = processStartTicks(process.pid) } = {}) {
   const killed = [];
-  if (process.platform !== 'linux' || typeof process.getuid !== 'function') return killed;
+  if (process.platform !== 'linux' || typeof process.getuid !== 'function' || since === null) return killed;
   try {
     const uid = process.getuid();
     const real = fs.realpathSync(root);
@@ -581,6 +612,8 @@ export function killStragglers(root) {
         if (fs.statSync(`/proc/${name}`).uid !== uid) continue;
         const cwd = fs.readlinkSync(`/proc/${name}/cwd`).replace(/ \(deleted\)$/, '');
         if (cwd !== real && !cwd.startsWith(real + path.sep)) continue;
+        const started = processStartTicks(name);
+        if (started === null || started < since) continue;
         process.kill(Number(name), 'SIGKILL');
         killed.push(Number(name));
       } catch { /* gone, or not ours */ }
@@ -589,14 +622,24 @@ export function killStragglers(root) {
   return killed;
 }
 
+/** Whether `dir` is a real directory (lstat, so a symlink is not) owned by this user where the platform reports a uid. */
+function ownDirectory(dir) {
+  try {
+    const stat = fs.lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    return typeof process.getuid !== 'function' || stat.uid === process.getuid();
+  } catch { return false; }
+}
+
 const STUDY_PREFIX = 'aem-study-';
 const STUDY_NAME = /^aem-study-(\d+)-[A-Za-z0-9]{6}$/;
 const LEGACY_STUDY_NAME = /^aem-study-[A-Za-z0-9]{6}$/;
 
 /**
  * Removes study parents left by runner processes that no longer exist (for example after SIGKILL). The owner PID is part of
- * the folder name, so there is no window in which a fresh parent lacks an owner. Folders that cannot be removed (for example
- * another user's) are skipped, never fatal. Parents in the earlier format (no PID in the name) are swept only when their
+ * the folder name, so there is no window in which a fresh parent lacks an owner. Only real directories this user owns are
+ * touched: a symlink or another user's entry under a study name, or under a `run-` name inside one, is skipped before any
+ * chmod or listing, so a planted link is never followed. Folders that cannot be removed are skipped, never fatal. Parents in the earlier format (no PID in the name) are swept only when their
  * owner.pid names a dead process. PIDs are checked in this PID namespace: runners in other containers that share this
  * temporary directory look dead, so give each container its own temporary directory.
  */
@@ -606,6 +649,9 @@ export function sweepStaleStudies(base = os.tmpdir()) {
   try { names = fs.readdirSync(base); } catch { return swept; }
   for (const name of names) {
     const match = STUDY_NAME.exec(name);
+    if (!match && !LEGACY_STUDY_NAME.test(name)) continue;
+    // Only a real directory this user owns is touched: a symlink planted under a study name is never followed or chmodded.
+    if (!ownDirectory(path.join(base, name))) continue;
     let pid = null;
     if (match) pid = Number(match[1]);
     else if (LEGACY_STUDY_NAME.test(name)) {
@@ -622,7 +668,11 @@ export function sweepStaleStudies(base = os.tmpdir()) {
     if (alive) continue;
     const dir = path.join(base, name);
     // Restore read access only on the folders a study made unlisted (the parent and its run roots), never deeper.
-    try { fs.chmodSync(dir, 0o700); for (const entry of fs.readdirSync(dir)) if (entry.startsWith('run-')) fs.chmodSync(path.join(dir, entry), 0o700); } catch { /* not ours */ }
+    try {
+      if (!ownDirectory(dir)) continue;
+      fs.chmodSync(dir, 0o700);
+      for (const entry of fs.readdirSync(dir)) if (entry.startsWith('run-') && ownDirectory(path.join(dir, entry))) fs.chmodSync(path.join(dir, entry), 0o700);
+    } catch { /* not ours */ }
     try { fs.rmSync(dir, { recursive: true, force: true }); swept.push(dir); } catch { /* not ours to remove */ }
   }
   return swept;
@@ -635,7 +685,8 @@ const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGH
  * One temporary parent per study, removed on normal exit and on SIGINT, SIGTERM, SIGHUP or SIGQUIT. Run roots are created
  * inside it. `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
  * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group. `groups`
- * holds the process groups this study started; removal kills only those. `close()` returns removal failures.
+ * holds the process groups this study started; removal kills those, then the stragglers still working under the parent
+ * (see killStragglers), then removes the tree. `close()` returns removal failures.
  */
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
@@ -644,7 +695,8 @@ function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   const groups = new Set();
   const failures = [];
   let removed = false;
-  const remove = () => { killLiveGroups(groups); if (!removed) removed = removeTree(parent, failures); };
+  // The live groups go first, then any straggler working under the parent (a daemon the last task detached), then the tree.
+  const remove = () => { killLiveGroups(groups); killStragglers(parent); if (!removed) removed = removeTree(parent, failures); };
   const onSignal = signal => {
     // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
@@ -696,16 +748,25 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   if (!['all', 'development', 'held-out'].includes(split)) throw new TypeError('split must be all, development or held-out');
   if (!dryRun && typeof execute !== 'function') throw new TypeError('live and scripted runs need an executor');
   const series = catalog.series.filter(item => split === 'all' || item.split === split);
-  fs.mkdirSync(root, { recursive: true });
   const provenance = provenanceFor({ catalog, protocol, arms, repeats, model, host, series });
   const attempts = [];
   const runs = [];
   let finished = false, owned = false, studyCleanupErrors = [];
-  // The study parent opens first, so a failure there leaves no provenance.json behind to block a retry into the same root.
-  // Partial output is written only into a root this study claimed with provenance.json, never over another study's results.
+  // Provenance is computed and the study parent opened before anything exists at `root`, so a failure in either leaves no
+  // directory or provenance.json behind to block a retry into the same root. A root this call created is removed again if
+  // claiming it fails. Partial output is written only into a root this study claimed with provenance.json, never over
+  // another study's results.
   const study = openStudyParent({ base: studyBase, onAbort: () => { if (owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } });
   try {
-  fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
+  let createdRoot = false;
+  try {
+    createdRoot = !fs.existsSync(root);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
+  } catch (error) {
+    if (createdRoot) { try { fs.rmdirSync(root); } catch { /* not empty or already gone */ } }
+    throw error;
+  }
   owned = true;
   // Every process group started inside, the executor's agents included, joins this study's set, which close() kills.
   await trackStudyGroups(study.groups, async () => {
@@ -780,10 +841,13 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const baseline = await runChecks(fixture, checkerOptions);
             const publicBaseline = await runPublicChecks(fixture, checkerOptions);
             const trapBaseline = task.trap ? subsetResult(task, baseline, true) : null;
-            const baselineBroken = !(baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass);
-            // Task 1 starts from the catalog alone, so a passing baseline there is a fixture error. A later task can be
-            // reached by what an earlier task left running; that attempt is invalid and the study continues.
-            if (!baselineBroken && index === 0) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
+            // A baseline checker that timed out says nothing about the fixture: the attempt is invalid as `baseline-timeout`,
+            // on any task, and the study continues.
+            const baselineTimedOut = baseline.error === 'ETIMEDOUT' || publicBaseline?.error === 'ETIMEDOUT';
+            const baselineBroken = !baselineTimedOut && !(baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass);
+            // Task 1 starts from the catalog alone, so a baseline that ran and did not fail there is a fixture error. A later
+            // task can be reached by what an earlier task left running; that attempt is invalid and the study continues.
+            if (!baselineBroken && !baselineTimedOut && index === 0) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
             const episodesBefore = episodeHashes(fixture.workspace, projectDir);
             const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
             const startedAt = Date.now();
@@ -792,7 +856,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const skipped = setupFailed || !baselineBroken;
             const ran = !dryRun && !skipped;
             if (skipped) {
-              const failures = [...setupErrors.map(row => `${row.step}: ${row.message}`), ...memoryRefused.map(reason => `carry-memory: ${reason}`), ...plans.refused.map(rel => `clear-plans: refused ${rel}`), ...(baselineBroken ? [] : ['baseline: the unchanged task already passes a check it must fail'])];
+              const failures = [...setupErrors.map(row => `${row.step}: ${row.message}`), ...memoryRefused.map(reason => `carry-memory: ${reason}`), ...plans.refused.map(rel => `clear-plans: refused ${rel}`),
+                ...(baselineTimedOut ? ['baseline: a baseline checker timed out'] : baselineBroken ? [] : ['baseline: the unchanged task already passes a check it must fail'])];
               error = `setup failed: ${failures.join('; ')}`.slice(0, 2000);
             } else if (!dryRun) {
               try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
@@ -843,9 +908,13 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               setupErrors.some(row => row.step === 'clear-plans') && 'external-plans-clear-failed',
               setupErrors.some(row => row.step === 'read-config') && 'arm-configuration-unreadable',
               !originRestored && 'origin-restore-failed',
-              !baselineBroken && 'invalid-baseline',
+              baselineTimedOut && 'baseline-timeout',
+              !baselineBroken && !baselineTimedOut && 'invalid-baseline',
             ].filter(Boolean);
             const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
+            // Any change to the stored config is reported, a commit mode or an extra key included; only a changed mode or
+            // feedback state fails the attempt. The next task rebuilds the config from the arm alone either way.
+            const configUnchanged = modeUnchanged && (before.full === undefined || after.full === before.full);
             const usage = usageOf(result);
             let repeatMistake = null;
             if (executed && invalidReasons.length === 0 && measurementErrors.length === 0 && task.trap) {
@@ -871,7 +940,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               scope: { ...scope, pass: unexpected.length === 0, unexpected },
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
               repoId: identity?.repoId ?? null, storeDir: identity?.storeDir ?? null, storeId: identity?.storeId ?? null, knowledgeMode: before.observed, feedback: before.feedbackObserved,
-              knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
+              knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !configUnchanged, seeded,
               carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, carriedMemoryRefused: memoryRefused, setupErrors, measurementErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
@@ -1035,9 +1104,14 @@ export function summarizeStudy({ attempts, runs, provenance, protocol = PROTOCOL
     heldOut[arm] = armStatistics({ attempts, runs, arm, split: protocol.promotion.split });
   }
   let ineligibleReason = null;
+  // The attempts that make the batch ineligible, so a reader can see which ones (for example one runtime error) did it.
+  let responsible = [];
   if (provenance.modelSelection === 'automatic' || provenance.model === 'auto') ineligibleReason = 'automatic-model-selection';
-  else if (!attempts.length || attempts.some(row => row.kind !== 'live')) ineligibleReason = 'not-a-complete-live-batch';
-  else if (attempts.some(row => !row.valid)) ineligibleReason = 'invalid-attempts-in-batch';
-  else if (attempts.some(row => row.actualModel !== provenance.model)) ineligibleReason = 'model-identity-not-observed-or-mixed';
-  return { arms, heldOut, promotion: scorePromotion(heldOut, { protocol, eligible: !ineligibleReason, ineligibleReason }), limits: protocol.limits };
+  else if (!attempts.length || attempts.some(row => row.kind !== 'live')) { ineligibleReason = 'not-a-complete-live-batch'; responsible = attempts.filter(row => row.kind !== 'live'); }
+  else if (attempts.some(row => !row.valid)) { ineligibleReason = 'invalid-attempts-in-batch'; responsible = attempts.filter(row => !row.valid); }
+  else if (attempts.some(row => row.actualModel !== provenance.model)) { ineligibleReason = 'model-identity-not-observed-or-mixed'; responsible = attempts.filter(row => row.actualModel !== provenance.model); }
+  const kinds = {};
+  for (const row of responsible) kinds[row.kind] = (kinds[row.kind] || 0) + 1;
+  const eligibility = { eligible: !ineligibleReason, reason: ineligibleReason, attempts: responsible.length, attemptIds: responsible.map(row => row.id), kinds };
+  return { arms, heldOut, eligibility, promotion: scorePromotion(heldOut, { protocol, eligible: !ineligibleReason, ineligibleReason }), limits: protocol.limits };
 }

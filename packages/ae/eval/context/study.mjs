@@ -170,8 +170,10 @@ const CLOSE_GRACE_MS = 1500;
 /**
  * Runs a process in its own process group (POSIX) and resolves like spawnSync: { status, signal, stdout, stderr, error }.
  * Agents and checkers both run through it. When the leader exits, the whole group is killed once, so a background process
- * it left behind (even one that still holds the output pipes) cannot outlive it; after that exit the pid may be reused, so
- * nothing signals it again. On timeout or overflow the group is killed too. The pipes then get a short grace period to close;
+ * it left behind (even one that still holds the output pipes) cannot outlive it. Node emits the leader's exit event only
+ * after it has reaped the leader, so that kill already follows the reap: it reaches the group because a process group id
+ * stays reserved while any member is alive, and if none is, it finds no group. After that one kill the pid may be reused,
+ * so nothing signals it again. On timeout or overflow the group is killed too. The pipes then get a short grace period to close;
  * a process that started its own session and still holds a pipe escapes the group kill but cannot delay the result past it.
  * `status` is null whenever `error` is set, and stdout and stderr are cut at `maxBuffer` bytes each. `input`, when given, is
  * written to stdin. On Windows only the direct child is killed.
@@ -191,7 +193,8 @@ export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, m
     const out = { stdout: [], stderr: [] };
     const size = { stdout: 0, stderr: 0 };
     let error = null, timer = null, grace = null, exited = null, settled = false, reaped = false;
-    // Only while the leader is unreaped: after its exit event the pid may belong to another process.
+    // Until the exit event has been handled: the leader is reaped before that event, and once it has passed (and the group
+    // kill in it has run) the pid may belong to another process.
     const kill = () => {
       if (reaped) return;
       try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
@@ -224,6 +227,8 @@ export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, m
     child.on('exit', (status, signal) => {
       exited ||= { status, signal };
       clearTimeout(timer);
+      // Node has already reaped the leader. The group id stays reserved while any member lives, so this one kill still
+      // reaches a background process the leader left; with no member left there is no group to signal.
       kill();
       reaped = true;
       liveGroups.delete(child.pid);

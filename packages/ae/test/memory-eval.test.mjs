@@ -105,6 +105,7 @@ function main() {
           taskRoot: fs.readdirSync(taskRoot).sort(), taskRootPath: taskRoot, runDirPath: runDir, studyParent: path.dirname(runDir),
           // The run root and study parent are unlisted while the study runs; root and Windows ignore that mode.
           runDir: (() => { try { return fs.readdirSync(runDir); } catch (error) { return error.code; } })(),
+          runDirMode: fs.statSync(runDir).mode & 0o7777, parentMode: fs.statSync(path.dirname(runDir)).mode & 0o7777,
           parentListing: (() => { try { return fs.readdirSync(path.dirname(runDir)).length; } catch (error) { return error.code; } })(),
           checkFile: fixture.checkFile ?? null, hasCheckText: typeof fixture.checkText === 'string', outFiles: fs.readdirSync(root).sort(), outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
           planPresent: fs.existsSync(path.join(fixture.harnessHome, 'projects')) && fs.readdirSync(path.join(fixture.harnessHome, 'projects')).some(id => fs.existsSync(path.join(fixture.harnessHome, 'projects', id, 'plans', 'scripted-plan.md'))),
@@ -232,6 +233,10 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
       assert.equal(seen.runDir, 'EACCES', `${key} cannot list its run root`);
       assert.equal(seen.parentListing, 'EACCES', `${key} cannot list the study parent`);
     } else assert.deepEqual(seen.runDir, [path.basename(seen.taskRootPath)], `${key} earlier task roots are gone`);
+    if (process.platform !== 'win32') {
+      assert.equal(seen.runDirMode, 0o300, `${key} run root is owner write and search only`);
+      assert.equal(seen.parentMode, 0o300, `${key} study parent is owner write and search only`);
+    }
     assert.match(path.basename(seen.taskRootPath), /^task-[A-Za-z0-9]{6}$/, `${key} task root has an unpredictable name`);
     assert.ok(seen.homePath.startsWith(seen.trial + path.sep), `${key} HOME belongs to this task only`);
     assert.ok(seen.tmp.startsWith(seen.trial + path.sep), `${key} TMPDIR belongs to this task only`);
@@ -497,12 +502,86 @@ test('carry-forward and episode counts never follow a symlinked docs/solutions, 
 test('the memory study runs both checkers under its own protocol checkerTimeoutMs and records that value', async t => {
   const { result } = await dry();
   assert.equal(result.provenance.checkerTimeoutMs, PROTOCOL.checkerTimeoutMs);
-  // A 1 ms checker timeout from the memory protocol (the context protocol's is 15 s) times out the baseline checks.
+  // A 1 ms checker timeout from the memory protocol (the context protocol's is 15 s) times out the baseline checks. A timed-out
+  // baseline says nothing about the fixture, so even on task 1 it makes that attempt invalid instead of aborting the study.
   const protocol = { ...PROTOCOL, checkerTimeoutMs: 1 };
   const root = path.join(directory(t), 'out');
-  await assert.rejects(runStudy({ root, catalog: { ...CATALOG, series: [orders] }, protocol, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t) }), /invalid broken baseline/);
+  let calls = 0;
+  const timed = await runStudy({ root, catalog: { ...CATALOG, series: [orders] }, protocol, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: () => { calls += 1; return usage; } });
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'provenance.json'), 'utf8')).checkerTimeoutMs, 1);
+  assert.equal(calls, 0, 'no agent runs on a task whose baseline timed out');
+  const [first] = rowsFor(timed, 'stateless');
+  assert.equal(first.kind, 'setup-error');
+  assert.equal(first.valid, false);
+  assert.deepEqual(first.invalidReasons, ['baseline-timeout']);
+  assert.match(first.error, /baseline checker timed out/);
+  assert.equal(timed.summary.eligibility.reason, 'not-a-complete-live-batch');
+  // A task 1 baseline that runs and passes is a real fixture error and still stops the study.
+  const broken = structuredClone(orders);
+  broken.tasks[0].files = { ...broken.tasks[0].files, ...broken.tasks[0].reference };
+  await assert.rejects(runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [broken] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t) }), /invalid broken baseline/);
   assert.throws(() => validateProtocol({ ...PROTOCOL, checkerTimeoutMs: 0 }), /checkerTimeoutMs/);
+});
+
+test('a study whose parent cannot be opened leaves no output directory behind, so a retry can use the same root', async t => {
+  const root = path.join(directory(t), 'out');
+  await assert.rejects(runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: path.join(directory(t), 'missing') }));
+  assert.equal(fs.existsSync(root), false);
+});
+
+test('one runtime error makes a live batch ineligible, and the summary names that attempt', async t => {
+  let failed = null;
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'live-test', host: 'cli:test', studyBase: directory(t),
+    execute: async fixture => {
+      if (fixture.index === 2) { failed = fixture; throw new Error('agent process failed: ETIMEDOUT'); }
+      write(fixture.workspace, fixture.task.reference);
+      return { ...usage, model: 'live-test', contextAccounting: [{ ...usage.contextAccounting[0], model: 'live-test' }] };
+    } });
+  assert.ok(failed);
+  const rows = rowsFor(result, 'stateless');
+  assert.deepEqual(rows.map(row => row.kind), ['live', 'live', 'runtime-error', 'live']);
+  assert.deepEqual(result.summary.eligibility, { eligible: false, reason: 'not-a-complete-live-batch', attempts: 1, attemptIds: [rows[2].id], kinds: { 'runtime-error': 1 } });
+  assert.equal(result.summary.promotion.comparison, 'inconclusive');
+});
+
+test('an agent-made store config change is reported and never reaches the next task, which rebuilds the config from the arm', async t => {
+  const seen = {};
+  const readConfig = ({ workspace, harnessHome }) => JSON.parse(fs.readFileSync(path.join(storeDir(workspace, { home: harnessHome }), 'config.json'), 'utf8'));
+  const hooks = {
+    // The agent sets a commit mode and an extra key while leaving the mode and feedback state as the arm set them.
+    'recall:0': fixture => {
+      seen.first = readConfig(fixture);
+      const file = path.join(storeDir(fixture.workspace, { home: fixture.harnessHome }), 'config.json');
+      fs.writeFileSync(file, JSON.stringify({ ...seen.first, commit: 'repo', agentKey: 'leaked' }) + '\n');
+    },
+    'recall:1': fixture => { seen.second = readConfig(fixture); },
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['recall'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  const [first, second] = rowsFor(result, 'recall');
+  assert.equal(first.configChangedByAgent, true, 'a change to any config key is reported');
+  assert.equal(first.knowledgeModeAfter, 'on');
+  assert.equal(second.configChangedByAgent, false);
+  assert.deepEqual(second.invalidReasons, []);
+  assert.deepEqual(seen.second, seen.first, 'task 2 starts from the same config task 1 started from');
+  assert.equal(seen.second.agentKey, undefined);
+  assert.notEqual(seen.second.commit, 'repo');
+});
+
+test('a detached daemon the last task started does not outlive the study', { skip: process.platform !== 'linux' && '/proc' }, async t => {
+  let daemon = null;
+  t.after(() => { try { if (daemon) process.kill(daemon, 'SIGKILL'); } catch { /* gone */ } });
+  const last = orders.tasks.length - 1;
+  const hooks = {
+    [`stateless:${last}`]: ({ workspace }) => {
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: workspace, detached: true, stdio: 'ignore' });
+      child.unref();
+      daemon = child.pid;
+    },
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  assert.ok(result.summary);
+  assert.ok(daemon);
+  assert.equal(await waitDead(daemon), true, 'the daemon from the final task was killed when the study ended');
 });
 
 test('controls: operator-granted checks, public examples in scoring, a protected verifier and fixed memory for capture-only and frozen-seed', async t => {
@@ -594,7 +673,8 @@ test('carried memory is copied into fresh homes as regular files and directories
   writeMemory(to, captured);
   assert.equal(fs.readFileSync(path.join(to.projectDir, 'docs', 'solutions', 'eval', 'note.md'), 'utf8'), 'note\n');
   assert.equal(fs.readFileSync(path.join(to.copilotHome, 'knowledge', 'manifest.md'), 'utf8'), 'manifest\n');
-  assert.equal(fs.readFileSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'config.json'), 'utf8'), '{"mode":"on"}\n');
+  assert.equal(fs.existsSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'config.json')), false, 'a store config is never carried; the next task rebuilds it');
+  assert.ok(fs.statSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'learnings')).isDirectory());
   assert.ok(fs.statSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'empty')).isDirectory(), 'empty directories are kept');
   assert.equal(fs.existsSync(path.join(to.harnessHome, 'index')), false, 'an absent target stays absent');
   assert.equal(fs.existsSync(path.join(to.harnessHome, 'storage-aliases')), false);
@@ -629,7 +709,7 @@ test('feedback records are carried only for arms that read captured memory, and 
   writeMemory(carried, captureMemory(from));
   assert.equal(fs.readFileSync(path.join(carried.projectDir, 'feedback', record), 'utf8'), '{"version":1}\n');
   const carriedStore = path.join(carried.harnessHome, 'knowledge', 'repo-id');
-  assert.deepEqual(fs.readdirSync(carriedStore).sort(), ['.git', 'config.json'], 'no .lock or stale tombstone is carried');
+  assert.deepEqual(fs.readdirSync(carriedStore).sort(), ['.git'], 'no .lock, stale tombstone or store config is carried');
   assert.deepEqual(fs.readdirSync(path.join(carriedStore, '.git')), ['HEAD'], 'no .git lock is carried');
   // A fixed arm captures without feedback records.
   const fixedSource = { ...from, feedback: false };
