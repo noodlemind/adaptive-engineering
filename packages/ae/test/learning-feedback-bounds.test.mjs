@@ -11,11 +11,12 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { ensureStore, writeFeedbackConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { compactDecisions, hydrateArchivedDecision, latestArchivedReadiness, readinessIndexHealth } from '../lib/decision-archive.mjs';
+import { decisionResultOf } from '../lib/decision-agent.mjs';
 import { decisionStatus, latestReadinessReceipt, prepareDecision } from '../lib/decision-agent.mjs';
 import { runOrient } from '../lib/orient.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import {
-  acceptedFeedbackRecord, exposureRel, feedbackSummary, learningVersion, planReviewFindings, publishFeedbackRecord, readExposure, readFeedbackRecords, recordExposure, validateFeedbackFields,
+  acceptedFeedbackRecord, exposureRel, exposureTotals, feedbackSummary, learningVersion, planReviewFindings, publishFeedbackRecord, readExposure, readFeedbackRecords, recordExposure, validateFeedbackFields,
 } from '../lib/learning-feedback.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { recordHash } from '../lib/review.mjs';
@@ -464,12 +465,15 @@ test('F1: an older request\'s index write never hides a newer archived receipt',
     if (variant === 'retry heals') {
       run.prepare(1002);
       assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2, 'B is retried after A\'s write, so the index names B');
-      assert.equal(staleWarning(run, prepared.requestId, 1003), undefined);
+      assert.ok(!readinessIndexHealth(loc, run.stored()).stale.includes(sha(PLAN)), 'P is healthy after that pass');
+      // The other plans retry a bounded number per pass and heal over the following passes.
+      for (let pass = 0; pass < 5; pass++) run.prepare(1003 + pass);
+      assert.equal(staleWarning(run, prepared.requestId, 1010), undefined);
     } else {
-      // A's own index write succeeds; B's retry is still refused.
-      refuseIndexFor(sha(PLAN), () => run.prepare(1002), 1);
+      // A's own index write succeeds; B's retry is still refused, while the other plans heal over bounded passes.
+      refuseIndexFor(sha(PLAN), () => { for (let pass = 0; pass < 6; pass++) run.prepare(1002 + pass); }, 1);
       assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 1, 'precondition: the index names the older A');
-      const warning = staleWarning(run, prepared.requestId, 1003);
+      const warning = staleWarning(run, prepared.requestId, 1010);
       assert.equal(warning.planCount, 1, 'only P is still stale');
       assert.deepEqual(warning.plans, [sha(PLAN).slice(0, 12)]);
       assert.deepEqual(latestReadinessReceipt({ workspace: c.ws, home: c.home, planPath: PLAN }), { id: b.receipt.id, requestId: b.requestId, verdict: 'escalate', recordedAt: 2 }, 'B, not the indexed A, is cited');
@@ -514,14 +518,22 @@ test('F3: past 256 stale plans the count is a stated lower bound, and stays exac
   // Another pass under the same fault neither drifts nor grows.
   run.prepare(1002);
   assert.equal(staleWarning(run, prepared.requestId, 1003).planCount, 256);
-  // The fault clears except for one plan: the count is exact for what is tracked, still a lower bound.
+  assert.equal(run.stored().readinessPending.untracked, 44, 'the 44 dropped plans are counted, not forgotten');
+  // The fault clears: tracked plans heal at most 8 per pass; the dropped plans stay reported until a repair.
   fs.unlinkSync(path.join(d.archive, 'readiness'));
-  refuseIndexFor(sha(plans[299]), () => run.prepare(1004));
-  const left = staleWarning(run, prepared.requestId, 1005);
-  assert.deepEqual([left.planCount, left.atLeast, left.plans], [1, true, [sha(plans[299]).slice(0, 12)]]);
-  run.prepare(1006);
-  assert.equal(staleWarning(run, prepared.requestId, 1007), undefined);
+  let passes = 0;
+  while (Object.keys(run.stored().readinessPending.plans).length && passes < 40) run.prepare(1004 + passes++);
+  assert.equal(passes, 32, '256 tracked plans, 8 retries per pass');
+  const left = staleWarning(run, prepared.requestId, 1100);
+  assert.deepEqual([left.planCount, left.atLeast, left.untrackedPlans], [0, true, 44]);
+  assert.match(left.message, /up to 44 untracked plan/);
+  assert.match(left.message, /"operation":"repair"/);
+  assert.equal(latestArchivedReadiness({ home: c.home, workspace: d.workspace }, plans[0]), null, 'precondition: a dropped plan has no index');
+  const repaired = decisionResultOf({ workspace: c.ws, home: c.home, input: { schema: 1, operation: 'repair' } });
+  assert.deepEqual([repaired.readiness.complete, repaired.readiness.failed, repaired.readiness.untrackedCleared], [true, 0, 44]);
+  assert.equal(staleWarning(run, prepared.requestId, 1101), undefined);
   assert.equal(run.stored().readinessPending, undefined);
+  assert.equal(latestArchivedReadiness({ home: c.home, workspace: d.workspace }, plans[0]).recordedAt, 1, 'the repair rebuilt a dropped plan\'s index');
 });
 
 test('a transient fault on an older receipt is covered once the newer receipt indexes in the same pass', t => {
@@ -603,7 +615,7 @@ test('an index current for an older request still derives the plan\'s newest rec
   assert.equal(refused, 1, 'only the newest request tried to write, once per pass');
   assert.deepEqual(Object.keys(state.requests), []);
   assert.deepEqual(faults.map(item => [item.requestId, item.plan]), [[newest.requestId, sha(PLAN)]]);
-  assert.deepEqual(readinessIndexHealth(loc, state), { stale: [sha(PLAN)], capped: false });
+  assert.deepEqual(readinessIndexHealth(loc, state), { stale: [sha(PLAN)], capped: false, untracked: 0 });
 });
 
 const writeExposure = (c, entries) => {
@@ -612,20 +624,40 @@ const writeExposure = (c, entries) => {
   fs.writeFileSync(file, `${JSON.stringify({ version: 1, plan: PLAN, entries }, null, 2)}\n`);
 };
 
-test('F4: hostile exposure entries (control-character IDs, future times) never block a real delivery', t => {
+test('F4: hostile exposure entries with control-character IDs never block a real delivery', t => {
   const c = seeded(t);
   writeExposure(c, Array.from({ length: 64 }, (_, i) => ({ id: `evil/\u001b[31m${i}\r\n`, layer: 'golden', firstExposedAt: '2030-01-01T00:00:00.000Z', lastExposedAt: '2030-01-01T00:00:00.000Z', count: 1 })));
   const record = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
   assert.deepEqual(record.entries.map(entry => entry.id), ['real/learning'], 'the real learning is recorded and the hostile entries dropped');
-  // Well-formed IDs with a future time, or a count below one, are dropped too; one within the skew is kept.
-  const soon = new Date(Date.now() + 60 * 1000).toISOString(), late = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+});
+
+test('F4a: a well-formed ID with only a future time is clamped to the present and kept', t => {
+  const c = seeded(t);
+  const late = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  writeExposure(c, [{ id: 'future/one', layer: 'golden', firstExposedAt: late, lastExposedAt: late, count: 3 }]);
+  const before = Date.now();
+  const next = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
+  const future = next.entries.find(entry => entry.id === 'future/one');
+  assert.equal(future?.count, 3, 'the count survives');
+  assert.ok(Date.parse(future.lastExposedAt) <= Date.now() && Date.parse(future.lastExposedAt) >= before, 'lastExposedAt is clamped to the present');
+  assert.ok(Date.parse(future.firstExposedAt) <= Date.now(), 'firstExposedAt is clamped too');
+  // Future times sort as the present, so 64 of them never evict a real delivery.
+  writeExposure(c, Array.from({ length: 64 }, (_, i) => ({ id: `future/n${String(i).padStart(2, '0')}`, layer: 'golden', firstExposedAt: late, lastExposedAt: late, count: 1 })));
+  const crowded = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
+  assert.ok(crowded.entries.some(entry => entry.id === 'real/learning'), 'the real delivery is kept');
+  assert.equal(crowded.entries.length, 64);
+});
+
+test('F4b: a malformed ID with only a past time is dropped, and a count below one is dropped', t => {
+  const c = seeded(t);
+  const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   writeExposure(c, [
-    { id: 'future/one', layer: 'golden', firstExposedAt: late, lastExposedAt: late, count: 3 },
-    { id: 'zero/one', layer: 'golden', firstExposedAt: soon, lastExposedAt: soon, count: 0 },
-    { id: 'skew/one', layer: 'golden', firstExposedAt: soon, lastExposedAt: soon, count: 2 },
+    { id: 'Bad Id!', layer: 'golden', firstExposedAt: past, lastExposedAt: past, count: 4 },
+    { id: 'zero/one', layer: 'golden', firstExposedAt: past, lastExposedAt: past, count: 0 },
+    { id: 'past/one', layer: 'golden', firstExposedAt: past, lastExposedAt: past, count: 2 },
   ]);
   const next = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
-  assert.deepEqual(next.entries.map(entry => [entry.id, entry.count]), [['real/learning', 1], ['skew/one', 2]]);
+  assert.deepEqual(next.entries.map(entry => [entry.id, entry.count]), [['past/one', 2], ['real/learning', 1]]);
 });
 
 test('F5: the delivered gate accepts only well-formed exposure entries, with a hex version', t => {
@@ -639,6 +671,142 @@ test('F5: the delivered gate accepts only well-formed exposure entries, with a h
     { id: 'ghost/four', lastExposedAt: now, count: 0 },
     { id: 'ok/one', lastExposedAt: now, count: 1, version: 'a'.repeat(64) },
   ]);
-  for (const id of ['ghost/one', 'ghost/two', 'ghost/three', 'ghost/four']) assert.throws(check(id), /never delivered/, id);
+  for (const id of ['ghost/one', 'ghost/two', 'ghost/four']) assert.throws(check(id), /never delivered/, id);
   assert.deepEqual(check('ok/one')().recalled, [{ id: 'ok/one', verdict: 'helped', version: 'a'.repeat(64) }]);
+  assert.deepEqual(check('ghost/three')().recalled, [{ id: 'ghost/three', verdict: 'helped' }], 'a future time alone is valid (clock correction)');
+});
+
+// Eighth review pass (PR #123): untracked plans stay reported until a repair, retries write only what the
+// request archive proves and are bounded per pass, and a backward clock correction never loses exposure counts.
+
+const stableJson = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+const hashOf = value => crypto.createHash('sha256').update(stableJson(value)).digest('hex');
+const indexFile = (d, planPath) => path.join(d.archive, 'readiness', `${sha(planPath)}.json`);
+
+test('G1: plans dropped past the tracking bound stay reported after the fault clears, until a repair rebuilds their index', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const plans = Array.from({ length: 258 }, (_, i) => `docs/plans/u${String(i).padStart(3, '0')}.md`);
+  // Every plan is indexed at t=1.
+  assert.deepEqual(compactDecisions(loc, d.state(plans.map((planPath, i) => readinessFor(d, planPath, 'escalate', 1, i === 0 ? 600 * 1024 : 0)))), []);
+  fs.renameSync(path.join(d.archive, 'readiness'), path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'readiness'), 'dir');
+  // A newer receipt per plan archives while the index is redirected; the two oldest are dropped from tracking.
+  const state = d.state(plans.map((planPath, i) => readinessFor(d, planPath, 'blocked', 1000 + i, i === 0 ? 600 * 1024 : 0)));
+  assert.equal(compactDecisions(loc, state).length, 258);
+  assert.equal(Object.keys(state.readinessPending.plans).length, 256);
+  assert.equal(state.readinessPending.plans[sha(plans[0])], undefined);
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  compactDecisions(loc, state);
+  const persist = () => { fs.mkdirSync(path.dirname(d.stateFile), { recursive: true }); fs.writeFileSync(d.stateFile, JSON.stringify(state)); };
+  persist();
+  const warning = staleWarning(run, undefined, 11);
+  assert.ok(warning, 'the warning persists once the fault clears');
+  assert.equal(warning.untrackedPlans, 2);
+  assert.equal(readinessIndexHealth(loc, state).untracked, 2);
+  // Even once every tracked plan has healed, the dropped plans stay reported.
+  for (let pass = 0; pass < 40 && Object.keys(state.readinessPending.plans).length; pass++) compactDecisions(loc, state);
+  assert.deepEqual(state.readinessPending.plans, {});
+  persist();
+  assert.deepEqual([staleWarning(run, undefined, 12).planCount, staleWarning(run, undefined, 12).untrackedPlans], [0, 2]);
+  assert.equal(latestArchivedReadiness(loc, plans[0]), null, 'a dropped plan has no index');
+  const repaired = decisionResultOf({ workspace: c.ws, home: c.home, input: { schema: 1, operation: 'repair' } });
+  assert.deepEqual([repaired.readiness.complete, repaired.readiness.plans, repaired.readiness.written, repaired.readiness.untrackedCleared], [true, 258, 2, 2]);
+  assert.equal(staleWarning(run, undefined, 13), undefined);
+  assert.equal(run.stored().readinessPending, undefined);
+  assert.equal(latestArchivedReadiness(loc, plans[0]).recordedAt, 1000);
+  assert.equal(latestArchivedReadiness(loc, plans[1]).recordedAt, 1001);
+  assert.throws(() => decisionResultOf({ workspace: c.ws, home: c.home, input: { schema: 1, operation: 'repair', force: true } }), /unknown or unsupported fields/);
+});
+
+test('G1b: an incomplete or failed repair keeps the untracked marker', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  run.seed([]);
+  fs.writeFileSync(d.stateFile, JSON.stringify({ ...run.stored(), readinessPending: { plans: {}, untracked: 3 } }));
+  const r1 = d.readiness('escalate', 1);
+  redirectIndex(c, d);
+  compactDecisions({ home: c.home, workspace: d.workspace, now: 10 }, d.state([r1]));
+  const repaired = decisionResultOf({ workspace: c.ws, home: c.home, input: { schema: 1, operation: 'repair' } });
+  assert.deepEqual([repaired.readiness.failed, repaired.readiness.untrackedCleared], [1, 0], 'the redirected index refuses the write');
+  assert.equal(run.stored().readinessPending.untracked, 3);
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  assert.equal(decisionResultOf({ workspace: c.ws, home: c.home, input: { schema: 1, operation: 'repair' } }).readiness.untrackedCleared, 3);
+  assert.equal(run.stored().readinessPending, undefined);
+});
+
+test('G2: a retry writes only the citation the retained request record proves', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const r1 = d.readiness('escalate', 1);
+  assert.deepEqual(compactDecisions(loc, d.state([r1])), []);
+  // A note naming R1 with a forged time, and a note naming no retained request.
+  const forged = d.state([]);
+  forged.readinessPending = { plans: {
+    [sha(PLAN)]: { planPath: PLAN, id: r1.receipt.id, requestId: r1.requestId, verdict: 'ready', recordedAt: 1e15 },
+    [sha('docs/plans/ghost.md')]: { planPath: 'docs/plans/ghost.md', id: 'e'.repeat(64), requestId: 'f'.repeat(64), verdict: 'ready', recordedAt: 1e15 },
+  } };
+  compactDecisions(loc, forged);
+  assert.equal(forged.readinessPending, undefined, 'both notes leave: one proves R1, which the index holds; the other proves nothing');
+  assert.equal(JSON.parse(fs.readFileSync(indexFile(d, PLAN), 'utf8')).receipt.recordedAt, 1, 'the index never takes the note\'s time');
+  assert.equal(fs.existsSync(indexFile(d, 'docs/plans/ghost.md')), false, 'an unproven note writes nothing');
+  const r3 = d.readiness('blocked', 3);
+  assert.deepEqual(compactDecisions(loc, d.state([r3])), []);
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 3, 'a later real receipt is indexed');
+  fs.mkdirSync(path.dirname(d.stateFile), { recursive: true });
+  fs.writeFileSync(d.stateFile, JSON.stringify(d.state([])));
+  assert.deepEqual(latestReadinessReceipt({ workspace: c.ws, home: c.home, planPath: PLAN }), { id: r3.receipt.id, requestId: r3.requestId, verdict: 'blocked', recordedAt: 3 });
+  // An index poisoned by an earlier version never hides a later real receipt.
+  const value = { schema: 1, workspace: d.workspace, planPath: PLAN, receipt: { id: r3.receipt.id, requestId: r3.requestId, verdict: 'blocked', recordedAt: 1e15 } };
+  fs.writeFileSync(indexFile(d, PLAN), `${stableJson({ ...value, id: hashOf(value) })}\n`);
+  const r4 = d.readiness('escalate', 4);
+  assert.deepEqual(compactDecisions(loc, d.state([r4])), []);
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 4);
+});
+
+test('G3: one pass retries at most 8 noted index writes, and every note is retried in turn', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const plans = Array.from({ length: 256 }, (_, i) => `docs/plans/v${String(i).padStart(3, '0')}.md`);
+  const state = d.state(plans.map((planPath, i) => readinessFor(d, planPath, 'escalate', i + 1, i === 0 ? 600 * 1024 : 0)));
+  const { openSync } = fs;
+  let attempts = [];
+  fs.openSync = (file, flags, ...rest) => {
+    if (flags === 'wx' && String(file).includes(`${path.sep}readiness${path.sep}`)) { attempts.push(/[a-f0-9]{64}/.exec(path.basename(String(file)))?.[0]); throw new Error('index directory refuses writes'); }
+    return openSync(file, flags, ...rest);
+  };
+  try {
+    compactDecisions(loc, state);
+    assert.equal(attempts.length, 256, 'each archived receipt tries its own write once');
+    assert.equal(Object.keys(state.readinessPending.plans).length, 256);
+    const seen = new Map();
+    for (let pass = 0; pass < 32; pass++) {
+      attempts = [];
+      compactDecisions(loc, state);
+      assert.ok(attempts.length <= 8, `pass ${pass}: ${attempts.length} index writes attempted`);
+      for (const key of attempts) seen.set(key, (seen.get(key) || 0) + 1);
+    }
+    assert.equal(seen.size, 256, 'round-robin: every note was retried');
+    assert.ok([...seen.values()].every(count => count === 1), 'and none twice before the others');
+  } finally { fs.openSync = openSync; }
+});
+
+test('G4: a backward clock correction never deletes an exposure count', t => {
+  const c = seeded(t);
+  const late = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  writeExposure(c, [{ id: c.id, layer: 'golden', firstExposedAt: late, lastExposedAt: late, count: 7 }]);
+  const gate = validateFeedbackFields({ operation: 'x', decision: 'no-learning', rationale: 'r', recalled: [{ id: c.id, verdict: 'helped' }] }, { recordRoot: c.ws, planPath: PLAN });
+  assert.deepEqual(gate.recalled.map(entry => entry.id), [c.id], 'the gate accepts the entry');
+  assert.equal(exposureTotals(c.ws).get(c.id)?.exposed, 7, 'totals count it');
+  assert.ok(Date.parse(exposureTotals(c.ws).get(c.id).last_exposed) <= Date.now(), 'last_exposed reads as no later than the present');
+  const next = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
+  assert.equal(next.entries.find(entry => entry.id === c.id)?.count, 7, 'the count survives another recordExposure');
+  const again = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: c.id }] });
+  assert.equal(again.entries.find(entry => entry.id === c.id)?.count, 8);
+  assert.equal(exposureTotals(c.ws).get(c.id).exposed, 8);
 });

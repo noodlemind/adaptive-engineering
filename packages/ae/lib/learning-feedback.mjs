@@ -89,9 +89,16 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   // single layer and read the same way.
   const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
   // Prior entries are read back from disk; a malformed one is dropped rather than carried forward.
-  // A caller-supplied clock never makes the real present look like the future.
+  // A time later than the present (say, written before a backward clock correction) is clamped to the
+  // present, never dropped, so its count survives. A caller-supplied clock never makes the real present
+  // look like the future.
   const nowMs = Math.max(now.getTime(), Date.now());
-  const entries = new Map((prior?.entries || []).filter(entry => wellFormedExposure(entry, nowMs)).map(entry => [entryKey(entry), entry]));
+  const clamp = value => exposureTime(value) > nowMs ? new Date(nowMs).toISOString() : value;
+  const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(entry => [entryKey(entry), {
+    ...entry,
+    ...(exposureTime(entry.firstExposedAt) !== null ? { firstExposedAt: clamp(entry.firstExposedAt) } : {}),
+    lastExposedAt: clamp(entry.lastExposedAt),
+  }]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
   const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
   const seen = new Set();
@@ -116,7 +123,9 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
     });
   }
   const byIdLayer = (a, b) => a.id.localeCompare(b.id) || String(a.layer).localeCompare(String(b.layer));
-  let kept = [...entries.values()].sort((a, b) => b.lastExposedAt.localeCompare(a.lastExposedAt) || byIdLayer(a, b)).slice(0, EXPOSURE_ENTRY_CAP);
+  // This delivery's entries are kept first; carried entries are then kept newest first.
+  const delivering = entry => seen.has(entryKey(entry)) ? 1 : 0;
+  let kept = [...entries.values()].sort((a, b) => delivering(b) - delivering(a) || b.lastExposedAt.localeCompare(a.lastExposedAt) || byIdLayer(a, b)).slice(0, EXPOSURE_ENTRY_CAP);
   const serialize = list => ({ version: 1, plan: planPath, entries: list.toSorted(byIdLayer) });
   // +1 for the trailing newline publishReviewRecord appends.
   while (kept.length > 1 && Buffer.byteLength(JSON.stringify(serialize(kept), null, 2)) + 1 > EXPOSURE_BYTE_CAP) kept = kept.slice(0, -1);
@@ -208,11 +217,11 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
     checkEntries(decision.recalled, { field: 'recalled', cap: EXPOSURE_ENTRY_CAP, keys: ['id', 'verdict', 'note'], choiceKey: 'verdict', choices: RECALLED_VERDICTS });
     const exposure = readExposure(recordRoot, planPath);
     // A learning ID can have one entry per layer; the verdict binds the most recently delivered version.
-    const exposed = new Map();
+    const exposed = new Map(), nowMs = Date.now();
     for (const entry of exposure?.entries || []) {
       if (!wellFormedExposure(entry)) continue;
       const prior = exposed.get(entry.id);
-      if (!prior || String(entry.lastExposedAt || '') > String(prior.lastExposedAt || '')) exposed.set(entry.id, entry);
+      if (!prior || clampedExposureTime(entry.lastExposedAt, nowMs) > clampedExposureTime(prior.lastExposedAt, nowMs)) exposed.set(entry.id, entry);
     }
     const unknown = decision.recalled.filter(entry => !exposed.has(entry.id)).map(entry => entry.id);
     if (unknown.length) throw new Error(`recalled lists learnings this plan's context packs never delivered: ${unknown.join(', ')}`);
@@ -378,20 +387,24 @@ const exposureTime = value => {
   const ms = Date.parse(value);
   return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
 };
-// Clock skew tolerated before an exposure time counts as in the future.
-const EXPOSURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+// An exposure time later than the present is read as the present: after a backward clock correction
+// real entries look future, and they must neither be lost nor sort first forever.
+const clampedExposureTime = (value, nowMs = Date.now()) => {
+  const ms = exposureTime(value);
+  return ms === null ? null : Math.min(ms, nowMs);
+};
 // One exposure entry as read back from disk. The writer carries forward, the reader counts and the
 // delivered gate accepts exactly the entries that pass this test: a learning ID, a count of at least
-// one, a version that is absent or a content hash, and an exposure time no later than `nowMs` plus skew.
-// A future time would otherwise sort first forever and evict every real delivery.
-const wellFormedExposure = (entry, nowMs = Date.now()) => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
+// one, a version that is absent or a content hash, and a strict ISO exposure time. A future time is
+// valid; every comparison clamps it to the present.
+const wellFormedExposure = entry => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
   && Number.isSafeInteger(entry.count) && entry.count >= 1 && (entry.version === undefined || ID.test(entry.version))
-  && exposureTime(entry.lastExposedAt) !== null && exposureTime(entry.lastExposedAt) <= nowMs + EXPOSURE_CLOCK_SKEW_MS;
-const later = (a, b) => {
-  const next = exposureTime(b);
+  && exposureTime(entry.lastExposedAt) !== null;
+const later = (a, b, nowMs = Date.now()) => {
+  const next = clampedExposureTime(b, nowMs);
   if (next === null) return a;
-  const prior = exposureTime(a);
-  return prior === null || next > prior ? b : a;
+  const prior = clampedExposureTime(a, nowMs);
+  return prior === null || next > prior ? new Date(next).toISOString() : a;
 };
 // Counts are safe integers; a sum saturates rather than overflowing to Infinity.
 const saturatingAdd = (a, b) => Math.min(Number.MAX_SAFE_INTEGER, a + b);
@@ -406,7 +419,7 @@ const saturatingAdd = (a, b) => Math.min(Number.MAX_SAFE_INTEGER, a + b);
  * same-ID branch learning on the new branch inherits the old branch's count.
  */
 export function exposureTotals(recordRoot) {
-  const totals = new Map();
+  const totals = new Map(), nowMs = Date.now();
   if (!recordRoot || !assertNoSymlinkAncestors(recordRoot, EXPOSURE_DIR_REL)) return totals;
   let names = [];
   try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return totals; }
@@ -425,8 +438,8 @@ export function exposureTotals(recordRoot) {
       const layer = row.layers[key] || { exposed: 0, last_exposed: null };
       row.exposed = saturatingAdd(row.exposed, entry.count);
       layer.exposed = saturatingAdd(layer.exposed, entry.count);
-      row.last_exposed = later(row.last_exposed, entry.lastExposedAt);
-      layer.last_exposed = later(layer.last_exposed, entry.lastExposedAt);
+      row.last_exposed = later(row.last_exposed, entry.lastExposedAt, nowMs);
+      layer.last_exposed = later(layer.last_exposed, entry.lastExposedAt, nowMs);
       row.layers[key] = layer;
       totals.set(entry.id, row);
     }
