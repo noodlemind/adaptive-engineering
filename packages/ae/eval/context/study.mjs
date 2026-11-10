@@ -131,7 +131,8 @@ function integrity(fixture) {
   catch { return false; }
 }
 
-export async function runChecks(fixture) {
+/** `timeoutMs` is the outer checker timeout; a study passes its own protocol's `checkerTimeoutMs`. */
+export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
   const challenge = randomBytes(16).toString('hex');
   // The checks travel on stdin, so the check-file path never appears in a command line the checked code could read.
@@ -141,21 +142,23 @@ export async function runChecks(fixture) {
     try { checkText = fs.readFileSync(fixture.checkFile, 'utf8'); } catch { return { pass: false, integrity: false, reason: 'check content unreadable' }; }
   }
   if (hash(checkText) !== fixture.checkHash) return { pass: false, integrity: false, reason: 'check content changed' };
+  // Verdicts cover every check the checker receives, which can be more than the task's own private checks.
+  const count = JSON.parse(checkText).checks.length;
   // The checker gets a budget below the outer timeout, so a hang or exit in checked code still yields per-check verdicts.
-  // spawnSync blocks this event loop: a SIGINT or SIGTERM sent meanwhile is handled only after the checker returns (at most checkerTimeoutMs).
-  const budget = Math.max(1000, PROTOCOL.checkerTimeoutMs - 3000);
-  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 256_000 });
+  // spawnSync blocks this event loop: a SIGINT or SIGTERM sent meanwhile is handled only after the checker returns (at most timeoutMs).
+  const budget = Math.max(1000, timeoutMs - 3000);
+  const result = spawnSync(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 256_000 });
   const intact = integrity(fixture);
   const lines = (result.stdout || '').split(/\r?\n/);
-  const completed = lines.includes(`harness-context-checked-v1:${challenge}:${fixture.task.checks.length}`);
+  const completed = lines.includes(`harness-context-checked-v1:${challenge}:${count}`);
   // Per-check verdicts let a caller score subsets (for example trap checks) from one run; null when the checker did not report.
-  const verdicts = fixture.task.checks.map((_, index) => lines.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : lines.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
+  const verdicts = Array.from({ length: count }, (_, index) => lines.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : lines.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
   return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, verdicts: intact && !result.error ? verdicts : verdicts.map(() => null), exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
 }
 
-export function runPublicChecks(fixture) {
+export function runPublicChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!fixture.verifyCmd) return null;
-  const result = spawnSync(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
+  const result = spawnSync(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64_000 });
   return { pass: !result.error && result.status === 0, exitCode: result.status, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || null };
 }
 

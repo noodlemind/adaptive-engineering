@@ -7,10 +7,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import {
-  CATALOG, PROTOCOL, armById, armStatistics, baselineChain, clearExternalPlans, compareArms, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
+  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, episodeHashes, restoreEpisodeStore, snapshotEpisodeStore, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { storeDir, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { loadNamedChecks, runNamedCheck } from '../lib/checks.mjs';
+import { trustStatus } from '../lib/trust.mjs';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const LEARNING_ID = 'javascript/eval-scripted-trap';
@@ -292,12 +294,13 @@ test('a learning added in task 1 is injected in task 3 under recall and absent u
   assert.deepEqual(rowsFor(result, 'recall')[0].learningsInjected, [], 'nothing to inject before task 1');
   const note = `docs/solutions/eval/${ordering.trap.id}.md`;
   for (const arm of ARMS) assert.equal(rowsFor(result, arm)[0].episodesWritten, 1, `${arm} task 1 wrote one episode`);
-  for (const arm of ['capture-only', 'recall']) {
-    assert.ok(third(arm).carriedForward.includes(note), `${arm} carried the episode forward`);
-    assert.ok(inspected[third(arm).id].tracked.includes(note), 'carried episodes are committed in the next checkout');
+  assert.ok(third('recall').carriedForward.includes(note), 'recall carried the episode forward');
+  assert.ok(inspected[third('recall').id].tracked.includes(note), 'carried episodes are committed in the next checkout');
+  // capture-only writes memory but never reads it back, so its notes stay behind like stateless ones.
+  for (const arm of ['stateless', 'capture-only']) {
+    assert.deepEqual(third(arm).carriedForward, [], `${arm} inherits no notes`);
+    assert.deepEqual(inspected[third(arm).id].tracked, []);
   }
-  assert.deepEqual(third('stateless').carriedForward, [], 'stateless inherits no notes');
-  assert.deepEqual(inspected[third('stateless').id].tracked, []);
 });
 
 test('external plans in the shared home are cleared before every task', async () => {
@@ -440,6 +443,129 @@ test('external plan clearing refuses a planted symlink and never deletes outside
   assert.deepEqual(mixed.refused, [path.join('docs', 'plans')]);
   assert.equal(fs.existsSync(path.join(home, 'projects', 'repo-id', 'plans')), false);
   assert.ok(fs.existsSync(path.join(victim, 'plans', 'keep.md')));
+});
+
+test('carry-forward and episode counts never follow a symlinked docs/solutions, docs or nested folder', t => {
+  const root = directory(t);
+  const link = process.platform === 'win32' ? 'junction' : 'dir';
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(path.join(outside, 'solutions'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'id_rsa'), 'secret\n');
+  fs.writeFileSync(path.join(outside, 'leak.md'), 'outside note\n');
+  fs.writeFileSync(path.join(outside, 'solutions', 'leak.md'), 'outside note\n');
+  const fresh = name => { const dir = path.join(root, name); fs.mkdirSync(dir); return dir; };
+  const project = name => { const dir = fresh(name); fs.mkdirSync(path.join(dir, 'docs', 'solutions'), { recursive: true }); return dir; };
+
+  // docs/solutions itself is a link.
+  const linkedLeaf = fresh('leaf');
+  fs.mkdirSync(path.join(linkedLeaf, 'docs'));
+  fs.symlinkSync(outside, path.join(linkedLeaf, 'docs', 'solutions'), link);
+  assert.deepEqual(collectCarryForward(linkedLeaf), {});
+  assert.deepEqual(episodeHashes(linkedLeaf, project('leaf-project')), {});
+
+  // A parent (docs) is a link; the project store's docs is linked the same way.
+  const linkedParent = fresh('parent');
+  fs.symlinkSync(outside, path.join(linkedParent, 'docs'), link);
+  const linkedProject = fresh('parent-project');
+  fs.symlinkSync(outside, path.join(linkedProject, 'docs'), link);
+  assert.deepEqual(collectCarryForward(linkedParent), {});
+  assert.deepEqual(episodeHashes(linkedParent, linkedProject), {});
+
+  // Real folders count; a linked folder or file inside them is skipped, as a checkout would commit the link, not its target.
+  const real = fresh('real');
+  fs.mkdirSync(path.join(real, 'docs', 'solutions', 'eval'), { recursive: true });
+  fs.writeFileSync(path.join(real, 'docs', 'solutions', 'eval', 'note.md'), 'inside note\n');
+  fs.symlinkSync(outside, path.join(real, 'docs', 'solutions', 'nested'), link);
+  try { fs.symlinkSync(path.join(outside, 'id_rsa'), path.join(real, 'docs', 'solutions', 'key.md')); } catch { /* file links may need privileges on Windows */ }
+  assert.deepEqual(Object.keys(collectCarryForward(real)), ['docs/solutions/eval/note.md']);
+  assert.deepEqual(Object.keys(episodeHashes(real, project('real-project'))), ['workspace:eval/note.md']);
+});
+
+test('the memory study runs both checkers under its own protocol checkerTimeoutMs and records that value', async t => {
+  const { result } = await dry();
+  assert.equal(result.provenance.checkerTimeoutMs, PROTOCOL.checkerTimeoutMs);
+  // A 1 ms checker timeout from the memory protocol (the context protocol's is 15 s) times out the baseline checks.
+  const protocol = { ...PROTOCOL, checkerTimeoutMs: 1 };
+  const root = path.join(directory(t), 'out');
+  await assert.rejects(runStudy({ root, catalog: { ...CATALOG, series: [orders] }, protocol, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t) }), /invalid broken baseline/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'provenance.json'), 'utf8')).checkerTimeoutMs, 1);
+  assert.throws(() => validateProtocol({ ...PROTOCOL, checkerTimeoutMs: 0 }), /checkerTimeoutMs/);
+});
+
+test('controls: operator-granted checks, public examples in scoring, a protected verifier and fixed memory for capture-only and frozen-seed', async t => {
+  const executor = scriptedExecutor([]);
+  const seen = {};
+  const external = ({ copilotHome, harnessHome, workspace }) => {
+    const project = path.join(harnessHome, 'projects', path.basename(storeDir(workspace, { home: harnessHome })));
+    return { episode: path.join(project, 'docs', 'solutions', 'eval', 'captured.md'), manifest: path.join(copilotHome, 'knowledge', 'captured.md'), index: path.join(harnessHome, 'index', 'captured.json') };
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['capture-only', 'recall', 'frozen-seed'], repeats: 1,
+    model: 'scripted-test', host: 'scripted-test', studyBase: directory(t),
+    execute: async fixture => {
+      const { arm, index, workspace, copilotHome, harnessHome, task } = fixture;
+      const key = `${arm.id}:${index}`;
+      // Finding 1: the runner, as operator, registers the public verifier and grants trust; it is idempotent across the series.
+      const granted = authorizeFixtureChecks(fixture);
+      const named = loadNamedChecks(workspace, { home: harnessHome });
+      const files = external(fixture);
+      seen[key] = { granted: granted.trust.trusted, trusted: trustStatus({ workspace, copilotHome, home: harnessHome }).trusted, command: named.checks?.[PUBLIC_CHECK]?.command,
+        captured: Object.fromEntries(Object.entries(files).map(([name, file]) => [name, fs.existsSync(file)])) };
+      if (index === 2) {
+        // Finding 2: a constant answer passes the edge-case private check but fails the public example.
+        write(workspace, { 'src/tags.mjs': 'export function uniqueTags() { return []; }\n' });
+      } else await executor(fixture);
+      if (index === 0) for (const file of Object.values(files)) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'captured in task 1\n'); }
+      if (index === 1) seen[key].publicCheck = (await runNamedCheck(workspace, PUBLIC_CHECK, named.checks[PUBLIC_CHECK], { copilotHome, home: harnessHome })).status;
+      // Finding 3: a no-op verifier is a scope violation; other Harness state is not.
+      if (index === 3 && arm.id === 'capture-only') { fs.chmodSync(path.join(workspace, SUPPLIED_FILES[0]), 0o644); fs.writeFileSync(path.join(workspace, SUPPLIED_FILES[0]), 'process.exit(0);\n'); }
+      if (index === 3 && arm.id === 'recall') fs.writeFileSync(path.join(workspace, '.harness', 'scratch.json'), '{}\n');
+      return usage;
+    } });
+  for (const arm of ['capture-only', 'recall', 'frozen-seed']) {
+    for (let index = 0; index < 4; index++) {
+      const row = seen[`${arm}:${index}`];
+      assert.equal(row.granted && row.trusted, true, `${arm} task ${index + 1} is trusted by the operator`);
+      assert.deepEqual(row.command, [process.execPath, '.harness/context-verify.mjs']);
+    }
+    assert.equal(seen[`${arm}:1`].publicCheck, 'passed', `${arm} named public check passes on a solved task`);
+    const recurrence = rowsFor(result, arm)[2];
+    assert.equal(recurrence.otherChecks.pass, false, `${arm} constant answer fails the public example`);
+    assert.equal(recurrence.trapRecurred, null, `${arm} constant answer is not a recurrence`);
+    assert.equal(recurrence.recurrenceUnscored, 'rest-of-task-unsolved');
+  }
+  // Finding 4: the episode store, recall manifest and index captured in task 1 are gone for capture-only and frozen-seed, kept for recall.
+  for (const index of [1, 2, 3]) {
+    assert.deepEqual(seen[`recall:${index}`].captured, { episode: true, manifest: true, index: true });
+    for (const arm of ['capture-only', 'frozen-seed']) assert.deepEqual(seen[`${arm}:${index}`].captured, { episode: false, manifest: false, index: false }, `${arm} task ${index + 1}`);
+  }
+  for (const row of result.attempts) assert.deepEqual(row.episodeStoreRefused, []);
+  assert.ok(rowsFor(result, 'frozen-seed')[2].learningsInjected.includes(seedId(ordering)), 'frozen-seed keeps its seed');
+  const tampered = rowsFor(result, 'capture-only')[3];
+  assert.deepEqual(tampered.scope.unexpected, [SUPPLIED_FILES[0]]);
+  assert.equal(tampered.pass, false);
+  const scratch = rowsFor(result, 'recall')[3];
+  assert.deepEqual(scratch.scope.unexpected, []);
+  assert.equal(scratch.checks.pass, true);
+});
+
+test('restoring the episode store refuses a planted symlink and never writes outside the homes', t => {
+  const root = directory(t);
+  const homes = { copilotHome: path.join(root, 'copilot'), harnessHome: path.join(root, 'state') };
+  homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+  fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
+  fs.mkdirSync(homes.copilotHome);
+  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
+  const snapshot = snapshotEpisodeStore(homes);
+  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'later.md'), 'later\n');
+  assert.deepEqual(restoreEpisodeStore(snapshot).refused, []);
+  assert.deepEqual(fs.readdirSync(path.join(homes.projectDir, 'docs', 'solutions')), ['seed.md']);
+  const victim = path.join(root, 'victim');
+  fs.mkdirSync(victim);
+  fs.writeFileSync(path.join(victim, 'keep.md'), 'outside\n');
+  fs.rmSync(path.join(homes.projectDir, 'docs'), { recursive: true });
+  fs.symlinkSync(victim, path.join(homes.projectDir, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.deepEqual(restoreEpisodeStore(snapshot).refused, ['projects/repo-id/docs/solutions']);
+  assert.deepEqual(fs.readdirSync(victim), ['keep.md']);
 });
 
 test('stale study parents from dead runners are swept; live, foreign and unremovable ones are kept', t => {

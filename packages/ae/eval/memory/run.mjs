@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { memoryAgentArgs, resolveStudyOutput, runStudy, runnableArms } from './study.mjs';
+import { authorizeFixtureChecks, memoryAgentArgs, resolveStudyOutput, runStudy, runnableArms } from './study.mjs';
 import { PROVIDERS } from '../../lib/provider.mjs';
 
 const args = process.argv.slice(2);
@@ -32,6 +32,8 @@ function execute(fixture) {
   const common = ['--workspace', workspace, '--copilot-home', copilotHome, '--harness-home', harnessHome, '--no-events', '--json'];
   const setup = spawnSync(process.execPath, [bin, 'config', 'set', 'agent.enabled', 'true', '--scope', 'user', ...common], { env, encoding: 'utf8', timeout: 15_000 });
   if (setup.error || setup.status !== 0) throw new Error(`fixture configuration failed: ${setup.error?.code || setup.stderr?.slice(0, 1000)}`);
+  // The operator, not the agent, registers the public verifier as a named check and grants fixture trust.
+  authorizeFixtureChecks(fixture);
   const result = spawnSync(process.execPath, [bin, 'agent', ...memoryAgentArgs({ ...fixture, provider: options.provider })], { cwd: workspace, env, encoding: 'utf8', timeout: (protocol.maxSeconds + 30) * 1000, maxBuffer: 20 * 1024 * 1024 });
   if (result.error) throw new Error(`agent process failed: ${result.error.code}`);
   try { return JSON.parse(result.stdout); }

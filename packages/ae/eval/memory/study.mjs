@@ -10,6 +10,8 @@ import { runOrient } from '../../lib/orient.mjs';
 import { repeatEvidenceFromServed } from '../../lib/repeat-mistake.mjs';
 import { ensureHarnessDir } from '../../lib/session.mjs';
 import { publicVerifierSource } from '../context/check.mjs';
+import { configureCheckConfiguration, inspectCheckConfiguration } from '../../lib/check-configuration.mjs';
+import { approveProject } from '../../lib/trust.mjs';
 
 export { resolveStudyOutput };
 
@@ -58,6 +60,7 @@ export function validateProtocol(protocol = PROTOCOL) {
   if (protocol.schema !== 1 || !Array.isArray(protocol.arms) || !protocol.arms.length) throw new TypeError('protocol needs schema 1 and arms');
   const ids = protocol.arms.map(arm => arm.id);
   if (new Set(ids).size !== ids.length) throw new TypeError('arm ids must be unique');
+  if (!Number.isSafeInteger(protocol.checkerTimeoutMs) || protocol.checkerTimeoutMs <= 0) throw new TypeError('protocol checkerTimeoutMs must be a positive integer');
   const roots = protocol.arms.filter(arm => arm.baseline === null);
   if (roots.length !== 1 || roots[0].id !== 'stateless' || roots[0].mode !== 'off') throw new TypeError('stateless (mode off) must be the only arm without a baseline');
   for (const arm of protocol.arms) {
@@ -154,8 +157,98 @@ function restoreOrigin(workspace, expected) {
   return fixed.status === 0 && after.configured === expected && after.effective === expected;
 }
 
-/** Arms whose knowledge mode writes memory. Only they inherit earlier tasks' docs/solutions notes. */
-export const capturesMemory = arm => arm.mode === 'on' || arm.mode === 'suggest' || arm.mode === 'capture-only';
+/**
+ * Arms whose later tasks may read what earlier tasks captured. Only they inherit earlier tasks' docs/solutions notes.
+ * `capture-only` writes memory but must not read it back, so it carries nothing forward.
+ */
+export const readsCapturedMemory = arm => arm.mode === 'on' || arm.mode === 'suggest';
+
+/**
+ * Arms whose recallable memory is fixed for the whole run: `capture-only` keeps the state it started with, and `frozen-seed`
+ * (mode freeze) keeps its seeded state. Compound still writes episodes in both modes, and orient recalls episodes whatever the
+ * knowledge mode, so the runner restores the episode store and retrieval index before every later task.
+ */
+export const fixesRecallableMemory = arm => arm.mode === 'capture-only' || arm.mode === 'freeze';
+
+const EPISODE_STORE_FILE_LIMIT = 2000;
+const EPISODE_STORE_BYTE_LIMIT = 32 * 1024 * 1024;
+
+/** Episode files, the recall manifest and its postings index, as [root, path under root]. */
+function episodeStoreTargets({ copilotHome, harnessHome, projectDir }) {
+  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, path.relative(harnessHome, path.join(projectDir, 'docs', 'solutions'))]];
+}
+
+/** Whether every component of `rel` under `root` that exists is a real directory, never a symlink; and whether the target exists. */
+function realDirectoryPath(root, rel) {
+  let current = root;
+  for (const part of rel.split(path.sep).filter(Boolean)) {
+    if (part === '..') return { safe: false, exists: false };
+    current = path.join(current, part);
+    let stat;
+    try { stat = fs.lstatSync(current); } catch { return { safe: true, exists: false }; }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return { safe: false, exists: true };
+  }
+  return { safe: true, exists: true };
+}
+
+/**
+ * Snapshot of the episode store held in this process's memory, so an agent cannot edit the copy it will be restored from.
+ * Taken by the runner before the first task's agent runs; symlinks are refused, as in a real checkout of the store.
+ */
+export function snapshotEpisodeStore(homes) {
+  let files = 0, bytes = 0;
+  return episodeStoreTargets(homes).map(([root, rel]) => {
+    const checked = realDirectoryPath(root, rel);
+    if (!checked.safe) throw new Error(`episode store path is not a real directory: ${rel}`);
+    const saved = checked.exists ? Object.entries(listFiles(path.join(root, rel))).map(([file, full]) => {
+      const content = fs.readFileSync(full);
+      files += 1; bytes += content.length;
+      if (files > EPISODE_STORE_FILE_LIMIT || bytes > EPISODE_STORE_BYTE_LIMIT) throw new Error('episode store exceeds the snapshot limit');
+      return [file, content];
+    }) : null;
+    return { root, rel, saved };
+  });
+}
+
+/**
+ * Restores a snapshot: each target is removed and rewritten from memory, or left absent if it was absent. A target whose
+ * path holds a symlink or a non-directory is refused and left untouched, and the attempt becomes invalid.
+ */
+export function restoreEpisodeStore(snapshot) {
+  const refused = [];
+  for (const { root, rel, saved } of snapshot) {
+    const checked = realDirectoryPath(root, rel);
+    if (!checked.safe) { refused.push(rel.split(path.sep).join('/')); continue; }
+    const target = path.join(root, rel);
+    if (checked.exists) fs.rmSync(target, { recursive: true, force: true });
+    for (const [file, content] of saved || []) {
+      fs.mkdirSync(path.dirname(path.join(target, file)), { recursive: true });
+      fs.writeFileSync(path.join(target, file), content);
+    }
+    if (saved && !saved.length) fs.mkdirSync(target, { recursive: true });
+  }
+  return { refused };
+}
+
+/** Named check that runs the runner-supplied public verifier; the Deliver completion gate needs named evidence. */
+export const PUBLIC_CHECK = 'public-checks';
+
+/**
+ * Operator setup before an agent runs: registers the public verifier as the named check PUBLIC_CHECK in the series project
+ * authority under the harness home, then approves project trust for this checkout. The runner grants trust as the operator;
+ * the agent itself may only read trust status. Without both, `ae verify` reports the check unavailable and a correct Deliver
+ * run can never finish with status ok. Idempotent across the tasks of a series, which share the harness home.
+ */
+export function authorizeFixtureChecks({ workspace, copilotHome, harnessHome }) {
+  const current = inspectCheckConfiguration({ workspace, home: harnessHome });
+  configureCheckConfiguration({ workspace, home: harnessHome, copilotHome, input: {
+    schema: 1, expectedDigest: current.sourceDigest, rationale: 'Memory study operator: the runner-supplied public verifier for this fixture.',
+    checks: { [PUBLIC_CHECK]: { command: [process.execPath, '.harness/context-verify.mjs'], proof: 'behavior' } },
+  } });
+  const trust = approveProject({ workspace, copilotHome, home: harnessHome });
+  if (!trust.trusted) throw new Error('fixture trust approval did not take effect');
+  return { check: PUBLIC_CHECK, trust };
+}
 
 /**
  * Fresh checkout of the series state for one task, with carried-forward episodes committed and origin pinned before any ae command.
@@ -179,7 +272,7 @@ export function prepareTask({ series, index, runRoot, carried = {}, extraFiles =
   const control = path.join(workspace, '.harness');
   fs.writeFileSync(path.join(control, 'context-verify.mjs'), publicVerifierSource(task.publicChecks), { mode: 0o444 });
   const checkerHash = hash(fs.readFileSync(checker));
-  const checkText = JSON.stringify({ checks: task.checks });
+  const checkText = JSON.stringify({ checks: scoredChecks(task) });
   const env2 = trialEnvironment({ trial, copilotHome, harnessHome });
   // The agent gets an empty HOME and its own temporary directory for this task only; the ae wrapper keeps its pinned homes.
   const agentHome = path.join(trial, 'home');
@@ -197,27 +290,48 @@ export function prepareTask({ series, index, runRoot, carried = {}, extraFiles =
   return fixture;
 }
 
+/** Regular files under `root`, never following a symlink: `root` and every directory walked are lstat'd, and links are skipped. */
 function listFiles(root, base = '') {
   const found = {};
   let entries;
-  try { entries = fs.readdirSync(path.join(root, base), { withFileTypes: true }); } catch { return found; }
-  for (const entry of entries) {
-    const rel = path.posix.join(base, entry.name);
-    if (entry.isDirectory()) Object.assign(found, listFiles(root, rel));
-    else if (entry.isFile()) found[rel] = path.join(root, rel);
+  try {
+    if (!fs.lstatSync(path.join(root, base)).isDirectory()) return found;
+    entries = fs.readdirSync(path.join(root, base));
+  } catch { return found; }
+  for (const name of entries) {
+    const rel = path.posix.join(base, name);
+    let stat;
+    try { stat = fs.lstatSync(path.join(root, rel)); } catch { continue; }
+    if (stat.isDirectory()) Object.assign(found, listFiles(root, rel));
+    else if (stat.isFile()) found[rel] = path.join(root, rel);
   }
   return found;
+}
+
+/**
+ * Regular files under `base/rel` as a real checkout would hold them: every path component from `base` down must be a real
+ * directory, not a symlink, so a linked `docs` or `docs/solutions` cannot pull files from outside into the count or the next task.
+ */
+function filesInside(base, rel) {
+  let current = base;
+  for (const part of rel.split('/').filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try { stat = fs.lstatSync(current); } catch { return {}; }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return {};
+  }
+  return listFiles(current);
 }
 
 /** Project-store directory for the series identity, independent of the workspace's current origin. */
 const projectDirFor = (home, identity) => path.join(home, 'projects', path.basename(identity.storeDir));
 
 /** Episode-shaped files (Markdown notes under docs/solutions) in the workspace and in the series project store. */
-function episodeHashes(workspace, projectDir) {
-  const roots = { workspace: path.join(workspace, PROTOCOL.carryForward), project: path.join(projectDir, 'docs', 'solutions') };
+export function episodeHashes(workspace, projectDir) {
+  const roots = { workspace: [workspace, PROTOCOL.carryForward], project: [projectDir, 'docs/solutions'] };
   const hashes = {};
-  for (const [label, root] of Object.entries(roots)) {
-    for (const [rel, file] of Object.entries(listFiles(root))) if (rel.endsWith('.md')) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
+  for (const [label, [base, sub]] of Object.entries(roots)) {
+    for (const [rel, file] of Object.entries(filesInside(base, sub))) if (rel.endsWith('.md')) hashes[`${label}:${rel}`] = hash(fs.readFileSync(file));
   }
   return hashes;
 }
@@ -255,8 +369,7 @@ export function clearExternalPlans(harnessHome, projectDir) {
 /** Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. */
 export function collectCarryForward(workspace) {
   const carried = {};
-  const root = path.join(workspace, PROTOCOL.carryForward);
-  for (const [rel, file] of Object.entries(listFiles(root)).sort(([a], [b]) => a.localeCompare(b)).slice(0, CARRY_FILE_LIMIT)) {
+  for (const [rel, file] of Object.entries(filesInside(workspace, PROTOCOL.carryForward)).sort(([a], [b]) => a.localeCompare(b)).slice(0, CARRY_FILE_LIMIT)) {
     const target = `${PROTOCOL.carryForward}/${rel}`;
     try { safePath(target); } catch { continue; }
     const stat = fs.lstatSync(file);
@@ -288,9 +401,19 @@ export function configureArm({ workspace, home, arm, series, seed = false }) {
   return { seeded };
 }
 
-/** Pass result for the trap (or non-trap) checks of a task, from one checker run's per-check verdicts. */
+/**
+ * Checks the private checker runs for a task: its private checks, then its public examples. The public examples run there
+ * too, from this process's copy, so a constant answer that passes the edge-case private checks but fails the public examples
+ * is an unsolved task, not a trap recurrence, and a changed workspace verifier cannot fake them.
+ */
+export const scoredChecks = task => [...task.checks, ...task.publicChecks];
+
+/** Files under `.harness/` that the runner supplies; any change to them is a scope violation, unlike ordinary Harness state. */
+export const SUPPLIED_FILES = Object.freeze(['.harness/context-verify.mjs']);
+
+/** Pass result for the trap (or non-trap) checks of a task, from one checker run's per-check verdicts. Public examples count as non-trap. */
 function subsetResult(task, result, trap) {
-  const verdicts = task.checks.map((check, index) => [Boolean(check.trap) === trap, result.verdicts?.[index]]).filter(([selected]) => selected).map(([, verdict]) => verdict);
+  const verdicts = scoredChecks(task).map((check, index) => [Boolean(check.trap) === trap, result.verdicts?.[index]]).filter(([selected]) => selected).map(([, verdict]) => verdict);
   return { pass: result.integrity !== false && verdicts.length > 0 && verdicts.every(verdict => verdict === true), verdicts };
 }
 
@@ -346,7 +469,7 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(),
     sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim()),
     profile: protocol.profile, publicVerifier: protocol.publicVerifier, maxTurns: protocol.maxTurns, maxSeconds: protocol.maxSeconds,
-    repeats, arms, series: series.map(item => item.id), origin: protocol.origin, carryForward: protocol.carryForward,
+    checkerTimeoutMs: protocol.checkerTimeoutMs, repeats, arms, series: series.map(item => item.id), origin: protocol.origin, carryForward: protocol.carryForward,
   };
   provenance.configHash = hash(JSON.stringify(provenance));
   provenance.sourceHash = hash(execFileSync('git', ['ls-files', '-z', 'packages/ae/lib', 'packages/ae/bin', 'packages/ae/corpus', 'packages/ae/eval/context', 'packages/ae/eval/memory'], { cwd: repoRoot }).toString().split('\0').filter(Boolean).map(file => `${file}:${hash(fs.readFileSync(path.resolve(repoRoot, file)))}`).join('\n'));
@@ -472,6 +595,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
         let carried = {};
         let first = null;
         let seeded = null;
+        let storeSnapshot = null;
         const runAttempts = [];
         try {
           for (let index = 0; index < item.tasks.length; index++) {
@@ -484,9 +608,17 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             if (!first) first = identity;
             const projectDir = projectDirFor(harnessHome, first);
             const plans = clearExternalPlans(harnessHome, projectDir);
+            // Arms with fixed recallable memory start every later task from the episode store their first task started with.
+            let storeRestore = { refused: [] };
+            if (fixesRecallableMemory(arm)) {
+              if (index === 0) storeSnapshot = snapshotEpisodeStore({ copilotHome, harnessHome, projectDir });
+              else storeRestore = restoreEpisodeStore(storeSnapshot);
+            }
             const before = { ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) };
-            const baseline = await runChecks(fixture);
-            const publicBaseline = runPublicChecks(fixture);
+            // Both checkers run under this study's own protocol timeout, the value recorded in provenance.
+            const checkerOptions = { timeoutMs: protocol.checkerTimeoutMs };
+            const baseline = await runChecks(fixture, checkerOptions);
+            const publicBaseline = runPublicChecks(fixture, checkerOptions);
             const trapBaseline = task.trap ? subsetResult(task, baseline, true) : null;
             if (baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
             const episodesBefore = episodeHashes(fixture.workspace, projectDir);
@@ -498,13 +630,14 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               catch (caught) { error = String(caught.message).slice(0, 2000); }
             }
             // A dry run changes nothing, so the baseline checks above already describe its workspace.
-            const checks = dryRun ? null : await runChecks(fixture);
+            const checks = dryRun ? null : await runChecks(fixture, checkerOptions);
             // One checker run scores the whole task; trap and non-trap results are subsets of its per-check verdicts.
             const trapChecks = dryRun || !task.trap ? null : subsetResult(task, checks, true);
             const otherChecks = dryRun || !task.trap ? null : subsetResult(task, checks, false);
             const scope = scopeResult(fixture);
-            // Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
-            const unexpected = scope.unexpected.filter(file => !file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`));
+            // Ordinary Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
+            // Runner-supplied files under .harness/, such as the public verifier, stay protected.
+            const unexpected = scope.unexpected.filter(file => SUPPLIED_FILES.includes(file) || (!file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`)));
             const originAfter = readOrigin(fixture.workspace);
             const originUnchanged = originAfter.configured === fixture.origin && originAfter.effective === fixture.origin;
             // Read every after-state through the series identity, never through an origin the agent may have changed.
@@ -520,6 +653,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               before.observed !== arm.mode && 'knowledge-mode-mismatch',
               before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
               plans.refused.length > 0 && 'external-plans-not-cleared',
+              storeRestore.refused.length > 0 && 'episode-store-not-restored',
               !originRestored && 'origin-restore-failed',
             ].filter(Boolean);
             const valid = invalidReasons.length === 0;
@@ -546,7 +680,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
               repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: before.observed, feedback: before.feedbackObserved,
               knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
-              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused,
+              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, episodeStoreRefused: storeRestore.refused,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
@@ -556,7 +690,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             };
             attempts.push(attempt);
             runAttempts.push(attempt);
-            carried = capturesMemory(arm) ? collectCarryForward(fixture.workspace) : {};
+            carried = readsCapturedMemory(arm) ? collectCarryForward(fixture.workspace) : {};
             if (inspect) await inspect(fixture, attempt);
             fs.rmSync(fixture.trial, { recursive: true, force: true });
           }

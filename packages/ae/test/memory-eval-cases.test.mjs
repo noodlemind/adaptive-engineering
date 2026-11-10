@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { checkCases, checkCasesIsolated } from '../eval/context/check.mjs';
+import { checkCases, checkCasesIsolated, errorText, publicVerifierSource } from '../eval/context/check.mjs';
 import { CATALOG, memoryPrompt, seriesOrigin, seriesState, validateCatalog } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
@@ -218,6 +218,42 @@ export function lone() { throw new Error('bad \\uD800 input: specific'); }
   ];
   const { verdicts, messages } = await checkCasesIsolated(workspace, checks);
   assert.deepEqual(verdicts, [true, true], messages.filter(Boolean).join('; '));
+});
+
+test('a thrown string and a thrown Error get the same throws verdict from checkCases, the public verifier and the isolated judge', async t => {
+  const root = directory(t);
+  const long = `${'y'.repeat(2100)} late`;
+  const workspace = materialize(root, { 'src/value.mjs': `export const error = () => { throw new Error('bad input: specific'); };
+export const text = () => { throw 'bad input: specific'; };
+export const longError = () => { throw new Error(${JSON.stringify(long)}); };
+export const longText = () => { throw ${JSON.stringify(long)}; };
+export const bare = () => { throw { code: 1 }; };
+` });
+  const cases = [
+    [{ module: 'src/value.mjs', export: 'error', args: [], throws: 'input: specific' }, true],
+    [{ module: 'src/value.mjs', export: 'text', args: [], throws: 'input: specific' }, true],
+    [{ module: 'src/value.mjs', export: 'error', args: [], throws: 'other' }, false],
+    [{ module: 'src/value.mjs', export: 'text', args: [], throws: 'other' }, false],
+    // Every path matches within the same first 2000 characters.
+    [{ module: 'src/value.mjs', export: 'longError', args: [], throws: 'late' }, false],
+    [{ module: 'src/value.mjs', export: 'longText', args: [], throws: 'late' }, false],
+    [{ module: 'src/value.mjs', export: 'longText', args: [], throws: 'yyyy' }, true],
+    [{ module: 'src/value.mjs', export: 'bare', args: [], throws: 'undefined' }, false],
+  ];
+  const checks = cases.map(([check]) => check);
+  const expected = cases.map(([, verdict]) => verdict);
+  assert.equal(errorText('plain'), errorText(new Error('plain')));
+  const { verdicts, messages } = await checkCasesIsolated(workspace, checks);
+  assert.deepEqual(verdicts, expected, messages.filter(Boolean).join('; '));
+  const inProcess = [];
+  for (const check of checks) inProcess.push(await passes(workspace, [check]));
+  assert.deepEqual(inProcess, expected, 'checkCases agrees');
+  const verifier = path.join(root, 'verify.mjs');
+  const standalone = checks.map(check => {
+    fs.writeFileSync(verifier, publicVerifierSource([check]));
+    return spawnSync(process.execPath, [verifier], { cwd: workspace, encoding: 'utf8', timeout: 20000 }).status === 0;
+  });
+  assert.deepEqual(standalone, expected, 'the standalone public verifier agrees');
 });
 
 test('a check that exits or hangs fails alone; the checks after it still get verdicts', t => {

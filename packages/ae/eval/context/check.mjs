@@ -9,6 +9,16 @@ import { types } from 'node:util';
 
 const self = fileURLToPath(import.meta.url);
 
+/**
+ * The error text a `throws` check matches, shared by `checkCases`, the standalone public verifier (which embeds this source)
+ * and the isolated probe, so all three give the same verdict: an Error's message, or the thrown value itself (a thrown string
+ * matches on its text), cut to 2000 characters and made well formed. Text that cannot be read becomes 'unprintable error'.
+ * The probe passes the built-ins it captured before any workspace import; other callers use the defaults.
+ */
+export function errorText(error, apply = Reflect.apply, toText = String, slice = String.prototype.slice, wellFormed = String.prototype.toWellFormed) {
+  try { return apply(wellFormed, apply(slice, toText(error?.message ?? error), [0, 2000]), []); } catch { return 'unprintable error'; }
+}
+
 /** In-process checks. Used for public verifiers only, where the checked code may see the expectations. */
 export async function checkCases(workspace, checks) {
   for (const check of checks) {
@@ -17,7 +27,7 @@ export async function checkCases(workspace, checks) {
       assert.equal(Object.hasOwn(module, check.export), false);
     } else {
       const evaluate = () => Object.hasOwn(check, 'args') ? module[check.export](...check.args) : module[check.export];
-      if (check.throws) await assert.rejects(async () => evaluate(), error => String(error.message).includes(check.throws));
+      if (check.throws) await assert.rejects(async () => evaluate(), error => errorText(error).includes(check.throws));
       else {
         const result = evaluate();
         if (check.synchronous) assert.equal(types.isPromise(result) || typeof result?.then !== 'undefined', false, `${check.export} must remain synchronous`);
@@ -29,7 +39,7 @@ export async function checkCases(workspace, checks) {
 
 /** Standalone public verifier for a workspace: the public checks and `checkCases`, with no path back to the AE checkout. */
 export function publicVerifierSource(checks) {
-  return `import assert from 'node:assert/strict';\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nimport { types } from 'node:util';\n${checkCases.toString()}\nawait checkCases(process.cwd(), ${JSON.stringify(checks)});\n`;
+  return `import assert from 'node:assert/strict';\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nimport { types } from 'node:util';\n${errorText.toString()}\n${checkCases.toString()}\nawait checkCases(process.cwd(), ${JSON.stringify(checks)});\n`;
 }
 
 /** What the probe child may know about a check: never the expected value or the expected error text. */
@@ -71,8 +81,8 @@ async function probeMain(workspace) {
     }
     return true;
   };
-  // toWellFormed after the slice repairs a lone surrogate or an emoji cut at the limit, which encodeURIComponent would reject.
-  const message = error => { try { return encodeText(apply(wellFormed, apply(stringSlice, toText(error?.message ?? error), [0, 2000]), [])); } catch { return 'unprintable%20error'; } };
+  // errorText makes the text well formed, so encodeURIComponent never meets a lone surrogate or an emoji cut at the limit.
+  const message = error => { try { return encodeText(errorText(error, apply, toText, stringSlice, wellFormed)); } catch { return 'unprintable%20error'; } };
   for (let index = 0; index < probes.length; index++) {
     const item = probes[index];
     let result;

@@ -89,11 +89,11 @@ Every trap task records its reference implementation, its naive implementation a
 | Arm | Knowledge mode | Baseline |
 | --- | --- | --- |
 | `stateless` | `off` | none |
-| `capture-only` | `capture-only` | `stateless` |
+| `capture-only` | `capture-only`. Captures in every task but never reads back what earlier tasks captured | `stateless` |
 | `recall` | `on` | `stateless` |
 | `recall+feedback` | `on` with `knowledge.feedback=on` | `recall` |
 | `recall+recheck` | `on` with `knowledge.recheck=on` | `recall`. Declared but not runnable until memory plan phase 2 adds the key |
-| `frozen-seed` | `freeze`, with one seed learning written before task 1 | `stateless` |
+| `frozen-seed` | `freeze`, with one seed learning written before task 1. Every task starts from the seeded memory | `stateless` |
 
 ```bash
 node eval/memory/run.mjs --out /absolute/new/external/directory
@@ -119,7 +119,11 @@ node eval/memory/run.mjs --out /absolute/new/dir --split development --arms stat
 - Attempt records, which include checker diagnostics, are written only after the study parent is gone. A crash or a signal still writes the finished attempts, with a `results.json` marked `partial` and no summary.
 - Plans are cleared only when every path component under the harness home is a real directory. A planted symlink is refused, and that attempt becomes invalid.
 
-**Memory channels.** Only arms that capture memory (`capture-only` and `recall*`) carry `docs/solutions/` notes into the next checkout and commit them there. Each attempt lists the files it inherited. In other arms, notes written under `docs/solutions/` are allowed, because compound may still write them, but they are discarded. Plans kept outside the checkout under the harness home are cleared before every task in every arm. Learnings and private episodes in the project store are the memory under test and persist.
+**Memory channels.** Only arms that read captured memory (`recall*`) carry `docs/solutions/` notes into the next checkout and commit them there. Carry-forward takes only regular files reached through real directories: a symlinked `docs`, `docs/solutions` or nested folder is skipped, as a checkout would commit the link and not its target. Each attempt lists the files it inherited. In other arms, notes written under `docs/solutions/` are allowed, because compound may still write them, but they are discarded. Plans kept outside the checkout under the harness home are cleared before every task in every arm. In the `recall*` arms, learnings and private episodes in the project store are the memory under test and persist.
+
+Compound still writes episodes in `capture-only` and `freeze` modes, and orient recalls episodes whatever the knowledge mode. So for `capture-only` and `frozen-seed` the runner snapshots the episode store before the first task's agent runs: the project store's `docs/solutions/`, the recall manifest under the Copilot home and the retrieval index under the harness home. It restores that snapshot before every later task. `capture-only` therefore never reads an earlier task's capture, and `frozen-seed` always starts from its seeded state. The snapshot stays in the runner's memory. A restore target that is a symlink or not a directory is refused, and that attempt becomes invalid.
+
+**Checks the runner supplies.** Before the agent runs, the runner, acting as the operator, registers the public verifier as the named check `public-checks` in the series's project authority under the harness home and approves project trust for the checkout. Deliver's completion gate needs passing named evidence, so without this a correct run could never finish with status `ok`. The agent may only read trust status. Changes under `.harness/` are ordinary Harness state and allowed, except to the files the runner supplies, such as `.harness/context-verify.mjs`. Changing one of those is a scope violation.
 
 **Metrics.** Each attempt records:
 - private-check pass
@@ -129,7 +133,7 @@ node eval/memory/run.mjs --out /absolute/new/dir --split development --arms stat
 - `learningsBytes` and injected learnings
 - episodes written (Markdown notes under `docs/solutions/`)
 
-A recurrence counts only when the task's non-trap private checks pass. An unsolved task is recorded as unscored, and each arm reports how many were unscored. Injected learnings come from a dry `ae orient` computed before the agent runs. A dry run makes no model calls and skips the post-run checks. It validates broken baselines, identity pinning, arm configuration and planned injection.
+A recurrence counts only when the task's non-trap private checks and its public examples pass. The private checker runs the public examples from the runner's own copy, so a constant answer that passes the edge-case private checks is unscored, and a changed workspace verifier cannot fake them. An unsolved task is recorded as unscored, and each arm reports how many were unscored. Injected learnings come from a dry `ae orient` computed before the agent runs. A dry run makes no model calls and skips the post-run checks. It validates broken baselines, identity pinning, arm configuration and planned injection.
 
 **Promotion.** An arm is compared with its declared baseline on held-out attempts. It counts as an improvement only if all of these hold:
 - trap recurrence falls by at least 30% relative to the baseline
