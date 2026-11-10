@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, READINESS_INDEX_FAULT, archivedOverCapMessage } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, READINESS_INDEX_FAULT, STAYS_LIVE_PREFIX, archivedOverCapMessage } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -125,8 +125,10 @@ function readState(loc) {
  * Well-formed warnings, the newest per request, at most MAX_STATE_WARNINGS. A
  * warning about a request leaves with it, except a readiness-index fault, which
  * stays at state level (requestId null), one per plan, until that plan's index
- * write succeeds. The one aggregated warning for plans archived over the cap
- * always keeps its slot.
+ * write succeeds; one that said its request stays live is reworded once that
+ * request is gone. The one aggregated warning for plans archived over the cap
+ * always keeps its slot: it lists at most MAX_ARCHIVED_PLAN_KEYS plans, the
+ * most recently archived, and `count` keeps the true total.
  */
 function stateWarnings(state) {
   const byKey = new Map();
@@ -135,33 +137,47 @@ function stateWarnings(state) {
     if (!object(item) || !Number.isFinite(item.at) || typeof item.message !== 'string') continue;
     const fault = item.fault === READINESS_INDEX_FAULT;
     if (fault && Array.isArray(item.plans)) {
-      const plans = item.plans.filter(plan => ID.test(plan || ''));
+      const plans = [...new Set(item.plans.filter(plan => ID.test(plan || '')))];
       if (!plans.length) continue;
-      const merged = [...new Set([...(archived?.plans || []), ...plans])].sort().slice(0, MAX_ARCHIVED_PLAN_KEYS);
-      archived = { at: Math.max(archived?.at ?? item.at, item.at), requestId: null, fault: READINESS_INDEX_FAULT, plans: merged, message: archivedOverCapMessage(merged.length) };
+      // Recency order: a plan archived again moves to the end, and the oldest drop first.
+      const merged = new Set(archived?.plans || []);
+      let count = archived?.count ?? 0;
+      const own = Number.isSafeInteger(item.count) && item.count >= plans.length ? item.count - plans.length : 0;
+      for (const plan of plans) { if (merged.delete(plan)) count--; merged.add(plan); }
+      count = Math.min(Number.MAX_SAFE_INTEGER, count + plans.length + own);
+      const kept = [...merged].slice(-MAX_ARCHIVED_PLAN_KEYS);
+      archived = { at: Math.max(archived?.at ?? item.at, item.at), requestId: null, fault: READINESS_INDEX_FAULT, plans: kept, count, message: archivedOverCapMessage(count) };
       continue;
     }
     const plan = fault && ID.test(item.plan || '') ? item.plan : null;
     const live = ID.test(item.requestId || '') && Object.hasOwn(state.requests, item.requestId);
     if (!live && !(fault && (item.requestId === null || ID.test(item.requestId || '')))) continue;
     const requestId = live ? item.requestId : null, key = requestId ?? (plan ? `plan:${plan}` : 'state');
+    let message = item.message;
+    if (!live && message.startsWith(STAYS_LIVE_PREFIX)) {
+      const cause = message.slice(STAYS_LIVE_PREFIX.length);
+      message = ID.test(item.requestId || '') ? `readiness index not retained for archived request ${item.requestId}: ${cause}` : `readiness index not retained; its request was archived: ${cause}`;
+    }
     byKey.delete(key);
-    byKey.set(key, { at: item.at, requestId, ...(fault ? { fault: READINESS_INDEX_FAULT } : {}), ...(plan ? { plan } : {}), message: Array.from(item.message).slice(0, 500).join('') });
+    byKey.set(key, { at: item.at, requestId, ...(fault ? { fault: READINESS_INDEX_FAULT } : {}), ...(plan ? { plan } : {}), message: Array.from(message).slice(0, 500).join('') });
   }
   const rest = [...byKey.values()];
   return archived ? [archived, ...rest.slice(-(MAX_STATE_WARNINGS - 1))] : rest.slice(-MAX_STATE_WARNINGS);
 }
 
 /**
- * A readiness-index warning clears only when its own plan's index write
- * succeeded; the aggregated warning drops each plan as its index is written.
+ * A readiness-index warning clears only when its own plan's index is healthy
+ * (written, or already holding that plan's newest live receipt); the aggregated
+ * warning drops each plan as its index is, and its count with it.
  * A warning stored before plan identity existed clears on any successful write.
  */
 function clearIndexed(item, indexed) {
   if (!object(item) || item.fault !== READINESS_INDEX_FAULT) return [item];
   if (Array.isArray(item.plans)) {
     const plans = item.plans.filter(plan => !indexed.has(plan));
-    return plans.length ? [{ ...item, plans }] : [];
+    if (!plans.length) return [];
+    const count = Number.isSafeInteger(item.count) && item.count >= item.plans.length ? item.count - (item.plans.length - plans.length) : plans.length;
+    return [{ ...item, plans, count }];
   }
   if (typeof item.plan === 'string') return indexed.has(item.plan) ? [] : [item];
   return indexed.size ? [] : [item];
@@ -490,11 +506,19 @@ export function recordDecision(options) {
   });
 }
 
+// Status shows the archived-over-cap plans as a count and a few short hashes; state keeps the full list for clearing.
+const STATUS_PLAN_SAMPLE = 8;
+function statusWarning(item) {
+  if (!Array.isArray(item.plans)) return item;
+  const { plans, count, ...rest } = item, shown = plans.slice(-STATUS_PLAN_SAMPLE).reverse();
+  return { ...rest, planCount: count, plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: count - shown.length };
+}
+
 export function decisionStatus(options) {
   const loc = locations(options), state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  const live = stateWarnings(state), warnings = live.length ? { warnings: live } : {};
+  const live = stateWarnings(state).map(statusWarning), warnings = live.length ? { warnings: live } : {};
   if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }

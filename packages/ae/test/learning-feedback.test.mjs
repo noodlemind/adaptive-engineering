@@ -548,3 +548,22 @@ test('third pass J: an existing feedback record over the read limit reports writ
   assert.deepEqual(result, { path: file, written: false });
   assert.ok(fs.statSync(file).size > 256 * 1024, 'the hand-made file is left as it is');
 });
+
+test('sixth pass 4: the exposure reader counts exactly the entries the writer would carry forward', t => {
+  const c = seeded(t);
+  const plan = 'docs/plans/loose-time.md';
+  publishReviewRecord(c.ws, exposureRel(plan), { version: 1, plan, entries: [
+    { id: c.id, count: 5, lastExposedAt: '2026-11-01T00:00:00Z' },
+    { id: 'logic/no-time', count: 4 },
+    { id: 'logic/good', count: 2, lastExposedAt: '2026-11-01T00:00:00.000Z' },
+  ] });
+  const totals = exposureTotals(c.ws);
+  assert.equal(totals.get(c.id), undefined, 'an entry without a strict ISO time is not counted');
+  assert.equal(totals.get('logic/no-time'), undefined);
+  assert.equal(totals.get('logic/good').exposed, 2);
+  // The writer drops the same entries, so a merge leaves the reader's totals as they were.
+  recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: plan, delivered: ['logic/other'], now: new Date(Date.UTC(2026, 10, 2)) });
+  assert.deepEqual(readExposure(c.ws, plan).entries.map(e => e.id).sort(), ['logic/good', 'logic/other']);
+  const after = exposureTotals(c.ws);
+  assert.deepEqual([after.get(c.id), after.get('logic/no-time'), after.get('logic/good')], [undefined, undefined, totals.get('logic/good')]);
+});

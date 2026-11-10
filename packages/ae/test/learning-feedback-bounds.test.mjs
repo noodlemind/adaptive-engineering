@@ -458,7 +458,7 @@ test('follow-up G: under a lasting index fault at most 32 plans keep a readiness
   assert.equal(archived.length, 1, 'one aggregated warning for the plans archived over the cap');
   assert.equal(archived[0].fault, 'readiness-index');
   assert.match(archived[0].message, /2 plan\(s\) archived .* more than 32 plans/);
-  assert.deepEqual(archived[0].plans, ['docs/plans/p00.md', 'docs/plans/p01.md'].map(sha).sort());
+  assert.deepEqual(archived[0].plans, ['docs/plans/p00.md', 'docs/plans/p01.md'].map(sha), 'oldest archived first');
 });
 
 test('follow-up H: a hydrated request whose index write fails leaves a state-level warning that decision status reports', t => {
@@ -638,10 +638,12 @@ test('fifth pass 2: the archived-over-cap warning reaches stored state and decis
   const aggregate = stored.warnings.filter(item => Array.isArray(item.plans));
   assert.equal(aggregate.length, 1, 'the aggregated warning survives the 16-warning bound');
   assert.deepEqual([aggregate[0].requestId, aggregate[0].fault], [null, 'readiness-index']);
-  assert.deepEqual(aggregate[0].plans, plans.slice(0, 3).map(sha).sort());
+  assert.deepEqual(aggregate[0].plans, plans.slice(0, 3).map(sha));
+  assert.equal(aggregate[0].count, 3);
   assert.match(aggregate[0].message, /3 plan\(s\) archived/);
   const status = run.status(prepared.requestId, 1001);
-  assert.deepEqual(status.warnings.filter(item => Array.isArray(item.plans)), aggregate);
+  const { plans: full, count, ...shared } = aggregate[0];
+  assert.deepEqual(status.warnings.filter(item => Array.isArray(item.plans)), [{ ...shared, planCount: 3, plans: plans.slice(0, 3).map(sha).reverse().map(key => key.slice(0, 12)), omittedPlans: 0 }]);
   assert.equal(status.warnings.length, 16);
   // The fault clears; the kept-live plans index, and an archived plan drops out of the aggregate only once its own index is written.
   fs.unlinkSync(path.join(d.archive, 'readiness'));
@@ -650,6 +652,101 @@ test('fifth pass 2: the archived-over-cap warning reaches stored state and decis
   fs.writeFileSync(d.stateFile, JSON.stringify({ ...current, requests: { ...current.requests, [q00.requestId]: q00.request }, receipts: { ...current.receipts, [q00.requestId]: q00.receipt } }));
   run.prepare(1002);
   const after = run.stored().warnings;
-  assert.deepEqual(after.map(item => item.plans), [plans.slice(1, 3).map(sha).sort()], 'only the aggregate remains, without the indexed plan');
+  assert.deepEqual(after.map(item => [item.plans, item.count]), [[plans.slice(1, 3).map(sha), 2]], 'only the aggregate remains, without the indexed plan');
   assert.match(after[0].message, /2 plan\(s\) archived/);
+});
+
+// Sixth review pass regressions (PR #123).
+
+test('sixth pass 1: an index already holding the plan\'s newest receipt clears its warning after a failed state save', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  redirectIndex(c, d);
+  const a = d.readiness('escalate', 1);
+  run.seed([a]);
+  run.prepare(1000);
+  assert.match(run.stored().warnings.find(item => item.plan === sha(PLAN)).message, /request stays live/, 'precondition: A stays live under the fault');
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  // A's index is written in this pass, but the state save that would record it fails.
+  const { openSync } = fs;
+  fs.openSync = (file, flags, ...rest) => {
+    if (String(file).includes(`${path.sep}decisions${path.sep}.tmp-`)) throw new Error('state save refused');
+    return openSync(file, flags, ...rest);
+  };
+  try { assert.throws(() => run.prepare(1001), /publication refused/); } finally { fs.openSync = openSync; }
+  assert.equal(latestArchivedReadiness({ home: c.home, workspace: d.workspace }, PLAN).requestId, a.requestId, 'the index was written');
+  assert.ok(run.stored().requests[a.requestId], 'the stored state still holds A live');
+  // Later passes find A's index current: A compacts and its warning clears.
+  run.prepare(1002);
+  run.prepare(1003);
+  const stored = run.stored();
+  assert.equal(stored.requests[a.requestId], undefined);
+  assert.equal(stored.warnings, undefined, 'no warning is left behind');
+});
+
+test('sixth pass 1: an index current for an older request does not clear the plan\'s newest request\'s fault', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  assert.deepEqual(compactDecisions(loc, d.state([readinessFor(d, PLAN, 'escalate', 2, 600 * 1024)])), []);
+  const older = readinessFor(d, PLAN, 'escalate', 1, 600 * 1024), newest = readinessFor(d, PLAN, 'blocked', 3);
+  const state = d.state([older, newest]), report = {};
+  // Index reads still work; only index writes fail.
+  const { openSync } = fs;
+  let refused = 0;
+  fs.openSync = (file, flags, ...rest) => {
+    if (flags === 'wx' && String(file).includes(`${path.sep}readiness${path.sep}`)) { refused += 1; throw new Error('index writes fail'); }
+    return openSync(file, flags, ...rest);
+  };
+  let warnings;
+  try { warnings = compactDecisions(loc, state, report); } finally { fs.openSync = openSync; }
+  assert.equal(refused, 1, 'only the newest request tried to write');
+  assert.deepEqual(Object.keys(state.requests), [newest.requestId]);
+  assert.equal(report.indexedPlans, undefined, 'the older request found the index current, which says nothing about the newest');
+  assert.deepEqual(warnings.map(item => [item.requestId, item.plan]), [[newest.requestId, sha(PLAN)]]);
+});
+
+test('sixth pass 1: a warning that said its request stays live is reworded once the request is gone', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  run.seed([]);
+  const prepared = run.prepare(1000);
+  const gone = 'a'.repeat(64);
+  fs.writeFileSync(d.stateFile, JSON.stringify({ ...run.stored(), warnings: [
+    { at: 5, requestId: gone, fault: 'readiness-index', plan: sha(PLAN), message: 'readiness index not retained; request stays live: disk full' },
+    { at: 6, requestId: null, fault: 'readiness-index', plan: sha('docs/plans/b.md'), message: 'readiness index not retained; request stays live: disk full' },
+  ] }));
+  const warnings = run.status(prepared.requestId, 1001).warnings;
+  assert.deepEqual(warnings.map(item => [item.requestId, item.message]), [
+    [null, `readiness index not retained for archived request ${gone}: disk full`],
+    [null, 'readiness index not retained; its request was archived: disk full'],
+  ]);
+  run.prepare(1002);
+  assert.equal(run.stored().warnings.some(item => /stays live/.test(item.message)), false, 'the stored wording is corrected too');
+});
+
+test('sixth pass 2 and 3: the over-cap plan list keeps the newest plans with a true count, and status shows a short sample', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  run.seed([]);
+  const prepared = run.prepare(1000);
+  const old = Array.from({ length: 256 }, (_, i) => sha(`old-${i}`)), late = 'f'.repeat(64);
+  fs.writeFileSync(d.stateFile, JSON.stringify({ ...run.stored(), warnings: [
+    { at: 5, requestId: null, fault: 'readiness-index', plans: old, count: 300, message: 'x' },
+    { at: 6, requestId: null, fault: 'readiness-index', plans: [late], message: 'x' },
+  ] }));
+  run.prepare(1001);
+  const [aggregate] = run.stored().warnings;
+  assert.equal(aggregate.plans.length, 256);
+  assert.equal(aggregate.plans.at(-1), late, 'the newly archived plan is kept though its hash sorts last');
+  assert.equal(aggregate.plans.includes(old[0]), false, 'the oldest plan is dropped');
+  assert.equal(aggregate.count, 301);
+  assert.match(aggregate.message, /301 plan\(s\) archived/);
+  const [shown] = run.status(prepared.requestId, 1002).warnings;
+  assert.deepEqual(shown.plans, [late, ...old.slice(-7).reverse()].map(key => key.slice(0, 12)), 'at most 8 short hashes, newest first');
+  assert.deepEqual([shown.planCount, shown.omittedPlans], [301, 293]);
+  assert.ok(JSON.stringify(shown).length < 1024, 'status stays small');
 });

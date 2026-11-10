@@ -66,6 +66,8 @@ const MAX_KEPT_READINESS = 32;
 /** The plan identity carried by readiness-index warnings: the hash that also names the plan's index record. */
 export const readinessPlanKey = planPath => hash(planPath);
 /** The one aggregated warning for plans archived over the cap; those plans may cite a stale index. */
+/** Starts the warning for a plan's newest readiness request kept live after its index write was refused. */
+export const STAYS_LIVE_PREFIX = 'readiness index not retained; request stays live: ';
 export const archivedOverCapMessage = count => `readiness index not retained; ${count} plan(s) archived their newest readiness request because more than ${MAX_KEPT_READINESS} plans already keep one live; their cited readiness may be stale until their index is written`;
 
 const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${readinessPlanKey(planPath)}.json`);
@@ -115,8 +117,9 @@ export function decisionTask(loc, state, key) {
 /**
  * Retire terminal/expired context while retaining immutable evidence and durable budgets. Returns best-effort warnings.
  * Readiness-index warnings carry `plan` (readinessPlanKey); plans archived over the cap are reported by one
- * aggregated warning carrying `plans`. `report.indexedPlans` holds the plan keys whose readiness-index write
- * succeeded in this pass; an index that was already current proves nothing about the fault.
+ * aggregated warning carrying `plans`, oldest archived first. `report.indexedPlans` holds the plan keys whose
+ * readiness index is healthy after this pass: the write succeeded, or the index already held the plan's newest
+ * live receipt. An index current for an older or hydrated request proves nothing about a newer receipt.
  */
 export function compactDecisions(loc, state, report = {}) {
   const warnings = [];
@@ -156,7 +159,10 @@ export function compactDecisions(loc, state, report = {}) {
     // leave the index naming an older receipt as latest: the plan's newest
     // readiness request stays live for a retry; older ones compact normally,
     // so live state stays bounded at one request per plan.
-    try { if (retainLatestReadiness(loc, request, receipt) === 'written') indexed.add(readinessPlanKey(request.planPath)); } catch (error) {
+    try {
+      const retained = retainLatestReadiness(loc, request, receipt);
+      if (retained === 'written' || (retained === 'current' && newestReadiness.get(request.planPath) === requestId)) indexed.add(readinessPlanKey(request.planPath));
+    } catch (error) {
       const newest = newestReadiness.get(request.planPath), plan = readinessPlanKey(request.planPath);
       if (newest === requestId) { refused.push({ requestId, request, invocations, plan, error }); continue; }
       // An archived request's warning rides on the plan's newest live request, or
@@ -169,7 +175,7 @@ export function compactDecisions(loc, state, report = {}) {
   }
   refused.sort((a, b) => state.receipts[b.requestId].recordedAt - state.receipts[a.requestId].recordedAt || a.requestId.localeCompare(b.requestId));
   for (const { requestId, plan, error } of refused.slice(0, MAX_KEPT_READINESS)) {
-    warnings.push({ requestId, plan, fault: READINESS_INDEX_FAULT, message: `readiness index not retained; request stays live: ${error.message}` });
+    warnings.push({ requestId, plan, fault: READINESS_INDEX_FAULT, message: `${STAYS_LIVE_PREFIX}${error.message}` });
   }
   const overCap = refused.slice(MAX_KEPT_READINESS);
   if (overCap.length) {
@@ -177,7 +183,8 @@ export function compactDecisions(loc, state, report = {}) {
     // An older request's warning that rode on an over-cap request moves to state level with its plan.
     for (const item of warnings) if (archived.has(item.requestId)) item.requestId = null;
     for (const { requestId, request, invocations } of overCap) retire(requestId, request, invocations);
-    const plans = [...new Set(overCap.map(item => item.plan))].sort();
+    // Oldest receipt first, so a bounded list keeps the newest plans.
+    const plans = [...new Set(overCap.map(item => item.plan).reverse())];
     warnings.push({ requestId: null, plans, fault: READINESS_INDEX_FAULT, message: archivedOverCapMessage(plans.length) });
   }
   if (indexed.size) report.indexedPlans = indexed;
