@@ -16,6 +16,8 @@ const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
 const ID = /^[a-f0-9]{64}$/;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
+// Records that could not be archived are retried by decision prepare and record at most this often.
+const ARCHIVE_RETRY_INTERVAL_MS = 5 * 1000;
 const DEFAULT_BUDGETS = Object.freeze({ maxDecisions: 24, maxRepairs: 3, maxAcquisitions: 3, maxSeconds: 900 });
 const LOCAL_INSPECTION = new Set(['read', 'Read', 'read_file', 'readFile', 'copilot_readFile', 'read_skill', 'readSkill', 'grep_search', 'file_search', 'list_dir', 'semantic_search', 'list_code_usages', 'get_errors', 'get_changed_files', 'get_search_view_results', 'test_search', 'open_file', 'codebase', 'search', 'usages', 'changes', 'problems', 'terminalLastCommand', 'get_terminal_output', 'think', 'todos']);
 const NATIVE_LOCAL_INSPECTION = new Set([...LOCAL_INSPECTION, 'ReadFile', 'Glob', 'Grep', 'ListDir', 'view', 'glob', 'grep', 'rg']);
@@ -137,7 +139,7 @@ function mutate(loc, callback, { sweep = false } = {}) {
     const state = readState(loc), result = callback(state);
     // Readiness-index health is derived on read (decisionStatus), so nothing about it is stored here;
     // warnings persisted by earlier versions are dropped on this write.
-    compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS } : { sweep: false, retries: false });
+    compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS, archiveRetryInterval: ARCHIVE_RETRY_INTERVAL_MS } : { sweep: false, retries: false });
     delete state.warnings;
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) {
@@ -280,7 +282,7 @@ export function prepareDecision(options) {
   const requestId = hash(packet);
   return mutate(loc, state => {
     const taskKey = packet.budgetKey;
-    let task = decisionTask(loc, state, taskKey);
+    let task = taskOrRefuse(loc, state, taskKey);
     if (!task) task = state.tasks[taskKey] = { startedAt: now, counts: { decisions: 0, repairs: 0, acquisitions: 0 } };
     taskBudget(task, policy, now);
     if (!hydrateArchivedDecision(loc, state, requestId)) {
@@ -293,6 +295,21 @@ export function prepareDecision(options) {
         ...(options.copilotHome ? ['--copilot-home', options.copilotHome] : []), ...(options.skillsHome ? ['--skills-home', options.skillsHome] : []), '--json'],
       next: 'Invoke the native decision-agent with this packet, then use recordCommand with the schema 1 record request on stdin. No decision API is called.' };
   }, { sweep: true });
+}
+
+/**
+ * The live request a native invocation may be observed for, or null. A request retired to the archive, or
+ * one kept live only because its archive was deferred after it was hydrated, is immutable evidence; one
+ * whose task time budget expired can no longer be decided. Neither is changed by a late observation.
+ */
+function observableRequest(loc, state, requestId, now) {
+  if (typeof requestId !== 'string' || !Object.hasOwn(state.requests, requestId)) return null;
+  if (Array.isArray(state.hydratedLive) && state.hydratedLive.includes(requestId)) return null;
+  const request = state.requests[requestId], seconds = request.budgets?.maxSeconds;
+  let task;
+  try { task = decisionTask(loc, state, request.budgetKey); } catch { return null; }
+  if (!task || !Number.isSafeInteger(seconds) || now < task.startedAt || now - task.startedAt > seconds * 1000) return null;
+  return request;
 }
 
 function parseJudgment(value) {
@@ -354,10 +371,10 @@ export function observeDecisionInvocation(options) {
     if (payload.cwd && fs.realpathSync.native(payload.cwd) !== loc.workspace) return { observed: false };
     if (tool === 'spawn_agent') {
       if (role !== 'decision-agent' || typeof normalized.toolInput.message !== 'string') return { observed: false };
-      const supplied = outputObject(normalized.toolInput.message), result = raw, request = hydrateArchivedDecision(loc, readState(loc), supplied.requestId);
+      const supplied = outputObject(normalized.toolInput.message), result = raw, request = observableRequest(loc, readState(loc), supplied.requestId, now);
       if (!request || request.sessionId !== sessionId || typeof result.agent_id !== 'string' || !result.agent_id || result.agent_id.length > 200) return { observed: false };
       return mutate(loc, state => {
-        hydrateArchivedDecision(loc, state, request.requestId);
+        if (!observableRequest(loc, state, request.requestId, now)) return { observed: false, reason: 'Archived or expired decision requests cannot start another retained child invocation' };
         if (state.receipts[request.requestId]) return { observed: false, reason: 'Terminal decision requests cannot start another retained child invocation' };
         const key = hash(result.agent_id), prior = state.invocations[key];
         if (prior && (prior.requestId !== request.requestId || prior.sessionId !== request.sessionId)) throw fail('native child identity was already bound');
@@ -379,7 +396,7 @@ export function observeDecisionInvocation(options) {
         if (role !== 'decision-agent') return { observed: false };
         judgment = parseJudgment(outputObject(raw));
       }
-      const request = hydrateArchivedDecision(loc, current, judgment.requestId);
+      const request = observableRequest(loc, current, judgment.requestId, now);
       if (!request || request.sessionId !== sessionId || request.workspace !== loc.workspace || now < request.createdAt) return { observed: false };
       const observation = { schema: 1, requestId: request.requestId, sessionId: request.sessionId, invocationId: nativeInvocationId, agent: 'decision-agent', tool, observedAt: now, judgment,
         provenance: 'post-hook-adapter-observation', assurance: 'Recorded native event; not an authenticated host transcript' };
@@ -423,7 +440,7 @@ export function recordDecision(options) {
   return mutate(loc, state => {
     const request = hydrateArchivedDecision(loc, state, options.input.requestId);
     if (!request) throw fail('unknown decision request');
-    const task = decisionTask(loc, state, request.budgetKey);
+    const task = taskOrRefuse(loc, state, request.budgetKey);
     taskBudget(task, policy, now);
     const current = currentRequest({ ...options, ...loc }, request, policy);
     if (!current.current) throw fail(current.reason);
@@ -452,17 +469,30 @@ export function recordDecision(options) {
 const OFFENDER_REMEDIES = [
   ['unreadable-record', 'request records that cannot be read or prove nothing: make each readable, restore it from a backup, or move it out of the archive if it cannot be restored, which loses its exact-ID lookup'],
   ['not-regular', 'readiness index files that are symlinks or not regular files, never followed or replaced: remove them and the next decision prepare or record rebuilds them'],
+  ['unknown-schema', 'readiness index files written by a newer version of AE, kept and not used: use that newer version, or remove them and the next decision prepare or record rebuilds them'],
+  ['not-directory', 'the archive\'s requests path, which is a regular file, a symlink or otherwise not a readable real directory, so no sweep can list it: make it one'],
   ['refused-write', 'readiness index files that could not be read or written: make them and their readiness directory, which must be a real directory, readable and writable, or remove them, and the next decision prepare or record rebuilds them'],
 ];
 // The remedy for each reason a record could not be archived (see ARCHIVE_REASONS in decision-archive.mjs).
 const ARCHIVE_REMEDIES = [
   ['not-regular', 'a symlink, directory or other non-regular entry holds the record\'s name and is never replaced: remove that entry'],
+  ['not-directory', 'a regular file or another non-directory stands where a directory on the record\'s path belongs: move it out of the way'],
   ['unreadable-now', 'the entry at the record\'s name cannot be read now: make it and its directory readable'],
   ['unknown-schema', 'a newer version of AE wrote the record there, which this version never replaces: use that newer version, or move the record out of the archive'],
+  ['invalid-task', 'the task budget record proves nothing (empty, partial or malformed, as a crash can leave it) and no live copy of the task exists: restore it from a backup, or delete it, which resets that task\'s budget'],
   ['conflict', 'a valid retained record there disagrees with the live copy, and retained evidence is never overwritten: inspect it, and move it out of the archive only if the live copy is the one to keep'],
   ['redirected', 'a directory on the record\'s path is a symlink, which is never written through: replace it with a real directory'],
   ['refused-write', 'the record could not be written: make its directory a writable real directory, with free space, on a filesystem that supports hard links'],
 ];
+/** The task budget for prepare and record; a retained task record that cannot be used refuses with its remedy. */
+function taskOrRefuse(loc, state, key) {
+  try { return decisionTask(loc, state, key); }
+  catch (error) {
+    if (!error.reason) throw error;
+    const remedy = ARCHIVE_REMEDIES.find(([reason]) => reason === error.reason)?.[1] || 'make it readable';
+    throw fail(`the task budget record ${path.join(archiveFaults(loc, state).archive, error.file)} cannot be used, so the budget cannot be verified (${error.message}): ${remedy}`);
+  }
+}
 /** The archive-fault description shared by the status warning and the capacity error. */
 function archiveFaultText({ count, files, truncated, archive }) {
   const groups = ARCHIVE_REMEDIES.map(([reason, remedy]) => [files.filter(item => item.reason === reason).map(item => item.file), remedy]).filter(([named]) => named.length);
@@ -470,9 +500,10 @@ function archiveFaultText({ count, files, truncated, archive }) {
     + (files.length ? `; files under ${archive}${truncated ? ` (first ${files.length})` : ''}: ${groups.map(([named, remedy]) => `${named.join(', ')} (${remedy})`).join('; ')}` : '')
     + '; every decision operation retries them, so each archives on the next one after its cause is fixed';
 }
-/** The derived archive-fault warning, or none. */
-function archiveWarnings(loc, state) {
-  const held = archiveFaults(loc, state);
+/** The derived archive-fault warning, or none; `extra` adds a task record this status call could not use. */
+function archiveWarnings(loc, state, extra = null) {
+  const marked = archiveFaults(loc, state), held = { ...marked, files: [...marked.files] };
+  if (extra && !held.files.some(item => item.file === extra.file)) { held.files.unshift(extra); held.count += 1; }
   if (!held.count) return [];
   return [{ fault: 'archive', count: held.count, archive: held.archive, files: held.files.map(item => item.file), offenders: held.files, message: archiveFaultText(held) }];
 }
@@ -509,8 +540,14 @@ export function decisionStatus(options) {
   // decision prepare and record advance retries and the reconciliation sweep.
   const state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
-  const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state)], warnings = live.length ? { warnings: live } : {};
+  // A retained task record that cannot be used never hides status: the live copy is used and it is reported.
+  let task = null, taskFault = null;
+  if (request) {
+    try { task = decisionTask(loc, state, request.budgetKey); }
+    catch (error) { if (!error.reason) throw error; taskFault = { file: error.file, reason: error.reason }; task = state.tasks[request.budgetKey] || null; }
+  }
+  const taskId = options.taskId || request?.taskId;
+  const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state, taskFault)], warnings = live.length ? { warnings: live } : {};
   if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }

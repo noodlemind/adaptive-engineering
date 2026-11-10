@@ -58,3 +58,55 @@ test('expired unrecorded contexts retire without renewing the original task time
   assert.throws(() => prepareDecision({ ...f, now: 200000, input: first.input }), /time|expired/i);
   assert.equal(decisionStatus({ ...f, now: 200000, requestId: first.prepared.requestId }).current, false);
 });
+
+// Isolated review of PR #127 at 38f4e745.
+
+test('a late observation or child spawn for an archived, expired request is refused and leaves no archive fault', t => {
+  const f = fixture(t), short = { ...f, policy: { ...f.policy, budgets: { ...f.policy.budgets, maxSeconds: 1 } } };
+  let first;
+  for (let index = 0; index < 80; index++) {
+    const input = { schema: 1, taskId: `task-${index}`, sessionId: `session-${index}`, type: 'action', intent: 'Run the selected behavior check.', action: f.action, sources: ['test.mjs'], context: { inspectedEvidence: 'x'.repeat(30000) } };
+    const prepared = prepareDecision({ ...short, input, now: 1000 + index * 2000 });
+    first ||= { input, prepared };
+  }
+  const stored = () => JSON.parse(fs.readFileSync(first.prepared.storePath, 'utf8'));
+  assert.equal(Object.hasOwn(stored().requests, first.prepared.requestId), false, 'the expired request was archived');
+  const judgment = { schema: 1, requestId: first.prepared.requestId, verdict: 'allow', reason: 'A late judgment.', evidence: ['test.mjs'] };
+  const late = observeDecisionInvocation({ ...short, now: 200000, payload: { cwd: f.workspace, session_id: first.input.sessionId, tool_name: 'Agent', tool_input: { subagent_type: 'decision-agent' }, tool_use_id: 'call-late', tool_response: judgment, success: true } });
+  assert.equal(late.observed, false);
+  const spawn = observeDecisionInvocation({ ...short, now: 200001, payload: { cwd: f.workspace, session_id: first.input.sessionId, tool_name: 'think', ae_native_tool_name: 'spawn_agent', tool_use_id: 'spawn-late', tool_input: { agent_type: 'decision-agent', message: JSON.stringify(first.prepared.packet) }, tool_response: { agent_id: 'child-late' }, success: true } });
+  assert.equal(spawn.observed, false);
+  assert.equal(spawn.pending, undefined, 'no child invocation is bound');
+  const after = stored();
+  assert.equal(Object.hasOwn(after.requests, first.prepared.requestId), false, 'the request stays archived');
+  assert.equal(after.archiveFaults, undefined);
+  assert.equal(decisionStatus({ ...short, now: 200002, requestId: first.prepared.requestId }).warnings, undefined);
+});
+
+test('a task record that cannot be used: status reports it and uses the live task; prepare and record refuse naming the file', t => {
+  for (const kind of ['directory', 'newer schema', 'empty without a live copy']) {
+    const f = fixture(t);
+    const input = { schema: 1, taskId: 't', sessionId: 's', type: 'action', intent: 'Run the selected behavior check.', action: f.action, sources: ['test.mjs'] };
+    const prepared = prepareDecision({ ...f, now: 1000, input });
+    const key = prepared.packet.budgetKey, archive = path.join(f.home, 'decision-archives', path.basename(prepared.storePath, '.json'));
+    const file = path.join(archive, 'tasks', `${key}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (kind === 'directory') fs.mkdirSync(file);
+    else if (kind === 'newer schema') fs.writeFileSync(file, '{"schema":2}');
+    else {
+      fs.writeFileSync(file, '');
+      const state = JSON.parse(fs.readFileSync(prepared.storePath, 'utf8'));
+      delete state.tasks[key];
+      fs.writeFileSync(prepared.storePath, JSON.stringify(state));
+    }
+    const reason = { directory: 'not-regular', 'newer schema': 'unknown-schema', 'empty without a live copy': 'invalid-task' }[kind];
+    const status = decisionStatus({ ...f, now: 1001, requestId: prepared.requestId });
+    const warning = status.warnings?.find(item => item.fault === 'archive');
+    assert.deepEqual(warning?.offenders, [{ file: `tasks/${key}.json`, reason }], `${kind}: status names the task record`);
+    if (kind !== 'empty without a live copy') assert.equal(status.status, 'current', `${kind}: the live task is used`);
+    const refusal = error => error.message.includes(file) && /cannot be used, so the budget cannot be verified/.test(error.message)
+      && (kind !== 'empty without a live copy' || /delete it, which resets that task's budget/.test(error.message));
+    assert.throws(() => prepareDecision({ ...f, now: 1002, input: { ...input, intent: 'Run it again.' } }), refusal, `${kind}: prepare refuses`);
+    assert.throws(() => recordDecision({ ...f, now: 1003, input: { schema: 1, requestId: prepared.requestId } }), refusal, `${kind}: record refuses`);
+  }
+});
