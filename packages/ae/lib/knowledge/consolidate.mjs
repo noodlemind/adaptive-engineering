@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, inertLine, stripFrontmatter } from './store.mjs';
+import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, inertLine, splitFrontmatter, episodeBody } from './store.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
@@ -23,10 +23,10 @@ export const PROMOTION_PLAN_THRESHOLD = 2;
 export const episodeId = e => crypto.createHash('sha256').update(JSON.stringify({ path: e.path, sha256: e.sha256, kind: e.kind })).digest('hex');
 
 function parseFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!m) return {};
+  const { frontmatter } = splitFrontmatter(text);
+  if (frontmatter === null) return {};
   const out = {};
-  for (const line of m[1].split('\n')) {
+  for (const line of frontmatter.split('\n')) {
     const kv = line.match(/^([\w-]+):\s*(.*)$/);
     if (kv) out[kv[1]] = kv[2].replace(/^["']|["']$/g, '').trim();
   }
@@ -51,7 +51,7 @@ function capTags(tags, totalCap) {
 }
 
 function excerpt(text) {
-  const body = stripFrontmatter(text).trim();
+  const body = episodeBody(text).trim();
   // inertLine (store.mjs) runs AFTER the \s+ collapse: \s only covers
   // whitespace control chars (tab/newline/CR/FF/VT) — a NUL byte or another
   // non-whitespace C0 control char embedded in the body would otherwise

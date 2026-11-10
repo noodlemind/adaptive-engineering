@@ -116,7 +116,10 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 // Quoted evidence (memory plan phase 5a) -----------------------------------
 // Line and paragraph separators and the bidirectional marks (LRM, RLM, ALM).
 // Also the zero-width and invisible format characters, BOM and tag characters.
-const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb];
+// And the other default-ignorable code points: the combining grapheme joiner,
+// the variation selectors, the Hangul fillers, U+17B4 and the musical format
+// characters.
+const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -193,13 +196,44 @@ test('an insight evidence quote with a bare colour-code remnant against a secret
   assert.deepEqual(remnant.written, []);
 });
 
-test('an evidence quote of ordinary log output that puts a URL and an email or @scope on adjacent lines passes the quote screen', () => {
-  for (const quote of ['Server listening on http://localhost:3000\nadmin@example.com logged in', 'GET https://registry.npmjs.org:443\n@types/node 404 Not Found']) {
-    assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
+test('an evidence quote that puts a URL and an @ on adjacent lines is refused, since a dotted user name reads the same', () => {
+  for (const quote of ['Server listening on http://localhost:3000\nadmin@example.com logged in', 'GET https://registry.npmjs.org:443\n@types/node 404 Not Found', 'postgres://reader:hunter2pass\n@db.example', 'postgres://svc.user:2024\nWinterPass@prod.example.com']) {
+    const wrapped = captureInsight({ evidenceQuote: quote });
+    assert.equal(wrapped.result.pass, false, JSON.stringify(quote));
+    assert.match(wrapped.result.blockedReason, /secret split across lines \(connection-string\)/);
+    assert.ok(!wrapped.result.blockedReason.includes('WinterPass'), 'the refusal does not echo the secret');
+    assert.deepEqual(wrapped.written, []);
   }
-  const wrapped = captureInsight({ evidenceQuote: 'postgres://reader:hunter2pass\n@db.example' });
+});
+
+test('an insight evidence quote whose wrapped token follows another line is refused', () => {
+  const wrapped = captureInsight({ evidenceQuote: `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}` });
   assert.equal(wrapped.result.pass, false);
-  assert.match(wrapped.result.blockedReason, /secret split across lines \(connection-string\)/);
+  assert.match(wrapped.result.blockedReason, /secret split across lines \(github-token\)/);
+  assert.ok(!wrapped.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
+  assert.deepEqual(wrapped.written, []);
+});
+
+test('ae compound --insight captures an accepted multi-line quote that the escaped line alone would look like a secret in', () => {
+  const ws = tempDir('quote-ml-ws-');
+  const home = tempDir('quote-ml-hh-');
+  const copilotHome = tempDir('quote-ml-ch-');
+  // Screened line by line and in compact spans, this holds no secret. Escaped
+  // as JSON on one line, the break and tabs become `\n` and `\t`, which glue
+  // the URL to the address into a false connection-string match.
+  const quote = 'GET http://localhost:3000\nstatus\t401\tuser\tadmin@example.com';
+  assert.equal(evidenceQuoteError(quote), null);
+  const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'multi-line quote', '--body', 'the login retry masks a 401', '--evidence-quote', quote, '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
+    { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  const out = JSON.parse(run.stdout);
+  const text = fs.readFileSync(path.join(solutionsWriteTarget(ws, { home }).base, out.path), 'utf8');
+  assert.equal(readEvidenceQuote(text), quote);
+  // Every other field and the body are still scanned.
+  const bodySecret = captureInsight({ evidenceQuote: quote, body: `see ghp_${'x'.repeat(36)}` });
+  assert.equal(bodySecret.result.pass, false);
+  assert.match(bodySecret.result.blockedReason, /github-token|secret/);
+  assert.deepEqual(bodySecret.written, []);
 });
 
 test('an insight evidence quote with a bare colour-code remnant inside a token is refused', () => {

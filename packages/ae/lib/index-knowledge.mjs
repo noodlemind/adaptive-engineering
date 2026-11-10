@@ -7,14 +7,14 @@ import { readFileNoFollow, assertNoSymlinkAncestors, writeFileContained } from '
 import { solutionsScanRoots } from './project-layout.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
 import YAML from 'yaml';
-import { repoId, stripFrontmatter } from './knowledge/store.mjs';
+import { repoId, splitFrontmatter, episodeBody } from './knowledge/store.mjs';
 import { manifestCorpusContent, projectManifestContent, PROJECT_MANIFEST_FILE } from './knowledge-manifest.mjs';
 
 function parseFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!m) return {};
+  const { frontmatter } = splitFrontmatter(text);
+  if (frontmatter === null) return {};
   const out = {};
-  for (const line of m[1].split('\n')) {
+  for (const line of frontmatter.split('\n')) {
     const kv = line.match(/^([\w-]+):\s*(.*)$/);
     if (kv) out[kv[1]] = kv[2].replace(/^["']|["']$/g, '').trim();
   }
@@ -22,10 +22,11 @@ function parseFrontmatter(text) {
 }
 
 function summaryFromBody(text) {
-  const prob = text.match(/## Problem\s*\n+([^\n#]+)/i);
+  const body = episodeBody(text);
+  const prob = body.match(/## Problem\s*\n+([^\n#]+)/i);
   if (prob) return prob[1].trim().slice(0, 200);
   return (
-    stripFrontmatter(text)
+    body
       .trim()
       .split('\n')
       .find((l) => l.trim())
@@ -34,7 +35,7 @@ function summaryFromBody(text) {
 }
 
 function excerptFromBody(text) {
-  const body = stripFrontmatter(text).trim();
+  const body = episodeBody(text).trim();
   const prob = body.match(/## Problem\s*\n+([\s\S]*?)(?=\n## |\n# |$)/i);
   const source = prob ? prob[1].trim() : body;
   return source.replace(/\s+/g, ' ').slice(0, 400);

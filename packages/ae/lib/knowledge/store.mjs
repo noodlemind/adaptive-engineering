@@ -554,15 +554,55 @@ export function rewriteGovernance(dir, keepPredicate) {
   }
 }
 
-// A leading frontmatter block: the opening fence, then the closing fence as a
-// whole line, followed by a line break or the end of the input. A `---` inside
-// a value does not close the block, and a file that ends on its closing fence
-// with no trailing newline still loses the whole block.
-const FRONTMATTER_BLOCK = /^---\r?\n(?:---|[\s\S]*?\r?\n---)(?:\r?\n|$)/;
+// A frontmatter fence: three dashes alone on a line, optionally followed by
+// spaces or tabs. Every episode reader uses this one rule, so the parsers that
+// read fields and the one that strips the block can never disagree.
+const FRONTMATTER_FENCE = /^---[ \t]*$/;
+
+const isFence = line => FRONTMATTER_FENCE.test(line.endsWith('\r') ? line.slice(0, -1) : line);
+
+/**
+ * Splits a leading frontmatter block from the text. The block opens with a
+ * fence on the first line and closes at the first later fence line, so a `---`
+ * inside a value does not close it. LF and CRLF both work, the block may be
+ * empty, and a file may end on its closing fence. `frontmatter` is the text
+ * between the fences, or null when there is no closed block (then `body` is
+ * the whole text); `body` is what follows the closing fence's line break.
+ * Scans line by line, so it is linear in the input.
+ */
+export function splitFrontmatter(text) {
+  const s = String(text ?? '');
+  const firstEnd = s.indexOf('\n');
+  if (firstEnd === -1 || !isFence(s.slice(0, firstEnd))) return { frontmatter: null, body: s };
+  const fmStart = firstEnd + 1;
+  for (let pos = fmStart; ;) {
+    const end = s.indexOf('\n', pos);
+    if (isFence(s.slice(pos, end === -1 ? s.length : end))) {
+      let fmEnd = Math.max(fmStart, pos - 1);
+      if (fmEnd > fmStart && s[fmEnd - 1] === '\r') fmEnd -= 1;
+      return { frontmatter: s.slice(fmStart, fmEnd), body: end === -1 ? '' : s.slice(end + 1) };
+    }
+    if (end === -1) return { frontmatter: null, body: s };
+    pos = end + 1;
+  }
+}
 
 /** The text after its leading frontmatter block, or the text unchanged when it has none. */
 export function stripFrontmatter(text) {
-  return String(text ?? '').replace(FRONTMATTER_BLOCK, '');
+  return splitFrontmatter(text).body;
+}
+
+const EVIDENCE_QUOTE_KEY = /^[ \t]*evidence_quote[ \t]*:/m;
+
+/**
+ * An episode's body for a summary or excerpt. When the frontmatter cannot be
+ * separated but the text carries an `evidence_quote` key, the body is empty:
+ * the quote is screened only as its own field, so raw frontmatter holding it
+ * must never ride into an excerpt.
+ */
+export function episodeBody(text) {
+  const { frontmatter, body } = splitFrontmatter(text);
+  return frontmatter === null && EVIDENCE_QUOTE_KEY.test(body) ? '' : body;
 }
 
 export function parseLearningFrontmatter(text) {
@@ -674,13 +714,32 @@ function yamlQuote(v) {
  * (U+202A-U+202E, U+2066-U+2069), the bidirectional marks (U+200E, U+200F,
  * U+061C), the Unicode line and paragraph separators (U+2028, U+2029), the
  * zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
- * U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB) and the tag
- * characters (U+E0000-U+E007F) to a single space so the
+ * U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB), the tag
+ * characters (U+E0000-U+E007F), and every other default-ignorable code point
+ * or format (Cf) character, such as U+034F, the variation selectors and the
+ * Hangul fillers, to a single space so the
  * text always renders as ONE visible line in its stored order, wherever it's
  * interpolated.
  */
 export function inertLine(text) {
-  return String(text ?? '').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb]/gu, ' ');
+  return String(text ?? '').replace(INERT_LINE_CHARS, ' ');
+}
+
+const INERT_LINE_CHARS = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+
+// Every default-ignorable code point and every format (Cf) character: what a
+// renderer may draw as nothing, such as U+034F, the variation selectors
+// U+FE00-U+FE0F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4,
+// the musical format characters U+1D173-U+1D17A, and the zero-width, bidi and
+// tag characters.
+const INVISIBLE_CHARS = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+
+/**
+ * Removes every invisible character outright, so a token broken by one reads
+ * as the contiguous token a reader sees and a secret screen can match it.
+ */
+export function stripInvisible(text) {
+  return String(text ?? '').replace(INVISIBLE_CHARS, '');
 }
 
 /**

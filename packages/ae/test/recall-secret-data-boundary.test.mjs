@@ -8,13 +8,17 @@ import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { inertEvidenceQuote, evidenceQuoteError, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
+// Default-ignorable code points outside the explicit sets: the combining
+// grapheme joiner, the variation selectors, the Hangul fillers, the Khmer
+// inherent vowel and the musical format characters.
+const DEFAULT_IGNORABLE = [0x034f, 0xfe00, 0xfe01, 0xfe0e, 0xfe0f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d174, 0x1d175, 0x1d176, 0x1d177, 0x1d178, 0x1d179, 0x1d17a];
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -246,7 +250,7 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   assert.match(split, /\[redacted:/);
   const controls = inertEvidenceQuote('\u009b31mFAIL\u009b0m ok \u202eevil\u2066x\u2069');
   assert.ok(!/[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/.test(controls), 'C1 and bidi controls are blanked');
-  for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb]) {
+  for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, ...DEFAULT_IGNORABLE]) {
     const ch = String.fromCodePoint(point);
     assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
     assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
@@ -308,22 +312,65 @@ test('a hand-edited quote whose secret is split mid-token across a line break is
   assert.equal(inertEvidenceQuote('expected 1\r\nreceived 2'), 'expected 1  received 2', 'ordinary multi-line output is only joined');
 });
 
-test('a URL ending one line and an email or @scope starting the next is ordinary log output, not a split connection string', () => {
+test('multi-line output whose split forms hold no connection string is ordinary output', () => {
+  for (const quote of [
+    'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@acme%2fwidget - Not found\nnpm ERR! 404 \n@acme/widget@1.2.3 is not in this registry.',
+    'Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n    at file:///srv/app/db.mjs:12:7\n    at async main (file:///srv/app/index.mjs:4:3)',
+    '--- a/config.yml\n+++ b/config.yml\n@@ -1,3 +1,3 @@\n-  retries: 0\n+  retries: 3',
+    'Server listening on http://localhost:3000\n\nready in 120 ms',
+  ]) {
+    assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
+    assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
+  }
+});
+
+test('a URL ending one line and an @ starting the next fails closed, because it cannot be told from wrapped credentials', () => {
   for (const quote of [
     'Server listening on http://localhost:3000\nadmin@example.com logged in',
     'GET https://registry.npmjs.org:443\n@types/node 404 Not Found',
-    // A URL that starts its own line after a word: compacting glues that
-    // word onto the scheme, which is not a break in the credentials.
     'Request failed\nhttp://localhost:8080\nadmin@example.com not authorized',
     'GET\nhttp://registry.local:4873\n@types/node/-/node-1.0.0.tgz',
     'listening http://10.0.0.5:9000\nops@corp.example.com',
     'listening http://my_svc.local:8080\nadmin@example.com',
-    'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@acme%2fwidget - Not found\nnpm ERR! 404 \n@acme/widget@1.2.3 is not in this registry.',
-    'Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n    at file:///srv/app/db.mjs:12:7\n    at async main (file:///srv/app/index.mjs:4:3)',
+    '-    url: http://localhost:3000\n@@ -20,7 +20,7 @@',
+    '// see http://localhost:8080\n@Test\nvoid x() {}',
+    'BASE = "http://localhost:8000"\n@pytest.mark.parametrize("x", [1])',
+    'Listening at https://example.com:8443\n@here deploy failed',
+    'const BASE = "http://localhost:3000"\nadmin@example.com',
+    '(see http://localhost:3000)\nadmin@example.com',
+    // The same text as a dotted user name whose password wraps after its
+    // leading digits: this is why the log shape above cannot be let through.
+    'postgres://svc.user:2024\nWinterPass@prod.example.com',
   ]) {
-    assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
-    assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
+    assert.match(evidenceQuoteError(quote) || '', /secret split across lines \(connection-string\)/, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
   }
+});
+
+test('a line before a wrapped token does not hide it', () => {
+  const quote = `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}`;
+  assert.match(evidenceQuoteError(quote) || '', /secret split across lines \(github-token\)/);
+  assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]');
+  for (const wrapped of [
+    `request\nfailed\nwith\ntoken\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}\nrejected by\nthe server`,
+    `token ghp_${'A'.repeat(12)}\n${'B'.repeat(12)}\n${'C'.repeat(12)}\nnext line`,
+  ]) {
+    assert.equal(inertEvidenceQuote(wrapped), '[redacted: split-secret]', JSON.stringify(wrapped));
+  }
+});
+
+test('the consolidation packet withholds a wrapped token after a preceding line and a dotted-user connection string', () => {
+  const { workspace, copilotHome, harnessHome } = seedQuotedEpisodes();
+  const dir = path.join(copilotHome, 'knowledge', 'solutions', 'perf');
+  const token = `ghp_${'A'.repeat(18)}`;
+  fs.writeFileSync(path.join(dir, 'wrapped.md'), `---\ntitle: "orders timeout wrapped"\nkind: insight\ndate: 2026-11-01\nevidence_quote: ${JSON.stringify(`Authentication failed\n${token}\n${'B'.repeat(18)}`)}\n---\n\nOrders timeout.\n`);
+  fs.writeFileSync(path.join(dir, 'dotted.md'), `---\ntitle: "orders timeout dotted"\nkind: insight\ndate: 2026-11-01\nevidence_quote: ${JSON.stringify('postgres://svc.user:2024\nWinterPass@prod.example.com')}\n---\n\nOrders timeout.\n`);
+  const entries = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+  const serialized = JSON.stringify(entries);
+  assert.ok(!serialized.includes(token) && !serialized.includes('WinterPass'), serialized);
+  assert.equal(entries.find(e => e.title === 'orders timeout wrapped').evidence_quote, '[redacted: split-secret]');
+  assert.equal(entries.find(e => e.title === 'orders timeout dotted').evidence_quote, '[redacted: split-secret]');
 });
 
 test('a connection string wrapped inside its credentials is still withheld as a split secret', () => {
@@ -335,17 +382,13 @@ test('a connection string wrapped inside its credentials is still withheld as a 
     // A break right after the `@`, with and without blanks around it.
     'connect failed: postgres://admin:s3cretpass@\nprod-db.internal:5432/app',
     'postgres://admin:s3cretpass@ \n  prod-db.internal',
-    // A password that opens with digits, wrapped after them: only an email
-    // address or an `@scope/` package on the next line is the benign shape.
+    // A password that opens with digits, wrapped after them.
     'postgres://admin:2024\nWinterPass@prod-db',
     'postgres://admin:2024\n@db.example',
-    // The same with a dotted host: the rest of the password then reads as an
-    // email address, so the user position must also look like a host.
     'postgres://admin:2024\nWinterPass@prod-db.internal',
     'mysql://root:1\nqaz2wsx@db.corp.example.com:3306',
     'postgres://admin:2024\nWin\nterPass@prod.example.com',
-    // A benign match whose host part swallows the scheme of a credential
-    // that follows it must not hide that credential.
+    'postgres://svc.user:2024\nWinterPass@prod.example.com',
     'proxy http://db.local:8080\nadmin@example.com,postgres://u:hunter2longpass\n@db.internal',
     `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`,
   ]) {
@@ -398,6 +441,59 @@ test('stripFrontmatter ends the block only at a whole-line closing fence', () =>
   assert.equal(stripFrontmatter('---\ntitle: x\n---'), '');
   assert.equal(stripFrontmatter('---\n---\nbody\n---\nmore'), 'body\n---\nmore', 'an empty block ends at its own fence');
   assert.equal(stripFrontmatter('no frontmatter\n---\nx'), 'no frontmatter\n---\nx');
+});
+
+test('a hand-edited quote whose token is broken by a default-ignorable character is withheld, and such characters are removed on read', () => {
+  for (const point of DEFAULT_IGNORABLE) {
+    const ch = String.fromCodePoint(point);
+    const hex = point.toString(16);
+    assert.match(evidenceQuoteError(`ok ${ch} x`) || '', /invisible character/, `U+${hex} is refused on write`);
+    assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /invisible character/, `U+${hex} inside a token is refused on write`);
+    assert.equal(inertEvidenceQuote(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)} rejected`), '[redacted: github-token]', `U+${hex} does not hide a token on read`);
+    assert.equal(inertEvidenceQuote(`a${ch}b`), 'ab', `U+${hex} is removed, not blanked, on read`);
+  }
+});
+
+test('splitFrontmatter is the one fence rule: trailing blanks on a fence, CRLF, an empty block and end of file', () => {
+  assert.deepEqual(splitFrontmatter('---\ntitle: t\n--- \n\nbody'), { frontmatter: 'title: t', body: '\nbody' });
+  assert.deepEqual(splitFrontmatter('--- \t\r\ntitle: t\r\n---\t\r\nbody'), { frontmatter: 'title: t', body: 'body' });
+  assert.deepEqual(splitFrontmatter('---\n---\nbody'), { frontmatter: '', body: 'body' });
+  assert.deepEqual(splitFrontmatter('---\r\n---'), { frontmatter: '', body: '' });
+  assert.deepEqual(splitFrontmatter('---\na: 1\n---'), { frontmatter: 'a: 1', body: '' });
+  assert.deepEqual(splitFrontmatter('---\na: ---\n--- x\nb: 2\n---\nbody'), { frontmatter: 'a: ---\n--- x\nb: 2', body: 'body' }, 'only a fence alone on its line closes');
+  assert.deepEqual(splitFrontmatter('---\na: 1\nno close'), { frontmatter: null, body: '---\na: 1\nno close' });
+  assert.deepEqual(splitFrontmatter('body only'), { frontmatter: null, body: 'body only' });
+  const long = `---\n${'a'.repeat(200000)}\n${' '.repeat(200000)}\n`;
+  const started = process.hrtime.bigint();
+  assert.equal(splitFrontmatter(long).frontmatter, null);
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'the split is linear');
+  assert.equal(episodeBody('---\ntitle: t\nevidence_quote: "x"\nbody without a closing fence'), '', 'an unseparated quote-bearing episode has no body');
+  assert.equal(episodeBody('evidence_quote: "x"\nbody'), '');
+  assert.equal(episodeBody('plain body'), 'plain body');
+});
+
+test('an episode whose closing fence has trailing whitespace keeps its quote out of the consolidation and recall excerpts', () => {
+  const workspace = tmp('quote-fence-ws-');
+  const copilotHome = tmp('quote-fence-ch-');
+  const harnessHome = tmp('quote-fence-hh-');
+  const dir = path.join(copilotHome, 'knowledge', 'solutions', 'perf');
+  fs.mkdirSync(dir, { recursive: true });
+  const token = `ghp_${'A'.repeat(18)}`;
+  fs.writeFileSync(path.join(dir, 'fence.md'), `---\ntitle: "orders timeout fence"\nkind: insight\nevidence_quote: "token ${token}\\n${'A'.repeat(18)} rejected"\n--- \n\nbody text\n`);
+  fs.writeFileSync(path.join(dir, 'open.md'), `---\ntitle: "orders timeout open"\nkind: insight\nevidence_quote: "QUOTE_MARKER ${token}"\nno closing fence\n`);
+  ensureStore(workspace, { home: harnessHome });
+  const entries = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+  const fence = entries.find(e => e.title === 'orders timeout fence');
+  assert.equal(fence.excerpt, 'body text');
+  assert.equal(fence.evidence_quote, '[redacted: split-secret]');
+  const open = entries.find(e => e.path.endsWith('open.md'));
+  assert.equal(open.excerpt, '', 'an unseparated quote-bearing episode fails closed');
+  assert.ok(!JSON.stringify(entries).includes(token), JSON.stringify(entries));
+  runIndexKnowledge({ workspace, copilotHome, flags: {}, log: () => {}, home: harnessHome });
+  const manifest = fs.readFileSync(path.join(copilotHome, 'knowledge', 'manifest.yaml'), 'utf8');
+  assert.ok(manifest.includes('fence.md') && manifest.includes('open.md'), manifest);
+  assert.ok(!manifest.includes(token) && !manifest.includes('evidence_quote') && !manifest.includes('QUOTE_MARKER'), manifest);
+  assert.match(manifest, /body text/);
 });
 
 test('a consolidation packet entry for an episode without a quote has no evidence_quote key', () => {

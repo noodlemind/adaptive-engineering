@@ -198,7 +198,8 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
-  if (evidenceQuote !== null) fmLines.push(evidenceQuoteLine(evidenceQuote));
+  const quoteLine = evidenceQuote === null ? null : evidenceQuoteLine(evidenceQuote);
+  if (quoteLine !== null) fmLines.push(quoteLine);
   // Git provenance (blueprint P1/P9): optional commit/branch/base stamped at
   // capture time from the CURRENT workspace HEAD. This is the sole CLI
   // episode writer — `compound --insight` (kind: insight) and
@@ -211,8 +212,13 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (gitContext.headSha) fmLines.push(`commit: ${gitContext.headSha}`);
   if (gitContext.branch) fmLines.push(`branch: ${yamlQuote(gitContext.branch)}`);
   if (gitContext.baseSha) fmLines.push(`base: ${gitContext.baseSha}`);
-  const doc = `---\n${fmLines.join('\n')}\n---\n\n${body.trim()}\n`;
-  const secrets = scanSecrets(doc);
+  const renderDoc = lines => `---\n${lines.join('\n')}\n---\n\n${body.trim()}\n`;
+  const doc = renderDoc(fmLines);
+  // evidenceQuoteError already screened the quote in every form it can be
+  // read in. Its escaped line is left out here: JSON turns each break into a
+  // literal `\n`, which would glue lines that are screened apart into one
+  // false match. Every other field and the body are still scanned.
+  const secrets = scanSecrets(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
   if (secrets.length) {
     return {
       pass: false,
