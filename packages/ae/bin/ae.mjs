@@ -146,8 +146,10 @@ function extractOutputLane(rawArgs, entry = null) {
   const consumed = hasInlineValue ? 1 : 2;
   const lane = OUTPUT_LANES[value];
   if (!lane) {
-    // The value is never echoed: it may be text that only looks like a lane.
-    const shown = value === undefined ? '(missing)' : 'not a known lane';
+    // Beside compound's stdin-only evidence flags the value is never echoed:
+    // it may be a fragment of an unquoted evidence line.
+    const evidence = entry?.name === 'compound' && rawArgs.some(a => typeof a === 'string' && /^--(?:evidence-quote|learning-decision)(?:=|$)/.test(a));
+    const shown = value === undefined ? '(missing)' : evidence ? 'not a known lane' : JSON.stringify(value);
     throw Object.assign(new Error(`invalid --output: ${shown} — must be json-envelope, agent, or jsonl`), {
       code: 'E_USAGE',
       hint: 'ae help',

@@ -75,7 +75,8 @@ function resumeVerification({ workspace, copilotHome, flags, active }) {
     if (current.pass) {
       const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
       const verifiedAt = Date.parse(evidence.verifiedAt || '');
-      return Date.now() - verifiedAt > maxAgeHours * 60 * 60 * 1000 ? { state: 'expired', reason: reason(EVIDENCE_AGE_MESSAGE) } : null;
+      // An unparsable verifiedAt cannot prove freshness, so it counts as expired.
+      return !Number.isFinite(verifiedAt) || Date.now() - verifiedAt > maxAgeHours * 60 * 60 * 1000 ? { state: 'expired', reason: reason(EVIDENCE_AGE_MESSAGE) } : null;
     }
     const message = current.message;
     // Only policy, trust and named-check configuration count as `config`.

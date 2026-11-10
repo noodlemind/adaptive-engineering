@@ -532,12 +532,17 @@ export function compoundStrayArgumentsError(argv, flags) {
   return undefined;
 }
 
+// The line is produced by a command that never names it, run in the host
+// shell (not through ae bash, ae exec or TUI !, whose scripts are recorded).
+const EVIDENCE_PIPE_HINT = "in the host shell, pipe the line from the saved check output without naming it: sed -n '<N>p' <check-log> | ae compound --insight --evidence-quote -";
 const STDIN_TTY_HINTS = {
-  '--evidence-quote': "pipe the line instead of typing it: printf '%s\\n' \"<line>\" | ae compound --insight --evidence-quote -",
-  '--learning-decision': "pipe the decision instead of typing it: printf '%s' '<decision json>' | ae compound --plan <path> --learning-decision -",
+  '--evidence-quote': EVIDENCE_PIPE_HINT,
+  '--learning-decision': "in the host shell, pipe the decision instead of typing it: ae compound --plan <path> --learning-decision - <<'EOF' (the decision JSON, then EOF on its own line)",
+  '--check-output': "in the host shell, pipe the re-run check output: <check> 2>&1 | ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output -",
 };
 
-// A terminal on stdin would wait silently for input nobody knows to type.
+// stdin is never read from a terminal, which would wait silently for input
+// the person was never asked to type.
 export function stdinIsTerminal() {
   try { return tty.isatty(0); } catch { return false; }
 }
@@ -557,6 +562,7 @@ export function runEvidenceMatch({ workspace, flags }) {
   if (bytesError) throw usageError(bytesError, hint);
   if (!flags.checkOutput) throw usageError('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
   // A relative path resolves against --workspace, as --learning-decision does.
+  if (flags.checkOutput === '-') refuseTerminalStdin('--check-output');
   const output = flags.checkOutput === '-'
     ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
     // A relative path is read under --workspace with every component
@@ -580,9 +586,11 @@ export function runEvidenceMatch({ workspace, flags }) {
 
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
   if (flags.evidenceQuote != null) {
-    const hint = "pipe the single failing line on stdin: printf '%s\\n' \"<line>\" | ae compound --insight --evidence-quote -";
-    // The line is read only from stdin, so it never reaches argv, shell
-    // history, the run journal or the TUI ledger. The value is never echoed.
+    const hint = EVIDENCE_PIPE_HINT;
+    // The line is read only from stdin, so harness never puts it in its own
+    // argv, run journal or TUI ledger, and never echoes it. A producer that
+    // names the line (printf "<line>") would still leave it in shell history
+    // and in any recorded script, so the hint uses one that does not.
     if (flags.evidenceQuoteCount > 1) throw usageError('--evidence-quote may be given only once', hint);
     if (flags.evidenceQuote !== '-') throw usageError('--evidence-quote takes only - and reads the line from stdin', hint);
     // A learning decision carries its own evidence_quote; a flag beside it

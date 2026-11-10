@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { parseFlags } from './flags.mjs';
 import { createStyle, keyWidthFor, EXIT } from './style.mjs';
 import { redactedJson, createRedactor } from './redact.mjs';
@@ -30,6 +31,27 @@ export function splitAtBoundary(argv) {
   const i = argv.indexOf('--');
   if (i === -1) return { harnessArgs: argv, childArgs: null };
   return { harnessArgs: argv.slice(0, i), childArgs: argv.slice(i + 1) };
+}
+
+// A script that pipes into a stdin-only evidence flag carries the evidence
+// line in its own text when its producer names the line. Such a script is
+// recorded in the run journal and the exec audit only as its length and a
+// digest prefix, as an agent task is; every other script is kept as typed.
+const STDIN_EVIDENCE = /--(?:evidence-quote|learning-decision)(?:=|\s+)-(?=$|[\s;|&)'"])/;
+
+export function carriesStdinEvidence(childArgs) {
+  return Array.isArray(childArgs) && STDIN_EVIDENCE.test(childArgs.join(' '));
+}
+
+function scriptPlaceholder(childArgs) {
+  const text = childArgs.join(' ');
+  return `<script:${Buffer.byteLength(text, 'utf8')}b:${createHash('sha256').update(text).digest('hex').slice(0, 12)}>`;
+}
+
+/** The run-journal argv of `ae exec` and `ae bash`. */
+export function execJournalArgv(argv) {
+  const { harnessArgs, childArgs } = splitAtBoundary(argv);
+  return carriesStdinEvidence(childArgs) ? [...harnessArgs, '--', scriptPlaceholder(childArgs)] : argv;
 }
 
 function repeatedFlag(argv, name) {
@@ -143,7 +165,7 @@ function emitAudit(ctx, mode, p, result) {
     exec: {
       shell: p.shell,
             shellPath: p.shellPath,
-      argv: p.childArgs,
+      argv: carriesStdinEvidence(p.childArgs) ? [scriptPlaceholder(p.childArgs)] : p.childArgs,
       cwd: p.cwd,
       timeoutSeconds: p.timeoutSeconds,
       env: { allowed: p.envReport.allowed, droppedCount: p.envReport.dropped.length, refused: p.envReport.refused },

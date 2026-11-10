@@ -349,7 +349,7 @@ test('stray fragments of an unquoted line, flag-shaped or not, never reach the r
     f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', 'SECRETQ', '--title', 'SECRETR'], '{}'),
     // An unknown flag beside a stdin-only flag is reported without its name.
     f.cli(['compound', '--insight', '--title', 't', '--evidence-quote', '-', '--SECRETP'], 'FAIL retry\n'),
-    f.cli(['compound', '--plan', f.plan, '--learning-decision=-', '--SECRETS=x'], '{}'),
+    f.cli(['compound', '--plan', f.plan, '--learning-decision=-', 'stray', '--SECRETS=x'], '{}'),
   ];
   for (const [i, run] of runs.entries()) {
     assert.equal(run.status, 2, `${i}: ${run.stdout}${run.stderr}`);
@@ -360,24 +360,67 @@ test('stray fragments of an unquoted line, flag-shaped or not, never reach the r
   assert.deepEqual(filesHolding(f.dir, 'SECRET'), [], 'no fragment reaches runs.jsonl, events or any other file');
   const unknown = f.cli(['compound', '--insight', '--SECRETU']);
   assert.match(unknown.stdout + unknown.stderr, /unknown flag: --SECRETU/, 'without a stdin-only flag the name is still shown');
+  // A file-based decision with no stray argument, and every other command, still name the flag.
+  const typo = f.cli(['compound', '--plan', f.plan, '--learning-decision', 'decision.json', '--plna']);
+  assert.match(typo.stdout + typo.stderr, /unknown flag: --plna/);
+  for (const args of [['domain', 'status', '--learning-decision', '-', '--bogusflag'], ['status', '--bogusflag'], ['agent', 'task', '--evidence-quote', '-', '--bogusflag']]) {
+    const run = f.cli(args);
+    assert.match(run.stdout + run.stderr, /(?:unknown flag:|unsupported option) --(?:bogusflag|evidence-quote)/, `${args.join(' ')}: ${run.stdout}${run.stderr}`);
+  }
 });
 
-test('a terminal on stdin is refused for --evidence-quote - and --learning-decision -, with the printf hint', async t => {
+test('--learning-decision=- takes the stdin path with all its checks', t => {
+  const f = verifiedFixture(t);
+  const piped = f.cli(['compound', '--plan', f.plan, '--learning-decision=-', '--json'], JSON.stringify(publish('quote-equals', { evidence_quote: QUOTE })));
+  assert.equal(piped.status, 0, piped.stdout + piped.stderr);
+  assert.deepEqual(JSON.parse(piped.stdout).evidence, { sha256_prefix: QUOTE_SHA.slice(0, 12), bytes: Buffer.byteLength(QUOTE) });
+  const stray = f.cli(['compound', '--plan', f.plan, '--learning-decision=-', MARKER], '{}');
+  assert.equal(stray.status, 2);
+  assert.ok(!(stray.stdout + stray.stderr).includes(MARKER));
+  const file = path.join(f.ws, 'decision.json');
+  fs.writeFileSync(file, JSON.stringify(publish('quote-equals-file', { evidence_quote: QUOTE })));
+  const fromFile = f.cli(['compound', '--plan', f.plan, `--learning-decision=${file}`, '--json']);
+  fs.rmSync(file);
+  assert.equal(fromFile.status, 2, fromFile.stdout + fromFile.stderr);
+  assert.match(fromFile.stdout + fromFile.stderr, /accepted only from stdin/);
+  assert.deepEqual(filesHolding(f.dir, MARKER), []);
+});
+
+test('a script piping into --evidence-quote - under ae bash or ae exec is journaled and audited only as length and digest', t => {
+  const f = verifiedFixture(t, { events: true });
+  fs.mkdirSync(path.join(f.copilot, 'harness'), { recursive: true });
+  fs.writeFileSync(path.join(f.copilot, 'harness', 'config.yaml'), 'version: 1\nexec.bash_enabled: true\n');
+  const inner = (title) => `printf '%s\\n' '${QUOTE}' | '${process.execPath}' '${path.join(root, 'bin/ae.mjs')}' compound --insight --title '${title}' --body 'retries matter' --evidence-quote - --workspace '${f.ws}' --harness-home '${f.home}' --copilot-home '${f.copilot}' --json`;
+  const ae = (...args) => spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), ...args], { cwd: f.ws, env: { ...process.env, HARNESS_HOME: f.home, COPILOT_HOME: f.copilot, HARNESS_ENFORCEMENT: '' }, encoding: 'utf8', timeout: 30000 });
+  const homes = ['--workspace', f.ws, '--harness-home', f.home, '--copilot-home', f.copilot];
+  const bash = ae('bash', ...homes, '--', inner('via bash'));
+  assert.equal(bash.status, 0, bash.stdout + bash.stderr);
+  const exec = ae('exec', ...homes, '--', '/bin/sh', '-c', inner('via exec'));
+  assert.equal(exec.status, 0, exec.stdout + exec.stderr);
+  const runs = walk(f.dir).filter(file => path.basename(file) === 'runs.jsonl').map(file => fs.readFileSync(file, 'utf8')).join('');
+  assert.match(runs, /<script:\d+b:[0-9a-f]{12}>/, 'the script is journaled as length and digest');
+  assert.ok(walk(f.dir).some(file => file.endsWith('.jsonl') && fs.readFileSync(file, 'utf8').includes('"exec"')), 'the exec audit is on');
+  assert.deepEqual(filesHolding(f.dir, MARKER), [], 'no journal, audit or episode holds the line');
+});
+
+test('a terminal on stdin is refused for --evidence-quote -, --learning-decision - and --check-output -, with a hint that never names the line', async t => {
   const tty = (await import('node:tty')).default;
-  const { runCompound } = await import('../lib/compound.mjs');
+  const { runCompound, runEvidenceMatch } = await import('../lib/compound.mjs');
   const original = tty.isatty;
   tty.isatty = fd => (fd === 0 ? true : original(fd));
   t.after(() => { tty.isatty = original; });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-tty-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  for (const flags of [{ insight: true, title: 't', evidenceQuote: '-', evidenceQuoteCount: 1 }, { learningDecision: '-' }]) {
-    await assert.rejects(runCompound({ workspace: dir, copilotHome: dir, flags: { workspace: dir, ...flags } }), error => {
-      assert.equal(error.code, 'E_USAGE');
-      assert.match(error.message, /stdin is a terminal/);
-      assert.match(error.hint, /printf '%s/);
-      return true;
-    });
-  }
+  const refused = error => {
+    assert.equal(error.code, 'E_USAGE');
+    assert.match(error.message, /stdin is a terminal/);
+    assert.match(error.hint, /in the host shell, pipe/);
+    assert.doesNotMatch(error.hint, /printf/, 'the hint never names the line in a command');
+    return true;
+  };
+  await assert.rejects(runCompound({ workspace: dir, copilotHome: dir, flags: { workspace: dir, insight: true, title: 't', evidenceQuote: '-', evidenceQuoteCount: 1 } }), error => refused(error) && /sed -n/.test(error.hint));
+  await assert.rejects(runCompound({ workspace: dir, copilotHome: dir, flags: { workspace: dir, learningDecision: '-' } }), error => refused(error) && /<<'EOF'/.test(error.hint));
+  assert.throws(() => runEvidenceMatch({ workspace: dir, flags: { matchEvidence: QUOTE_SHA.slice(0, 12), checkOutput: '-' } }), refused);
 });
 
 test('under ae agent, a real child receives the piped decision through dispatchToolCall and stores only the fingerprint', async t => {
@@ -455,7 +498,7 @@ test('a capture over stdin and a later match agree across BOM, NFD, OSC and CRLF
   assert.equal(lane.status, 2, `a literal value that looks like --output is not an output lane: ${lane.stdout}${lane.stderr}`);
   assert.match(lane.stdout + lane.stderr, /takes only -/);
   assert.ok(!(lane.stdout + lane.stderr).includes(MARKER));
-  const badLane = f.cli(['compound', '--output', `${MARKER}`, '--json']);
+  const badLane = f.cli(['compound', '--learning-decision', '-', '--output', `${MARKER}`, '--json']);
   assert.equal(badLane.status, 2);
   assert.match(badLane.stderr, /not a known lane/);
   assert.deepEqual(filesHolding(f.dir, MARKER).filter(file => !file.endsWith('out.txt')), [], 'nothing but the test-written output holds the line');

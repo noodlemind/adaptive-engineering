@@ -187,6 +187,7 @@ export function parseFlags(argv) {
     else if (a === '--packet') flags.packet = scan[++i];
     else if (a === '--reviewer') (flags.reviewers ||= []).push(scan[++i]);
     else if (a === '--learning-decision') flags.learningDecision = scan[++i];
+    else if (a.startsWith('--learning-decision=')) flags.learningDecision = a.slice('--learning-decision='.length);
     else if (a === '--explain') flags.explain = true;
     else if (a === '--read') flags.read = true;
     else if (a === '--context-version') flags.contextVersion = parseContextVersion(scan[++i]);

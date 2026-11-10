@@ -31,7 +31,7 @@ import {
   cmdResolve,
 } from './commands.mjs';
 import { cmdPlanNew, normalizePlanNewArgs } from './plan-new.mjs';
-import { VALUE_FLAGS } from './positionals.mjs';
+import { VALUE_FLAGS, positionalsOf } from './positionals.mjs';
 import { cmdPlanUpdate } from './plan-update.mjs';
 import { cmdWorktree } from './worktree-cmd.mjs';
 import { cmdPrepare } from './prepare.mjs';
@@ -46,7 +46,7 @@ import { cmdResources, resourcesResultOf, resourcesExitFor, RESOURCES_VERBS } fr
 import { cmdReview, reviewResultOf, REVIEW_VERBS } from './review.mjs';
 import { CONFIG_KEYS, SCOPES } from './config.mjs';
 import { RUN_STATUSES } from './run-journal.mjs';
-import { cmdExec, execResultOf, cmdBash, bashResultOf, exitFor as execExitFor } from './exec-cmd.mjs';
+import { cmdExec, execResultOf, cmdBash, bashResultOf, exitFor as execExitFor, execJournalArgv } from './exec-cmd.mjs';
 import {
   cmdEdit, editResultOf, cmdWrite, writeResultOf, cmdUndo, undoResultOf,
   exitFor as editExitFor, literalFlag,
@@ -302,6 +302,12 @@ export function commandHelpRequested(argv, entry = null) {
   return false;
 }
 
+function compoundLineMayBeSplit(argv) {
+  const has = name => argv.some(t => typeof t === 'string' && (t === name || t.startsWith(`${name}=`)));
+  if (has('--evidence-quote')) return true;
+  return has('--learning-decision') && (argv.includes('--') || positionalsOf(argv).length > 0);
+}
+
 export function validateArgs(entry, argv) {
   const known = flagIndex(entry);
     const present = new Set();
@@ -325,9 +331,10 @@ export function validateArgs(entry, argv) {
       const hint = flagName === '--files' && known.has('--file')
         ? fileInputHint(entry.name)
         : `ae help ${entry.name}`;
-      // Beside a stdin-only evidence flag, a flag-shaped token may be a
-      // fragment of an unquoted line, so it is not echoed.
-      if (argv.some(t => typeof t === 'string' && /^--(?:evidence-quote|learning-decision)(?:=|$)/.test(t))) {
+      // Beside compound's --evidence-quote, or beside --learning-decision
+      // with stray arguments, a flag-shaped token may be a fragment of an
+      // unquoted evidence line, so it is not echoed.
+      if (entry.name === 'compound' && compoundLineMayBeSplit(argv)) {
         throw usageError('unknown flag (not shown, because it may be part of an unquoted evidence line)', `ae help ${entry.name}`);
       }
       throw usageError(`unknown flag: ${flagName}`, hint);
@@ -1142,8 +1149,8 @@ registerCommand({
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--evidence-quote', type: 'string', valueName: '-', description: 'only -: read the one failing line of check output for --insight from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'cli-only', valueIsLiteral: true },
-      { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix', required: false, default: null, tui: 'cli-only' },
-      { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace), or - for stdin', required: false, default: null, tui: 'cli-only' },
+      { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix; exit 0 on a match, exit 1 on no match (still recorded as a succeeded run), exit 2 on a usage error', required: false, default: null, tui: 'cli-only' },
+      { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace, e.g. .harness/check-output.txt), or - for stdin', required: false, default: null, tui: 'cli-only' },
       { name: '--evidence-bytes', type: 'string', valueName: 'n', description: 'optional stored evidence length for --match-evidence; a matching line must have it', required: false, default: null, tui: 'cli-only' },
             { name: '--enforcement', type: 'string', valueName: 'mode', description: 'observe | warn | enforce (default enforce)', required: false, default: null, tui: 'prompt', choices: ['observe', 'warn', 'enforce'] },
     ],
@@ -1527,6 +1534,8 @@ registerCommand({
     ],
   },
   handler: cmdExec,
+  // A script piping into --evidence-quote - is journaled as length and digest.
+  journalArgv: execJournalArgv,
   resultOf: execResultOf,
     exitOf: execExitFor,
 });
@@ -1548,6 +1557,8 @@ registerCommand({
     ],
   },
   handler: cmdBash,
+  // A script piping into --evidence-quote - is journaled as length and digest.
+  journalArgv: execJournalArgv,
   resultOf: bashResultOf,
   exitOf: execExitFor,
 });
