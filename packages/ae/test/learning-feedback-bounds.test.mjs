@@ -11,7 +11,7 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { ensureStore, writeFeedbackConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { readFileNoFollow } from '../lib/fs-safe.mjs';
-import { compactDecisions, hydrateArchivedDecision, latestArchivedReadiness, readinessIndexHealth } from '../lib/decision-archive.mjs';
+import { compactDecisions, decisionTask, hydrateArchivedDecision, latestArchivedReadiness, readinessIndexHealth } from '../lib/decision-archive.mjs';
 import { decisionResultOf } from '../lib/decision-agent.mjs';
 import { decisionStatus, inspectDecisionAction, latestReadinessReceipt, prepareDecision } from '../lib/decision-agent.mjs';
 import { runOrient } from '../lib/orient.mjs';
@@ -1709,13 +1709,15 @@ test('N2: a request record left empty or truncated by a crash is replaced, and o
   compactDecisions(loc, state);
   assert.equal(state.requests[busy.requestId], undefined, 'a later pass archives it');
   assert.equal(hydrateArchivedDecision(loc, d.state([]), busy.requestId).requestId, busy.requestId);
-  // A non-regular entry at the record's name is never replaced: the request stays live and a sweep names the file.
+  // A non-regular entry at the record's name is never replaced: the request stays live and the archive-fault
+  // marker names the entry with the remedy for a live request (remove it), not the lost-record one.
   const blocked = d.readiness('escalate', at++);
   fs.mkdirSync(path.join(d.archive, 'requests', `${blocked.requestId}.json`));
   const held = d.state([blocked]);
   compactDecisions(loc, held);
   assert.ok(held.requests[blocked.requestId], 'the request stays live');
-  assert.deepEqual(held.readinessPending.sweep.last.offenders, [{ file: `requests/${blocked.requestId}.json`, reason: 'unreadable-record' }], 'the sweep names the entry');
+  assert.deepEqual(held.archiveFaults, { count: 1, files: [{ file: `requests/${blocked.requestId}.json`, reason: 'not-regular' }] });
+  assert.equal(held.readinessPending, undefined, 'no sweep is started for it');
 });
 
 test('N3: a short read loops until every byte is read, and a file that ends early reads as unreadable, not as content', t => {
@@ -1748,4 +1750,205 @@ test('N4: a full offender list from an earlier version, which never said whether
   for (const item of full.items) fs.writeFileSync(path.join(d.archive, 'requests', `${item.requestId}.json`), '');
   compactDecisions(full.loc, full.state);
   assert.deepEqual([full.state.readinessPending.sweep.last.offenders.length, full.state.readinessPending.sweep.last.offendersTruncated], [8, false]);
+});
+
+// Isolated review of PR #127: a record that cannot be archived never throws out of a decision operation,
+// and one that stays live is reported with the remedy for its cause.
+
+const archiveWarning = (run, now) => (run.status(undefined, now).warnings || []).find(item => item.fault === 'archive');
+
+test('O1: a request record that cannot be archived is named with its cause, and a full state says so instead of "wait"', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  // A redirected requests/ directory: nothing is written through it, the request stays live, and the marker names it.
+  fs.mkdirSync(d.archive, { recursive: true });
+  fs.mkdirSync(path.join(c.dir, 'elsewhere'), { recursive: true });
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'requests'), 'dir');
+  const item = d.readiness('escalate', 1);
+  const state = d.state([item]);
+  const faults = compactDecisions(loc, state);
+  assert.ok(state.requests[item.requestId], 'the request stays live');
+  assert.ok(faults.some(fault => fault.requestId === item.requestId && /redirected/.test(fault.message)));
+  assert.deepEqual(state.archiveFaults, { count: 1, files: [{ file: `requests/${item.requestId}.json`, reason: 'redirected' }] });
+  assert.deepEqual(fs.readdirSync(path.join(c.dir, 'elsewhere')), []);
+  persistState(d, state);
+  const warning = archiveWarning(run, 11);
+  assert.deepEqual([warning.count, warning.files, warning.archive], [1, [`requests/${item.requestId}.json`], d.archive]);
+  assert.match(warning.message, /replace it with a real directory/);
+  // Fixed, the next pass archives it and the marker clears, even though the state is small now.
+  fs.unlinkSync(path.join(d.archive, 'requests'));
+  const small = d.state([]);
+  small.archiveFaults = state.archiveFaults;
+  const tiny = readinessFor(d, 'docs/plans/o1.md', 'escalate', 2);
+  small.requests[tiny.requestId] = tiny.request; small.receipts[tiny.requestId] = tiny.receipt;
+  compactDecisions(loc, small);
+  assert.equal(small.requests[tiny.requestId], undefined, 'a marked state retires on the next pass');
+  assert.equal(small.archiveFaults, undefined);
+  // A filesystem without hard links refuses every publish: the cause is a refused write.
+  const linked = d.readiness('escalate', 3);
+  const noLinks = d.state([linked]);
+  const { linkSync } = fs;
+  fs.linkSync = () => { throw Object.assign(new Error('EPERM: link not permitted'), { code: 'EPERM' }); };
+  try { compactDecisions(loc, noLinks); } finally { fs.linkSync = linkSync; }
+  assert.deepEqual(noLinks.archiveFaults.files, [{ file: `requests/${linked.requestId}.json`, reason: 'refused-write' }]);
+  // When deferred records are what fills the state, the capacity error names them and their remedy.
+  const items = [0, 1, 2].map(i => readinessFor(d, `docs/plans/full-${i}.md`, 'escalate', 10 + i, 600 * 1024));
+  const full = d.state(items);
+  const base = Buffer.byteLength(JSON.stringify(full));
+  const last = readinessFor(d, 'docs/plans/full-2.md', 'escalate', 12, 600 * 1024 + (2 * 1024 * 1024 - 64 - base));
+  items[2] = last;
+  persistState(d, d.state(items));
+  fs.rmSync(path.join(d.archive, 'requests'), { recursive: true });
+  fs.mkdirSync(path.join(c.dir, 'elsewhere2'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere2'), path.join(d.archive, 'requests'), 'dir');
+  assert.throws(() => run.prepare(1000), error => /capacity is full while 3 retained record\(s\) could not be archived/.test(error.message)
+    && /replace it with a real directory/.test(error.message) && !/allow existing task budgets to expire/.test(error.message));
+});
+
+test('O1b: a hydrated request kept live by a deferred archive keeps its mark, so it is never noted as the newest receipt', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const r1 = d.readiness('escalate', 1), r2 = d.readiness('blocked', 2);
+  assert.deepEqual(compactDecisions(loc, d.state([r1, r2])), []);
+  const hydrated = d.state([]);
+  hydrateArchivedDecision(loc, hydrated, r1.requestId);
+  const record = path.join(d.archive, 'requests', `${r1.requestId}.json`);
+  emfileOn(record, () => compactDecisions(loc, hydrated));
+  assert.ok(hydrated.requests[r1.requestId], 'the hydrated request stays live');
+  assert.deepEqual(hydrated.hydratedLive, [r1.requestId], 'its mark is persisted with the state');
+  // The published state loses the in-memory mark; the persisted one restores it.
+  const published = JSON.parse(JSON.stringify(hydrated));
+  fs.renameSync(path.join(d.archive, 'readiness'), path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'readiness'), 'dir');
+  compactDecisions(loc, published);
+  assert.equal(published.requests[r1.requestId], undefined, 'it archives once its record reads');
+  assert.equal(published.hydratedLive, undefined);
+  assert.ok(!Object.values(published.readinessPending?.plans || {}).some(entry => entry.requestId === r1.requestId), 'R1 is never noted over R2');
+});
+
+test('O2: a retained record already proving consumption stands over a later consumption; any other disagreement waits, reported', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const item = readinessFor(d, PLAN, 'ready', 1, 600 * 1024);
+  const first = d.state([item]);
+  first.receipts[item.requestId] = { ...item.receipt, consumedAt: 5 };
+  assert.deepEqual(compactDecisions(loc, first), []);
+  const record = path.join(d.archive, 'requests', `${item.requestId}.json`), bytes = fs.readFileSync(record);
+  // The pass above was never published; a retry consumes the receipt again later.
+  const retry = d.state([item]);
+  retry.receipts[item.requestId] = { ...item.receipt, consumedAt: 9 };
+  compactDecisions(loc, retry);
+  assert.equal(retry.requests[item.requestId], undefined, 'the live copy retires');
+  assert.equal(retry.archiveFaults, undefined);
+  assert.deepEqual(fs.readFileSync(record), bytes, 'the archived evidence is unchanged');
+  assert.equal(hydrateArchivedDecision(loc, d.state([]), item.requestId) && JSON.parse(bytes).receipt.consumedAt, 5);
+  // Any other difference never throws and never overwrites: the live copy waits and the marker names it.
+  const other = d.state([item]);
+  other.receipts[item.requestId] = { ...item.receipt, consumedAt: 9 };
+  other.observations[item.requestId] = { schema: 1, note: 'observed after archiving' };
+  const faults = compactDecisions(loc, other);
+  assert.ok(other.requests[item.requestId], 'the live copy stays');
+  assert.ok(faults.some(fault => /disagrees with the live copy/.test(fault.message)));
+  assert.deepEqual(other.archiveFaults.files, [{ file: `requests/${item.requestId}.json`, reason: 'conflict' }]);
+  assert.deepEqual(fs.readFileSync(record), bytes);
+});
+
+test('O3: an archive directory that cannot be created refuses the write without throwing out of the pass', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const item = d.readiness('escalate', 1);
+  const state = d.state([item]);
+  const { mkdirSync } = fs;
+  for (const code of ['EACCES', 'EROFS', 'EDQUOT']) {
+    fs.mkdirSync = (target, ...rest) => { if (String(target).startsWith(d.archive)) throw Object.assign(new Error(`${code}: mkdir`), { code }); return mkdirSync(target, ...rest); };
+    try { compactDecisions(loc, state); } finally { fs.mkdirSync = mkdirSync; }
+    assert.ok(state.requests[item.requestId], `${code}: the request stays live`);
+    assert.deepEqual(state.archiveFaults.files, [{ file: `requests/${item.requestId}.json`, reason: 'refused-write' }], code);
+  }
+  compactDecisions(loc, state);
+  assert.equal(state.requests[item.requestId], undefined, 'it archives once the directory can be created');
+});
+
+test('O4: a crash-left task record is replaced, and a task record that cannot be written keeps the task live, reported', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const key = sha('task-o4'), task = { startedAt: 1, counts: { decisions: 2, repairs: 0, acquisitions: 1 } };
+  const taskFile = path.join(d.archive, 'tasks', `${key}.json`);
+  fs.mkdirSync(path.dirname(taskFile), { recursive: true });
+  for (const content of ['', '{"schema":1,"workspa']) {
+    fs.writeFileSync(taskFile, content);
+    const state = d.state([d.readiness('escalate', 1)]);
+    state.tasks[key] = task;
+    assert.deepEqual(decisionTask(loc, d.state([]), key), null, 'a record that proves nothing is ignored');
+    compactDecisions(loc, state);
+    assert.equal(state.tasks[key], undefined, 'the task retires');
+    assert.equal(state.archiveFaults, undefined);
+    assert.deepEqual(decisionTask(loc, d.state([]), key), task, 'the verified record replaced it');
+  }
+  // A symlinked tasks/ directory is never written through: the task stays live and is named.
+  fs.rmSync(path.join(d.archive, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(c.dir, 'elsewhere'));
+  fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'tasks'), 'dir');
+  const state = d.state([d.readiness('escalate', 2)]);
+  state.tasks[key] = task;
+  const faults = compactDecisions(loc, state);
+  assert.deepEqual(state.tasks[key], task, 'the task stays live');
+  assert.ok(faults.some(fault => fault.requestId === null && /task budget/.test(fault.message)));
+  assert.deepEqual(state.archiveFaults.files, [{ file: `tasks/${key}.json`, reason: 'redirected' }]);
+  assert.deepEqual(fs.readdirSync(path.join(c.dir, 'elsewhere')), []);
+});
+
+test('O5: a well-formed record of a newer schema is kept, never replaced, and its request waits', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const item = d.readiness('escalate', 1);
+  const record = path.join(d.archive, 'requests', `${item.requestId}.json`), newer = JSON.stringify({ schema: 2, id: 'f'.repeat(64), shape: 'from a newer version' });
+  fs.mkdirSync(path.dirname(record), { recursive: true });
+  fs.writeFileSync(record, newer);
+  const state = d.state([item]);
+  compactDecisions(loc, state);
+  assert.ok(state.requests[item.requestId], 'the request stays live');
+  assert.equal(fs.readFileSync(record, 'utf8'), newer, 'the newer record is untouched');
+  assert.deepEqual(state.archiveFaults.files, [{ file: `requests/${item.requestId}.json`, reason: 'unknown-schema' }]);
+  // A task record of a newer schema is kept the same way.
+  const key = sha('task-o5'), taskFile = path.join(d.archive, 'tasks', `${key}.json`);
+  fs.mkdirSync(path.dirname(taskFile), { recursive: true });
+  fs.writeFileSync(taskFile, newer);
+  const tasks = d.state([d.readiness('escalate', 2)]);
+  tasks.tasks[key] = { startedAt: 1, counts: { decisions: 1, repairs: 0, acquisitions: 0 } };
+  compactDecisions(loc, tasks);
+  assert.ok(tasks.tasks[key], 'the task stays live');
+  assert.equal(fs.readFileSync(taskFile, 'utf8'), newer);
+  assert.ok(tasks.archiveFaults.files.some(item => item.file === `tasks/${key}.json` && item.reason === 'unknown-schema'));
+});
+
+test('O6: a non-regular entry at a live request\'s name says to remove it, never that a record is lost', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const item = d.readiness('escalate', 1);
+  const entry = path.join(d.archive, 'requests', `${item.requestId}.json`);
+  fs.mkdirSync(entry, { recursive: true });
+  const state = d.state([item]);
+  // Even while a sweep is running, the live request's entry is the marker's to report, not the sweep's.
+  state.readinessPending = { plans: {}, untracked: 1 };
+  compactDecisions(loc, state);
+  assert.equal(state.readinessPending, undefined, 'the sweep finishes clean past a live request\'s entry');
+  persistState(d, state);
+  const warning = archiveWarning(run, 11);
+  assert.deepEqual(warning.offenders, [{ file: `requests/${item.requestId}.json`, reason: 'not-regular' }]);
+  assert.match(warning.message, /remove that entry/);
+  assert.doesNotMatch(warning.message, /backup|lookup/);
+  fs.rmdirSync(entry);
+  compactDecisions(loc, state);
+  assert.equal(state.requests[item.requestId], undefined, 'the next pass archives it');
+  assert.equal(state.archiveFaults, undefined);
 });

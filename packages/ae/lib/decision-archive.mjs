@@ -13,64 +13,86 @@ const root = loc => path.join('decision-archives', hash(loc.workspace));
 // truncated, malformed, a broken hash or binding), as opposed to one whose read failed (EMFILE, EIO).
 const invalidRecord = message => Object.assign(fail(message), { invalid: true });
 
+// A record that exists but cannot be used now and must be kept: its read failed (EMFILE, EIO, EACCES) or a
+// newer version wrote it. `reason` names it for the archive-fault marker status reports.
+const keptRecord = (message, reason) => Object.assign(fail(message), { reason });
+
 function readRecord(loc, relative) {
-  const file = path.join(loc.home, relative), stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  const file = path.join(loc.home, relative);
+  let stat;
+  try { stat = fs.lstatSync(file, { throwIfNoEntry: false }); }
+  catch (error) { throw keptRecord(`retained record cannot be inspected now: ${error.message}`, 'unreadable-now'); }
   if (!stat) return null;
   if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw invalidRecord('retained record is not a regular file or is oversized');
   const bytes = readFileNoFollow(file, { root: loc.home, maxBytes: 2 * 1024 * 1024 });
-  if (bytes === null) throw fail('retained record is unreadable, oversized or redirected');
+  if (bytes === null) throw keptRecord('retained record is unreadable, oversized or redirected', 'unreadable-now');
   let record;
   try { record = JSON.parse(bytes); } catch { throw invalidRecord('retained record is malformed or unsafe'); }
+  // A well-formed record of a schema this version does not know was written by a newer version: it is kept,
+  // never judged by this version's integrity rules and never replaced.
+  if (object(record) && Number.isSafeInteger(record.schema) && record.schema > 1) throw keptRecord(`retained record has schema ${record.schema}, written by a newer version, so it is kept`, 'unknown-schema');
   const { id, ...value } = record || {};
   if (!object(record) || !ID.test(id || '') || hash(value) !== id || value.schema !== 1 || value.workspace !== loc.workspace) throw invalidRecord('retained record integrity or workspace binding changed');
   return value;
 }
 
-// An immutable request record that cannot be archived this pass (unreadable now, a non-regular entry at its
-// name, a redirected or refused write): the request stays live and a later pass retries it.
-const deferred = (message, extra = {}) => Object.assign(fail(message), { deferred: true }, extra);
+// A record that cannot be archived or written this pass: the caller keeps its live copy and retries it on a
+// later pass. `reason` is one of ARCHIVE_REASONS and selects the remedy status gives.
+const deferred = (message, reason, extra = {}) => Object.assign(fail(message), { deferred: true, reason }, extra);
+
+// Consumption time is outside a receipt's id hash, so a pass whose state was never published can be retried
+// and consume the same receipt again later. A retained record that already proves consumption stands.
+const withoutConsumption = record => ({ ...record, receipt: object(record.receipt) ? { ...record.receipt, consumedAt: null } : record.receipt,
+  nativeProbe: object(record.nativeProbe) ? { ...record.nativeProbe, consumedAt: null } : record.nativeProbe });
+const consumedOnly = (previous, value) => object(previous.receipt) && Number.isFinite(previous.receipt.consumedAt) && object(value.receipt)
+  && stable(withoutConsumption(previous)) === stable(withoutConsumption(value));
 
 /**
- * Publish one retained record. Returns 'written', 'kept' when an identical immutable record is already
- * retained, or 'replaced' when the immutable record's name held a regular file whose content proved nothing
- * (empty or truncated after a crash, malformed, a broken hash or binding): the verified record replaces it.
- * An immutable record that cannot be archived this pass throws with `deferred` (and `notRegular` when a
- * non-regular entry holds its name, which is never replaced), so the caller keeps the request live and
- * retries it; only a valid retained record that conflicts with the value throws otherwise. A non-immutable
- * write throws when it is refused.
+ * Publish one retained record. Returns 'written', 'kept' when the immutable record is already retained, or
+ * 'replaced' when the immutable record's name held a regular file whose content proved nothing (empty or
+ * truncated after a crash, malformed, a broken hash or binding): the verified record replaces it. A
+ * retained record is authoritative: one that differs from the value only in when it was consumed, and
+ * already proves consumption, is 'kept' too. Anything that keeps the record from being written this pass
+ * throws with `deferred` and a `reason`, and the caller keeps the live copy and retries it: a read that
+ * fails now ('unreadable-now'), a newer-schema record ('unknown-schema'), a non-regular entry at its name,
+ * which is never replaced ('not-regular'), a valid retained record that disagrees with the value, which is
+ * never overwritten ('conflict'), a symlinked ancestor ('redirected') or a refused write, including a
+ * directory that cannot be created ('refused-write').
  */
 function writeRecord(loc, relative, value, immutable = false, durable = false) {
-  if (!assertNoSymlinkAncestors(loc.home, relative)) {
-    if (immutable) throw deferred('retained record path is redirected');
-    throw fail('retained record path is redirected');
-  }
+  if (!assertNoSymlinkAncestors(loc.home, relative)) throw deferred('retained record path is redirected', 'redirected');
   const bytes = `${stable({ ...value, id: hash(value) })}\n`;
-  if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) throw fail('one retained record exceeds its bound');
+  if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) throw deferred('one retained record exceeds its bound', 'refused-write');
   let replace = false;
   if (immutable) {
     let previous;
     try { previous = readRecord(loc, relative); }
     catch (error) {
-      if (!error.invalid) throw deferred(`retained request record cannot be read now, so it is archived on a later pass: ${error.message}`);
+      if (!error.invalid) throw deferred(`retained request record cannot be used now, so its request stays live: ${error.message}`, error.reason || 'unreadable-now');
       let stat;
       try { stat = fs.lstatSync(path.join(loc.home, relative)); }
-      catch (statError) { throw deferred(`retained request record cannot be read now, so it is archived on a later pass: ${statError.message}`); }
-      if (!stat.isFile()) throw deferred('retained request record name holds a symlink or another non-regular entry, which is never replaced', { notRegular: true });
+      catch (statError) { throw deferred(`retained request record cannot be inspected now, so its request stays live: ${statError.message}`, 'unreadable-now'); }
+      if (!stat.isFile()) throw deferred('retained request record name holds a symlink or another non-regular entry, which is never replaced', 'not-regular', { notRegular: true });
       replace = true;
     }
     if (previous) {
-      if (stable(previous) !== stable(value)) throw fail('immutable request evidence conflicts with its retained identity');
-      return 'kept';
+      if (stable(previous) === stable(value) || consumedOnly(previous, value)) return 'kept';
+      throw deferred('a valid retained request record disagrees with the live copy, and retained evidence is never overwritten', 'conflict');
     }
+  } else {
+    let stat;
+    try { stat = fs.lstatSync(path.join(loc.home, relative), { throwIfNoEntry: false }); }
+    catch (error) { throw deferred(`retained record cannot be inspected now: ${error.message}`, 'unreadable-now'); }
+    if (stat && !stat.isFile()) throw deferred('retained record name holds a symlink or another non-regular entry, which is never replaced', 'not-regular', { notRegular: true });
   }
   // Immutable request evidence is flushed before it is linked (or renamed over invalid content) where the
-  // filesystem allows: a durable readiness index may name it. A failed flush never refuses it, since
-  // archiving must never block a decision operation, and a reader already treats invalid content as such.
-  const written = writeFileContained(loc.home, relative, bytes, { exclusive: immutable && !replace, mode: 0o600, durable: immutable ? 'best-effort' : durable });
-  if (!written) {
-    if (immutable) throw deferred('retained record publication refused');
-    throw fail('retained record publication refused');
-  }
+  // filesystem allows: a durable readiness index may name it. A failed flush never refuses it, and a
+  // reader already treats invalid content as such. A directory that cannot be created (EACCES, EROFS,
+  // EDQUOT) refuses the write like any other refusal.
+  let written;
+  try { written = writeFileContained(loc.home, relative, bytes, { exclusive: immutable && !replace, mode: 0o600, durable: immutable ? 'best-effort' : durable }); }
+  catch (error) { throw deferred(`retained record publication refused: ${error.message}`, 'refused-write'); }
+  if (!written) throw deferred('retained record publication refused', 'refused-write');
   return replace ? 'replaced' : 'written';
 }
 
@@ -274,9 +296,10 @@ export const READINESS_SWEEP_INTERVAL_MS = 30 * 1000;
  * after the cursor, in sorted order, each integrity-checked and its readiness receipt written to the plan's
  * index forward-only (an index already proving a newer or equal receipt is kept), adding each plan whose
  * index it wrote to `wrote`. Returns the advanced sweep and whether this slice reached the end of the
- * archive. Runs under the caller's per-pass lock.
+ * archive. A record name of a live request (in `live`) that cannot be used is skipped. Runs under the
+ * caller's per-pass lock.
  */
-function sweepSlice(loc, sweep, faults, wrote = new Set(), rebuilt = new Set()) {
+function sweepSlice(loc, sweep, faults, wrote = new Set(), rebuilt = new Set(), live = new Set()) {
   const relative = path.join(root(loc), 'requests');
   if (!assertNoSymlinkAncestors(loc.home, relative)) return { sweep, done: false };
   const names = [];
@@ -308,7 +331,9 @@ function sweepSlice(loc, sweep, faults, wrote = new Set(), rebuilt = new Set()) 
   for (const name of slice) {
     const requestId = name.slice(0, 64);
     let record;
-    try { record = archivedRequest(loc, requestId); } catch { unreadable += 1; offend({ file: `requests/${name}`, reason: 'unreadable-record' }); continue; }
+    // A live request's record name that cannot be used is the archive-fault marker's to report: the request
+    // has not archived, and its readiness index is written when it does.
+    try { record = archivedRequest(loc, requestId); } catch { if (live.has(requestId)) continue; unreadable += 1; offend({ file: `requests/${name}`, reason: 'unreadable-record' }); continue; }
     const receipt = record?.receipt, planPath = record?.request?.planPath;
     if (receipt?.type !== 'readiness' || !keyablePlan(planPath) || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) continue;
     try {
@@ -399,17 +424,60 @@ function validTask(value) {
   return object(value) && Number.isFinite(value.startedAt) && object(value.counts) && ['decisions', 'repairs', 'acquisitions'].every(key => Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0);
 }
 
-/** Counters retain the earliest start and greatest observed use across crash recovery. */
+/**
+ * Counters retain the earliest start and greatest observed use across crash recovery. A retained task
+ * record that reads but proves nothing (empty or partial after a crash, malformed, a broken hash or
+ * binding) is ignored, and the next retirement replaces it. One that cannot be used now (a failed read, a
+ * newer schema, a non-regular entry at its name) throws with a `reason`, so the caller keeps the live task.
+ */
 export function decisionTask(loc, state, key) {
   if (!ID.test(key || '')) return null;
-  const retained = readRecord(loc, path.join(root(loc), 'tasks', `${key}.json`));
-  if (retained && (retained.budgetKey !== key || !validTask(retained.task))) throw fail('retained task budget binding is invalid');
+  const relative = path.join(root(loc), 'tasks', `${key}.json`);
+  let retained;
+  try { retained = readRecord(loc, relative); }
+  catch (error) {
+    if (!error.invalid) throw Object.assign(fail(`retained task budget cannot be used now: ${error.message}`), { reason: error.reason || 'unreadable-now' });
+    let stat;
+    try { stat = fs.lstatSync(path.join(loc.home, relative)); }
+    catch (statError) { throw Object.assign(fail(`retained task budget cannot be inspected now: ${statError.message}`), { reason: 'unreadable-now' }); }
+    if (!stat.isFile()) throw Object.assign(fail('retained task budget name holds a symlink or another non-regular entry, which is never replaced'), { reason: 'not-regular' });
+    retained = null;
+  }
+  if (retained && (retained.budgetKey !== key || !validTask(retained.task))) retained = null;
   const current = state.tasks[key];
   if (current && !validTask(current)) throw fail('live task budget is malformed');
   if (!current && !retained) return null;
   const task = current && retained ? { startedAt: Math.min(current.startedAt, retained.task.startedAt), counts: Object.fromEntries(['decisions', 'repairs', 'acquisitions'].map(name => [name, Math.max(current.counts[name], retained.task.counts[name])])) } : current || retained.task;
   state.tasks[key] = task;
   return task;
+}
+
+// The archive-fault marker: records the last retiring pass could not archive, which stay live in the decision
+// state. `count` counts them; `files` names up to MAX_OFFENDERS by archive-relative hex name with the reason
+// that selects the remedy. Recomputed by every retiring pass; while it is set every pass retires, so a fixed
+// record archives on the next decision operation and the marker clears.
+const ARCHIVE_FAULT = /^(requests|tasks)\/[a-f0-9]{64}\.json$/;
+export const ARCHIVE_REASONS = Object.freeze(['not-regular', 'unreadable-now', 'unknown-schema', 'conflict', 'redirected', 'refused-write']);
+/** The sanitized archive-fault marker, with the archive path its file names are relative to. */
+export function archiveFaults(loc, state) {
+  const value = object(state.archiveFaults) ? state.archiveFaults : {}, files = [];
+  for (const item of Array.isArray(value.files) ? value.files : []) {
+    if (files.length >= MAX_OFFENDERS) break;
+    if (object(item) && typeof item.file === 'string' && ARCHIVE_FAULT.test(item.file) && ARCHIVE_REASONS.includes(item.reason) && !files.some(seen => seen.file === item.file)) files.push({ file: item.file, reason: item.reason });
+  }
+  const count = Math.min(MAX_UNTRACKED, Math.max(nonNegative(value.count), files.length));
+  return { count, files, truncated: count > files.length, archive: path.join(loc.home, root(loc)) };
+}
+// A request hydrated from the archive that a pass keeps live (its archive deferred) keeps its mark across the
+// published state, so a later pass never treats it as a fresh receipt.
+function restoreHydrated(state) {
+  const ids = Array.isArray(state.hydratedLive) ? state.hydratedLive : [];
+  delete state.hydratedLive;
+  for (const id of ids) {
+    if (typeof id !== 'string' || !ID.test(id) || !Object.hasOwn(state.requests, id)) continue;
+    if (!state.archivedHydrated) Object.defineProperty(state, 'archivedHydrated', { value: new Set(), enumerable: false });
+    state.archivedHydrated.add(id);
+  }
 }
 
 /**
@@ -440,20 +508,22 @@ export function decisionTask(loc, state, key) {
  * that record. A read that fails (EMFILE, EIO) is retried instead. A sweep keeps up to MAX_OFFENDERS
  * archive-relative names of the files it could not use, each with its reason, so status can name them
  * and give the matching remedy. A plan path that is not well-formed Unicode is never indexed or noted.
- * Archiving a request record never refuses the pass: a failed flush publishes it unflushed; a record name
- * holding content that proves nothing (left by a crash after link, before the state was published) is
+ * Archiving never throws out of the pass: a failed flush publishes a request record unflushed; a record
+ * name holding content that proves nothing (left by a crash after link, before the state was published) is
  * replaced with the verified record, and its plan is counted as untracked so a restarted sweep reconciles
- * it; and a record that cannot be archived this pass (a read that fails, a refused write, a non-regular
- * entry at its name) keeps its request live for a later pass. A non-regular entry never clears by itself,
- * so it also marks the archive for a sweep, which counts it unreadable and names it in status.
- * Returns this pass's faults, `{ requestId, plan, message }` (`plan` null for a request without a
- * readiness receipt); callers may ignore them, because status derives readiness-index health from the
- * index, the notes and the sweep, not from these faults.
+ * it; a retained record that already proves consumption stands over a live copy consumed again later; and
+ * a request or task record that cannot be archived this pass (see writeRecord and decisionTask) keeps its
+ * live copy, is counted and named in `state.archiveFaults` with its reason, and is retried on every later
+ * pass until it archives. A sweep skips a live request's record name, which that marker reports instead.
+ * Returns this pass's faults, `{ requestId, plan, message }` (`requestId` and `plan` null for a task,
+ * `plan` null for a request without a readiness receipt); callers may ignore them, because status derives
+ * readiness-index health from the index, the notes and the sweep, and archive health from the marker.
  */
 export function compactDecisions(loc, state, options = {}) {
   const faults = [];
-  // Small state with nothing hydrated retires nothing; it still retries noted index writes.
-  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || state.archivedHydrated?.size > 0;
+  restoreHydrated(state);
+  // Small state with nothing hydrated and no deferred record retires nothing; it still retries noted index writes.
+  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || state.archivedHydrated?.size > 0 || archiveFaults(loc, state).count > 0;
   // The consume path (retries off) with nothing to retire leaves readiness bookkeeping untouched.
   if (!retireNow && (state.readinessPending === undefined || options.retries === false)) return faults;
   const now = loc.now ?? Date.now(), touched = new Set();
@@ -466,6 +536,17 @@ export function compactDecisions(loc, state, options = {}) {
   // A note never claims to have been tried after this pass, so a hostile time cannot starve its retry.
   for (const entry of pending.values()) if (entry.tried > pass) entry.tried = pass;
   const tried = new Set(), wrote = new Set(), untrackedNow = new Set(), rebuilt = new Set();
+  const deferredFiles = [];
+  let deferredCount = 0;
+  const defer = (file, reason) => {
+    deferredCount += 1;
+    if (deferredFiles.length < MAX_OFFENDERS && !deferredFiles.some(seen => seen.file === file)) deferredFiles.push({ file, reason: ARCHIVE_REASONS.includes(reason) ? reason : 'refused-write' });
+  };
+  // A retained task budget that cannot be used now leaves only the live copy to judge expiry by.
+  const taskOf = key => {
+    try { return decisionTask(loc, state, key); }
+    catch { return validTask(state.tasks[key]) ? state.tasks[key] : null; }
+  };
   // A pass that leaves a plan untracked whose record may lie behind the sweep cursor restarts the sweep.
   let restart = false;
   // Absent or mismatched evidence (null) is not unreadable evidence (threw): only the first drops a note.
@@ -494,7 +575,7 @@ export function compactDecisions(loc, state, options = {}) {
     }
   };
   for (const [requestId, request] of retireNow ? Object.entries(state.requests) : []) {
-    const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
+    const task = taskOf(request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
     const expired = task && Number.isSafeInteger(seconds) && now >= task.startedAt && now - task.startedAt > seconds * 1000;
     const terminal = receipt && (!receipt.authorized || receipt.consumedAt !== null);
@@ -507,11 +588,9 @@ export function compactDecisions(loc, state, options = {}) {
     let archived;
     try { archived = writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true); }
     catch (error) {
-      if (!error.deferred) throw error;
-      // The request stays live and is archived on a later pass. A non-regular entry at its name never
-      // clears by itself: a sweep lists that name, counts it unreadable and names it in status.
+      // The request stays live, is named in the archive-fault marker, and is retried on every later pass.
       faults.push({ requestId, plan: readinessPlan, message: `request ${requestId} not archived this pass, kept live: ${error.message}` });
-      if (error.notRegular && !untracked) untracked = 1;
+      defer(`requests/${requestId}.json`, error.reason);
       continue;
     }
     if (archived === 'replaced') {
@@ -572,7 +651,7 @@ export function compactDecisions(loc, state, options = {}) {
     sweep = prior;
     if (due) {
       const sweptPlans = new Set(), sweptRebuilt = new Set();
-      const slice = sweepSlice(loc, { ...prior, lastSweepAt: now }, faults, sweptPlans, sweptRebuilt);
+      const slice = sweepSlice(loc, { ...prior, lastSweepAt: now }, faults, sweptPlans, sweptRebuilt, new Set(Object.keys(state.requests)));
       // A note whose plan index the sweep just wrote leaves once that index holds it.
       kept = kept.filter(entry => !(sweptPlans.has(entry.plan) && indexHolds(loc, entry)));
       sweep = slice.sweep;
@@ -589,10 +668,25 @@ export function compactDecisions(loc, state, options = {}) {
   const liveTasks = new Set(Object.values(state.requests).map(request => request.budgetKey));
   for (const key of new Set([...touched, ...Object.keys(state.tasks)])) {
     if (liveTasks.has(key)) continue;
-    const task = decisionTask(loc, state, key);
+    let task;
+    try { task = decisionTask(loc, state, key); }
+    catch (error) {
+      // A malformed live task (no reason) is left as it is; a retained record that cannot be used is reported.
+      if (error.reason) { defer(`tasks/${key}.json`, error.reason); faults.push({ requestId: null, plan: null, message: `task budget ${key} not retired this pass, kept live: ${error.message}` }); }
+      continue;
+    }
     if (!task) continue;
-    writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task });
+    try { writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task }, false, 'best-effort'); }
+    catch (error) {
+      defer(`tasks/${key}.json`, error.reason);
+      faults.push({ requestId: null, plan: null, message: `task budget ${key} not retired this pass, kept live: ${error.message}` });
+      continue;
+    }
     delete state.tasks[key];
   }
+  if (deferredCount) state.archiveFaults = { count: Math.min(MAX_UNTRACKED, deferredCount), files: deferredFiles };
+  else delete state.archiveFaults;
+  const hydratedLive = [...(state.archivedHydrated || [])].filter(id => Object.hasOwn(state.requests, id)).sort();
+  if (hydratedLive.length) state.hydratedLive = hydratedLive;
   return faults;
 }

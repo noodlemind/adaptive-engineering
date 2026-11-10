@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, READINESS_SWEEP_INTERVAL_MS, MAX_SWEEP_RECORDS } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, archiveFaults, READINESS_SWEEP_INTERVAL_MS, MAX_SWEEP_RECORDS } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -140,7 +140,12 @@ function mutate(loc, callback, { sweep = false } = {}) {
     compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS } : { sweep: false, retries: false });
     delete state.warnings;
     const bytes = stable(state);
-    if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
+    if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) {
+      // Records that cannot be archived stay live; when they are what holds the state, waiting never helps.
+      const held = archiveFaults(loc, state);
+      if (held.count) throw fail(`active decision capacity is full while ${archiveFaultText(held)}`);
+      throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
+    }
     if (!writeFileContained(loc.home, loc.relative, `${bytes}\n`, { mode: 0o600 })) throw fail('decision state publication refused');
     return result;
   } finally { fs.rmdirSync(lock); }
@@ -449,6 +454,28 @@ const OFFENDER_REMEDIES = [
   ['not-regular', 'readiness index files that are symlinks or not regular files, never followed or replaced: remove them and the next decision prepare or record rebuilds them'],
   ['refused-write', 'readiness index files that could not be read or written: make them and their readiness directory, which must be a real directory, readable and writable, or remove them, and the next decision prepare or record rebuilds them'],
 ];
+// The remedy for each reason a record could not be archived (see ARCHIVE_REASONS in decision-archive.mjs).
+const ARCHIVE_REMEDIES = [
+  ['not-regular', 'a symlink, directory or other non-regular entry holds the record\'s name and is never replaced: remove that entry'],
+  ['unreadable-now', 'the entry at the record\'s name cannot be read now: make it and its directory readable'],
+  ['unknown-schema', 'a newer version of AE wrote the record there, which this version never replaces: use that newer version, or move the record out of the archive'],
+  ['conflict', 'a valid retained record there disagrees with the live copy, and retained evidence is never overwritten: inspect it, and move it out of the archive only if the live copy is the one to keep'],
+  ['redirected', 'a directory on the record\'s path is a symlink, which is never written through: replace it with a real directory'],
+  ['refused-write', 'the record could not be written: make its directory a writable real directory, with free space, on a filesystem that supports hard links'],
+];
+/** The archive-fault description shared by the status warning and the capacity error. */
+function archiveFaultText({ count, files, truncated, archive }) {
+  const groups = ARCHIVE_REMEDIES.map(([reason, remedy]) => [files.filter(item => item.reason === reason).map(item => item.file), remedy]).filter(([named]) => named.length);
+  return `${count} retained record(s) could not be archived and stay live in the decision state, which grows until they archive`
+    + (files.length ? `; files under ${archive}${truncated ? ` (first ${files.length})` : ''}: ${groups.map(([named, remedy]) => `${named.join(', ')} (${remedy})`).join('; ')}` : '')
+    + '; every decision operation retries them, so each archives on the next one after its cause is fixed';
+}
+/** The derived archive-fault warning, or none. */
+function archiveWarnings(loc, state) {
+  const held = archiveFaults(loc, state);
+  if (!held.count) return [];
+  return [{ fault: 'archive', count: held.count, archive: held.archive, files: held.files.map(item => item.file), offenders: held.files, message: archiveFaultText(held) }];
+}
 // Status names at most this many stale plans, by short hash, newest first.
 const STATUS_PLAN_SAMPLE = 8;
 /** The one derived readiness-index warning, or none. Recomputed from the index on every call. */
@@ -483,7 +510,7 @@ export function decisionStatus(options) {
   const state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
-  const live = readinessWarnings(loc, state), warnings = live.length ? { warnings: live } : {};
+  const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state)], warnings = live.length ? { warnings: live } : {};
   if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }
