@@ -14,6 +14,7 @@ import { compactDecisions, hydrateArchivedDecision, latestArchivedReadiness, rea
 import { decisionResultOf } from '../lib/decision-agent.mjs';
 import { decisionStatus, inspectDecisionAction, latestReadinessReceipt, prepareDecision } from '../lib/decision-agent.mjs';
 import { runOrient } from '../lib/orient.mjs';
+import { learningRendered } from '../lib/context-pack.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import {
   acceptedFeedbackRecord, exposureRel, exposureTotals, feedbackSummary, learningVersion, planReviewFindings, publishFeedbackRecord, readExposure, readFeedbackRecords, recordExposure, validateFeedbackFields,
@@ -361,7 +362,8 @@ test('under an index fault a hydrated request is never noted as newest, and an o
   assert.equal(hydrateArchivedDecision(loc, hydrated, r1.requestId).requestId, r1.requestId);
   compactDecisions(loc, hydrated);
   assert.deepEqual(Object.keys(hydrated.requests), [], 'the hydrated request is retired again');
-  assert.equal(hydrated.readinessPending, undefined, 'R2 behind the index stays the newest');
+  assert.deepEqual(hydrated.readinessPending.plans, {}, 'R2 behind the index stays the newest: R1 is never noted');
+  assert.equal(hydrated.readinessPending.untracked, 1, 'the refused re-archive write is not swallowed: the plan is counted as untracked');
 
   // An older terminal request archived under the fault is noted; the open newest stays live.
   const r3 = d.readiness('escalate', 3), r4 = readinessFor(d, PLAN, 'ready', 4, 600 * 1024);
@@ -952,7 +954,7 @@ test('J1: an indexed newer record unreadable for one pass never lets an older re
   assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2);
 });
 
-test('J2: a guarded tool call never lists the request archive; status and decision writes advance a throttled sweep', t => {
+test('J2: a guarded tool call never lists the request archive; decision writes advance a throttled sweep, status does not', t => {
   const c = seeded(t);
   const d = decisionHarness(c);
   const run = decisionRun(c, d);
@@ -973,16 +975,18 @@ test('J2: a guarded tool call never lists the request archive; status and decisi
     assert.equal(listings, 0, 'the consume path never lists requests/');
     assert.deepEqual([run.stored().readinessPending.sweep?.swept ?? 0, run.stored().readinessPending.sweep?.lastSweepAt], [0, undefined], 'and runs no sweep slice');
     run.status(undefined, 100010);
-    assert.equal(listings, 1, 'status runs one due slice');
+    assert.equal(listings, 0, 'status runs no slice');
+    run.prepare(100020);
+    assert.equal(listings, 1, 'a decision write runs one due slice');
     assert.equal(run.stored().readinessPending.sweep.swept, 64);
     run.status(undefined, 110000);
     run.prepare(120000);
-    assert.equal(listings, 1, 'within 30 seconds of the last slice, neither status nor a write lists again');
+    assert.equal(listings, 1, 'within 30 seconds of the last slice, a write does not list again');
     assert.equal(run.stored().readinessPending.sweep.swept, 64);
-    run.prepare(130010);
+    run.prepare(130030);
     assert.equal(listings, 2, 'a write 30 seconds later runs the next slice');
   } finally { fs.opendirSync = opendirSync; fs.readdirSync = readdirSync; }
-  assert.equal(run.stored().readinessPending, undefined, 'the sweep completed cleanly over status and record calls');
+  assert.equal(run.stored().readinessPending, undefined, 'the sweep completed cleanly over decision writes');
   assert.ok(plans.every((planPath, i) => latestArchivedReadiness(loc, planPath)?.recordedAt === i + 1));
   const warning = staleWarning(run, undefined, 140000);
   assert.equal(warning, undefined);
@@ -1000,7 +1004,8 @@ test('J2b: a sweep that cannot complete says why plainly, and the warning names 
   assert.match(warning.message, /2 unreadable request record/);
   assert.match(warning.message, /stays for good while those records remain unreadable/);
   assert.match(warning.message, /more records than one sweep can list, so no sweep can complete/);
-  assert.equal(run.stored().readinessPending.sweep.lastSweepAt, 1000, 'status within the interval ran no slice');
+  assert.equal(run.stored().readinessPending.sweep.lastSweepAt, 1000, 'status ran no slice');
+  assert.match(warning.message, /on decision prepare or record; status only reports it/);
 });
 
 test('J3: with 256 notes, one compaction pass reads at most 16 indexes', t => {
@@ -1078,4 +1083,185 @@ test('J4c: a note whose own time is older than its record proves never hides a s
   compactDecisions(loc, state);
   assert.equal(state.readinessPending, undefined);
   assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2, 'the retry proved R2 and wrote it');
+});
+
+// Eleventh review pass (PR #123): only a missing index reads as "no index", a sweep cursor past every record restarts,
+// a forged note time never discards a newer receipt, status is lock-free, the consume path retries nothing, and
+// exposure, feedback-record and delivery checks are strict.
+
+/** Fail the next `count` opens of `file` (reads and writes alike) with EMFILE, then run normally. */
+function emfileOn(file, fn, count = 1) {
+  const { openSync } = fs;
+  let failed = 0;
+  fs.openSync = (target, ...rest) => {
+    if (String(target) === file && failed < count) { failed += 1; throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' }); }
+    return openSync(target, ...rest);
+  };
+  try { return fn(); } finally { fs.openSync = openSync; assert.ok(failed > 0, 'the index read was attempted'); }
+}
+
+test('K1: an index read that fails (EMFILE) never lets an older receipt replace a newer index, in any path', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const a = d.readiness('escalate', 1), b = d.readiness('blocked', 2);
+  assert.deepEqual(compactDecisions(loc, d.state([b])), []);
+  const names = () => JSON.parse(fs.readFileSync(indexFile(d, PLAN), 'utf8')).receipt.requestId;
+  // Normal compaction.
+  const state = d.state([a]);
+  const faults = emfileOn(indexFile(d, PLAN), () => compactDecisions(loc, state));
+  assert.equal(names(), b.requestId, 'the index still names the newer receipt');
+  assert.deepEqual(faults.map(item => item.requestId), [a.requestId]);
+  assert.match(faults[0].message, /readiness index cannot be read, so it is kept/);
+  assert.equal(state.readinessPending.plans[sha(PLAN)].requestId, a.requestId, 'the refused citation is noted');
+  persistState(d, state);
+  const warning = emfileOn(indexFile(d, PLAN), () => staleWarning(run, undefined, 11), Infinity);
+  assert.equal(warning.planCount, 1, 'status reports the plan while its index cannot be read');
+  compactDecisions(loc, state);
+  assert.equal(state.readinessPending, undefined, 'once the index reads, it holds the newer receipt and the note leaves');
+  // The hydrated re-archive branch: the failure is a fault and an untracked plan, never a silent success.
+  const hydrated = d.state([]);
+  hydrateArchivedDecision(loc, hydrated, a.requestId);
+  const again = emfileOn(indexFile(d, PLAN), () => compactDecisions(loc, hydrated, { sweep: false }));
+  assert.equal(names(), b.requestId);
+  assert.match(again[0].message, /re-archived request/);
+  assert.deepEqual([hydrated.readinessPending.untracked, hydrated.readinessPending.plans], [1, {}]);
+  persistState(d, hydrated);
+  assert.equal(staleWarning(run, undefined, 12).untrackedPlans, 1, 'status reports it');
+  // The sweep: a failed index read counts as failed, so the sweep cannot finish clean and keeps the marker.
+  const swept = d.state([]);
+  swept.readinessPending = { plans: {}, untracked: 1 };
+  emfileOn(indexFile(d, PLAN), () => compactDecisions(loc, swept));
+  assert.equal(names(), b.requestId);
+  assert.equal(swept.readinessPending.untracked, 1, 'the marker stays');
+  assert.deepEqual(swept.readinessPending.sweep.last, { unreadable: 0, failed: 1 });
+  compactDecisions(loc, swept);
+  assert.equal(swept.readinessPending, undefined, 'a later clean sweep clears it');
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2);
+});
+
+test('K2: a sweep cursor past every record restarts the sweep instead of clearing the marker', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const { loc, plans, state } = untrackedArchive(c, d, 100, 1);
+  state.readinessPending.sweep = { after: `${'f'.repeat(64)}.json`, swept: 100, unreadable: 0, failed: 0, total: 100 };
+  compactDecisions(loc, state);
+  assert.equal(state.readinessPending?.untracked, 1, 'the marker stays: nothing was swept');
+  assert.equal(state.readinessPending.sweep.swept, 64, 'the sweep restarted from the beginning');
+  compactDecisions(loc, state);
+  assert.equal(state.readinessPending, undefined, 'the full pass clears it');
+  assert.ok(plans.every((planPath, i) => latestArchivedReadiness(loc, planPath)?.recordedAt === i + 1), 'every index was rebuilt');
+});
+
+test('K3: a prior note with a forged time never discards a newer refused receipt', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const r1 = d.readiness('escalate', 1), r2 = d.readiness('blocked', 2), r3 = d.readiness('escalate', 3);
+  assert.deepEqual(compactDecisions(loc, d.state([r1])), []);
+  const state = d.state([r2]);
+  refuseIndexFor(sha(PLAN), () => compactDecisions(loc, state));
+  state.readinessPending.plans[sha(PLAN)].recordedAt = 1e15;
+  state.requests[r3.requestId] = r3.request; state.receipts[r3.requestId] = r3.receipt;
+  refuseIndexFor(sha(PLAN), () => compactDecisions(loc, state));
+  assert.deepEqual([state.readinessPending.plans[sha(PLAN)].requestId, state.readinessPending.plans[sha(PLAN)].recordedAt], [r3.requestId, 3], 'R3 replaces the note: R2 proves only time 2');
+  compactDecisions(loc, state);
+  assert.equal(state.readinessPending, undefined);
+  assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 3);
+});
+
+test('K4: decision status takes no lock and writes no state, even when a sweep slice is due', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const { state } = untrackedArchive(c, d, 10, 1);
+  persistState(d, state);
+  const before = fs.readFileSync(d.stateFile, 'utf8');
+  const { mkdirSync, opendirSync } = fs;
+  let locks = 0, listings = 0;
+  fs.mkdirSync = (file, ...rest) => { if (String(file).endsWith('.lock')) locks += 1; return mkdirSync(file, ...rest); };
+  fs.opendirSync = (file, ...rest) => { if (String(file).endsWith(`${path.sep}requests`)) listings += 1; return opendirSync(file, ...rest); };
+  let warning;
+  try { warning = staleWarning(run, undefined, 100000); } finally { fs.mkdirSync = mkdirSync; fs.opendirSync = opendirSync; }
+  assert.deepEqual([locks, listings], [0, 0], 'no lock and no archive listing');
+  assert.equal(fs.readFileSync(d.stateFile, 'utf8'), before, 'the stored state is unchanged');
+  assert.equal(warning.untrackedPlans, 1, 'status still reports from what exists');
+  assert.match(warning.message, /the sweep starts on the next decision prepare or record/);
+  // A held lock (a concurrent guarded tool call) never makes status fail.
+  mkdirSync(`${d.stateFile}.lock`);
+  t.after(() => fs.rmSync(`${d.stateFile}.lock`, { recursive: true, force: true }));
+  assert.equal(staleWarning(run, undefined, 100001).untrackedPlans, 1);
+});
+
+test('K5: the guarded consume path retries no noted index write and leaves the notes unchanged', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const plans = ['docs/plans/k5a.md', 'docs/plans/k5b.md', 'docs/plans/k5c.md'];
+  redirectIndex(c, d);
+  const state = d.state(plans.map((planPath, i) => readinessFor(d, planPath, 'escalate', i + 1, i === 0 ? 600 * 1024 : 0)));
+  compactDecisions(loc, state);
+  assert.equal(Object.keys(state.readinessPending.plans).length, 3);
+  fs.unlinkSync(path.join(d.archive, 'readiness'));
+  persistState(d, state);
+  const pending = JSON.parse(fs.readFileSync(d.stateFile, 'utf8')).readinessPending;
+  const policy = { enabled: true, revision: 'consent-1', tools: ['execute'], budgets: { maxDecisions: 1, maxRepairs: 1, maxAcquisitions: 1, maxSeconds: 60 } };
+  const action = { tool: 'Bash', input: { command: 'node test.mjs' }, cwd: d.workspace };
+  const { openSync } = fs;
+  let reads = 0;
+  fs.openSync = (file, ...rest) => { if (String(file).startsWith(d.archive)) reads += 1; return openSync(file, ...rest); };
+  try {
+    for (let i = 0; i < 3; i++) assert.equal(inspectDecisionAction({ workspace: c.ws, home: c.home, policy, sessionId: 'session-x', action, consume: true, now: 1000 + i }).authorized, false);
+  } finally { fs.openSync = openSync; }
+  assert.equal(reads, 0, 'no index or request record is read');
+  assert.deepEqual(JSON.parse(fs.readFileSync(d.stateFile, 'utf8')).readinessPending, pending, 'notes and pass counter are unchanged');
+});
+
+test('K6: an exposure entry with a malformed or later-than-last first exposure is dropped, never carried forward', t => {
+  const c = seeded(t);
+  const past = new Date(Date.now() - 60 * 60 * 1000).toISOString(), later = new Date(Date.now() - 60 * 1000).toISOString();
+  writeExposure(c, [
+    { id: 'bad/first', layer: 'golden', firstExposedAt: 'yesterday', lastExposedAt: past, count: 2 },
+    { id: 'loose/first', layer: 'golden', firstExposedAt: '2026-11-01T00:00:00Z', lastExposedAt: past, count: 2 },
+    { id: 'late/first', layer: 'golden', firstExposedAt: later, lastExposedAt: past, count: 2 },
+    { id: 'ok/first', layer: 'golden', firstExposedAt: past, lastExposedAt: past, count: 2 },
+  ]);
+  for (const id of ['bad/first', 'loose/first', 'late/first']) {
+    assert.throws(() => validateFeedbackFields({ operation: 'x', decision: 'no-learning', rationale: 'r', recalled: [{ id, verdict: 'helped' }] }, { recordRoot: c.ws, planPath: PLAN }), /never delivered/, id);
+    assert.equal(exposureTotals(c.ws).has(id), false, id);
+  }
+  const next = recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [{ id: 'real/learning' }] });
+  assert.deepEqual(next.entries.map(entry => [entry.id, entry.firstExposedAt === undefined || Date.parse(entry.firstExposedAt) <= Date.parse(entry.lastExposedAt)]), [['ok/first', true], ['real/learning', true]]);
+});
+
+test('K7: only a valid feedback record at the key marks the decision as recorded', t => {
+  const c = seeded(t);
+  const feedback = { recalled: [{ id: c.id, verdict: 'helped' }] };
+  const dir = path.join(projectStoreDir(c.ws, { home: c.home }), 'feedback');
+  fs.mkdirSync(dir, { recursive: true });
+  const operation = sha('k7'), digest = sha('k7-digest');
+  const keyed = path.join(dir, `${recordHash({ operation, plan: PLAN, digest })}.json`);
+  for (const bytes of ['not json', JSON.stringify({ version: 2, operation, plan: PLAN, digest }), JSON.stringify({ version: 1, operation: sha('other'), plan: PLAN, digest })]) {
+    fs.writeFileSync(keyed, bytes);
+    assert.equal(acceptedFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, feedback }), null, bytes.slice(0, 20));
+    assert.throws(() => publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, captureDate: '2026-11-10', feedback }), /unsafe or unavailable/);
+    assert.equal(fs.readFileSync(keyed, 'utf8'), bytes, 'the file is never replaced');
+  }
+  fs.unlinkSync(keyed);
+  const published = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, captureDate: '2026-11-10', feedback });
+  assert.deepEqual(published, { path: keyed, written: true });
+  assert.equal(acceptedFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, feedback }), keyed);
+  assert.deepEqual(publishFeedbackRecord({ workspace: c.ws, home: c.home, operation, digest, planPath: PLAN, captureDate: '2026-11-10', feedback }), { path: keyed, written: false });
+});
+
+test('K8: a golden learning whose own text starts with [branch-local is credited; the renderer\'s marks are not', () => {
+  const golden = { id: 'sql/dup' };
+  const pack = line => `# Harness Context Pack\n\n## Learnings (memory)\n${line}`;
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-local notes] keep them apart → c\n'), golden), true);
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-locality] t → c\n'), golden), true);
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-local] t → c\n'), golden), false);
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-local, subordinate] t → c\n'), golden), false);
+  assert.equal(learningRendered(pack('- [sql/dup] [branch-loc'), golden), false, 'a truncated mark is not credited');
 });

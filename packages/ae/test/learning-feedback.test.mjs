@@ -8,7 +8,7 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { readFeedbackConfig, storeDir, writeFeedbackConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import {
-  EXPOSURE_ENTRY_CAP, exposureRel, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
+  acceptedFeedbackRecord, EXPOSURE_ENTRY_CAP, exposureRel, exposureTotals, feedbackState, feedbackSummary, learningVersion, publishFeedbackRecord, readExposure, recordExposure, validateFeedbackFields,
 } from '../lib/learning-feedback.mjs';
 import { feedbackPruningCheck } from '../lib/doctor.mjs';
 import { publishReviewRecord, recordHash } from '../lib/review.mjs';
@@ -538,14 +538,14 @@ test('third pass F: the K8 candidate list is capped at 20 with a count of the re
   assert.match(k8.hint, /and 20 more/);
 });
 
-test('third pass J: an existing feedback record over the read limit reports written:false instead of throwing', t => {
+test('third pass J: an existing file over the read limit is not taken as the accepted record and is never replaced', t => {
   const c = seeded(t);
   const op = operation('oversized');
   const file = path.join(projectStoreDir(c.ws, { home: c.home }), 'feedback', `${op}.json`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ version: 1, operation: op, plan: PLAN, note: 'x'.repeat(300 * 1024) }));
-  const result = publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: op, planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } });
-  assert.deepEqual(result, { path: file, written: false });
+  assert.throws(() => publishFeedbackRecord({ workspace: c.ws, home: c.home, operation: op, planPath: PLAN, captureDate: '2026-11-09', feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } }), /unsafe or unavailable/);
+  assert.equal(acceptedFeedbackRecord({ workspace: c.ws, home: c.home, operation: op, planPath: PLAN, feedback: { recalled: [{ id: c.id, verdict: 'helped' }] } }), null);
   assert.ok(fs.statSync(file).size > 256 * 1024, 'the hand-made file is left as it is');
 });
 

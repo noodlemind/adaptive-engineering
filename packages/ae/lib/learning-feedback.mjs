@@ -94,9 +94,9 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   // look like the future.
   const nowMs = Math.max(now.getTime(), Date.now());
   const clamp = value => exposureTime(value) > nowMs ? new Date(nowMs).toISOString() : value;
-  const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(entry => [entryKey(entry), {
+  const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(({ firstExposedAt, ...entry }) => [entryKey(entry), {
     ...entry,
-    ...(exposureTime(entry.firstExposedAt) !== null ? { firstExposedAt: clamp(entry.firstExposedAt) } : {}),
+    ...(exposureTime(firstExposedAt) !== null ? { firstExposedAt: clamp(firstExposedAt) } : {}),
     lastExposedAt: clamp(entry.lastExposedAt),
   }]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
@@ -273,14 +273,15 @@ function legacyAccepted(base, { operation, plan, digest, feedback }) {
 }
 
 /**
- * Whether a regular file already holds this record. A file over the read limit
- * (only possible by hand) still marks the decision as recorded; it is never
- * replaced and the caller reports written:false.
+ * Whether the file already holds a valid feedback record for this key: parseable, version 1, and named by
+ * its own operation, plan and digest. Any other file (garbage, oversized, another key's record) does not
+ * mark the decision as recorded; it is never replaced either, so publishing reports it as unavailable.
  */
 function feedbackFileExists(base, rel) {
-  const full = assertNoSymlinkAncestors(base, rel);
-  if (!full) return false;
-  try { return fs.lstatSync(full).isFile(); } catch { return false; }
+  if (!assertNoSymlinkAncestors(base, rel)) return false;
+  const record = readFeedbackFile(base, rel);
+  return Boolean(record) && typeof record === 'object' && !Array.isArray(record) && record.version === 1 && typeof record.operation === 'string' && (record.digest === undefined || ID.test(record.digest))
+    && `${feedbackKey(record)}.json` === path.basename(rel);
 }
 
 /** One immutable record per accepted learning decision, in the project store so every worktree's verdicts aggregate. */
@@ -395,11 +396,14 @@ const clampedExposureTime = (value, nowMs = Date.now()) => {
 };
 // One exposure entry as read back from disk. The writer carries forward, the reader counts and the
 // delivered gate accepts exactly the entries that pass this test: a learning ID, a count of at least
-// one, a version that is absent or a content hash, and a strict ISO exposure time. A future time is
-// valid; every comparison clamps it to the present.
+// one, a version that is absent or a content hash, a strict ISO exposure time, and a first exposure that
+// is absent or a strict ISO time no later than the last one (beyond a small skew). A future last time is
+// valid (a backward clock correction); every comparison clamps it to the present.
+const EXPOSURE_SKEW_MS = 60 * 1000;
 const wellFormedExposure = entry => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
   && Number.isSafeInteger(entry.count) && entry.count >= 1 && (entry.version === undefined || ID.test(entry.version))
-  && exposureTime(entry.lastExposedAt) !== null;
+  && exposureTime(entry.lastExposedAt) !== null
+  && (entry.firstExposedAt === undefined || (exposureTime(entry.firstExposedAt) !== null && exposureTime(entry.firstExposedAt) <= exposureTime(entry.lastExposedAt) + EXPOSURE_SKEW_MS));
 const later = (a, b, nowMs = Date.now()) => {
   const next = clampedExposureTime(b, nowMs);
   if (next === null) return a;

@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, readinessSweepDue, READINESS_SWEEP_INTERVAL_MS } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, READINESS_SWEEP_INTERVAL_MS } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -119,9 +119,10 @@ function readState(loc) {
 }
 
 /**
- * Run `callback` on the locked state, compact it and publish it. `sweep: true` lets this pass run one
- * throttled readiness reconciliation slice (decision prepare, record and status); the pre-tool consume
- * path leaves it off, so a guarded tool call never lists the request archive under the lock.
+ * Run `callback` on the locked state, compact it and publish it. `sweep: true` (decision prepare and
+ * record) lets this pass retry noted readiness-index writes and run one throttled reconciliation slice;
+ * every other pass, including the pre-tool consume path, does neither, so a guarded tool call never
+ * lists the request archive or retries index writes under the lock.
  */
 function mutate(loc, callback, { sweep = false } = {}) {
   fs.mkdirSync(loc.home, { recursive: true });
@@ -136,7 +137,7 @@ function mutate(loc, callback, { sweep = false } = {}) {
     const state = readState(loc), result = callback(state);
     // Readiness-index health is derived on read (decisionStatus), so nothing about it is stored here;
     // warnings persisted by earlier versions are dropped on this write.
-    compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS } : { sweep: false });
+    compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS } : { sweep: false, retries: false });
     delete state.warnings;
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
@@ -450,12 +451,12 @@ function readinessWarnings(loc, state) {
   if (!stale.length && !untracked) return [];
   const shown = stale.slice(0, STATUS_PLAN_SAMPLE);
   const parts = [];
-  if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations use the archived receipt and the index write is retried on compaction`);
+  if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations use the archived receipt and the index write is retried on the next decision prepare or record`);
   if (untracked) {
-    const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision prepare, record or status';
+    const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision prepare or record';
     const last = sweep.last ? [sweep.last.unreadable ? `${sweep.last.unreadable} unreadable request record(s)` : null, sweep.last.failed ? `${sweep.last.failed} refused index write(s)` : null].filter(Boolean) : [];
     const interval = Math.round(READINESS_SWEEP_INTERVAL_MS / 1000);
-    parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive, one bounded slice at most every ${interval} seconds on decision prepare, record or status (${progress})`
+    parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive, one bounded slice at most every ${interval} seconds on decision prepare or record; status only reports it (${progress})`
       + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them, and it stays for good while those records remain unreadable or those writes keep being refused` : '')
       + (sweep.last?.overCap ? '; the request archive holds more records than one sweep can list, so no sweep can complete and the warning stays until the archive is smaller' : ''));
   }
@@ -465,9 +466,8 @@ function readinessWarnings(loc, state) {
 
 export function decisionStatus(options) {
   const loc = locations(options);
-  // Status advances the readiness reconciliation sweep when a slice is due; a busy or failing write is
-  // skipped, and status reports what exists.
-  try { if (readinessSweepDue(readState(loc), loc.now)) mutate(loc, () => null, { sweep: true }); } catch { /* reported from what exists */ }
+  // Status is read-only and takes no lock: readiness-index health is derived from what exists, and only
+  // decision prepare and record advance retries and the reconciliation sweep.
   const state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;

@@ -79,7 +79,7 @@ Invoke native `decision-agent` with the returned complete packet. Select a detec
 {"schema":1,"requestId":"<returned requestId>","verdict":"allow","reason":"<evidence-based assessment>","evidence":["<source or check reference>"]}
 ```
 
-`allow` applies to action or memory; `acquire` to capability; `ready` to readiness. `revise`, `deny`, or `escalate` preserve the actual unfinished state. The host hook records the complete result. Then execute the returned `recordCommand` with `{schema:1,operation:"record",requestId:"<returned requestId>"}` on stdin. Do not author the verdict or invocation provenance in the record input. `operation: "status"` may inspect a `requestId` without consuming it. Budgets, source changes, revocation and one-shot use remain authoritative.
+`allow` applies to action or memory; `acquire` to capability; `ready` to readiness. `revise`, `deny`, or `escalate` preserve the actual unfinished state. The host hook records the complete result. Then execute the returned `recordCommand` with `{schema:1,operation:"record",requestId:"<returned requestId>"}` on stdin. Do not author the verdict or invocation provenance in the record input. `operation: "status"` may inspect a `requestId` without consuming it. Status is read-only. Its `readiness-index` warning means a plan's readiness index may name an older receipt than the newest one archived, and citations then use the archived receipt. Only `prepare` and `record` retry the index and advance its reconciliation. Budgets, source changes, revocation and one-shot use remain authoritative.
 
 ## Native specialist review output
 

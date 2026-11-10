@@ -15,6 +15,7 @@ export const RECALL_DATA_PREAMBLE =
 const learningLayerMark = (l) => (l.layer === 'branch' ? (l.subordinate ? ' [branch-local, subordinate]' : ' [branch-local]') : '');
 
 const TWIN_MARK = ' [branch-local, subordinate]';
+const BRANCH_MARK = ' [branch-local]';
 
 /** Lines of the pack's `## Learnings (memory)` section, up to the next section heading. */
 function learningsSectionLines(packBody) {
@@ -29,8 +30,10 @@ function learningsSectionLines(packBody) {
 /**
  * Whether this learning's own line (layer mark included) starts a line of the
  * pack's learnings section, so a twin's line never credits the other layer. A
- * golden match is a twin line when the rest starts with ` [branch-local`, or is
- * a nonempty prefix of the twin mark cut off by truncation.
+ * golden match is a branch line when the rest starts with a whole mark the
+ * renderer adds (` [branch-local]` or ` [branch-local, subordinate]`), or is a
+ * nonempty prefix of one cut off by truncation. A golden learning whose own text
+ * starts with `[branch-local` but is not one of those marks is credited.
  */
 export function learningRendered(packBody, l) {
   const mark = learningLayerMark(l);
@@ -39,7 +42,7 @@ export function learningRendered(packBody, l) {
     if (!line.startsWith(prefix)) continue;
     if (mark) return true;
     const rest = line.slice(prefix.length);
-    if (rest.startsWith(' [branch-local') || (rest && TWIN_MARK.startsWith(rest))) continue;
+    if ([BRANCH_MARK, TWIN_MARK].some((m) => rest.startsWith(m) || (rest && m.startsWith(rest)))) continue;
     return true;
   }
   return false;
