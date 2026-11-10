@@ -22,10 +22,10 @@ import {
   provenanceBytes,
   correctionLines,
   statusForAuthority,
+  scanSecretsFolded,
 } from './store.mjs';
 import { deriveGitContext, isDetachedKey } from '../git-context.mjs';
 import { MAX_OPS_PER_RUN, LEARNING_BYTE_CAP, QUARANTINE_THRESHOLD, DOMAIN_ACTIVE_CAP, isActiveFm, collectEpisodes, splitLedger } from './consolidate.mjs';
-import { scanSecrets } from '../secret-scan.mjs';
 import { absorbOrAbort, mirrorLearnings } from './admin.mjs';
 import { parseMergedFrom } from './listing.mjs';
 import { resolveWriteLayer, ensureBucket, migrateRenamedBucket, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
@@ -1289,7 +1289,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-        const secrets = scanSecrets(`${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
+        const secrets = scanSecretsFolded(`${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
         if (secrets.length) {
           return rejectOp('E_SECRET', `op ${i}: secret-shaped content (${secrets.map((s) => s.id).join(', ')})`, op.episodes);
         }
@@ -1376,7 +1376,7 @@ export function applyOps({
         consumedTargets.add(op.target);
       }
       if (op.op === 'STRENGTHEN') {
-        const scopeSecrets = scanSecrets(`${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
+        const scopeSecrets = scanSecretsFolded(`${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
         if (scopeSecrets.length) {
           return rejectOp(
             'E_SECRET',

@@ -209,7 +209,7 @@ test('an evidence quote that puts a URL and an @ on adjacent lines is refused, s
 test('an insight evidence quote whose wrapped token follows another line is refused', () => {
   const wrapped = captureInsight({ evidenceQuote: `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}` });
   assert.equal(wrapped.result.pass, false);
-  assert.match(wrapped.result.blockedReason, /secret split across lines \(github-token\)/);
+  assert.match(wrapped.result.blockedReason, /secret split across lines \(split-token\)/);
   assert.ok(!wrapped.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
   assert.deepEqual(wrapped.written, []);
 });
@@ -218,7 +218,7 @@ test('ae compound --insight captures an accepted multi-line quote that the escap
   const ws = tempDir('quote-ml-ws-');
   const home = tempDir('quote-ml-hh-');
   const copilotHome = tempDir('quote-ml-ch-');
-  // Screened line by line and in compact spans, this holds no secret. Escaped
+  // Screened line by line and in the compact form, this holds no secret. Escaped
   // as JSON on one line, the break and tabs become `\n` and `\t`, which glue
   // the URL to the address into a false connection-string match.
   const quote = 'GET http://localhost:3000\nstatus\t401\tuser\tadmin@example.com';

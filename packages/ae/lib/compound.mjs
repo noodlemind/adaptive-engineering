@@ -13,8 +13,7 @@ import { selectPlan } from './plan-parse.mjs';
 import { loadPolicy } from './policy.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
-import { scanSecrets } from './secret-scan.mjs';
-import { readStoreConfig } from './knowledge/store.mjs';
+import { readStoreConfig, scanSecretsFolded } from './knowledge/store.mjs';
 import { evidenceQuoteError, evidenceQuoteLine } from './knowledge/evidence-quote.mjs';
 import { EXIT } from './style.mjs';
 import { deriveGitContext } from './git-context.mjs';
@@ -217,8 +216,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   // evidenceQuoteError already screened the quote in every form it can be
   // read in. Its escaped line is left out here: JSON turns each break into a
   // literal `\n`, which would glue lines that are screened apart into one
-  // false match. Every other field and the body are still scanned.
-  const secrets = scanSecrets(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
+  // false match. Every other field and the body are still scanned, also with
+  // invisible characters removed from their NFKC form (see scanSecretsFolded).
+  const secrets = scanSecretsFolded(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
   if (secrets.length) {
     return {
       pass: false,

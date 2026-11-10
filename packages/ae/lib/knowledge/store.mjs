@@ -8,6 +8,7 @@ import { storageIdForRepo } from '../storage-aliases.mjs';
 import { assertNoSymlinkAncestors, assertRealpathContained, readFileNoFollow } from '../fs-safe.mjs';
 import { gitMetadataEnvironment } from '../../corpus/hooks/lib/product-diff.mjs';
 import { cachedGitObservation } from '../git-observation-cache.mjs';
+import { scanSecrets } from '../secret-scan.mjs';
 import {
   readLearningFile,
   readStoreFile,
@@ -721,23 +722,22 @@ function yamlQuote(v) {
  * extra "lines" — fake headings, extra bullets, anything — into what is
  * otherwise a trusted context surface. Collapses every C0 control char
  * (0x00-0x1F), DEL (0x7F), every C1 control (0x80-0x9F, such as the CSI
- * terminal escape) and the Unicode line and paragraph separators (U+2028,
- * U+2029) to a single space. Removes outright every invisible character
- * (see stripInvisible): the bidirectional overrides, isolates and marks, the
- * zero-width and other format characters, the tag characters, the variation
- * selectors and every other default-ignorable code point. Removing rather
- * than blanking them keeps words whole (`⚠️ build` reads `⚠ build`, not
- * `⚠  build`) and leaves the token a reader sees for a keyword or secret
- * match. The text always renders as ONE visible line in its stored order,
- * wherever it's interpolated.
+ * terminal escape) and the bidirectional overrides and isolates
+ * (U+202A-U+202E, U+2066-U+2069), the bidirectional marks (U+200E, U+200F,
+ * U+061C), the Unicode line and paragraph separators (U+2028, U+2029), the
+ * zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
+ * U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB), the tag
+ * characters (U+E0000-U+E007F), and every other default-ignorable code point
+ * or format (Cf) character, such as U+034F, the variation selectors and the
+ * Hangul fillers, to a single space so the
+ * text always renders as ONE visible line in its stored order, wherever it's
+ * interpolated.
  */
 export function inertLine(text) {
-  return String(text ?? '').replace(INVISIBLE_CHARS, '').replace(INERT_LINE_BREAKS, ' ');
+  return String(text ?? '').replace(INERT_LINE_CHARS, ' ');
 }
 
-// What can break or rewrite a line: every C0 control, DEL, every C1 control
-// and the Unicode line and paragraph separators. Each becomes a space.
-const INERT_LINE_BREAKS = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
+const INERT_LINE_CHARS = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
 
 // Every default-ignorable code point and every format (Cf) character: what a
 // renderer may draw as nothing, such as U+034F, the variation selectors
@@ -752,6 +752,22 @@ const INVISIBLE_CHARS = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
  */
 export function stripInvisible(text) {
   return String(text ?? '').replace(INVISIBLE_CHARS, '');
+}
+
+/**
+ * scanSecrets on the text as written and, when it differs, on its Unicode
+ * compatibility form (NFKC) with every invisible character removed. A write
+ * gate uses it so a token broken by a zero-width character, or written in
+ * fullwidth look-alikes, is refused even though the raw text does not match:
+ * a reader, a model or a later normalization may see it whole.
+ */
+export function scanSecretsFolded(text) {
+  const s = String(text ?? '');
+  const folded = stripInvisible(s.normalize('NFKC'));
+  const hits = scanSecrets(s);
+  if (folded === s) return hits;
+  const seen = new Set(hits.map(h => `${h.id}@${h.line}`));
+  return [...hits, ...scanSecrets(folded).filter(h => !seen.has(`${h.id}@${h.line}`))];
 }
 
 /**

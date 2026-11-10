@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { runRecall } from '../lib/recall-cmd.mjs';
+import { runInsightCompound } from '../lib/compound.mjs';
 import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry, redactSecrets } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { inertEvidenceQuote, evidenceQuoteError, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
@@ -253,8 +254,7 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, ...DEFAULT_IGNORABLE]) {
     const ch = String.fromCodePoint(point);
     assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
-    const breaksLine = point === 0x2028 || point === 0x2029;
-    assert.equal(inertLine(`a${ch}b`), breaksLine ? 'a b' : 'ab', `inertLine ${breaksLine ? 'blanks' : 'removes'} U+${point.toString(16)}`);
+    assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
   }
   const euros = inertEvidenceQuote('€'.repeat(1000));
   assert.equal(Buffer.byteLength(euros), EVIDENCE_QUOTE_CAP);
@@ -351,7 +351,9 @@ test('a URL ending one line and an @ starting the next fails closed, because it 
 
 test('a line before a wrapped token does not hide it', () => {
   const quote = `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}`;
-  assert.match(evidenceQuoteError(quote) || '', /secret split across lines \(github-token\)/);
+  // The line before glues onto the token, so no pattern's \b matches; the
+  // long token run across the join is what catches it.
+  assert.match(evidenceQuoteError(quote) || '', /secret split across lines \(split-token\)/);
   assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]');
   for (const wrapped of [
     `request\nfailed\nwith\ntoken\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}\nrejected by\nthe server`,
@@ -481,18 +483,13 @@ test('a doc that explains evidence_quote keeps its body, with only the quote lin
   assert.equal(episodeBody('Set `evidence_quote:` in frontmatter.'), 'Set `evidence_quote:` in frontmatter.', 'a mention mid-line is not a field line');
 });
 
-test('inertLine removes invisible characters instead of spacing words apart', () => {
-  assert.equal(inertLine('\u26a0\ufe0f build warning'), '\u26a0 build warning');
-  assert.equal(inertLine('\u26a0\ufe0f build'), '\u26a0 build');
-  assert.equal(inertLine('\u845b\u{E0100}\u98fe'), '\u845b\u98fe');
-  assert.equal(inertLine('1\ufe0f\u20e3 step'), '1\u20e3 step', 'a keycap keeps its digit and mark together');
-  assert.equal(inertLine('\u0600123'), '123');
-  assert.equal(inertLine('a\x00b\x85c\u2028d'), 'a b c d', 'controls and line separators still become spaces');
-});
-
-test('a token broken by an invisible character is redacted before inertLine joins it', () => {
+test('inertLine blanks invisible characters, so a token broken by one stays broken', () => {
+  assert.equal(inertLine('\u0600123'), ' 123');
+  assert.equal(inertLine('a\x00b\x85c\u2028d'), 'a b c d', 'controls and line separators become spaces');
   const token = `ghp_${'A'.repeat(18)}\u200b${'A'.repeat(18)}`;
-  assert.equal(redactSecrets(token), '[redacted: github-token]');
+  const rendered = inertLine(redactSecrets(token));
+  assert.ok(!rendered.includes(`ghp_${'A'.repeat(36)}`), rendered);
+  assert.equal(rendered, `ghp_${'A'.repeat(18)} ${'A'.repeat(18)}`);
 });
 
 test('a control or line-break character at a line edge cannot hide a split secret on read', () => {
@@ -546,4 +543,83 @@ test('a consolidation packet entry for an episode without a quote has no evidenc
   const entries = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
   const plain = entries.find(e => e.title === 'orders timeout plain');
   assert.deepEqual(Object.keys(plain), ['path', 'sha256', 'kind', 'title', 'tags', 'excerpt']);
+});
+
+test('blank lines cannot pad a wrapped credential apart, however many lines it takes', () => {
+  for (const quote of [
+    'AKIAIOSF\n\n\n\n\nODNN7EXAMPLE',
+    'AKIAIOSF\r\n \r\n\t\r\n\r\nODNN7EXAMPLE',
+    'AK\nI\nA\nIOSF\nODNN\n7EXAMPLE',
+    'key:\nAK\n\nI\nA\n\n\nIOSF\nODNN\n7EXAMPLE\nrejected',
+    `${'abcd\n'.repeat(4)}abcd`,
+  ]) {
+    assert.match(evidenceQuoteError(quote) || '', /split across lines/, JSON.stringify(quote));
+    assert.equal(screenSecrets(quote)?.split, true, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
+  }
+  // A hand-edited quote whose blank lines are made of line separators.
+  assert.equal(inertEvidenceQuote('AKIAIOSF\u0085\u2028 \u2029\nODNN7EXAMPLE'), '[redacted: split-secret]');
+});
+
+test('real multi-line error output with short words still passes the split screen', () => {
+  for (const quote of [
+    'TypeError: Cannot read properties of undefined (reading \'id\')\n    at getUser (/srv/app/src/users.js:42:18)\n\n    at async handler (/srv/app/src/routes.js:17:5)\n    at async Server.<anonymous> (node:internal/http:1:1)',
+    'FAIL test/retry.test.mjs (12 ms)\n  retry\n    x gives up after 3 tries\n\n  expected 3\n  received 4',
+    'error[E0308]: mismatched types\n --> src/main.rs:4:18\n  |\n4 |     let x: u32 = "a";\n  |                  ^^^ expected `u32`, found `&str`',
+    'Traceback (most recent call last):\n  File "app.py", line 3, in <module>\n    main()\nKeyError: \'user\'',
+  ]) {
+    assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
+  }
+  // The rule does not know what a token is: a line ending in a long path
+  // glued to a word on the next line forms a long run, and fails closed.
+  assert.match(evidenceQuoteError('FAIL test/retry.test.mjs\n  retry') || '', /split across lines \(split-token\)/);
+});
+
+test('a fullwidth credential is screened in its compatibility form on write and read', () => {
+  const fullwidth = '\uff21\uff2b\uff29\uff21\uff29\uff2f\uff33\uff26\uff2f\uff24\uff2e\uff2e\uff17\uff25\uff38\uff21\uff2d\uff30\uff2c\uff25';
+  assert.equal(fullwidth.normalize('NFKC'), AWS);
+  assert.match(evidenceQuoteError(fullwidth) || '', /aws-access-key/);
+  assert.match(evidenceQuoteError(`connect failed ${fullwidth}`) || '', /aws-access-key/);
+  assert.equal(inertEvidenceQuote(fullwidth), '[redacted: aws-access-key]');
+});
+
+test('a key broken by a zero-width space is refused at capture and stays broken in the consolidation packet', () => {
+  const workspace = tmp('zwsp-ws-');
+  const copilotHome = tmp('zwsp-ch-');
+  const harnessHome = tmp('zwsp-hh-');
+  const broken = 'AKIAIOSF\u200bODNN7EXAMPLE';
+  const text = `deploy key ${broken} N`;
+  ensureStore(workspace, { home: harnessHome });
+  for (let n = 0; n < 5; n++) {
+    const result = runInsightCompound({ workspace, copilotHome, home: harnessHome, flags: { title: `${text}${n}`, body: text, tags: text, category: 'insights' }, log: () => {}, kind: 'insight' });
+    assert.equal(result.pass, false, JSON.stringify(result));
+    assert.match(result.blockedReason, /secret-shaped content blocked capture: aws-access-key/);
+    const fullwidth = runInsightCompound({ workspace, copilotHome, home: harnessHome, flags: { title: `fullwidth ${n}`, body: 'deploy key \uff21\uff2b\uff29\uff21IOSFODNN7EXAMPLE', category: 'insights' }, log: () => {}, kind: 'insight' });
+    assert.equal(fullwidth.pass, false, JSON.stringify(fullwidth));
+  }
+  const windows = Array.from({ length: AWS.length - 7 }, (_, i) => AWS.slice(i, i + 8));
+  const refusedPacket = JSON.stringify(consolidateCandidates({ workspace, copilotHome, home: harnessHome }));
+  for (const w of windows) assert.ok(!refusedPacket.includes(w), `${w} reached the packet: ${refusedPacket}`);
+
+  // Episodes captured before the write gate, or edited by hand, still render
+  // with the zero-width space blanked, never removed, so the key stays broken.
+  const dir = path.join(copilotHome, 'knowledge', 'solutions', 'insights');
+  fs.mkdirSync(dir, { recursive: true });
+  for (let n = 0; n < 5; n++) {
+    fs.writeFileSync(path.join(dir, `legacy-${n}.md`), `---\ntitle: "${text}${n}"\nkind: insight\ndate: 2026-11-01\ntags: ${text}\ntrigger: "${text}"\n---\n\n${text}\n`);
+  }
+  const entries = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+  assert.equal(entries.length, 5, JSON.stringify(entries));
+  const legacyPacket = JSON.stringify(entries);
+  const crossing = windows.filter(w => AWS.indexOf(w) > 0 && AWS.indexOf(w) < 8);
+  for (const w of crossing) assert.ok(!legacyPacket.includes(w), `${w} reached the packet: ${legacyPacket}`);
+  assert.ok(entries.every(e => e.title.includes('AKIAIOSF ODNN7EXAMPLE') && e.excerpt.includes('AKIAIOSF ODNN7EXAMPLE') && e.tags.some(t => t.includes('AKIAIOSF ODNN7EXAMPLE'))), legacyPacket);
+});
+
+test('the write gate scan sees a key broken by an invisible character or written fullwidth', () => {
+  for (const text of ['AKIAIOSF\u200bODNN7EXAMPLE', 'AKIA\u2060IOSFODNN7EXAMPLE', '\uff21\uff2b\uff29\uff21IOSFODNN7EXAMPLE', `trigger\nghp_${'A'.repeat(18)}\u200c${'A'.repeat(18)}`]) {
+    assert.ok(scanSecretsFolded(text).length > 0, JSON.stringify(text));
+  }
+  assert.deepEqual(scanSecretsFolded('plain \u26a0\ufe0f build note'), []);
 });
