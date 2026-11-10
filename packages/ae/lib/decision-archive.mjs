@@ -59,16 +59,10 @@ export function hydrateArchivedDecision(loc, state, requestId) {
   return request;
 }
 
-/** Marks compaction warnings about a refused readiness-index write; they outlive their request until that plan's index write succeeds. */
-export const READINESS_INDEX_FAULT = 'readiness-index';
-// Under a lasting index fault, at most this many plans keep their newest readiness request live.
-const MAX_KEPT_READINESS = 32;
-/** The plan identity carried by readiness-index warnings: the hash that also names the plan's index record. */
+/** The plan identity the readiness-index warning reports: the hash that also names the plan's index record. */
 export const readinessPlanKey = planPath => hash(planPath);
-/** The one aggregated warning for plans archived over the cap; those plans may cite a stale index. */
-/** Starts the warning for a plan's newest readiness request kept live after its index write was refused. */
-export const STAYS_LIVE_PREFIX = 'readiness index not retained; request stays live: ';
-export const archivedOverCapMessage = count => `readiness index not retained; ${count} plan(s) archived their newest readiness request because more than ${MAX_KEPT_READINESS} plans already keep one live; their cited readiness may be stale until their index is written`;
+// At most this many plans are tracked as possibly holding a stale readiness index.
+const MAX_PENDING_READINESS = 256;
 
 const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${readinessPlanKey(planPath)}.json`);
 const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.requestId, verdict: receipt.verdict, recordedAt: receipt.recordedAt });
@@ -76,16 +70,58 @@ const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.reque
 /**
  * Keep the newest archived readiness receipt per plan so read-only citations survive compaction.
  * Returns 'written' after an index write, 'current' when the index already holds a newer or equal
- * receipt (nothing was written), and null when the receipt is not a readiness receipt.
+ * receipt (nothing was written), and null when the citation lacks a plan, an id or a time.
  */
-function retainLatestReadiness(loc, request, receipt) {
-  if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) return null;
-  const relative = readinessRelative(loc, request.planPath);
+function retainLatestReadiness(loc, planPath, receipt) {
+  if (typeof planPath !== 'string' || !ID.test(receipt?.id || '') || !Number.isFinite(receipt.recordedAt)) return null;
+  const relative = readinessRelative(loc, planPath);
   let previous = null;
   try { previous = readRecord(loc, relative); } catch { previous = null; }
-  if (previous?.planPath === request.planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return 'current';
-  writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath: request.planPath, receipt: readinessCitation(receipt) });
+  if (previous?.planPath === planPath && previous.receipt?.recordedAt >= receipt.recordedAt) return 'current';
+  writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath, receipt: readinessCitation(receipt) });
   return 'written';
+}
+
+/** True when the plan's readiness index exists and names a receipt at least as new as `entry`. */
+function indexHolds(loc, entry) {
+  let index = null;
+  try { index = readRecord(loc, readinessRelative(loc, entry.planPath)); } catch { return false; }
+  return index?.planPath === entry.planPath && Number.isFinite(index.receipt?.recordedAt) && index.receipt.recordedAt >= entry.recordedAt;
+}
+
+/**
+ * Archived readiness receipts whose index write did not succeed, one per plan (its newest), newest first:
+ * facts about the archive, not warnings. A malformed entry, or one from an older shape, is ignored.
+ */
+export function pendingReadiness(state) {
+  const plans = object(state.readinessPending?.plans) ? state.readinessPending.plans : {};
+  const entries = [];
+  for (const [plan, entry] of Object.entries(plans)) {
+    if (!object(entry) || typeof entry.planPath !== 'string' || readinessPlanKey(entry.planPath) !== plan || !ID.test(entry.id || '') || !ID.test(entry.requestId || '')
+      || typeof entry.verdict !== 'string' || entry.verdict.length > 32 || !Number.isFinite(entry.recordedAt)) continue;
+    entries.push({ plan, planPath: entry.planPath, id: entry.id, requestId: entry.requestId, verdict: entry.verdict, recordedAt: entry.recordedAt });
+  }
+  entries.sort((a, b) => b.recordedAt - a.recordedAt || a.plan.localeCompare(b.plan));
+  return { entries: entries.slice(0, MAX_PENDING_READINESS), capped: state.readinessPending?.capped === true || entries.length > MAX_PENDING_READINESS };
+}
+
+/**
+ * Read-only readiness-index health, derived from what exists: a tracked plan is stale while its index is
+ * missing or names a receipt older than the plan's newest archived one. Nothing here is stored or cleared.
+ * `capped` means more plans were stale than are tracked, so the count is a lower bound.
+ */
+export function readinessIndexHealth(loc, state) {
+  const { entries, capped } = pendingReadiness(state);
+  return { stale: entries.filter(entry => !indexHolds(loc, entry)).map(entry => entry.plan), capped };
+}
+
+/** Read-only: a plan's newest archived readiness receipt whose index write failed, cross-checked against its retained request record. */
+export function pendingArchivedReadiness(loc, state, planPath) {
+  const entry = pendingReadiness(state).entries.find(item => item.planPath === planPath);
+  if (!entry) return null;
+  const retained = readRecord(loc, path.join(root(loc), 'requests', `${entry.requestId}.json`));
+  if (!retained || retained.request?.planPath !== planPath || retained.receipt?.id !== entry.id) return null;
+  return readinessCitation(retained.receipt);
 }
 
 /** Read-only: the newest archived readiness citation for a plan, cross-checked against its retained request record. */
@@ -115,36 +151,34 @@ export function decisionTask(loc, state, key) {
 }
 
 /**
- * Retire terminal/expired context while retaining immutable evidence and durable budgets. Returns best-effort warnings.
- * Readiness-index warnings carry `plan` (readinessPlanKey); plans archived over the cap are reported by one
- * aggregated warning carrying `plans`, oldest archived first. `report.indexedPlans` holds the plan keys whose
- * readiness index is healthy after this pass: the write succeeded, or the index already held the plan's newest
- * live receipt. An index current for an older or hydrated request proves nothing about a newer receipt.
+ * Retire terminal/expired context while retaining immutable evidence and durable budgets.
+ * A refused readiness-index write never blocks compaction: the request still archives, and the plan's
+ * newest archived receipt is noted in `state.readinessPending` so readers can cite it and the write is
+ * retried on later passes. A note leaves once the plan's index holds a receipt at least as new, which is
+ * read from the index itself, never inferred from some other write. Returns this pass's index faults,
+ * `{ requestId, plan, message }`, for the caller to report; they are not stored.
  */
-export function compactDecisions(loc, state, report = {}) {
-  const warnings = [];
-  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return warnings;
-  const now = loc.now ?? Date.now(), touched = new Set(), indexed = new Set();
-  // The newest live readiness receipt per plan; only it may stay live when its
-  // index write is refused, so a lasting fault retains at most one request per
-  // plan. A request hydrated from the archive is never a candidate: a newer
-  // receipt may already be archived.
-  const newestReadiness = new Map();
-  for (const [requestId, request] of Object.entries(state.requests)) {
-    const receipt = state.receipts[requestId];
-    if (receipt?.type !== 'readiness' || typeof request.planPath !== 'string' || !Number.isFinite(receipt.recordedAt) || state.archivedHydrated?.has(requestId)) continue;
-    const current = state.receipts[newestReadiness.get(request.planPath)];
-    if (!current || receipt.recordedAt > current.recordedAt) newestReadiness.set(request.planPath, requestId);
-  }
-  const retire = (requestId, request, invocations) => {
-    touched.add(request.budgetKey);
-    delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
-    for (const key of Object.keys(invocations)) delete state.invocations[key];
+export function compactDecisions(loc, state) {
+  const faults = [];
+  // Small state with nothing hydrated retires nothing; it still retries noted index writes.
+  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || state.archivedHydrated?.size > 0;
+  if (!retireNow && state.readinessPending === undefined) return faults;
+  const now = loc.now ?? Date.now(), touched = new Set();
+  const noted = pendingReadiness(state), pending = new Map(noted.entries.map(entry => [entry.plan, entry]));
+  let capped = noted.capped;
+  const tried = new Set();
+  const retain = (planPath, citation) => {
+    const plan = readinessPlanKey(planPath);
+    try { retainLatestReadiness(loc, planPath, citation); return true; }
+    catch (error) {
+      tried.add(plan);
+      faults.push({ requestId: citation.requestId, plan, message: `readiness index not retained for request ${citation.requestId}: ${error.message}` });
+      const prior = pending.get(plan);
+      if (!prior || citation.recordedAt > prior.recordedAt) pending.set(plan, { plan, planPath, ...citation });
+      return false;
+    }
   };
-  // Newest requests whose own index write failed. The cap applies to these
-  // alone, once every write in the pass has been tried.
-  const refused = [];
-  for (const [requestId, request] of Object.entries(state.requests)) {
+  for (const [requestId, request] of retireNow ? Object.entries(state.requests) : []) {
     const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
     const expired = task && Number.isSafeInteger(seconds) && now >= task.startedAt && now - task.startedAt > seconds * 1000;
@@ -155,39 +189,28 @@ export function compactDecisions(loc, state, report = {}) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
-    // A refused readiness-index write must not block compaction, and must not
-    // leave the index naming an older receipt as latest: the plan's newest
-    // readiness request stays live for a retry; older ones compact normally,
-    // so live state stays bounded at one request per plan.
-    try {
-      const retained = retainLatestReadiness(loc, request, receipt);
-      if (retained === 'written' || (retained === 'current' && newestReadiness.get(request.planPath) === requestId)) indexed.add(readinessPlanKey(request.planPath));
-    } catch (error) {
-      const newest = newestReadiness.get(request.planPath), plan = readinessPlanKey(request.planPath);
-      if (newest === requestId) { refused.push({ requestId, request, invocations, plan, error }); continue; }
-      // An archived request's warning rides on the plan's newest live request, or
-      // stays at state level when there is none; either lasts until that plan's index write succeeds.
-      const message = newest ? `readiness index not retained for older request ${requestId}: ${error.message}`
-        : `readiness index not retained for archived request ${requestId}: ${error.message}`;
-      warnings.push({ requestId: newest || null, plan, fault: READINESS_INDEX_FAULT, message });
+    // A request hydrated from the archive was archived before; a newer receipt may already be,
+    // so it never becomes the plan's pending newest.
+    if (receipt?.type === 'readiness' && typeof request.planPath === 'string' && ID.test(receipt.id || '') && Number.isFinite(receipt.recordedAt) && !state.archivedHydrated?.has(requestId)) {
+      retain(request.planPath, readinessCitation(receipt));
+    } else if (receipt?.type === 'readiness' && typeof request.planPath === 'string') {
+      try { retainLatestReadiness(loc, request.planPath, readinessCitation(receipt)); } catch { /* the original pass noted it */ }
     }
-    retire(requestId, request, invocations);
+    touched.add(request.budgetKey);
+    delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
+    for (const key of Object.keys(invocations)) delete state.invocations[key];
   }
-  refused.sort((a, b) => state.receipts[b.requestId].recordedAt - state.receipts[a.requestId].recordedAt || a.requestId.localeCompare(b.requestId));
-  for (const { requestId, plan, error } of refused.slice(0, MAX_KEPT_READINESS)) {
-    warnings.push({ requestId, plan, fault: READINESS_INDEX_FAULT, message: `${STAYS_LIVE_PREFIX}${error.message}` });
+  // Each noted plan leaves once its index holds a receipt at least as new; otherwise retry the write
+  // once per pass. The archived request record already exists, so readers can cite it meanwhile.
+  for (const [plan, entry] of pending) {
+    if (indexHolds(loc, entry) || (!tried.has(plan) && retain(entry.planPath, { id: entry.id, requestId: entry.requestId, verdict: entry.verdict, recordedAt: entry.recordedAt }))) pending.delete(plan);
   }
-  const overCap = refused.slice(MAX_KEPT_READINESS);
-  if (overCap.length) {
-    const archived = new Set(overCap.map(item => item.requestId));
-    // An older request's warning that rode on an over-cap request moves to state level with its plan.
-    for (const item of warnings) if (archived.has(item.requestId)) item.requestId = null;
-    for (const { requestId, request, invocations } of overCap) retire(requestId, request, invocations);
-    // Oldest receipt first, so a bounded list keeps the newest plans.
-    const plans = [...new Set(overCap.map(item => item.plan).reverse())];
-    warnings.push({ requestId: null, plans, fault: READINESS_INDEX_FAULT, message: archivedOverCapMessage(plans.length) });
-  }
-  if (indexed.size) report.indexedPlans = indexed;
+  // Bounded: the newest plans stay tracked; once one is dropped, the stale count is a lower bound until none remain.
+  const kept = [...pending.values()].sort((a, b) => b.recordedAt - a.recordedAt || a.plan.localeCompare(b.plan));
+  if (kept.length > MAX_PENDING_READINESS) capped = true;
+  if (!kept.length) delete state.readinessPending;
+  else state.readinessPending = { ...(capped ? { capped: true } : {}), plans: Object.fromEntries(kept.slice(0, MAX_PENDING_READINESS).map(({ plan, ...entry }) => [plan, entry])) };
+  if (!retireNow) return faults;
   const liveTasks = new Set(Object.values(state.requests).map(request => request.budgetKey));
   for (const key of new Set([...touched, ...Object.keys(state.tasks)])) {
     if (liveTasks.has(key)) continue;
@@ -196,5 +219,5 @@ export function compactDecisions(loc, state, report = {}) {
     writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task });
     delete state.tasks[key];
   }
-  return warnings;
+  return faults;
 }

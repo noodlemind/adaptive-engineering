@@ -89,7 +89,9 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   // single layer and read the same way.
   const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
   // Prior entries are read back from disk; a malformed one is dropped rather than carried forward.
-  const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(entry => [entryKey(entry), entry]));
+  // A caller-supplied clock never makes the real present look like the future.
+  const nowMs = Math.max(now.getTime(), Date.now());
+  const entries = new Map((prior?.entries || []).filter(entry => wellFormedExposure(entry, nowMs)).map(entry => [entryKey(entry), entry]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
   const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
   const seen = new Set();
@@ -208,6 +210,7 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
     // A learning ID can have one entry per layer; the verdict binds the most recently delivered version.
     const exposed = new Map();
     for (const entry of exposure?.entries || []) {
+      if (!wellFormedExposure(entry)) continue;
       const prior = exposed.get(entry.id);
       if (!prior || String(entry.lastExposedAt || '') > String(prior.lastExposedAt || '')) exposed.set(entry.id, entry);
     }
@@ -375,9 +378,15 @@ const exposureTime = value => {
   const ms = Date.parse(value);
   return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
 };
-// One exposure entry as read back from disk. The writer carries forward and the
-// reader counts exactly the entries that pass this test.
-const wellFormedExposure = entry => Boolean(entry) && typeof entry.id === 'string' && exposureTime(entry.lastExposedAt) !== null && Number.isSafeInteger(entry.count) && entry.count >= 0;
+// Clock skew tolerated before an exposure time counts as in the future.
+const EXPOSURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+// One exposure entry as read back from disk. The writer carries forward, the reader counts and the
+// delivered gate accepts exactly the entries that pass this test: a learning ID, a count of at least
+// one, a version that is absent or a content hash, and an exposure time no later than `nowMs` plus skew.
+// A future time would otherwise sort first forever and evict every real delivery.
+const wellFormedExposure = (entry, nowMs = Date.now()) => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
+  && Number.isSafeInteger(entry.count) && entry.count >= 1 && (entry.version === undefined || ID.test(entry.version))
+  && exposureTime(entry.lastExposedAt) !== null && exposureTime(entry.lastExposedAt) <= nowMs + EXPOSURE_CLOCK_SKEW_MS;
 const later = (a, b) => {
   const next = exposureTime(b);
   if (next === null) return a;
@@ -410,7 +419,7 @@ export function exposureTotals(recordRoot) {
     try { record = text === null ? null : JSON.parse(text); } catch { record = null; }
     if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
     for (const entry of record.entries) {
-      if (!wellFormedExposure(entry) || !LEARNING_ID.test(entry.id) || entry.count < 1) continue;
+      if (!wellFormedExposure(entry)) continue;
       const row = totals.get(entry.id) || { exposed: 0, last_exposed: null, layers: {} };
       const key = layerOf(entry.layer);
       const layer = row.layers[key] || { exposed: 0, last_exposed: null };
