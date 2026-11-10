@@ -12,6 +12,7 @@ import { parsePlanFrontmatter } from './plan-parse.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors, canonicalPath } from './fs-safe.mjs';
 import { readProductDiff, gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { discoverCapabilities, resolveCapability } from './capability-catalog.mjs';
+import { withholdFrontmatterEvidenceQuote } from './knowledge/store.mjs';
 
 export const CODE_REVIEWERS = Object.freeze(['architecture-strategist', 'security-sentinel', 'performance-oracle', 'code-simplicity-reviewer', 'pattern-recognition-specialist']);
 export const REVIEW_BUDGET_CAP = 3;
@@ -262,10 +263,14 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
   const budget = Math.max(1024, Math.min(maxBytes, 131072));
   const included = [], omitted = [];
   let bytes = 0;
-  // evidence_quote withholding is out of scope here: these excerpts and the diff show the user's own working-tree changes.
+  // An excerpted file may be an in-repo episode, whose evidence_quote is
+  // screened only as its own field, so it is withheld as in every raw view
+  // (see withholdFrontmatterEvidenceQuote). The diff shows the user's own
+  // working-tree changes and is left as written.
   for (const ref of refs) {
     if (!selected.includes(ref.path)) { omitted.push({ ...ref, reason: 'not selected for excerpts; remains in the review scope' }); continue; }
-    const text = readReviewFile(workspace, ref, { maxBytes: 1024 * 1024, plan });
+    const read = readReviewFile(workspace, ref, { maxBytes: 1024 * 1024, plan });
+    const text = read === null ? null : withholdFrontmatterEvidenceQuote(read);
     const remaining = budget - bytes;
     if (text === null || remaining < 256) { omitted.push({ ...ref, reason: text === null ? 'deleted, unsafe, binary or over read limit' : 'packet byte budget' }); continue; }
     const excerpt = Buffer.from(text).subarray(0, Math.min(remaining, 4096)).toString('utf8');

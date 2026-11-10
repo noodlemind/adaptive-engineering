@@ -480,14 +480,15 @@ async function compoundFlagNames() {
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
   if (flags.evidenceQuote != null) {
     const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
-    if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
     // The value is taken literally, so a forgotten value swallows the next flag.
     // Only the space form can swallow a flag; --evidence-quote=--dry-run is a deliberate value.
+    // These come before the --insight check: a swallowed --insight is reported as swallowed.
     if (flags.evidenceQuoteForm === 'missing') throw usage('--evidence-quote needs a value', 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
     // Only a real flag of this command counts: its own or a global flag name or
     // alias, alone or with =value, or -h/--help. Other dash-led text, such as
     // `--- a/x`, `-  removed line`, `-x` or `--max-old-space-size=4096`, is a quote.
     if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
   }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });

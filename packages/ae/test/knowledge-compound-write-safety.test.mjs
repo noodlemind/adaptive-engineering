@@ -298,6 +298,22 @@ test('ae compound refuses --evidence-quote without --insight or without a value'
   }
 });
 
+test('the last --evidence-quote wins with its own form, and a swallowed --insight is reported as swallowed', () => {
+  const ws = tempDir('quote-last-ws-');
+  const home = tempDir('quote-last-hh-');
+  const copilotHome = tempDir('quote-last-ch-');
+  const ae = (...args) => spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json', ...args],
+    { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+  const target = solutionsWriteTarget(ws, { home });
+  const last = ae('--insight', '--title', 'last quote wins', '--body', 'body', '--evidence-quote', 'first', '--evidence-quote=--json');
+  assert.equal(last.status, 0, last.stdout + last.stderr);
+  assert.equal(readEvidenceQuote(fs.readFileSync(path.join(target.base, JSON.parse(last.stdout).path), 'utf8')), '--json', 'the = form after a space form is a deliberate value');
+  const swallowedInsight = ae('--evidence-quote', '--insight', '--title', 'swallowed insight', '--body', 'body');
+  assert.equal(swallowedInsight.status, 2, swallowedInsight.stdout + swallowedInsight.stderr);
+  assert.match(swallowedInsight.stdout + swallowedInsight.stderr, /--evidence-quote needs a value but got the flag --insight/);
+  assert.doesNotMatch(swallowedInsight.stdout + swallowedInsight.stderr, /accepted only with --insight/);
+});
+
 test('an insight without an evidence quote keeps the exact pre-quote episode bytes', () => {
   const { result, text } = captureInsight();
   assert.equal(result.pass, true, JSON.stringify(result));

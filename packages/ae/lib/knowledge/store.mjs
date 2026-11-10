@@ -593,7 +593,6 @@ export function stripFrontmatter(text) {
   return splitFrontmatter(text).body;
 }
 
-const EVIDENCE_QUOTE_KEY = /^[ \t]*evidence_quote[ \t]*:/m;
 // A whole `evidence_quote` key line. A line runs to CR or LF, so U+2028 and
 // U+2029 stay inside it and text after one cannot escape the redaction.
 const EVIDENCE_QUOTE_LINE = /^([ \t]*)evidence_quote[ \t]*:/;
@@ -604,11 +603,10 @@ const LEADING_BLANKS = /^[ \t]*/;
  * `evidence_quote: [withheld]`, keeping its indent. Every nonblank line after
  * one that is indented deeper than the key is emptied too, since YAML reads
  * such lines as the rest of the value. Line breaks are kept, so line counts
- * do not move. This is for text that may be a fragment of an episode with no
- * fence to anchor it: a hand-editable manifest summary, snippet or excerpt
- * field, and the body of a text that is not a fenced episode (see
- * episodeBody). A whole file shown raw goes through
- * withholdFrontmatterEvidenceQuote instead, which leaves its body alone.
+ * do not move. This is for the body of a text that is not a fenced episode
+ * (see episodeBody). A manifest field collapsed onto one line goes through
+ * withholdEvidenceQuoteField, and a whole file shown raw through
+ * withholdFrontmatterEvidenceQuote, which leaves its body alone.
  */
 export function withholdEvidenceQuoteLines(text) {
   const s = String(text ?? '');
@@ -630,51 +628,103 @@ export function withholdEvidenceQuoteLines(text) {
   return parts.join('');
 }
 
-// A block scalar indicator (`|` or `>`, with optional chomping and indent
-// indicators and a trailing comment), whose value is the indented lines below.
-const BLOCK_SCALAR = /^[|>][-+0-9]*[ \t]*(?:#.*)?$/;
+/**
+ * A single manifest field (a summary, snippet or excerpt) cut at the first
+ * `evidence_quote` and ended with `evidence_quote: [withheld]`. These fields
+ * are collapsed onto one line, so a copied frontmatter block can put the key
+ * anywhere in them (`--- title: t evidence_quote: "..." ---`, `- evidence_quote:`),
+ * and a line-anchored rule would miss it. Whatever follows the key is cut,
+ * not parsed; a field without the key, and the text before it, are kept.
+ */
+export function withholdEvidenceQuoteField(text) {
+  const s = String(text ?? '');
+  const at = s.indexOf('evidence_quote');
+  return at < 0 ? s : `${s.slice(0, at)}evidence_quote: [withheld]`;
+}
 
 /**
- * Text with the `evidence_quote` line of its LEADING frontmatter block (see
- * splitFrontmatter) replaced by `evidence_quote: [withheld]`, for a raw file
- * preview or excerpt that may be an episode, whose quote is screened only as
- * its own field (see inertEvidenceQuote). The lines below the key are emptied
- * only when its value continues there: a block scalar (`|` or `>`) or an
- * empty value, whose nonblank lines indented deeper than the key are the
- * rest of it. Line breaks are kept, so line numbers do not move. A text with
- * no leading frontmatter, and everything after the block, is returned as
- * written, so a doc or source file that mentions the key is not touched.
+ * The leading fenced block of a text shown raw, found leniently: a UTF-8 BOM
+ * or blank lines before the opening fence, and CR, LF or CRLF line endings,
+ * are all tolerated, so a hand-edited shape the strict reader
+ * (splitFrontmatter) does not take as frontmatter is still treated as one by
+ * what withholds from it. Returns the text split into lines and their breaks,
+ * the index of the opening fence line, and the index of the closing fence
+ * line, or -1 when the block never closes and runs to the end. Null when the
+ * text does not open with a fence.
+ */
+function leadingFenceBlock(s) {
+  const parts = s.split(/(\r\n|\r|\n)/);
+  const lineAt = i => (i === 0 ? parts[0].replace(/^﻿/, '') : parts[i]);
+  let open = 0;
+  while (open + 2 < parts.length && !lineAt(open).trim()) open += 2;
+  if (!FRONTMATTER_FENCE.test(lineAt(open))) return null;
+  let close = open + 2;
+  while (close < parts.length && !FRONTMATTER_FENCE.test(parts[close])) close += 2;
+  return { parts, open, close: close < parts.length ? close : -1 };
+}
+
+const fenceBlockEnd = block => (block.close < 0 ? block.parts.length : block.close);
+
+const fenceBlockHolds = (block, token) => {
+  for (let i = block.open + 2; i < fenceBlockEnd(block); i += 2) if (block.parts[i].includes(token)) return true;
+  return false;
+};
+
+/**
+ * Text with the `evidence_quote` of its leading frontmatter block withheld,
+ * for a raw file preview or excerpt that may be an episode, whose quote is
+ * screened only as its own field (see inertEvidenceQuote). The block is found
+ * leniently (see leadingFenceBlock). A canonical key line
+ * (`evidence_quote: <value>`, at any indent) becomes `evidence_quote: [withheld]`,
+ * and every following line that is blank or indented deeper than the key is
+ * emptied whatever the value, since YAML reads such lines as the rest of it
+ * (a long quoted string folds onto them). Any other appearance of the key in
+ * the block (a quoted, flow, complex or list key, or a mention in another
+ * value), and an `&` or `*` anywhere in the quote's lines (an anchor another
+ * key could repeat, or an alias to text elsewhere), withholds every line of
+ * the block instead: the shape is not parsed, it is refused. Line breaks are
+ * kept, so line numbers do not move. A text with no leading fence, and
+ * everything after the block, is returned as written, so a doc or source file
+ * that mentions the key is not touched.
  */
 export function withholdFrontmatterEvidenceQuote(text) {
   const s = String(text ?? '');
   if (!s.includes('evidence_quote')) return s;
-  const { frontmatter } = splitFrontmatter(s);
-  if (frontmatter === null || !frontmatter.includes('evidence_quote')) return s;
-  const fmStart = s.indexOf('\n') + 1;
-  const parts = frontmatter.split(/(\r\n|\r|\n)/);
-  let keyIndent = -1;
-  for (let i = 0; i < parts.length; i += 2) {
-    const line = parts[i];
-    const key = line.match(EVIDENCE_QUOTE_LINE);
-    if (key) {
-      const value = line.slice(key[0].length).trim();
-      parts[i] = `${key[1]}evidence_quote: [withheld]`;
-      keyIndent = !value || BLOCK_SCALAR.test(value) ? key[1].length : -1;
-      continue;
+  const block = leadingFenceBlock(s);
+  if (!block || !fenceBlockHolds(block, 'evidence_quote')) return s;
+  const { parts, open } = block;
+  const end = fenceBlockEnd(block);
+  const withheld = new Map();
+  let whole = false;
+  for (let i = open + 2; i < end && !whole; i += 2) {
+    if (!parts[i].includes('evidence_quote')) continue;
+    const key = parts[i].match(EVIDENCE_QUOTE_LINE);
+    if (!key) { whole = true; break; }
+    withheld.set(i, `${key[1]}evidence_quote: [withheld]`);
+    if (/[&*]/.test(parts[i].slice(key[0].length))) whole = true;
+    for (let k = i + 2; k < end; k += 2) {
+      if (parts[k].trim() && parts[k].match(LEADING_BLANKS)[0].length <= key[1].length) break;
+      if (/[&*]/.test(parts[k])) whole = true;
+      withheld.set(k, '');
+      i = k;
     }
-    if (keyIndent < 0 || !line.trim()) continue;
-    if (line.match(LEADING_BLANKS)[0].length > keyIndent) parts[i] = '';
-    else keyIndent = -1;
   }
-  return s.slice(0, fmStart) + parts.join('') + s.slice(fmStart + frontmatter.length);
+  if (whole) {
+    for (let k = open + 2; k < end; k += 2) parts[k] = '';
+    parts[open + 2] = '[frontmatter withheld: evidence_quote]';
+  } else {
+    for (const [k, line] of withheld) parts[k] = line;
+  }
+  return parts.join('');
 }
 
 /**
  * An episode's body for a summary or excerpt. A text is an episode only when
- * its first line is a frontmatter fence. When that fence never closes and the
- * text carries an `evidence_quote` key, the body is empty: the quote is
- * screened only as its own field, so raw frontmatter holding it must never
- * ride into an excerpt. A text with no opening fence (such as a doc that
+ * its first line is a frontmatter fence. When the strict reader finds no
+ * block but a lenient one (see leadingFenceBlock) mentions `evidence_quote`,
+ * the body is what follows its closing fence, or empty when it never closes:
+ * the quote is screened only as its own field, so raw frontmatter holding it
+ * must never ride into an excerpt. A text with no opening fence (such as a doc that
  * explains the field) keeps its body, with its `evidence_quote` lines
  * withheld (see withholdEvidenceQuoteLines) so no quote can leak through it.
  */
@@ -684,7 +734,12 @@ export function episodeBody(text) {
   const opensWithFence = isFence(firstEnd === -1 ? s : s.slice(0, firstEnd));
   const { frontmatter, body } = splitFrontmatter(s);
   if (frontmatter !== null) return body;
-  if (opensWithFence) return EVIDENCE_QUOTE_KEY.test(body) ? '' : body;
+  // A block the strict reader does not take (a BOM or blank line before the
+  // fence, lone CR line endings, or no closing fence) that mentions the key
+  // in any form: only what follows its closing fence is body, or nothing.
+  const block = leadingFenceBlock(s);
+  if (block && fenceBlockHolds(block, 'evidence_quote')) return block.close < 0 ? '' : block.parts.slice(block.close + 2).join('');
+  if (opensWithFence) return body;
   return withholdEvidenceQuoteLines(body);
 }
 

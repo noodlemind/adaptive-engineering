@@ -9,7 +9,7 @@ import { tokenize, FIELD_BOOSTS } from '../tokenize.mjs';
 import { loadPostingsIndex, postingsMatchManifest } from '../postings-index.mjs';
 import { loadManifest, rankRecall, findMatchingPlans } from '../recall-rank.mjs';
 import { loadCollections, entryMatchesCollection, resolveIndexDir } from '../recall-config.mjs';
-import { storeDir, inertLine, readStaleExclusions, repoId, withholdEvidenceQuoteLines } from '../knowledge/store.mjs';
+import { storeDir, inertLine, readStaleExclusions, repoId, withholdEvidenceQuoteField } from '../knowledge/store.mjs';
 import { rankLearnings, retrievalExclusion } from '../knowledge/retrieve.mjs';
 import { learningApplicability } from '../knowledge/applicability.mjs';
 import { loadLayeredLearnings } from '../knowledge/overlay.mjs';
@@ -83,10 +83,10 @@ function snippetOf(text) {
 }
 
 // A knowledge snippet comes from a hand-editable manifest field, which may
-// hold a line copied from an episode's frontmatter; an evidence_quote line is
-// withheld (see withholdEvidenceQuoteLines). Code snippets come from tracked
+// hold a line copied from an episode's frontmatter; everything from an
+// evidence_quote key on is withheld (see withholdEvidenceQuoteField). Code snippets come from tracked
 // source files, never episodes, so they are shown as written.
-const knowledgeSnippetOf = (text) => snippetOf(typeof text === 'string' ? withholdEvidenceQuoteLines(text) : text);
+const knowledgeSnippetOf = (text) => snippetOf(typeof text === 'string' ? withholdEvidenceQuoteField(text) : text);
 
 function digestOf(parts) {
   return `sha256:${crypto.createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16)}`;

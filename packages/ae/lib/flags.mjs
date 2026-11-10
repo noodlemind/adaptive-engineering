@@ -324,7 +324,11 @@ export function parseFlags(argv) {
     else if (a === '--trigger') flags.trigger = scan[++i];
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
-    else if (a.startsWith('--evidence-quote=')) flags.evidenceQuote = a.split('=').slice(1).join('=');
+    else if (a.startsWith('--evidence-quote=')) {
+      // The last occurrence wins, so its form replaces any earlier one's.
+      flags.evidenceQuote = a.split('=').slice(1).join('=');
+      flags.evidenceQuoteForm = 'equals';
+    }
     else if (a === '--evidence-quote') {
       // The value is taken literally; remember the form so a forgotten value
       // that swallowed the next flag, or a missing trailing value, is a usage error.

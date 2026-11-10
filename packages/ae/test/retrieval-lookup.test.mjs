@@ -229,6 +229,40 @@ test('an episode evidence_quote line is withheld from every raw-file preview, ex
   assertWithheld(found, 'search snippets');
 });
 
+test('get and lookup withhold a folded or hand-edited evidence_quote shape whole', async () => {
+  const { runGet } = await import('../lib/get-cmd.mjs');
+  const ws = fixtureWorkspace();
+  const copilotHome = tempDir('lookup-shape-home-');
+  const home = tempDir('lookup-shape-hh-');
+  const secret = 'AKIAABCDEFGHIJKLMNOP';
+  const files = {
+    'docs/solutions/insights/folded.md': `---\ntitle: "folded"\nevidence_quote: "connect failed with key ${secret.slice(0, 8)}\n  ${secret.slice(8)} and more"\nkind: insight\n---\n\nBody.\n`,
+    'docs/solutions/insights/bom.md': `﻿---\ntitle: "bom"\nevidence_quote: "QUOTE_MARKER"\n---\n\nBody.\n`,
+    'docs/solutions/insights/blank.md': `\n---\ntitle: "blank"\nevidence_quote: "QUOTE_MARKER"\n---\n\nBody.\n`,
+    'docs/solutions/insights/cr.md': `---\rtitle: "cr"\revidence_quote: "QUOTE_MARKER"\r---\r\rBody.\r`,
+    'docs/solutions/insights/quoted-key.md': `---\ntitle: "quoted"\n"evidence_quote": "QUOTE_MARKER"\n---\n\nBody.\n`,
+    'docs/solutions/insights/flow.md': `---\n{title: flow, evidence_quote: "QUOTE_MARKER"}\n---\n\nBody.\n`,
+    'docs/solutions/insights/complex.md': `---\ntitle: "complex"\n? evidence_quote\n: "QUOTE_MARKER"\n---\n\nBody.\n`,
+    'docs/solutions/insights/alias.md': `---\ntitle: &a "QUOTE_MARKER"\nevidence_quote: *a\n---\n\nBody.\n`,
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(ws, rel)), { recursive: true });
+    fs.writeFileSync(path.join(ws, rel), text);
+  }
+  const { spawnSync } = await import('node:child_process');
+  for (const args of [['init', '-q'], ['config', 'user.email', 'harness@local'], ['config', 'user.name', 'harness'], ['add', '-A'], ['commit', '-q', '-m', 'fixture']]) spawnSync('git', ['-C', ws, ...args]);
+  for (const rel of Object.keys(files)) {
+    for (const [where, value] of [
+      ['get', runGet({ workspace: ws, copilotHome, home, flags: { path: rel } })],
+      ['get --offset 3', runGet({ workspace: ws, copilotHome, home, flags: { path: rel, offset: 3 } })],
+      ['lookup file', lookupEntity({ kind: 'file', identifier: rel, workspace: ws, copilotHome, home })],
+    ]) {
+      const text = JSON.stringify(value);
+      for (const leak of ['QUOTE_MARKER', secret.slice(0, 8), secret.slice(8)]) assert.ok(!text.includes(leak), `${where} ${rel} leaked ${leak}: ${text}`);
+    }
+  }
+});
+
 test('a doc or source file that only mentions evidence_quote comes back unchanged from get and lookup', async () => {
   const { runGet } = await import('../lib/get-cmd.mjs');
   const ws = fixtureWorkspace();

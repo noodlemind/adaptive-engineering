@@ -490,6 +490,16 @@ test('selecting packet excerpts cannot omit checks for the delivery scope', t =>
   assert.deepEqual(assembled.value.coverage.missing, ['sql-contract']);
 });
 
+test('a packet excerpt withholds an in-repo episode evidence_quote as every raw view does', t => {
+  const f = fixture(t);
+  fs.appendFileSync(path.join(f.ws, '.gitignore'), 'episode.md\n');
+  fs.writeFileSync(path.join(f.ws, 'episode.md'), '---\ntitle: "orders timeout"\nevidence_quote: "QUOTE_MARKER failed"\nkind: insight\n---\n\nOrders timeout.\n');
+  const packet = prepareDocument(f, 'episode.md');
+  const excerpt = packet.preparation.files.find(file => file.path === 'episode.md')?.excerpt;
+  assert.ok(excerpt, JSON.stringify(packet.preparation.files));
+  assert.ok(!excerpt.includes('QUOTE_MARKER') && excerpt.includes('evidence_quote: [withheld]') && excerpt.includes('kind: insight'), excerpt);
+});
+
 test('ignored documents above the excerpt read limit still bind their actual bytes', t => {
   const f = fixture(t);
   fs.appendFileSync(path.join(f.ws, '.gitignore'), 'large.md\n');

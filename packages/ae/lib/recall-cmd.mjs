@@ -1,7 +1,7 @@
 import { rankRecall, findMatchingPlans, loadManifest } from './recall-rank.mjs';
 import { parseQueryFromArgv } from './argv.mjs';
 import { redactRecallEntry } from './secret-scan.mjs';
-import { withholdEvidenceQuoteLines } from './knowledge/store.mjs';
+import { withholdEvidenceQuoteField } from './knowledge/store.mjs';
 
 export function runRecall({ workspace, copilotHome, flags, argv }) {
   const query = parseQueryFromArgv(argv, flags);
@@ -23,9 +23,9 @@ export function runRecall({ workspace, copilotHome, flags, argv }) {
     path: e.path,
     title: e.title || e.id,
     score: Number(e.score.toFixed(3)),
-    // Manifest fields may hold a copied evidence_quote line; withhold it as search does.
-    summary: withholdEvidenceQuoteLines(e.summary || ''),
-    snippet: withholdEvidenceQuoteLines(e.snippet || ''),
+    // Manifest fields may hold a copied evidence_quote; withhold it from the key on, as search does.
+    summary: withholdEvidenceQuoteField(e.summary || ''),
+    snippet: withholdEvidenceQuoteField(e.snippet || ''),
     scope: e.scope,
     kind: e.kind || 'solution',
     ranker: e.ranker || 'overlap',

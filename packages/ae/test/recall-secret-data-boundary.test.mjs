@@ -9,10 +9,10 @@ import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry, redactSecrets } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded, withholdEvidenceQuoteLines, withholdFrontmatterEvidenceQuote } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded, withholdEvidenceQuoteLines, withholdEvidenceQuoteField, withholdFrontmatterEvidenceQuote } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
-import { inertEvidenceQuote, evidenceQuoteError, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
+import { inertEvidenceQuote, evidenceQuoteError, readEvidenceQuote, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
@@ -373,7 +373,10 @@ test('screening is linear and an oversize hand-edited quote is withheld before s
   assert.equal(inertEvidenceQuote(`${'x'.repeat(EVIDENCE_QUOTE_READ_CAP)}\nghp_${'A'.repeat(36)}`), '[redacted: oversize]', 'nothing past the bound is shown unscreened');
   assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500);
   assert.ok(EVIDENCE_QUOTE_READ_CAP >= 4 * EVIDENCE_QUOTE_CAP);
-  assert.equal(inertEvidenceQuote('x'.repeat(EVIDENCE_QUOTE_READ_CAP)), 'x'.repeat(EVIDENCE_QUOTE_CAP), 'a quote at the bound is screened and capped');
+  const capped = inertEvidenceQuote('x'.repeat(EVIDENCE_QUOTE_READ_CAP));
+  assert.equal(capped, `${'x'.repeat(EVIDENCE_QUOTE_CAP - ' [truncated]'.length)} [truncated]`, 'a quote at the bound is screened, capped and marked as cut');
+  assert.equal(Buffer.byteLength(capped), EVIDENCE_QUOTE_CAP);
+  assert.equal(inertEvidenceQuote('x'.repeat(EVIDENCE_QUOTE_CAP)), 'x'.repeat(EVIDENCE_QUOTE_CAP), 'a quote within the cap carries no marker');
 });
 
 test('a frontmatter-only episode whose closing fence has no trailing newline keeps its frontmatter out of the excerpt and manifest', () => {
@@ -632,7 +635,7 @@ test('withholdFrontmatterEvidenceQuote withholds only inside a leading frontmatt
   assert.equal(withholdFrontmatterEvidenceQuote(block), '---\ntitle: x\nevidence_quote: [withheld]\n\n\n\nkind: insight\n---\nbody\n');
   assert.equal(withholdFrontmatterEvidenceQuote('---\ntitle: x\nevidence_quote: >-\n  a\n  b\n---\n'), '---\ntitle: x\nevidence_quote: [withheld]\n\n\n---\n');
   assert.equal(withholdFrontmatterEvidenceQuote('---\r\nevidence_quote:\r\n  - x\r\nkind: fix\r\n---\r\nbody'), '---\r\nevidence_quote: [withheld]\r\n\r\nkind: fix\r\n---\r\nbody', 'an empty value continues below');
-  assert.equal(withholdFrontmatterEvidenceQuote('---\nevidence_quote: "x"\n  indented: 1\n---\n'), '---\nevidence_quote: [withheld]\n  indented: 1\n---\n', 'a one-line value withholds only its line');
+  assert.equal(withholdFrontmatterEvidenceQuote('---\nevidence_quote: "x"\n  indented: 1\nkind: fix\n---\n'), '---\nevidence_quote: [withheld]\n\nkind: fix\n---\n', 'deeper lines below any value are withheld too');
   const doc = '# Evidence quotes\n\nevidence_quote: "x"\n\n    const token = load();\n    run(token);\n';
   assert.equal(withholdFrontmatterEvidenceQuote(doc), doc, 'a doc without frontmatter is unchanged');
   const ts = 'const record = {\n  evidence_quote: "x",\n    nested: 1,\n};\n';
@@ -671,4 +674,126 @@ test('a manifest field holding a copied evidence_quote line is withheld in recal
   });
   assert.ok(!pack.includes('QUOTE_MARKER'), pack);
   assert.ok(pack.includes('evidence_quote: [withheld]'), pack);
+});
+
+// Review fixes on the evidence quote (memory plan phase 5) ------------------
+
+// A long quote YAML folds onto an indented second line, as YAML.stringify
+// writes it: the key line alone holds the first half of the token.
+const FOLDED_QUOTE = '---\ntitle: "orders timeout folded"\nkind: insight\nevidence_quote: "connect failed with key AKIAABCD\n  EFGHIJKLMNOP and more"\n---\n\nOrders timeout.\n';
+
+test('a quote folded onto a deeper-indented line is read as withheld whole and blanked whole in raw views', () => {
+  assert.equal(readEvidenceQuote(FOLDED_QUOTE), '[redacted: multi-line]', 'the unclosed first half is never read');
+  const closedThenDeeper = '---\nevidence_quote: "first half AKIAABCD"\n  EFGHIJKLMNOP\nkind: fix\n---\n';
+  assert.equal(readEvidenceQuote(closedThenDeeper), '[redacted: multi-line]', 'a complete scalar followed by a deeper line is not one line');
+  assert.equal(readEvidenceQuote('---\nevidence_quote: plain words\n\n  continued\n---\n'), '[redacted: multi-line]', 'a plain scalar continued after a blank line');
+  for (const value of ['&a "x"', '*a', '[a, b]', '{a: b}', "'open", '"open', '!!str x', '|', '>-']) {
+    assert.equal(readEvidenceQuote(`---\nevidence_quote: ${value}\nkind: fix\n---\n`), '[redacted: multi-line]', value);
+  }
+  assert.equal(readEvidenceQuote('---\nevidence_quote: "a"\nevidence_quote: "b"\n---\n'), '[redacted: multi-line]', 'a duplicate key');
+  assert.equal(readEvidenceQuote('---\nevidence_quote: "expected 1, got 2"\nkind: fix\n---\n'), 'expected 1, got 2');
+  assert.equal(readEvidenceQuote("---\nevidence_quote: 'it''s 2'\n---\n"), "it's 2");
+  assert.equal(readEvidenceQuote('---\nevidence_quote: expected 1, got 2\n---\n'), 'expected 1, got 2');
+  assert.equal(readEvidenceQuote('---\r\nevidence_quote: "crlf"\r\nkind: fix\r\n---\r\n'), 'crlf');
+  assert.equal(readEvidenceQuote('---\nkind: fix\n---\n'), null);
+  const shown = withholdFrontmatterEvidenceQuote(FOLDED_QUOTE);
+  assert.ok(!shown.includes('AKIAABCD') && !shown.includes('EFGHIJKLMNOP'), shown);
+  assert.equal(shown.split('\n').length, FOLDED_QUOTE.split('\n').length, 'line numbers do not move');
+  assert.ok(shown.includes('kind: insight') && shown.includes('Orders timeout.'), 'the rest of the episode is kept');
+});
+
+test('the consolidation packet withholds a folded quote whole instead of showing its first half', () => {
+  const { workspace, copilotHome, harnessHome } = seedQuotedEpisodes();
+  fs.writeFileSync(path.join(copilotHome, 'knowledge', 'solutions', 'perf', 'folded.md'), FOLDED_QUOTE);
+  const entries = consolidateCandidates({ workspace, copilotHome, home: harnessHome }).clusters.flatMap(c => c.episodes);
+  assert.equal(entries.find(e => e.title === 'orders timeout folded').evidence_quote, '[redacted: multi-line]');
+  assert.ok(!JSON.stringify(entries).includes('AKIAABCD'), 'no half of the token reaches the packet');
+});
+
+test('hand-edited frontmatter shapes never show the quote in a raw view', () => {
+  const secret = 'QUOTE_MARKER_SECRET';
+  const shapes = {
+    bom: `\ufeff---\ntitle: t\nevidence_quote: "${secret}"\n---\nbody\n`,
+    leadingBlank: `\n---\ntitle: t\nevidence_quote: "${secret}"\n---\nbody\n`,
+    loneCr: `---\rtitle: t\revidence_quote: "${secret}"\r---\rbody\r`,
+    quotedKey: `---\ntitle: t\n"evidence_quote": "${secret}"\n---\nbody\n`,
+    singleQuotedKey: `---\ntitle: t\n'evidence_quote': "${secret}"\n---\nbody\n`,
+    flow: `---\n{title: t, evidence_quote: "${secret}"}\n---\nbody\n`,
+    complexKey: `---\ntitle: t\n? evidence_quote\n: "${secret}"\n---\nbody\n`,
+    alias: `---\nanchor: &a "${secret}"\nevidence_quote: *a\n---\nbody\n`,
+    anchor: `---\nevidence_quote: &a "${secret}"\ntitle: *a\n---\nbody\n`,
+    unclosed: `---\ntitle: t\nevidence_quote: "${secret}"\nbody\n`,
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    const shown = withholdFrontmatterEvidenceQuote(text);
+    assert.ok(!shown.includes(secret), `${name}: ${JSON.stringify(shown)}`);
+    assert.equal(shown.split(/\r\n|\r|\n/).length, text.split(/\r\n|\r|\n/).length, `${name}: line breaks are kept`);
+    assert.ok(!episodeBody(text).includes(secret), `${name}: no excerpt carries it`);
+  }
+  assert.ok(withholdFrontmatterEvidenceQuote(shapes.bom).startsWith('\ufeff---\ntitle: t\nevidence_quote: [withheld]\n---\nbody'), 'a canonical key behind a BOM is withheld by line');
+  assert.match(withholdFrontmatterEvidenceQuote(shapes.quotedKey), /^---\n\[frontmatter withheld: evidence_quote\]\n\n---\nbody\n$/, 'any other shape withholds the whole block');
+  assert.equal(episodeBody(shapes.bom), 'body\n', 'a lenient block that holds the key is not body');
+  // Text that only mentions the key, outside a leading block, is untouched.
+  const doc = '# Notes\n\n---\nevidence_quote: "x"\n---\n';
+  assert.equal(withholdFrontmatterEvidenceQuote(doc), doc);
+});
+
+test('a collapsed manifest field is cut from the first evidence_quote, wherever it appears', () => {
+  for (const field of [
+    '--- title: t evidence_quote: "QUOTE_MARKER" --- body',
+    '- evidence_quote: QUOTE_MARKER',
+    '> evidence_quote: QUOTE_MARKER',
+    'see {"evidence_quote":"QUOTE_MARKER"}',
+  ]) {
+    const shown = withholdEvidenceQuoteField(field);
+    assert.ok(!shown.includes('QUOTE_MARKER'), shown);
+    assert.ok(shown.endsWith('evidence_quote: [withheld]'), shown);
+  }
+  assert.equal(withholdEvidenceQuoteField('--- title: t evidence_quote: "x"'), '--- title: t evidence_quote: [withheld]', 'the text before the key is kept');
+  assert.equal(withholdEvidenceQuoteField('orders timeout under retry load'), 'orders timeout under retry load', 'a field without the key is unchanged');
+  assert.equal(withholdEvidenceQuoteField('evidence quotes are optional'), 'evidence quotes are optional', 'a mention without the key token is unchanged');
+  const pack = buildContextPack({
+    query: 'orders timeout',
+    recall: [{ docid: 'a', path: 'a.md', title: 'a', score: 1, snippet: '--- title: t evidence_quote: "QUOTE_MARKER" --- body' }],
+    learnings: [],
+    plans: [],
+    gatePreview: { pass: true },
+    nextTools: [],
+  });
+  assert.ok(!pack.includes('QUOTE_MARKER') && pack.includes('--- title: t evidence_quote: [withheld]'), pack);
+});
+
+test('look-alikes are refused by structure on write and withheld on read, while ordinary text in one script passes', () => {
+  const body = 'A1b2C3d4E5'.repeat(4).slice(0, 36);
+  for (const [name, quote, reason] of [
+    ['prefix glued to a word', `TOKEN_ghp_${body}`, /secret \(github-token\)/],
+    ['prefix glued to a letter', `xghp_${body}`, /secret \(github-token\)/],
+    ['combining overlay inside a token', `ghp_${body.slice(0, 10)}\u0336${body.slice(10)}`, /secret \(github-token\)/],
+    ['combining overlay on a word', 'retry\u0336 failed', /combining mark/],
+    ['combining keycap on a digit', 'step 1\u20e3 failed', /combining mark/],
+    ['Cyrillic shha', `gh\u04bb_${body}`, /mix Latin letters with letters of another script/],
+    ['Armenian oh', `key gh\u0555_${body}`, /mix Latin letters with letters of another script/],
+    ['Latin small capital', `ghp_\u1d00${body.slice(1)}`, /no ASCII base/],
+    ['Cherokee a', '\u13aaKIAIOSFODNN7EXAMPLE', /mix Latin letters with letters of another script/],
+    ['Braille blank', `ghp_${body.slice(0, 18)}\u2800${body.slice(18)}`, /invisible character/],
+    ['lone surrogate', `ghp_${body.slice(0, 18)}\ud800${body.slice(18)}`, /lone surrogates/],
+  ]) {
+    assert.match(evidenceQuoteError(quote) || '', reason, name);
+    assert.match(inertEvidenceQuote(quote), /^\[redacted: /, `${name} is withheld on read`);
+  }
+  for (const quote of [
+    'Ошибка: превышено время ожидания соединения',
+    'ファイルconfig.jsonが見つかりません',
+    '错误：无法连接数据库 (code 42)',
+    '오류: 파일을 찾을 수 없습니다',
+    'Straße nicht gefunden',
+    'café_1 failed: résumé.pdf missing',
+    'błąd połączenia 404',
+    'त्रुटि: फ़ाइल नहीं मिली',
+    'Warning \u26a0\ufe0f test failed',
+    'TOKEN_LIMIT exceeded: 4097 > 4096',
+  ]) {
+    assert.equal(evidenceQuoteError(quote), null, quote);
+    assert.equal(inertEvidenceQuote(quote), quote, quote);
+  }
 });

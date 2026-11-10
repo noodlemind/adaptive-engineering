@@ -1,4 +1,4 @@
-import { inertLine, withholdEvidenceQuoteLines } from './knowledge/store.mjs';
+import { inertLine, withholdEvidenceQuoteField } from './knowledge/store.mjs';
 import { redactSecrets } from './secret-scan.mjs';
 import { obligationLine } from './intent-sources.mjs';
 
@@ -198,9 +198,9 @@ export function buildContextPack({
       const label = r.kind === 'insight' ? ' [insight]' : '';
       const title = inertLine(redactSecrets(r.title || docid));
       lines.push(`- **${title}**${label} (\`${inertLine(r.path)}\`, docid \`${docid}\`, score ${r.score.toFixed(2)})`);
-      // Manifest fields may hold a copied evidence_quote line; withhold it as search does.
-      if (r.snippet) lines.push(`  - ${inertLine(redactSecrets(withholdEvidenceQuoteLines(r.snippet))).slice(0, 120)}`);
-      else if (r.summary) lines.push(`  - ${inertLine(redactSecrets(withholdEvidenceQuoteLines(r.summary))).slice(0, 120)}`);
+      // Manifest fields may hold a copied evidence_quote; withhold it from the key on, as search does.
+      if (r.snippet) lines.push(`  - ${inertLine(redactSecrets(withholdEvidenceQuoteField(r.snippet))).slice(0, 120)}`);
+      else if (r.summary) lines.push(`  - ${inertLine(redactSecrets(withholdEvidenceQuoteField(r.summary))).slice(0, 120)}`);
     }
   }
 
