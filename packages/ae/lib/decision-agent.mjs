@@ -471,7 +471,8 @@ export function recordDecision(options) {
 const OFFENDER_REMEDIES = [
   ['unreadable-record', 'request records that cannot be read or prove nothing: make each readable, restore it from a backup, or move it out of the archive if it cannot be restored, which loses its exact-ID lookup'],
   ['not-regular', 'readiness index files that are symlinks or not regular files, never followed or replaced: remove them and the next decision prepare or record rebuilds them'],
-  ['unknown-schema', 'readiness index files written by a newer version of AE, kept and not used: use that newer version, or remove them and the next decision prepare or record rebuilds them'],
+  ['unknown-schema', 'request records or readiness index files written by a newer version of AE, kept and not used: use that newer version, or move them out of the archive; the next decision prepare or record rebuilds a readiness file, and a request record moved out loses its exact-ID lookup'],
+  ['oversized', 'request records larger than 2 MiB, never read or replaced: move each out of the archive, which loses its exact-ID lookup'],
   ['not-directory', 'the archive\'s requests path, which is a regular file, a symlink or otherwise not a readable real directory, so no sweep can list it: make it one'],
   ['refused-write', 'readiness index files that could not be read or written: make them and their readiness directory, which must be a real directory, readable and writable, or remove them, and the next decision prepare or record rebuilds them'],
 ];
@@ -480,19 +481,22 @@ const ARCHIVE_REMEDIES = [
   ['not-regular', 'a symlink, directory or other non-regular entry holds the record\'s name and is never replaced: remove that entry'],
   ['not-directory', 'a regular file or another non-directory stands where a directory on the record\'s path belongs: move it out of the way'],
   ['unreadable-now', 'the entry at the record\'s name cannot be read now: make it and its directory readable'],
+  ['oversized', 'the record there is larger than 2 MiB, so it is never read or replaced: move it out of the archive'],
+  ['invalid-record', 'the archived record there proves nothing (empty, truncated or malformed, as a crash can leave it) or is a symlink or other non-regular entry: restore it from a backup, or move it out of the archive; the request then reads as unknown (status reports it missing and record refuses it), and preparing the same input again starts it fresh under its task\'s remaining budget'],
   ['unknown-schema', 'a newer version of AE wrote the record there, which this version never replaces: use that newer version, or move the record out of the archive'],
   ['invalid-task', 'the task budget record proves nothing (empty, partial or malformed, as a crash can leave it) and no live copy of the task exists: restore it from a backup, or delete it, which resets that task\'s budget'],
   ['conflict', 'a valid retained record there disagrees with the live copy, and retained evidence is never overwritten: inspect it, and move it out of the archive only if the live copy is the one to keep'],
-  ['redirected', 'a directory on the record\'s path is a symlink, which is never written through: replace it with a real directory'],
+  ['redirected', 'a directory on the record\'s path is a symlink, which is never read or written through: replace it with a real directory'],
   ['refused-write', 'the record could not be written: make its directory a writable real directory, with free space, on a filesystem that supports hard links'],
 ];
 /** An exact request lookup; an archived record that cannot be read refuses with the remedy for its cause. */
 function lookupDecision(loc, state, requestId) {
   try { return hydrateArchivedDecision(loc, state, requestId); }
   catch (error) {
-    if (!error.reason) throw error;
-    const remedy = ARCHIVE_REMEDIES.find(([reason]) => reason === error.reason)?.[1] || 'make it readable';
-    throw fail(`the archived request record ${path.join(archiveFaults(loc, state).archive, 'requests', `${requestId}.json`)} cannot be read (${error.message}): ${remedy}`);
+    const reason = error.reason || (error.invalid ? 'invalid-record' : null);
+    if (!reason) throw error;
+    const remedy = ARCHIVE_REMEDIES.find(([name]) => name === reason)?.[1] || 'make it readable';
+    throw Object.assign(fail(`the archived request record ${path.join(archiveFaults(loc, state).archive, 'requests', `${requestId}.json`)} cannot be used (${error.message}): ${remedy}`), { archiveFault: { file: `requests/${requestId}.json`, reason } });
   }
 }
 /** The task budget for prepare and record; a retained task record that cannot be used refuses with its remedy. */
@@ -511,10 +515,10 @@ function archiveFaultText({ count, files, truncated, archive }) {
     + (files.length ? `; files under ${archive}${truncated ? ` (first ${files.length})` : ''}: ${groups.map(([named, remedy]) => `${named.join(', ')} (${remedy})`).join('; ')}` : '')
     + `; decision prepare and record retry them at most every ${Math.round(ARCHIVE_RETRY_INTERVAL_MS / 1000)} seconds, and every pass retries them while the decision state is over 512 KB, so each archives on the first retry after its cause is fixed`;
 }
-/** The derived archive-fault warning, or none; `extra` adds a task record this status call could not use. */
-function archiveWarnings(loc, state, extra = null) {
+/** The derived archive-fault warning, or none; `extras` add records this status call could not use. */
+function archiveWarnings(loc, state, extras = []) {
   const marked = archiveFaults(loc, state), held = { ...marked, files: [...marked.files] };
-  if (extra && !held.files.some(item => item.file === extra.file)) { held.files.unshift(extra); held.count += 1; }
+  for (const extra of extras.filter(Boolean).reverse()) if (!held.files.some(item => item.file === extra.file)) { held.files.unshift(extra); held.count += 1; }
   if (!held.count) return [];
   return [{ fault: 'archive', count: held.count, archive: held.archive, files: held.files.map(item => item.file), offenders: held.files, message: archiveFaultText(held) }];
 }
@@ -550,7 +554,10 @@ export function decisionStatus(options) {
   // Status is read-only and takes no lock: readiness-index health is derived from what exists, and only
   // decision prepare and record advance retries and the reconciliation sweep.
   const state = readState(loc), policy = authority(options.policy);
-  const request = options.requestId ? lookupDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
+  // An archived request record that cannot be used is reported, never thrown: status shows the request missing.
+  let request, requestFault = null;
+  try { request = options.requestId ? lookupDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0]; }
+  catch (error) { if (!error.archiveFault) throw error; requestFault = error.archiveFault; request = undefined; }
   // A retained task record that cannot be used never hides status: the live copy is used and it is reported.
   let task = null, taskFault = null;
   if (request) {
@@ -558,7 +565,7 @@ export function decisionStatus(options) {
     catch (error) { if (!error.reason) throw error; taskFault = { file: error.file, reason: error.reason }; task = state.tasks[request.budgetKey] || null; }
   }
   const taskId = options.taskId || request?.taskId;
-  const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state, taskFault)], warnings = live.length ? { warnings: live } : {};
+  const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state, [requestFault, taskFault])], warnings = live.length ? { warnings: live } : {};
   if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }

@@ -43,7 +43,11 @@ test('retired decision contexts archive before workspace capacity fills while se
   assert.throws(() => prepareDecision({ ...f, now: 1004, input: { ...first.input, taskId: 'renamed', intent: 'Attempt to reset an archived budget.' } }), /budget/i);
   consume(f, prepare(f, 80));
   fs.writeFileSync(archive, '{"schema":1,"approved":true}\n');
-  assert.throws(() => decisionStatus({ ...f, now: 1004, requestId: first.prepared.requestId }), /archive|integrity|binding/i);
+  // A tampered record is never trusted: status reports it, record refuses with the file and the remedy.
+  const tampered = decisionStatus({ ...f, now: 1004, requestId: first.prepared.requestId });
+  assert.equal(tampered.status, 'missing');
+  assert.deepEqual(tampered.warnings.find(item => item.fault === 'archive').offenders, [{ file: `requests/${first.prepared.requestId}.json`, reason: 'invalid-record' }]);
+  assert.throws(() => recordDecision({ ...f, now: 1004, input: { schema: 1, requestId: first.prepared.requestId } }), /integrity|binding/i);
 });
 
 test('expired unrecorded contexts retire without renewing the original task time budget', t => {
@@ -136,8 +140,66 @@ test('a regular file or a symlink to one at requests makes prepare and record re
     fs.mkdirSync(archive, { recursive: true });
     if (kind === 'file') fs.writeFileSync(path.join(archive, 'requests'), 'x');
     else { const target = path.join(path.dirname(f.home), 'plain'); fs.writeFileSync(target, 'x'); fs.symlinkSync(target, path.join(archive, 'requests')); }
-    const refusal = /the archived request record .* cannot be read .*a regular file or another non-directory stands where a directory on the record's path belongs: move it out of the way/;
+    const refusal = /the archived request record .* cannot be used .*a regular file or another non-directory stands where a directory on the record's path belongs: move it out of the way/;
     assert.throws(() => prepareDecision({ ...f, now: 1001, input: { ...input, intent: 'Run it again.' } }), refusal, `${kind}: prepare`);
     assert.throws(() => recordDecision({ ...f, now: 1002, input: { schema: 1, requestId: 'a'.repeat(64) } }), refusal, `${kind}: record`);
   }
+});
+
+// Isolated review of PR #127 at 1c2bde4a.
+
+function archivedFirst(t, maxDecisions = 1) {
+  const f = fixture(t);
+  f.policy.budgets.maxDecisions = maxDecisions;
+  const first = prepare(f, 0);
+  consume(f, first);
+  for (let index = 1; index < 40; index++) consume(f, prepare(f, index));
+  const record = path.join(f.home, 'decision-archives', path.basename(first.prepared.storePath, '.json'), 'requests', `${first.prepared.requestId}.json`);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(first.prepared.storePath, 'utf8')).requests, first.prepared.requestId), false, 'the request was archived');
+  return { f, first, record };
+}
+
+test('an archived request record left empty, truncated or as a symlink is reported by status and refused by record and prepare with the file and the remedy', t => {
+  for (const kind of ['empty', 'truncated', 'symlink']) {
+    const { f, first, record } = archivedFirst(t, 2);
+    const kept = `${record}.kept`;
+    fs.renameSync(record, kept);
+    if (kind === 'symlink') fs.symlinkSync(kept, record);
+    else fs.writeFileSync(record, kind === 'empty' ? '' : '{"schema":1,"trunc');
+    const status = decisionStatus({ ...f, now: 1004, requestId: first.prepared.requestId });
+    assert.equal(status.status, 'missing', kind);
+    assert.deepEqual(status.warnings.find(item => item.fault === 'archive').offenders, [{ file: `requests/${first.prepared.requestId}.json`, reason: 'invalid-record' }], kind);
+    const refusal = error => error.message.includes(record) && /restore it from a backup, or move it out of the archive/.test(error.message);
+    assert.throws(() => recordDecision({ ...f, now: 1004, input: { schema: 1, requestId: first.prepared.requestId } }), refusal, `${kind}: record`);
+    assert.throws(() => prepareDecision({ ...f, now: 1004, input: first.input }), refusal, `${kind}: prepare`);
+    // What the remedy says happens after moving it out: unknown to status and record; the same input starts fresh.
+    fs.rmSync(record);
+    const moved = decisionStatus({ ...f, now: 1005, requestId: first.prepared.requestId });
+    assert.equal(moved.status, 'missing');
+    assert.equal(moved.warnings, undefined);
+    assert.throws(() => recordDecision({ ...f, now: 1005, input: { schema: 1, requestId: first.prepared.requestId } }), /unknown decision request/);
+    const fresh = prepareDecision({ ...f, now: 1006, input: first.input });
+    assert.equal(fresh.requestId, first.prepared.requestId);
+    assert.equal(decisionStatus({ ...f, now: 1007, requestId: fresh.requestId }).counts.decisions, 2, 'it counts against the task\'s remaining budget');
+  }
+});
+
+test('a symlinked requests directory is named as redirected by status and by record', t => {
+  const { f, first, record } = archivedFirst(t);
+  const directory = path.dirname(record), moved = path.join(path.dirname(f.home), 'moved');
+  fs.renameSync(directory, moved);
+  fs.symlinkSync(moved, directory);
+  const status = decisionStatus({ ...f, now: 1004, requestId: first.prepared.requestId });
+  assert.deepEqual(status.warnings.find(item => item.fault === 'archive').offenders, [{ file: `requests/${first.prepared.requestId}.json`, reason: 'redirected' }]);
+  assert.throws(() => recordDecision({ ...f, now: 1004, input: { schema: 1, requestId: first.prepared.requestId } }), /replace it with a real directory/);
+});
+
+test('a repeated prepare and a record replay of an archived request leave no orphan task in live state', t => {
+  const { f, first } = archivedFirst(t);
+  const key = first.prepared.packet.budgetKey, tasks = () => JSON.parse(fs.readFileSync(first.prepared.storePath, 'utf8')).tasks;
+  assert.equal(Object.hasOwn(tasks(), key), false);
+  prepareDecision({ ...f, now: 1004, input: first.input });
+  recordDecision({ ...f, now: 1005, input: { schema: 1, requestId: first.prepared.requestId } });
+  assert.equal(Object.hasOwn(tasks(), key), false, 'the archived task budget does not come back');
+  assert.equal(decisionStatus({ ...f, now: 1006, requestId: first.prepared.requestId }).counts.decisions, 1, 'and still counts from its retained record');
 });

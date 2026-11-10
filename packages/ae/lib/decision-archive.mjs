@@ -25,7 +25,11 @@ function readRecord(loc, relative) {
   try { stat = fs.lstatSync(file, { throwIfNoEntry: false }); }
   catch (error) { throw keptRecord(`retained record cannot be inspected now: ${error.message}`, inspectReason(error)); }
   if (!stat) return null;
-  if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw invalidRecord('retained record is not a regular file or is oversized');
+  // A record behind a symlinked directory on its path is never read through; it is named as such.
+  if (!assertNoSymlinkAncestors(loc.home, path.dirname(relative))) throw keptRecord('a directory on the retained record\'s path is a symlink, which is never read through', 'redirected');
+  if (!stat.isFile()) throw invalidRecord('retained record is not a regular file');
+  // Too large to read, so nothing about it is known: it is kept, never replaced unread.
+  if (stat.size > 2 * 1024 * 1024) throw keptRecord('retained record is larger than 2 MiB, so it is never read or replaced', 'oversized');
   const bytes = readFileNoFollow(file, { root: loc.home, maxBytes: 2 * 1024 * 1024 });
   if (bytes === null) throw keptRecord('retained record is unreadable, oversized or redirected', 'unreadable-now');
   let record;
@@ -160,17 +164,22 @@ const MAX_UNTRACKED = 1 << 30;
 // A sweep names at most this many offending archive files so status can say which file to act on, each
 // as `{ file, reason }`: `file` is an archive-relative hex name only, and `reason` selects the remedy:
 // 'unreadable-record' (a request record that cannot be read or proves nothing: restore it or move it out),
-// 'not-regular' (an index file that is a symlink or not a regular file: remove it) and 'refused-write'
-// (an index file that could not be read or written: fix its permissions or directory, or remove it).
+// 'not-regular' (an index file that is a symlink or not a regular file: remove it), 'refused-write'
+// (an index file that could not be read or written: fix its permissions or directory, or remove it),
+// 'unknown-schema' (a request record or index file another version wrote) and 'oversized' (a request
+// record over 2 MiB); a request record carries only 'unreadable-record', 'unknown-schema' or 'oversized'.
 // `offendersTruncated` says whether more offenders were found than are named.
 const MAX_OFFENDERS = 8;
 const OFFENDER = /^(requests|readiness)\/[a-f0-9]{64}\.json$/;
-const REASONS = new Set(['unreadable-record', 'not-regular', 'refused-write', 'unknown-schema']);
+const REASONS = new Set(['unreadable-record', 'not-regular', 'refused-write', 'unknown-schema', 'oversized']);
+// Which reasons each kind of file can carry.
+const REQUEST_REASONS = new Set(['unreadable-record', 'unknown-schema', 'oversized']), INDEX_REASONS = new Set(['not-regular', 'refused-write', 'unknown-schema']);
+const reasonFits = (file, reason) => (file.startsWith('requests/') ? REQUEST_REASONS : INDEX_REASONS).has(reason);
 // The requests directory itself, when a sweep cannot list it (a regular file, a symlink, unreadable).
 const LISTING = { file: 'requests', reason: 'not-directory' };
 // A bare name from an earlier version: a request record was unreadable; an index write was refused.
 const offenderOf = item => object(item) && item.file === LISTING.file && item.reason === LISTING.reason ? { ...LISTING } : typeof item === 'string' ? (OFFENDER.test(item) ? { file: item, reason: item.startsWith('requests/') ? 'unreadable-record' : 'refused-write' } : null)
-  : object(item) && typeof item.file === 'string' && OFFENDER.test(item.file) && REASONS.has(item.reason) && (item.reason === 'unreadable-record') === item.file.startsWith('requests/') ? { file: item.file, reason: item.reason } : null;
+  : object(item) && typeof item.file === 'string' && OFFENDER.test(item.file) && REASONS.has(item.reason) && reasonFits(item.file, item.reason) ? { file: item.file, reason: item.reason } : null;
 const offendersOf = value => {
   const list = [];
   for (const item of Array.isArray(value) ? value : []) {
@@ -352,7 +361,13 @@ function sweepSlice(loc, sweep, faults, wrote = new Set(), rebuilt = new Set(), 
     let record;
     // A live request's record name that cannot be used is the archive-fault marker's to report: the request
     // has not archived, and its readiness index is written when it does.
-    try { record = archivedRequest(loc, requestId); } catch { if (live.has(requestId)) continue; unreadable += 1; offend({ file: `requests/${name}`, reason: 'unreadable-record' }); continue; }
+    try { record = archivedRequest(loc, requestId); }
+    catch (error) {
+      if (live.has(requestId)) continue;
+      unreadable += 1;
+      offend({ file: `requests/${name}`, reason: REQUEST_REASONS.has(error.reason) ? error.reason : 'unreadable-record' });
+      continue;
+    }
     const receipt = record?.receipt, planPath = record?.request?.planPath;
     if (receipt?.type !== 'readiness' || !keyablePlan(planPath) || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) continue;
     try {
@@ -486,7 +501,7 @@ function taskRecord(loc, state, key) {
 // pass that retries (not a guarded tool call) retires at most once per `options.archiveRetryInterval`, so a
 // fixed record archives on the next such pass and the marker clears.
 const ARCHIVE_FAULT = /^(requests|tasks)\/[a-f0-9]{64}\.json$/;
-export const ARCHIVE_REASONS = Object.freeze(['not-regular', 'not-directory', 'unreadable-now', 'unknown-schema', 'invalid-task', 'conflict', 'redirected', 'refused-write']);
+export const ARCHIVE_REASONS = Object.freeze(['not-regular', 'not-directory', 'unreadable-now', 'oversized', 'unknown-schema', 'invalid-task', 'conflict', 'redirected', 'refused-write']);
 /** The sanitized archive-fault marker, with the archive path its file names are relative to. */
 export function archiveFaults(loc, state) {
   const value = object(state.archiveFaults) ? state.archiveFaults : {}, files = [];
@@ -545,11 +560,23 @@ export function compactDecisions(loc, state, options = {}) {
   // plan's index is written forward-only from the retained record's own receipt below.
   delete state.hydratedLive;
   const hydrated = [...(state.archivedHydrated || [])].filter(id => Object.hasOwn(state.requests, id));
+  const hydratedTasks = new Set(hydrated.map(id => state.requests[id].budgetKey));
   for (const id of hydrated) {
     delete state.requests[id]; delete state.receipts[id]; delete state.observations[id]; delete state.nativeProbes[id];
     for (const [key, value] of Object.entries(state.invocations)) if (value?.requestId === id) delete state.invocations[key];
   }
   state.archivedHydrated?.clear();
+  // A lookup brings the task's retained budget into live state too; with no live request using it, it
+  // leaves again when its retained record already covers it (an earlier or equal start, as much use).
+  const liveKeys = new Set(Object.values(state.requests).map(request => request.budgetKey));
+  for (const key of hydratedTasks) {
+    const live = state.tasks[key];
+    if (liveKeys.has(key) || !ID.test(key || '') || !validTask(live)) continue;
+    let retained = null;
+    try { retained = readRecord(loc, path.join(root(loc), 'tasks', `${key}.json`)); } catch { continue; }
+    if (retained?.budgetKey === key && validTask(retained.task) && retained.task.startedAt <= live.startedAt
+      && ['decisions', 'repairs', 'acquisitions'].every(name => retained.task.counts[name] >= live.counts[name])) delete state.tasks[key];
+  }
   // Small state with no deferred record retires nothing; it still retries noted index writes.
   // Deferred records are retried by a decision prepare or record pass (never a guarded tool call), at most
   // once per `options.archiveRetryInterval` ms (default 0); a large state retires on every pass anyway.

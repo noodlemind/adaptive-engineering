@@ -2128,3 +2128,39 @@ test('Q4: a parsed record of any schema other than 1 is kept, never replaced', t
     assert.deepEqual(faultsOf(state).files, [{ file: `requests/${item.requestId}.json`, reason: 'unknown-schema' }]);
   }
 });
+
+// Isolated review of PR #127 at 1c2bde4a.
+
+test('R1: a sweep names a newer-schema or oversized request record with its own reason and remedy', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const { loc, items, state } = untrackedArchive(c, d, 3, 1);
+  const newer = path.join(d.archive, 'requests', `${items[1].requestId}.json`), big = path.join(d.archive, 'requests', `${items[2].requestId}.json`);
+  fs.writeFileSync(newer, JSON.stringify({ schema: 2, shape: 'newer' }));
+  fs.writeFileSync(big, 'x'.repeat(2 * 1024 * 1024 + 1));
+  compactDecisions(loc, state);
+  assert.deepEqual(state.readinessPending.sweep.last.offenders, [
+    { file: `requests/${items[1].requestId}.json`, reason: 'unknown-schema' }, { file: `requests/${items[2].requestId}.json`, reason: 'oversized' }].sort((a, b) => a.file.localeCompare(b.file)));
+  persistState(d, state);
+  const message = staleWarning(run, undefined, 11).message;
+  assert.match(message, /written by a newer version of AE, kept and not used/);
+  assert.match(message, /larger than 2 MiB, never read or replaced/);
+  assert.doesNotMatch(message, /restore it from a backup/);
+  assert.equal(fs.statSync(big).size, 2 * 1024 * 1024 + 1, 'the oversized record is untouched');
+});
+
+test('R2: a regular file over 2 MiB at a due request\'s record name is kept, never replaced unread', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const item = d.readiness('escalate', 1);
+  const record = path.join(d.archive, 'requests', `${item.requestId}.json`);
+  fs.mkdirSync(path.dirname(record), { recursive: true });
+  fs.writeFileSync(record, 'y'.repeat(2 * 1024 * 1024 + 1));
+  const state = d.state([item]);
+  compactDecisions(loc, state);
+  assert.ok(state.requests[item.requestId], 'the request waits');
+  assert.deepEqual(faultsOf(state).files, [{ file: `requests/${item.requestId}.json`, reason: 'oversized' }]);
+  assert.equal(fs.statSync(record).size, 2 * 1024 * 1024 + 1);
+});
