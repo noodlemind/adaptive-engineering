@@ -86,8 +86,9 @@ import { cmdFlows, flowsResultOf, FLOW_VERBS } from './flow-model-cmd.mjs';
 import { cmdDiagrams, diagramsResultOf, DIAGRAM_VERBS } from './diagram-cmd.mjs';
 import { cmdHost, hostResultOf, HOST_VERBS } from './hosts/command.mjs';
 import { cmdMcp } from './hosts/mcp-server.mjs';
+import { REGISTRY, hasCommand } from './command-names.mjs';
 
-const REGISTRY = new Map();
+export { hasCommand };
 
 export const GLOBAL_FLAGS = [
   { name: '--json', type: 'boolean', description: 'JSON output for machine readers', required: false, default: false, tui: 'cli-only' },
@@ -258,10 +259,6 @@ export function registerCommand(entry) {
     args,
   });
   return entry.name;
-}
-
-export function hasCommand(name) {
-  return REGISTRY.has(name);
 }
 
 export function getCommand(name) {

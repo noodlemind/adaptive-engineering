@@ -18,6 +18,8 @@ import { deriveGitContext } from '../lib/git-context.mjs';
 import { ensureBucket } from '../lib/knowledge/layer.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
 import { externalPlansDir, normalizePlanRel } from '../lib/project-layout.mjs';
+// The CLI loads the command registry before any command runs; journal commands are shown only when it names them.
+import '../lib/registry.mjs';
 
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const PLAN_A = 'docs/plans/2026-11-01-a-plan.md', PLAN_B = 'docs/plans/2026-11-02-b-plan.md', PLAN_C = 'docs/plans/2026-11-03-c-plan.md';
@@ -624,9 +626,45 @@ test('hostile plans, journal commands and journal times never reach the packet o
   assert.ok(unit.plans.includes(PLAN_A) && unit.plans.includes(PLAN_B));
   assert.ok(unit.plans.some(plan => /^\[unnamed:[a-f0-9]{12}\]$/.test(plan)), 'an unsafe plan is shown as a digest');
   const journal = packet.recheck.failure_clusters.find(c => c.source === 'run-journal');
-  assert.deepEqual([journal.command, journal.first_seen, journal.last_seen, journal.plan_count], ['[unnamed]', null, null, 2]);
+  assert.match(journal.command, /^\[command:[a-f0-9]{12}\]$/);
+  assert.deepEqual([journal.first_seen, journal.last_seen, journal.plan_count], [null, null, 2]);
   const [findings] = packet.recheck.finding_clusters;
   assert.equal(findings.plan_count, 2);
+});
+
+test('a journal command is shown only when the ae command registry defines it, otherwise as a digest', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  // Lowercase and short enough to pass the character rules: the shape alone vouched for these before.
+  const planted = ['xoxb-1234567890-abcdefghij', 'hunter2correcthorse'];
+  const lines = [];
+  for (const [n, command] of [...planted, 'verify'].entries()) {
+    for (const plan of [PLAN_A, PLAN_B]) {
+      const run = `c${n}${plan === PLAN_A ? 'a' : 'b'}`;
+      lines.push({ schema: 1, type: 'run.start', run, ts: '2026-11-01T00:00:00.000Z', command, plan });
+      lines.push({ schema: 1, type: 'run.result', run, ts: '2026-11-01T00:01:00.000Z', status: 'failed', exitCode: 1, plan });
+    }
+  }
+  f.journal(lines);
+  const { recheck } = f.packet({ recheck: true });
+  const json = JSON.stringify(recheck);
+  for (const value of planted) assert.equal(json.includes(value), false, `${value} must not appear`);
+  const journal = recheck.failure_clusters.filter(c => c.source === 'run-journal');
+  assert.equal(journal.length, 3);
+  const shown = journal.map(c => c.command);
+  assert.ok(shown.includes('verify'), 'a registered command is shown by name');
+  const digests = shown.filter(command => command !== 'verify');
+  assert.equal(digests.length, 2);
+  for (const command of digests) assert.match(command, /^\[command:[a-f0-9]{12}\]$/);
+  assert.notEqual(digests[0], digests[1], 'distinct commands stay distinct');
+  // The cluster ID still follows the recorded command, so an answer to it keeps matching.
+  assert.ok(journal.some(c => c.id === failureClusterId('command:xoxb-1234567890-abcdefghij')));
+
+  // The same through the CLI, which loads the registry itself.
+  const cli = spawnSync(process.execPath, [path.join(import.meta.dirname, '..', 'bin', 'ae.mjs'), 'consolidate', '--candidates', '--recheck', '--json', '--workspace', f.ws, '--no-events'], { encoding: 'utf8', env: { ...process.env, HARNESS_HOME: f.home, AE_HOME: f.home, NO_COLOR: '1' } });
+  for (const value of planted) assert.equal(cli.stdout.includes(value), false, `CLI: ${value} must not appear`);
+  assert.match(cli.stdout, /"command": ?"verify"/);
 });
 
 test('a cluster counts its evidence records without listing their paths, and lists five failure records newest first', t => {

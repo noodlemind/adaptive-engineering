@@ -10,6 +10,7 @@ import { createRedactor } from './redact.mjs';
 import { externalPlansDir, normalizePlanRel } from './project-layout.mjs';
 import { loadNamedChecks } from './checks.mjs';
 import { CODE_REVIEWERS, DOCUMENT_REVIEWERS, LANGUAGE_REVIEWER_IDS } from './review-preparation.mjs';
+import { hasCommand } from './command-names.mjs';
 
 // Consolidation re-check (agent memory plan, Phase 2). Every signal here is
 // evidence for judgment built only from Harness-owned records in the
@@ -42,9 +43,10 @@ export const RECHECK_DIR_ENTRY_CAP = 4096;
 const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
 // Structured metadata only: no raw check output, finding title, command line or plan text is ever shown.
-// Identity fields read from records (check names, review perspectives, finding files, plans) are shown only
-// when an allowlist outside the record vouches for them: a check the workspace's checks configuration
-// declares, a review perspective Harness defines, or a file that exists in the checkout or the plan store.
+// Identity fields read from records (check names, run-journal commands, review perspectives, finding files,
+// plans) are shown only when an allowlist outside the record vouches for them: a check the workspace's checks
+// configuration declares, a command the `ae` command registry defines (the same check the CLI makes before it
+// journals a run), a review perspective Harness defines, or a file that exists in the checkout or the plan store.
 // Anything else is shown as a short digest, never escaped or trimmed: what a value looks like never decides
 // whether it is shown. The character sets and secret screens below are an extra layer, not the gate. A shown
 // name is display text only and is never used as a plain-object key.
@@ -191,8 +193,12 @@ const checkName = (value, declared) => (typeof value === 'string' && declared().
  */
 const displayPath = value => safePath(value) ?? (typeof value === 'string' && value ? `[unnamed:${shortHash(value)}]` : UNNAMED);
 
-/** A run-journal command as shown: only a lowercase `ae` subcommand-shaped word, otherwise `[unnamed]`. */
-const safeCommand = value => (typeof value === 'string' && SAFE_COMMAND.test(value) ? value : UNNAMED);
+/**
+ * A run-journal command as shown: only a command the `ae` registry defines (and that passes the character
+ * rules), otherwise a digest. The journal is in the checkout and can be written by anyone, so the word's
+ * shape alone vouches for nothing.
+ */
+const safeCommand = value => (typeof value === 'string' && SAFE_COMMAND.test(value) && hasCommand(value) && noSecret(value) ? value : digestName('command', value));
 
 /** A learning ID as shown: `domain/slug` in the safe set, otherwise a digest. */
 const safeLearningId = value => (typeof value === 'string' && SAFE_LEARNING_ID.test(value) && noSecret(value) ? value : `[unnamed:${shortHash(String(value))}]`);
