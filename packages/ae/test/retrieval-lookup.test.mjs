@@ -182,3 +182,49 @@ test('a malformed events file does not crash the resolver', () => {
   const out = call('event', 's', ws);
   assert.equal(out.metadata.count, 1, 'unparseable lines are skipped, not fatal');
 });
+
+test('an episode evidence_quote line is withheld from every raw-file preview, excerpt and snippet', async () => {
+  const { runGet } = await import('../lib/get-cmd.mjs');
+  const { runSearch } = await import('../lib/retrieval/search.mjs');
+  const { spawnSync } = await import('node:child_process');
+  const ws = fixtureWorkspace();
+  const copilotHome = tempDir('lookup-quote-home-');
+  const home = tempDir('lookup-quote-hh-');
+  const half1 = 'A1b2C3d4E5f6G7h8I9';
+  const half2 = 'J0k1L2m3N4o5P6q7R8';
+  const token = `ghp_${half1}${half2}`;
+  // Hand-written: the stored line holds the token split by an escaped newline,
+  // so no secret pattern sees it on the raw line, and a block scalar quote
+  // whose continuation lines are the rest of the value.
+  const rel = 'docs/solutions/insights/split-quote.md';
+  fs.mkdirSync(path.join(ws, 'docs', 'solutions', 'insights'), { recursive: true });
+  fs.writeFileSync(path.join(ws, rel), `---\ntitle: "quotewitness split"\nkind: insight\nevidence_quote: ${JSON.stringify(`quotewitness auth failed ghp_${half1}\n${half2}`)}\n---\n\nThe login retry masks a 401.\n`);
+  const blockRel = 'docs/solutions/insights/block-quote.md';
+  fs.writeFileSync(path.join(ws, blockRel), `---\ntitle: "quotewitness block"\nevidence_quote: |\n  quotewitness ghp_${half1}\n  ${half2}\nkind: insight\n---\n\nBody.\n`);
+  fs.mkdirSync(path.join(ws, 'knowledge'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'knowledge', 'manifest.yaml'), ['updated: "2026-11-01T00:00:00Z"', 'entries:', '  - id: split-quote', `    path: ${rel}`, '    title: "quotewitness split"', '    kind: insight', `    summary: "evidence_quote: quotewitness ghp_${half1}\\n${half2}"`, '  - id: block-quote', `    path: ${blockRel}`, '    title: "quotewitness block"', '    kind: insight', ''].join('\n'));
+  for (const args of [['init', '-q'], ['config', 'user.email', 'harness@local'], ['config', 'user.name', 'harness'], ['add', '-A'], ['commit', '-q', '-m', 'fixture']]) spawnSync('git', ['-C', ws, ...args]);
+
+  const windows = Array.from({ length: token.length - 7 }, (_, i) => token.slice(i, i + 8));
+  const assertWithheld = (value, where) => {
+    const text = JSON.stringify(value);
+    for (const w of windows) assert.ok(!text.includes(w), `${where} leaked ${w}: ${text}`);
+  };
+  for (const [id, file] of [['split-quote', rel], ['block-quote', blockRel]]) {
+    const doc = lookupEntity({ kind: 'document', identifier: id, workspace: ws, copilotHome, home });
+    assert.ok(doc.preview.includes('evidence_quote: [withheld]'), doc.preview);
+    assert.ok(doc.preview.includes('kind: insight'), 'the rest of the frontmatter is still shown');
+    assertWithheld(doc, `lookup document ${id}`);
+    assertWithheld(lookupEntity({ kind: 'file', identifier: file, workspace: ws, copilotHome, home }), `lookup file ${file}`);
+    const got = runGet({ workspace: ws, copilotHome, home, flags: { docid: id, contextVersion: 2 } });
+    assert.ok(got.excerpt.includes('evidence_quote: [withheld]'), got.excerpt);
+    assert.equal(got.evidence.redacted, true, 'a withheld line counts as redacted');
+    assert.equal(got.totalLines, fs.readFileSync(path.join(ws, file), 'utf8').split('\n').length, 'line numbers do not move');
+    assertWithheld(got, `get --docid ${id}`);
+    assertWithheld(runGet({ workspace: ws, copilotHome, home, flags: { path: file, offset: 4 } }), `get --path ${file} --offset 4`);
+  }
+  // A hand-edited manifest field that holds a copied quote line.
+  const found = runSearch({ query: 'quotewitness ghp', workspace: ws, copilotHome, home, mode: 'literal', sources: ['knowledge'] });
+  assert.ok(found.results.some((r) => r.id === 'split-quote' && r.snippet === 'evidence_quote: [withheld]'), JSON.stringify(found.results));
+  assertWithheld(found, 'search snippets');
+});

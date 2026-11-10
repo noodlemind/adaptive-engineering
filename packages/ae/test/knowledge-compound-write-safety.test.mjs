@@ -117,9 +117,9 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 // Line and paragraph separators and the bidirectional marks (LRM, RLM, ALM).
 // Also the zero-width and invisible format characters, BOM and tag characters.
 // And the other default-ignorable code points: the combining grapheme joiner,
-// the variation selectors, the Hangul fillers, U+17B4 and the musical format
+// the variation selectors but VS16 (allowed for emoji), the Hangul fillers, U+17B4 and the musical format
 // characters.
-const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
+const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0e, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -171,6 +171,24 @@ test('an insight evidence quote with a secret or terminal control codes is refus
     assert.deepEqual(refused.written, []);
   }
   assert.equal(captureInsight({ evidenceQuote: 'line one\r\nline two' }).result.pass, true, 'CRLF output is accepted, as documented');
+});
+
+test('an insight evidence quote keeps emoji with a variation selector or joiner, but a joiner between letters is still refused', () => {
+  for (const quote of ['Warning \u26a0\ufe0f test failed', 'dev \u{1F468}\u200d\u{1F4BB} failed', 'flame \u2764\ufe0f\u200d\u{1F525} hot', 'wave \u{1F44B}\u{1F3FD}\u200d\u{1F4BB} hi']) {
+    const { result, text } = captureInsight({ evidenceQuote: quote });
+    assert.equal(result.pass, true, `${JSON.stringify(quote)}: ${JSON.stringify(result)}`);
+    assert.equal(readEvidenceQuote(text), quote, 'the stored quote reads back byte for byte');
+  }
+  for (const quote of [`token ghp\u200d${'A'.repeat(36)}`, 'a\u200db', '\u200d\u{1F4BB} lead', '\u{1F468}\u200d trailing']) {
+    const refused = captureInsight({ evidenceQuote: quote });
+    assert.equal(refused.result.pass, false, JSON.stringify(quote));
+    assert.match(refused.result.blockedReason, /zero-width/);
+    assert.deepEqual(refused.written, []);
+  }
+  // Allowed presentation characters are still removed before the secret scan.
+  const hidden = captureInsight({ evidenceQuote: `token ghp_${'A'.repeat(18)}\ufe0f${'A'.repeat(18)}` });
+  assert.equal(hidden.result.pass, false);
+  assert.match(hidden.result.blockedReason, /github-token/);
 });
 
 test('an insight evidence quote with a secret split across lines is refused', () => {

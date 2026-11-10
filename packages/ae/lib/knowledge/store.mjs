@@ -594,9 +594,40 @@ export function stripFrontmatter(text) {
 }
 
 const EVIDENCE_QUOTE_KEY = /^[ \t]*evidence_quote[ \t]*:/m;
-// A whole `evidence_quote` line, up to its line break. `[^\r\n]` also takes
-// U+2028 and U+2029, so text after one cannot escape the redaction.
-const EVIDENCE_QUOTE_LINES = /^([ \t]*)evidence_quote[ \t]*:[^\r\n]*/gm;
+// A whole `evidence_quote` key line. A line runs to CR or LF, so U+2028 and
+// U+2029 stay inside it and text after one cannot escape the redaction.
+const EVIDENCE_QUOTE_LINE = /^([ \t]*)evidence_quote[ \t]*:/;
+const LEADING_BLANKS = /^[ \t]*/;
+
+/**
+ * Text with every `evidence_quote` key line replaced by
+ * `evidence_quote: [withheld]`, keeping its indent. Every nonblank line after
+ * one that is indented deeper than the key is emptied too, since YAML reads
+ * such lines as the rest of the value (a block scalar or a wrapped plain or
+ * quoted string in a hand-edited file). Line breaks are kept, so line numbers
+ * and counts do not move. Any preview, excerpt or snippet of a raw file that
+ * may be an episode goes through this before it is shown, because the quote
+ * is screened only as its own field (see inertEvidenceQuote).
+ */
+export function withholdEvidenceQuoteLines(text) {
+  const s = String(text ?? '');
+  if (!s.includes('evidence_quote')) return s;
+  const parts = s.split(/(\r\n|\r|\n)/);
+  let keyIndent = -1;
+  for (let i = 0; i < parts.length; i += 2) {
+    const line = parts[i];
+    const key = line.match(EVIDENCE_QUOTE_LINE);
+    if (key) {
+      parts[i] = `${key[1]}evidence_quote: [withheld]`;
+      keyIndent = key[1].length;
+      continue;
+    }
+    if (keyIndent < 0 || !line.trim()) continue;
+    if (line.match(LEADING_BLANKS)[0].length > keyIndent) parts[i] = '';
+    else keyIndent = -1;
+  }
+  return parts.join('');
+}
 
 /**
  * An episode's body for a summary or excerpt. A text is an episode only when
@@ -604,8 +635,8 @@ const EVIDENCE_QUOTE_LINES = /^([ \t]*)evidence_quote[ \t]*:[^\r\n]*/gm;
  * text carries an `evidence_quote` key, the body is empty: the quote is
  * screened only as its own field, so raw frontmatter holding it must never
  * ride into an excerpt. A text with no opening fence (such as a doc that
- * explains the field) keeps its body, with each `evidence_quote` line replaced
- * by `evidence_quote: [withheld]` so no quote can leak through it.
+ * explains the field) keeps its body, with its `evidence_quote` lines
+ * withheld (see withholdEvidenceQuoteLines) so no quote can leak through it.
  */
 export function episodeBody(text) {
   const s = String(text ?? '');
@@ -614,7 +645,7 @@ export function episodeBody(text) {
   const { frontmatter, body } = splitFrontmatter(s);
   if (frontmatter !== null) return body;
   if (opensWithFence) return EVIDENCE_QUOTE_KEY.test(body) ? '' : body;
-  return body.replace(EVIDENCE_QUOTE_LINES, '$1evidence_quote: [withheld]');
+  return withholdEvidenceQuoteLines(body);
 }
 
 export function parseLearningFrontmatter(text) {

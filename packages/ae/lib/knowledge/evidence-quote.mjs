@@ -29,6 +29,13 @@ export const EVIDENCE_QUOTE_READ_CAP = 4096;
 // U+1D173-U+1D17A) are refused: they would
 // land raw in frontmatter, break a line, reorder what a reader or model sees,
 // or hide text from a reader while a model still reads it.
+// One exception: emoji presentation. VARIATION SELECTOR-16 (U+FE0F) is
+// allowed anywhere, and ZERO WIDTH JOINER (U+200D) between two pictographs
+// (a VS16 or a skin-tone modifier may sit before it), so `Warning ⚠️` and
+// `dev 👨‍💻` are accepted. A joiner anywhere else, such as between two
+// letters of a token, is still refused. Screening removes both (see
+// stripInvisible), so neither can hide a token from the secret scan.
+const EMOJI_PRESENTATION = /\ufe0f|(?<=\p{Extended_Pictographic}(?:\ufe0f|[\u{1f3fb}-\u{1f3ff}])?)\u200d(?=\p{Extended_Pictographic})/gu;
 const DISALLOWED = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
 
 // Whole terminal escape sequences: CSI (ESC [ or the C1 CSI byte) with its
@@ -41,6 +48,16 @@ const ANSI_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x
 const SGR_REMNANT = /\[[0-9;]*m/g;
 
 const stripAnsi = text => text.replace(ANSI_SEQUENCE, '');
+// Only the bytes that open an escape sequence (ESC, ESC [, ESC ], and the C1
+// CSI and OSC bytes), with everything after them kept. Removing whole
+// sequences can eat a token's first characters as parameters or a final byte
+// (`ghp_\x1b[A1b2...` loses its `A`), so this screening form keeps them.
+const ESCAPE_INTRODUCER = /\x1b[\[\]]?|[\x9b\x9d]/g;
+const stripEscapeIntroducers = text => text.replace(ESCAPE_INTRODUCER, '');
+// ESC or any C1 control in a quote read back from an episode. Writes refuse
+// these, so only a foreign or hand-edited file has one; such a quote is
+// withheld whole (see inertEvidenceQuote).
+const READ_CONTROL = /[\x1b\x80-\x9f]/;
 
 // The shared inertLine blanks only C0 controls and DEL, so it never changes
 // how a path or title displays. A quote also has every C1 control (such as NEL
@@ -74,19 +91,35 @@ export const SPLIT_TOKEN_MIN = 20;
 export const SPLIT_FRAGMENT_MIN = 8;
 const TOKEN_RUN = new RegExp(`[A-Za-z0-9_+/=.-]{${SPLIT_TOKEN_MIN},}`, 'g');
 const TOKEN_LINE = /^[A-Za-z0-9_+/=.-]+$/;
+// An identifier or dotted name, such as `AssertionError`,
+// `expected_checksum_value` or `java.lang.NullPointerException`. Stack traces
+// and test output put these on lines of their own, so they are not fragments.
+const IDENTIFIER_OR_DOTTED = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+// The prefixes of the identifier-shaped credentials in SECRET_PATTERNS.
+const SECRET_PREFIX = /gh[pousr]_|github_pat_|AKIA|ASIA|npm_|glpat-|xox[abprs]-|sk-/;
 
-// Which lines are wrapped-token fragments: a whole line of token characters
-// that is SPLIT_FRAGMENT_MIN or longer, or that belongs to a maximal sequence
-// of consecutive whole-token lines whose joined length is SPLIT_TOKEN_MIN or
-// more (a token wrapped over many short lines).
+// Whether a whole-token line (or the join of a run of them) is shaped like a
+// token rather than a name: anything that is not an identifier or dotted name
+// (it holds `+`, `/`, `=` or `-`, or starts with a digit), an undotted
+// identifier that holds a digit, or anything that holds a credential prefix.
+// So a dotted name is never a fragment, and neither is a letters-only
+// identifier such as `AssertionError` or `abcdabcdabcdabcdabcd`: mixed case
+// cannot tell `NullPointerException` from a random token, so it is not used.
+const tokenShaped = text => !IDENTIFIER_OR_DOTTED.test(text) || SECRET_PREFIX.test(text) || (!text.includes('.') && /\d/.test(text));
+
+// Which lines are wrapped-token fragments: a token-shaped whole line of token
+// characters that is SPLIT_FRAGMENT_MIN or longer, or a line in a maximal
+// sequence of consecutive whole-token lines whose join is token-shaped and
+// SPLIT_TOKEN_MIN or longer (a token wrapped over many short lines).
 function fragmentLines(lines) {
   const fragment = lines.map(() => false);
   for (let i = 0; i < lines.length;) {
     if (!TOKEN_LINE.test(lines[i])) { i++; continue; }
     let j = i;
-    let chain = 0;
-    while (j < lines.length && TOKEN_LINE.test(lines[j])) chain += lines[j++].length;
-    for (let k = i; k < j; k++) fragment[k] = chain >= SPLIT_TOKEN_MIN || lines[k].length >= SPLIT_FRAGMENT_MIN;
+    let chain = '';
+    while (j < lines.length && TOKEN_LINE.test(lines[j])) chain += lines[j++];
+    const chained = chain.length >= SPLIT_TOKEN_MIN && tokenShaped(chain);
+    for (let k = i; k < j; k++) fragment[k] = chained || (lines[k].length >= SPLIT_FRAGMENT_MIN && tokenShaped(lines[k]));
     i = j;
   }
   return fragment;
@@ -123,6 +156,32 @@ function splitTokenRun(text, lines, joins) {
 const LINE_BREAK = /\r\n|[\r\n\u0085\u2028\u2029]/;
 const LINE_NOISE = /[\x00-\x08\x0a-\x1f\x7f-\x9f\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
 
+// Separators source code and shells put at a line edge to continue a string
+// on the next line: quotes (Python implicit concatenation, `'a' +` in JS), a
+// `+` operator, a trailing backslash, and a comma. They are removed from
+// each line's edges before the join. A `+` counts only when it stands apart
+// or next to a quote, since `+` inside a base64 run is token text.
+const JOIN_EDGE_END = /(?:[\s'"`\\,]|(?<=^|[\s'"`])\+)+$/;
+const JOIN_EDGE_START = /^(?:[\s'"`\\,]|\+(?=$|[\s'"`]))+/;
+const NON_TOKEN = /[^A-Za-z0-9_+/=.-]/;
+
+// The longest prefix every line shares, cut back to end at its last non-token
+// character (such as `[stderr] ` or `stdout | `), when that is 3 or more
+// characters; otherwise ''. Cutting at a non-token character keeps the
+// shared first characters of the lines' own text.
+function commonLinePrefix(lines) {
+  let prefix = lines[0];
+  for (const line of lines) {
+    let n = 0;
+    while (n < prefix.length && n < line.length && prefix[n] === line[n]) n++;
+    prefix = prefix.slice(0, n);
+    if (!prefix) return '';
+  }
+  let end = prefix.length;
+  while (end > 0 && !NON_TOKEN.test(prefix[end - 1])) end--;
+  return end >= 3 ? prefix.slice(0, end) : '';
+}
+
 // The ids of what only shows once a form's lines are joined with nothing
 // between them, which is how a credential wrapped across lines reads. The
 // form is split into lines, each line loses its controls and invisible
@@ -147,9 +206,27 @@ const LINE_NOISE = /[\x00-\x08\x0a-\x1f\x7f-\x9f\p{Default_Ignorable_Code_Point}
 //   `WinterPass@prod.example.com`). A dotted user name cannot be told from a
 //   host, so that log shape fails closed on purpose.
 //
+// Before the join, a prefix that every line shares (see commonLinePrefix) is
+// removed, and so are continuation separators at each line's edges (see
+// JOIN_EDGE_END), so `[stderr] ` on every line, `"ab"` then `"cd"`, `'ab' +`
+// then `'cd'`, and `ab\` then `cd` all join to `abcd`.
+//
+// What still defeats the join, by design or for now: a prefix that differs
+// from line to line (line numbers, timestamps) or is shorter than 3
+// characters; continuation operators other than the ones above (`.` in PHP,
+// `..` in Lua, `||` in SQL, `&` in VB, `)` or `;` at an edge); a separator
+// inside a line rather than at its edge (a tab or space between two halves on
+// one line), which no renderer joins; and a token split into letters-only or
+// dotted pieces, which tokenShaped reads as names (a letters-only credential
+// with no known prefix wrapped over lines passes, such as `abcd` five times).
+//
 // Splitting, trim() and one scan per pattern keep the cost linear.
 function splitIds(form) {
-  const lines = form.split(LINE_BREAK).map(line => inertQuoteLine(line.replace(LINE_NOISE, '').trim())).filter(Boolean);
+  let lines = form.split(LINE_BREAK).map(line => inertQuoteLine(line.replace(LINE_NOISE, '').trim())).filter(Boolean);
+  if (lines.length < 2) return [];
+  const prefix = commonLinePrefix(lines);
+  if (prefix) lines = lines.map(line => line.slice(prefix.length));
+  lines = lines.map(line => line.replace(JOIN_EDGE_END, '').replace(JOIN_EDGE_START, '')).filter(Boolean);
   if (lines.length < 2) return [];
   const joins = [];
   let text = lines[0];
@@ -183,7 +260,7 @@ function splitIds(form) {
 export function screenSecrets(value) {
   const raw = String(value ?? '');
   const stripped = stripAnsi(raw);
-  const written = [raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, '')];
+  const written = [raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, ''), stripEscapeIntroducers(raw)];
   const visible = [...written, ...written.map(stripInvisible)];
   const bases = [...new Set([...visible, ...visible.map(form => form.normalize('NFKC'))])];
   const direct = secretIds([...bases, ...bases.map(inertQuoteLine)]);
@@ -196,7 +273,7 @@ export function screenSecrets(value) {
 export function evidenceQuoteError(value) {
   if (typeof value !== 'string' || !value.trim()) return 'evidence_quote must be nonempty text';
   if (Buffer.byteLength(value, 'utf8') > EVIDENCE_QUOTE_CAP) return `evidence_quote must be at most ${EVIDENCE_QUOTE_CAP} bytes of verbatim error, test or diff text`;
-  if (DISALLOWED.test(value)) return 'evidence_quote may contain tabs, newlines and carriage returns but no other control, bidirectional formatting, line separator, zero-width or tag characters, nor any other invisible character; strip terminal color codes';
+  if (DISALLOWED.test(value.replace(EMOJI_PRESENTATION, ''))) return 'evidence_quote may contain tabs, newlines and carriage returns but no other control, bidirectional formatting, line separator, zero-width or tag characters, nor any other invisible character; strip terminal color codes';
   // Screen the joined forms too (see screenSecrets): a credential split
   // across lines must not pass here and then reassemble when the quote is
   // rendered as one line.
@@ -239,12 +316,14 @@ function capBytes(text, max) {
 /**
  * Quoted evidence as inert data for an agent-facing packet. A quote over
  * EVIDENCE_QUOTE_READ_CAP bytes is withheld as `[redacted: oversize]` before
- * any screening. Otherwise terminal escape sequences are removed whole, then
- * the quote is screened in every form screenSecrets checks, including the
- * compact form where a credential split across a line break is joined back
- * together. Any hit withholds the whole quote behind a marker naming the
- * matched patterns, or `split-secret` when only the compact form matched.
- * Otherwise invisible characters (default-ignorable and format characters)
+ * any screening. Otherwise the quote is screened in every form screenSecrets
+ * checks, including the compact form where a credential split across a line
+ * break is joined back together. Any hit withholds the whole quote behind a
+ * marker naming the matched patterns, or `split-secret` when only the compact
+ * form matched. A quote with no hit that still holds ESC or any C1 control
+ * (which a write refuses, so only a foreign or hand-edited file has one) is
+ * withheld whole as `[redacted: control-sequence]`, so no escape sequence is
+ * ever interpreted or half-removed on display. Otherwise invisible characters (default-ignorable and format characters)
  * are removed outright, exactly as in the form screened without them, and the
  * quote is joined to one line (C0, DEL, C1 and the line and paragraph
  * separators become spaces) and capped in bytes at a code-point boundary.
@@ -254,5 +333,6 @@ export function inertEvidenceQuote(value) {
   if (Buffer.byteLength(text, 'utf8') > EVIDENCE_QUOTE_READ_CAP) return '[redacted: oversize]';
   const screen = screenSecrets(text);
   if (screen) return screen.split ? '[redacted: split-secret]' : `[redacted: ${screen.ids.join(', ')}]`;
+  if (READ_CONTROL.test(text)) return '[redacted: control-sequence]';
   return capBytes(inertQuoteLine(stripInvisible(stripAnsi(text))), EVIDENCE_QUOTE_CAP);
 }

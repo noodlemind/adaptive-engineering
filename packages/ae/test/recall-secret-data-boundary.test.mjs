@@ -9,7 +9,7 @@ import { runOrient } from '../lib/orient.mjs';
 import { redactRecallEntry, redactSecrets } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
-import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded } from '../lib/knowledge/store.mjs';
+import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded, withholdEvidenceQuoteLines } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { inertEvidenceQuote, evidenceQuoteError, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
@@ -303,7 +303,7 @@ test('a hand-edited quote whose token sits inside colour codes is redacted, and 
     assert.ok(!rendered.includes(leak), `${JSON.stringify(quote)} leaked: ${rendered}`);
     assert.equal(rendered, `[redacted: ${id}]`);
   }
-  assert.equal(inertEvidenceQuote('\x1b[31mFAIL\x1b[0m retry.test.mjs \x1b]0;title\x07done'), 'FAIL retry.test.mjs done', 'CSI and OSC sequences leave no [31m remnant');
+  assert.equal(inertEvidenceQuote('\x1b[31mFAIL\x1b[0m retry.test.mjs \x1b]0;title\x07done'), '[redacted: control-sequence]', 'a write refuses escape sequences, so one read back withholds the whole quote');
 });
 
 test('a hand-edited quote whose secret is split mid-token across a line break is withheld whole', () => {
@@ -450,8 +450,14 @@ test('a hand-edited quote whose token is broken by a default-ignorable character
   for (const point of DEFAULT_IGNORABLE) {
     const ch = String.fromCodePoint(point);
     const hex = point.toString(16);
-    assert.match(evidenceQuoteError(`ok ${ch} x`) || '', /invisible character/, `U+${hex} is refused on write`);
-    assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /invisible character/, `U+${hex} inside a token is refused on write`);
+    if (point === 0xfe0f) {
+      // VS16 is allowed for emoji presentation, but still removed before the scan.
+      assert.equal(evidenceQuoteError(`ok ${ch} x`), null, 'U+fe0f is accepted on write');
+      assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /github-token/, 'U+fe0f inside a token does not hide it on write');
+    } else {
+      assert.match(evidenceQuoteError(`ok ${ch} x`) || '', /invisible character/, `U+${hex} is refused on write`);
+      assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /invisible character/, `U+${hex} inside a token is refused on write`);
+    }
     assert.equal(inertEvidenceQuote(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)} rejected`), '[redacted: github-token]', `U+${hex} does not hide a token on read`);
     assert.equal(inertEvidenceQuote(`a${ch}b`), 'ab', `U+${hex} is removed, not blanked, on read`);
   }
@@ -557,7 +563,7 @@ test('blank lines cannot pad a wrapped credential apart, however many lines it t
     'AKIAIOSF\r\n \r\n\t\r\n\r\nODNN7EXAMPLE',
     'AK\nI\nA\nIOSF\nODNN\n7EXAMPLE',
     'key:\nAK\n\nI\nA\n\n\nIOSF\nODNN\n7EXAMPLE\nrejected',
-    `${'abcd\n'.repeat(4)}abcd`,
+    `${'abcd\n'.repeat(4)}ab12`,
   ]) {
     assert.match(evidenceQuoteError(quote) || '', /split across lines/, JSON.stringify(quote));
     assert.equal(screenSecrets(quote)?.split, true, JSON.stringify(quote));
@@ -565,6 +571,12 @@ test('blank lines cannot pad a wrapped credential apart, however many lines it t
   }
   // A hand-edited quote whose blank lines are made of line separators.
   assert.equal(inertEvidenceQuote('AKIAIOSF\u0085\u2028 \u2029\nODNN7EXAMPLE'), '[redacted: split-secret]');
+  // Letters-only pieces with no credential prefix read as names, not as a
+  // wrapped token (see tokenShaped), so they pass; a digit makes them a token.
+  const letters = `${'abcd\n'.repeat(4)}abcd`;
+  assert.equal(screenSecrets(letters), null);
+  assert.equal(evidenceQuoteError(letters), null);
+  assert.equal(inertEvidenceQuote(letters), 'abcd abcd abcd abcd abcd');
 });
 
 test('real multi-line error output with short words still passes the split screen', () => {
@@ -585,6 +597,16 @@ test('real multi-line error output with short words still passes the split scree
     'at Object.<anonymous> (/srv/app/test/orders/retry-policy.test.mjs\n  orders',
     'running 1 test\ntest tests::retry_gives_up ... FAILED\n\nfailures:\n\n---- tests::retry_gives_up stdout ----\nthread panicked at src/lib.rs:10:5',
     'File "/srv/app/services/orders/retry_policy.py", line 3\n  raise\nValueError',
+    // A bare exception class or identifier on its own line is a name, not a
+    // wrapped-token fragment.
+    'java.lang.NullPointerException\n\tat com.example.service.UserService.getUser(UserService.java:42)',
+    'java.lang.AssertionError\n\tat org.junit.Assert.fail(Assert.java:86)',
+    '...\n    assert compute(data) == expected_checksum_value\nAssertionError',
+    '    result = service.fetch_user_profile_by_identifier\nAttributeError',
+    'org.springframework.beans.factory.BeanCreationException: Error creating bean\n\tat org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:208)\nCaused by: java.lang.IllegalStateException\n\tat com.example.config.DataSourceConfig.dataSource(DataSourceConfig.java:31)\n\t... 12 more',
+    'Caused by: com.example.orders.RetryExhaustedException\n\tat com.example.orders.RetryPolicy.execute(RetryPolicy.java:57)\nCaused by:\njava.net.SocketTimeoutException\n\tat java.base/java.net.SocketInputStream.read(SocketInputStream.java:168)',
+    '    def test_checksum():\n>       assert compute(data) == expected_checksum_value\nE       AssertionError: assert 41 == 42\nE        +  where 41 = compute(data)\n\ntests/test_checksum.py:12: AssertionError',
+    '________________ test_fetch_user_profile ________________\n\n    def test_fetch_user_profile():\n>       result = service.fetch_user_profile_by_identifier\nE       AttributeError\n\ntests/test_service.py:8: AttributeError\n=========================== short test summary info ===========================\nFAILED tests/test_service.py::test_fetch_user_profile - AttributeError',
   ]) {
     assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
     assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
@@ -597,7 +619,7 @@ test('a wrapped token next to a whole-line fragment is still withheld as a split
   for (const quote of [
     'AKIAIOSF\n\n\n\n\nODNN7EXAMPLE',
     'AK\nI\nA\nIOSF\nODNN\n7EXAMPLE',
-    `${'abcd\n'.repeat(4)}abcd`,
+    `${'abcd\n'.repeat(4)}abc1`,
     `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}`,
     'postgres://reader:hunter2pass\n@db.example',
     // A generic token whose fragment line is long enough on its own.
@@ -659,4 +681,54 @@ test('the write gate scan sees a key broken by an invisible character or written
     assert.ok(scanSecretsFolded(text).length > 0, JSON.stringify(text));
   }
   assert.deepEqual(scanSecretsFolded('plain \u26a0\ufe0f build note'), []);
+});
+
+test('an escape introducer in front of a token cannot eat its first character on read', () => {
+  const body = 'A1b2C3d4E5'.repeat(4).slice(0, 36);
+  for (const quote of [`t=ghp_\x1b[${body}`, `t=ghp_\x1b${body}`, `t=ghp_\x1b[12${body}`, `t=ghp_\x1b]${body}`, `t=ghp_\u009b${body}`, `t=ghp_\u009d${body}`]) {
+    assert.deepEqual(screenSecrets(quote)?.ids, ['github-token'], JSON.stringify(quote));
+    const rendered = inertEvidenceQuote(quote);
+    assert.equal(rendered, '[redacted: github-token]', JSON.stringify(quote));
+    assert.match(evidenceQuoteError(quote) || '', /control/, 'a write refuses it outright');
+  }
+});
+
+test('a hand-edited quote with any ESC or C1 control is withheld whole on read', () => {
+  for (const quote of ['\x1b[31mFAIL\x1b[0m retry.test.mjs', 'FAIL \x1b retry', 'FAIL\u0085retry', '\u009b31mFAIL\u009b0m ok', 'ok \u0090 x']) {
+    assert.equal(inertEvidenceQuote(quote), '[redacted: control-sequence]', JSON.stringify(quote));
+  }
+  assert.equal(inertEvidenceQuote('FAIL retry.test.mjs\tok'), 'FAIL retry.test.mjs ok', 'tabs and C0 blanks are still only joined');
+});
+
+test('a separator at the line join does not hide a wrapped token', () => {
+  const A = 'abcdefgh12345678';
+  const B = 'ijklmnop9012345678ab';
+  for (const quote of [
+    // Python implicit string concatenation.
+    `token = ("ghp_${A}"\n         "${B}")`,
+    // A JavaScript + continuation.
+    `const t = 'ghp_${A}' +\n  '${B}';`,
+    `const t = "ghp_${A}"\n  + "${B}";`,
+    // A shell trailing backslash.
+    `export GH_TOKEN=ghp_${A}\\\n${B}`,
+    // A per-line prefix every line shares.
+    `[stderr] auth with ghp_${A}\n[stderr] ${B} rejected`,
+    `stdout | ghp_${A}\nstdout | ${B}`,
+  ]) {
+    assert.equal(screenSecrets(quote)?.split, true, JSON.stringify(quote));
+    assert.match(evidenceQuoteError(quote) || '', /split across lines/, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
+  }
+  // A shared prefix and edge separators alone do not make ordinary output a secret.
+  for (const quote of ['[stderr] FAIL test/retry.test.mjs\n[stderr]   retry', "expect(a).toBe('x') +\n  'y'", '  at main (app.js:1:1),\n  at run (app.js:2:2)']) {
+    assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
+  }
+});
+
+test('withholdEvidenceQuoteLines withholds the key line and its indented continuation, keeping line breaks', () => {
+  const fm = '---\ntitle: x\nevidence_quote: |\n  ghp_one\n\n  ghp_two\nkind: insight\n---\nbody\n';
+  assert.equal(withholdEvidenceQuoteLines(fm), '---\ntitle: x\nevidence_quote: [withheld]\n\n\n\nkind: insight\n---\nbody\n');
+  assert.equal(withholdEvidenceQuoteLines('a\r\n  evidence_quote: "x"\r\n    more\r\n  next: 1\r\n'), 'a\r\n  evidence_quote: [withheld]\r\n\r\n  next: 1\r\n');
+  assert.equal(withholdEvidenceQuoteLines('no quote here\n  indented'), 'no quote here\n  indented');
+  assert.equal(withholdEvidenceQuoteLines('Set `evidence_quote:` in frontmatter.'), 'Set `evidence_quote:` in frontmatter.');
 });
