@@ -516,7 +516,8 @@ const usageError = (message, hint) => Object.assign(new Error(message), { code: 
  * or --learning-decision are refused: an unquoted line would otherwise be
  * split, part fingerprinted and the rest carried in argv.
  */
-// Registered as the compound requireArgs hook, so it runs in dispatch before
+// Registered as the compound requireArgs hook (undefined when the arguments
+// are fine, as every requireArgs hook returns), so it runs in dispatch before
 // the run journal opens: a stray fragment of an unquoted line never reaches
 // runs.jsonl, events or the ledger.
 export function compoundStrayArgumentsError(argv, flags) {
@@ -525,10 +526,10 @@ export function compoundStrayArgumentsError(argv, flags) {
     if (argv.includes('--')) return usageError('ae compound --match-evidence takes no arguments after --', hint);
     if (positionalsOf(argv).length) return usageError('ae compound --match-evidence takes no positional arguments', hint);
   }
-  if (flags.evidenceQuote == null && flags.learningDecision == null) return null;
+  if (flags.evidenceQuote == null && flags.learningDecision == null) return undefined;
   if (argv.includes('--')) return usageError('ae compound takes no arguments after -- with --evidence-quote or --learning-decision', 'pipe the line or decision on stdin');
   if (positionalsOf(argv).length) return usageError('ae compound takes no positional arguments with --evidence-quote or --learning-decision; quote nothing on the command line', 'pipe the line or decision on stdin');
-  return null;
+  return undefined;
 }
 
 const STDIN_TTY_HINTS = {
