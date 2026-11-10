@@ -10,13 +10,15 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, READINESS_INDEX_FAULT } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, READINESS_INDEX_FAULT, archivedOverCapMessage } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
 const ID = /^[a-f0-9]{64}$/;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_STATE_WARNINGS = 16;
+// Plans the aggregated archived-over-cap warning tracks until each one's index is written.
+const MAX_ARCHIVED_PLAN_KEYS = 256;
 const DEFAULT_BUDGETS = Object.freeze({ maxDecisions: 24, maxRepairs: 3, maxAcquisitions: 3, maxSeconds: 900 });
 const LOCAL_INSPECTION = new Set(['read', 'Read', 'read_file', 'readFile', 'copilot_readFile', 'read_skill', 'readSkill', 'grep_search', 'file_search', 'list_dir', 'semantic_search', 'list_code_usages', 'get_errors', 'get_changed_files', 'get_search_view_results', 'test_search', 'open_file', 'codebase', 'search', 'usages', 'changes', 'problems', 'terminalLastCommand', 'get_terminal_output', 'think', 'todos']);
 const NATIVE_LOCAL_INSPECTION = new Set([...LOCAL_INSPECTION, 'ReadFile', 'Glob', 'Grep', 'ListDir', 'view', 'glob', 'grep', 'rg']);
@@ -122,20 +124,47 @@ function readState(loc) {
 /**
  * Well-formed warnings, the newest per request, at most MAX_STATE_WARNINGS. A
  * warning about a request leaves with it, except a readiness-index fault, which
- * stays at state level (requestId null) until an index write succeeds.
+ * stays at state level (requestId null), one per plan, until that plan's index
+ * write succeeds. The one aggregated warning for plans archived over the cap
+ * always keeps its slot.
  */
 function stateWarnings(state) {
-  const byRequest = new Map();
+  const byKey = new Map();
+  let archived = null;
   for (const item of Array.isArray(state.warnings) ? state.warnings : []) {
     if (!object(item) || !Number.isFinite(item.at) || typeof item.message !== 'string') continue;
     const fault = item.fault === READINESS_INDEX_FAULT;
+    if (fault && Array.isArray(item.plans)) {
+      const plans = item.plans.filter(plan => ID.test(plan || ''));
+      if (!plans.length) continue;
+      const merged = [...new Set([...(archived?.plans || []), ...plans])].sort().slice(0, MAX_ARCHIVED_PLAN_KEYS);
+      archived = { at: Math.max(archived?.at ?? item.at, item.at), requestId: null, fault: READINESS_INDEX_FAULT, plans: merged, message: archivedOverCapMessage(merged.length) };
+      continue;
+    }
+    const plan = fault && ID.test(item.plan || '') ? item.plan : null;
     const live = ID.test(item.requestId || '') && Object.hasOwn(state.requests, item.requestId);
     if (!live && !(fault && (item.requestId === null || ID.test(item.requestId || '')))) continue;
-    const requestId = live ? item.requestId : null, key = requestId ?? 'state';
-    byRequest.delete(key);
-    byRequest.set(key, { at: item.at, requestId, ...(fault ? { fault: READINESS_INDEX_FAULT } : {}), message: Array.from(item.message).slice(0, 500).join('') });
+    const requestId = live ? item.requestId : null, key = requestId ?? (plan ? `plan:${plan}` : 'state');
+    byKey.delete(key);
+    byKey.set(key, { at: item.at, requestId, ...(fault ? { fault: READINESS_INDEX_FAULT } : {}), ...(plan ? { plan } : {}), message: Array.from(item.message).slice(0, 500).join('') });
   }
-  return [...byRequest.values()].slice(-MAX_STATE_WARNINGS);
+  const rest = [...byKey.values()];
+  return archived ? [archived, ...rest.slice(-(MAX_STATE_WARNINGS - 1))] : rest.slice(-MAX_STATE_WARNINGS);
+}
+
+/**
+ * A readiness-index warning clears only when its own plan's index write
+ * succeeded; the aggregated warning drops each plan as its index is written.
+ * A warning stored before plan identity existed clears on any successful write.
+ */
+function clearIndexed(item, indexed) {
+  if (!object(item) || item.fault !== READINESS_INDEX_FAULT) return [item];
+  if (Array.isArray(item.plans)) {
+    const plans = item.plans.filter(plan => !indexed.has(plan));
+    return plans.length ? [{ ...item, plans }] : [];
+  }
+  if (typeof item.plan === 'string') return indexed.has(item.plan) ? [] : [item];
+  return indexed.size ? [] : [item];
 }
 
 function mutate(loc, callback) {
@@ -150,11 +179,11 @@ function mutate(loc, callback) {
   try {
     const state = readState(loc), result = callback(state);
     // Compaction warnings stay in the state, quietly, for decision status to
-    // report. Index-fault warnings clear on the next successful index write;
-    // this pass's own faults stay.
+    // report. An index-fault warning clears on its own plan's next successful
+    // index write; this pass's own faults stay.
     const report = {};
-    const fresh = compactDecisions(loc, state, report).map(item => ({ at: loc.now, requestId: item.requestId, ...(item.fault ? { fault: item.fault } : {}), message: item.message }));
-    const prior = (Array.isArray(state.warnings) ? state.warnings : []).filter(item => !(report.indexRetained && item?.fault === READINESS_INDEX_FAULT));
+    const fresh = compactDecisions(loc, state, report).map(item => ({ at: loc.now, requestId: item.requestId, ...(item.fault ? { fault: item.fault } : {}), ...(item.plan ? { plan: item.plan } : {}), ...(item.plans ? { plans: item.plans } : {}), message: item.message }));
+    const prior = (Array.isArray(state.warnings) ? state.warnings : []).flatMap(item => clearIndexed(item, report.indexedPlans || new Set()));
     const warnings = stateWarnings({ ...state, warnings: [...prior, ...fresh] });
     if (warnings.length) state.warnings = warnings; else delete state.warnings;
     const bytes = stable(state);

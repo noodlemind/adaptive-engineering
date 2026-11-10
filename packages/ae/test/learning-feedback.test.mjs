@@ -409,6 +409,43 @@ test('third pass A: a retired protected golden does not hide its active branch t
   assert.deepEqual(feedbackPruningCheck({ workspace: c.ws, home: c.home }).pruningCandidates, ['sql/dup'], 'and its K8 candidacy');
 });
 
+test('fifth pass K8: branch-layer candidates get branch guidance, never the golden-only --why and retire commands', t => {
+  // A branch learning that shadows an unprotected golden with the same ID.
+  const c = twins(t);
+  const dir = storeDir(c.ws, { home: c.home });
+  const goldenFile = path.join(dir, 'learnings', 'sql', 'dup.md');
+  fs.writeFileSync(goldenFile, fs.readFileSync(goldenFile, 'utf8').replace('source: human', 'source: auto'));
+  // And a learning that exists only on the branch.
+  const bucket = path.join(dir, 'branches', branchKeyFor('feature/x'));
+  const branchOnly = path.join(bucket, 'learnings', 'sql', 'only.md');
+  fs.writeFileSync(branchOnly, fs.readFileSync(path.join(bucket, 'learnings', 'sql', 'dup.md'), 'utf8').replace('t dup', 't only'));
+  const layered = loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings;
+  assert.deepEqual(layered.map(l => [l.id, l.layer, Boolean(l.subordinate)]), [['sql/dup', 'branch', false], ['sql/only', 'branch', false]], 'precondition: a shadowing branch learning and a branch-only one');
+  for (let i = 0; i < 5; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: layered });
+  writeFeedbackConfig(c.ws, { home: c.home, feedback: 'suggest' });
+  const k8 = feedbackPruningCheck({ workspace: c.ws, home: c.home });
+  assert.equal(k8.pass, false);
+  assert.deepEqual(k8.pruningCandidates, ['sql/dup', 'sql/only']);
+  assert.deepEqual(k8.branchPruningCandidates, ['sql/dup', 'sql/only']);
+  assert.doesNotMatch(k8.hint, /review with ae learnings --why <id>|retire only through ae learning retire/, 'no golden-only command is recommended for a branch candidate');
+  assert.match(k8.hint, /^branch-layer pruning hint, advisory only: /);
+  const rel = file => path.relative(dir, file).split(path.sep).join('/');
+  assert.ok(k8.hint.includes(`sql/dup (exposed 5, helped 0) at ${rel(path.join(bucket, 'learnings', 'sql', 'dup.md'))}`), 'the shadowing candidate points at its branch file, not the golden');
+  assert.ok(k8.hint.includes(`sql/only (exposed 5, helped 0) at ${rel(branchOnly)}`));
+  assert.match(k8.hint, /act only on golden learnings/);
+  // A golden candidate alongside keeps the golden guidance, for it alone.
+  fs.mkdirSync(path.join(dir, 'learnings', 'logic'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'learnings', 'logic', 'gold.md'), fs.readFileSync(goldenFile, 'utf8').replace('t dup', 't gold'));
+  const gold = loadLayeredLearnings({ workspace: c.ws, home: c.home }).learnings.find(l => l.id === 'logic/gold');
+  assert.equal(gold.layer === 'branch', false);
+  for (let i = 0; i < 6; i++) recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [gold] });
+  const mixed = feedbackPruningCheck({ workspace: c.ws, home: c.home });
+  assert.deepEqual(mixed.branchPruningCandidates, ['sql/dup', 'sql/only']);
+  const [goldenHint, branchHint] = mixed.hint.split('; branch-layer ');
+  assert.equal(goldenHint, 'pruning hint, advisory only: logic/gold (exposed 6, helped 0) — review with ae learnings --why <id>; retire only through ae learning retire');
+  assert.doesNotMatch(branchHint, /logic\/gold/);
+});
+
 test('third pass D: a twin line truncated after the layer mark opens does not credit the golden', () => {
   const golden = { id: 'sql/dup' };
   const pack = line => `# Harness Context Pack\n\n## Learnings (memory)\n${line}`;
@@ -446,6 +483,28 @@ test('fourth pass 4: malformed prior exposure entries are dropped on the next me
   ] });
   recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.learnings[0]], now: new Date(Date.UTC(2026, 10, 2)) });
   assert.deepEqual(readExposure(c.ws, PLAN).entries.map(e => [e.id, e.count]).sort(), [[c.id, 1], ['logic/good', 2]].sort());
+});
+
+test('fifth pass 3: hand-edited exposure counts saturate at a safe integer and only strict ISO times order last_exposed', t => {
+  const c = seeded(t);
+  const write = (plan, entries) => publishReviewRecord(c.ws, exposureRel(plan), { version: 1, plan, entries });
+  write('docs/plans/a.md', [{ id: c.id, count: 1e308, lastExposedAt: '2026-11-01T00:00:00.000Z' }, { id: 'logic/safe', count: Number.MAX_SAFE_INTEGER, lastExposedAt: '2026-11-01T00:00:00.000Z' }]);
+  write('docs/plans/b.md', [{ id: c.id, count: 1e308, lastExposedAt: 'zzzz' }, { id: 'logic/safe', count: Number.MAX_SAFE_INTEGER, lastExposedAt: '2026-11-03T00:00:00.000Z' }]);
+  write('docs/plans/c.md', [{ id: c.id, count: 2, lastExposedAt: '2026-11-02T00:00:00.000Z' }, { id: 'logic/safe', count: 3, lastExposedAt: '2026-11-02T00:00:00Z' }]);
+  const totals = exposureTotals(c.ws);
+  assert.equal(totals.get(c.id).exposed, 2, 'counts beyond the safe integer range are not accepted');
+  assert.equal(totals.get(c.id).last_exposed, '2026-11-02T00:00:00.000Z', 'a non-ISO time never beats a real one');
+  const safe = totals.get('logic/safe');
+  assert.equal(safe.exposed, Number.MAX_SAFE_INTEGER, 'the sum saturates instead of overflowing');
+  assert.equal(safe.layers.golden.exposed, Number.MAX_SAFE_INTEGER);
+  assert.equal(safe.last_exposed, '2026-11-03T00:00:00.000Z');
+  assert.ok(Number.isFinite(JSON.parse(JSON.stringify({ exposed: safe.exposed })).exposed));
+  // A merge drops an out-of-range prior count and saturates a maximal one.
+  write(PLAN, [{ id: 'logic/huge', count: 1e308, lastExposedAt: '2026-11-01T00:00:00.000Z' }, { id: c.id, count: Number.MAX_SAFE_INTEGER, lastExposedAt: '2026-11-01T00:00:00.000Z' }]);
+  recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.home, planPath: PLAN, delivered: [c.learnings[0]], now: new Date(Date.UTC(2026, 10, 2)) });
+  const merged = readExposure(c.ws, PLAN).entries;
+  assert.equal(merged.some(e => e.id === 'logic/huge'), false);
+  assert.ok(merged.filter(e => e.id === c.id).every(e => e.count <= Number.MAX_SAFE_INTEGER));
 });
 
 test('third pass E: an exposure record of 32 KiB plus its trailing newline is still read', t => {

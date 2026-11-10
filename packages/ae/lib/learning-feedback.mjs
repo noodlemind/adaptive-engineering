@@ -89,7 +89,7 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   // single layer and read the same way.
   const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
   // Prior entries are read back from disk; a malformed one is dropped rather than carried forward.
-  const wellFormed = entry => entry && typeof entry.id === 'string' && typeof entry.lastExposedAt === 'string' && Number.isInteger(entry.count);
+  const wellFormed = entry => entry && typeof entry.id === 'string' && exposureTime(entry.lastExposedAt) !== null && Number.isSafeInteger(entry.count) && entry.count >= 0;
   const entries = new Map((prior?.entries || []).filter(wellFormed).map(entry => [entryKey(entry), entry]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
   const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
@@ -111,7 +111,7 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
       ...(version ? { version } : {}),
       firstExposedAt: before?.firstExposedAt || at,
       lastExposedAt: at,
-      count: (before?.count || 0) + 1,
+      count: saturatingAdd(before?.count || 0, 1),
     });
   }
   const byIdLayer = (a, b) => a.id.localeCompare(b.id) || String(a.layer).localeCompare(String(b.layer));
@@ -369,7 +369,21 @@ export function feedbackSummary({ workspace, home, learnings, verdicts = null })
 export const PRUNING_EXPOSURE_THRESHOLD = 5;
 const EXPOSURE_DIR_REL = '.harness/learning/exposures';
 const layerOf = value => value === 'branch' ? 'branch' : 'golden';
-const later = (a, b) => typeof b === 'string' && (!a || b > a) ? b : a;
+// Only a strict ISO-8601 UTC timestamp (as toISOString writes) is a valid exposure time; it compares by parsed time.
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const exposureTime = value => {
+  if (typeof value !== 'string' || !ISO_TIMESTAMP.test(value)) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
+};
+const later = (a, b) => {
+  const next = exposureTime(b);
+  if (next === null) return a;
+  const prior = exposureTime(a);
+  return prior === null || next > prior ? b : a;
+};
+// Counts are safe integers; a sum saturates rather than overflowing to Infinity.
+const saturatingAdd = (a, b) => Math.min(Number.MAX_SAFE_INTEGER, a + b);
 
 /**
  * Per-learning exposure totals summed over every plan's exposure record under
@@ -394,12 +408,12 @@ export function exposureTotals(recordRoot) {
     try { record = text === null ? null : JSON.parse(text); } catch { record = null; }
     if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
     for (const entry of record.entries) {
-      if (typeof entry?.id !== 'string' || !LEARNING_ID.test(entry.id) || !Number.isInteger(entry.count) || entry.count < 1) continue;
+      if (typeof entry?.id !== 'string' || !LEARNING_ID.test(entry.id) || !Number.isSafeInteger(entry.count) || entry.count < 1) continue;
       const row = totals.get(entry.id) || { exposed: 0, last_exposed: null, layers: {} };
       const key = layerOf(entry.layer);
       const layer = row.layers[key] || { exposed: 0, last_exposed: null };
-      row.exposed += entry.count;
-      layer.exposed += entry.count;
+      row.exposed = saturatingAdd(row.exposed, entry.count);
+      layer.exposed = saturatingAdd(layer.exposed, entry.count);
       row.last_exposed = later(row.last_exposed, entry.lastExposedAt);
       layer.last_exposed = later(layer.last_exposed, entry.lastExposedAt);
       row.layers[key] = layer;
@@ -488,7 +502,7 @@ export function feedbackStatusView({ workspace, home, learnings, recordRoot = wo
  */
 export function pruningCandidates({ columns, learnings, threshold = PRUNING_EXPOSURE_THRESHOLD }) {
   return primary(learnings)
-    .map(learning => ({ id: learning.id, ...(columnsFor(columns, learning.id, learning.layer) || emptyFeedbackColumns()) }))
+    .map(learning => ({ id: learning.id, layer: layerOf(learning.layer), file: typeof learning.file === 'string' ? learning.file : null, ...(columnsFor(columns, learning.id, learning.layer) || emptyFeedbackColumns()) }))
     .filter(row => row.exposed >= threshold && row.helped === 0)
     .sort((a, b) => b.exposed - a.exposed || a.id.localeCompare(b.id));
 }
