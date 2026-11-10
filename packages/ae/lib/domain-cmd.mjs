@@ -50,7 +50,7 @@ export function parseDomainArguments(argv) {
     if (boolean.has(name) && split < 0) continue;
     if (!allValued.has(name)) throw usage(`unsupported option ${name}`, name === '--files' ? fileInputHint('domain') : undefined);
     const value = split < 0 ? argv[++index] : token.slice(split + 1);
-    if (!value || (value.startsWith('-') && !(name === '--file' && value === '-')) || /[\x00-\x1f\x7f]/.test(value)) throw usage(`${name} requires a bounded value`);
+    if (!value || (value.startsWith('-') && !(['--file', '--learning-decision'].includes(name) && value === '-')) || /[\x00-\x1f\x7f]/.test(value)) throw usage(`${name} requires a bounded value`);
     const entries = values.get(name) || [];
     if (entries.length >= 32 || Buffer.byteLength(value) > 4096) throw usage(`${name} exceeds the input bound`);
     entries.push(value); values.set(name, entries);

@@ -295,6 +295,7 @@ test('native domain controls admit exact lifecycle shapes and reject malformed a
     'review assemble --plan /home/domain/plan.hplan --packet abc --file /tmp/results.json',
     'verify --plan /home/domain/plan.hplan --base HEAD',
     'compound --plan /home/domain/plan.hplan --learning-decision /tmp/learning.json',
+    'compound --plan /home/domain/plan.hplan --learning-decision -',
   ]) assert.equal(harnessControlCommand(`ae domain ${tail} --name catalogue --json`.split(' '), '/tmp/workspace'), 'domain', tail);
   for (const tail of [
     'verify --plan p.hplan --allow-inplace',
@@ -305,5 +306,11 @@ test('native domain controls admit exact lifecycle shapes and reject malformed a
     'verify --plan p.hplan --unknown yes',
     'status --plan p.hplan --name another',
     'verify --plan p.hplan && echo unsafe',
+    'compound --plan p.hplan --learning-decision --json',
+    'compound --plan p.hplan --learning-decision -x',
+    'compound --plan p.hplan --learning-decision --',
+    'plan-new --learning-decision -',
+    'verify --plan p.hplan --file -',
+    'review assemble --plan p.hplan --packet abc --file -',
   ]) assert.equal(harnessControlCommand(`ae domain ${tail} --name catalogue --json`.split(' '), '/tmp/workspace'), null, tail);
 });

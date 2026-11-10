@@ -12,7 +12,8 @@ import { storeDir, ensureStore } from '../lib/knowledge/store.mjs';
 import { LEARNING_BYTE_CAP, consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { normalizeEvidenceLine, evidenceLineError, evidenceFingerprint, matchEvidence, evidencePrefixError, evidenceBytesError, compoundJournalArgv, readEvidenceFingerprint, EVIDENCE_LINE_CAP } from '../lib/knowledge/evidence-fingerprint.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
-import { beforeDeliveryTool } from '../lib/agent-delivery.mjs';
+import { beforeDeliveryTool, runDeliveryCommand } from '../lib/agent-delivery.mjs';
+import { harnessStagedDecision } from '../lib/compound.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
@@ -374,4 +375,18 @@ test('under ae agent delivery, --check-output is confined to the workspace', () 
   assert.equal(call(['--check-output', 'out.txt']).pass, true);
   assert.equal(call(['--check-output', '-']).pass, true);
   for (const value of [['--check-output', '/etc/passwd'], ['--check-output=../outside.txt'], ['--check-output', '.']]) assert.equal(call(value).pass, false, value.join(' '));
+});
+
+test('a decision Harness stages for ae agent delivery counts as stdin; other decision files do not', async () => {
+  let staged;
+  await runDeliveryCommand({ argv: ['compound', '--plan', 'p.md'], decision: publish('staged', { evidence_quote: QUOTE }) }, async argv => {
+    staged = argv[argv.indexOf('--learning-decision') + 1];
+    assert.equal(harnessStagedDecision(staged), true, staged);
+    return { status: 'ok' };
+  });
+  assert.equal(fs.existsSync(staged), false, 'the staged decision is deleted after the run');
+  for (const file of ['decision.json', path.join(os.tmpdir(), 'decision.json'), path.join(os.tmpdir(), 'other-dir', 'decision.json'),
+    path.join(os.tmpdir(), 'harness-agent-decision-x', 'nested', 'decision.json'), path.join(os.tmpdir(), 'harness-agent-decision-x', 'other.json')]) {
+    assert.equal(harnessStagedDecision(file), false, file);
+  }
 });

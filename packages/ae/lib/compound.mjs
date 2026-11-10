@@ -4,6 +4,7 @@ import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
+import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
@@ -384,6 +385,16 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   });
 }
 
+// Under `ae agent` delivery Harness itself stages an inline decision in an
+// owned temporary directory (see runDeliveryCommand in agent-delivery.mjs)
+// and deletes it when the command ends, so that file is accepted too.
+const STAGED_DECISION_PREFIX = 'harness-agent-decision-';
+export function harnessStagedDecision(file) {
+  if (typeof file !== 'string' || path.basename(file) !== 'decision.json') return false;
+  const dir = path.dirname(path.resolve(file));
+  return path.basename(dir).startsWith(STAGED_DECISION_PREFIX) && path.dirname(dir) === path.resolve(os.tmpdir());
+}
+
 async function runLearningDecision({ workspace, copilotHome, flags, log, domainContext = null }) {
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
@@ -403,7 +414,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (decision.evidence_quote !== undefined) {
     // A decision file would leave the evidence line on disk, so a decision
     // carrying one must arrive on stdin.
-    if (flags.learningDecision !== '-') throw Object.assign(new Error('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file'), { code: 'E_USAGE', exit: EXIT.usage, hint: 'ae compound --plan <path> --learning-decision - --json' });
+    if (flags.learningDecision !== '-' && !harnessStagedDecision(flags.learningDecision)) throw Object.assign(new Error('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file'), { code: 'E_USAGE', exit: EXIT.usage, hint: 'ae compound --plan <path> --learning-decision - --json' });
     if (decision.decision !== 'publish') throw new Error('evidence_quote applies only to a publish decision');
     const quoteError = evidenceLineError(decision.evidence_quote);
     if (quoteError) throw new Error(quoteError);

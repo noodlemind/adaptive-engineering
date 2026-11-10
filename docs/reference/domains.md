@@ -69,7 +69,7 @@ The domain commands reuse those lifecycle operations with explicit parent author
 | `domain review prepare --name <name> --plan <path> --base <base>` | Capture parent review sources and required coverage. |
 | `domain review assemble --name <name> --plan <path> --packet <id> --file <results>` | Bind collected review results to that packet. |
 | `domain verify --name <name> --plan <path> --base <base>` | Run the coordinator check and declared joint checks after child completion. |
-| `domain compound --name <name> --plan <path> --learning-decision <decision>` | Record accepted publication or no-learning for current parent proof. |
+| `domain compound --name <name> --plan <path> --learning-decision -` | Record accepted publication or no-learning for current parent proof, with the decision piped on stdin (a decision carrying `evidence_quote` is refused from a file). |
 
 Use the same selected Harness home for the parent and its children. Run each child's ordinary delivery lifecycle in its returned workspace, in dependency order. Then collect parent review, run parent verification, record learning, and submit the complete decision. `domain status` is a derived rollup, not a second task lifecycle.
 

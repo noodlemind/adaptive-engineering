@@ -936,7 +936,11 @@ export function harnessControlCommand(tokens, workspace) {
       if (boolean.has(name) && split < 0) continue;
       if (!valued.has(name)) return null;
       const value = split < 0 ? args[++index] : token.slice(split + 1);
-      if (!value || (value.startsWith('-') && !(name === '--file' && value === '-' && ['plan-new', 'plan-update'].includes(verb))) || /[\u0000-\u001f\u007f]/.test(value)) return null;
+      // `-` (stdin) is the only dash-led value: --file for plan-new and
+      // plan-update, and --learning-decision for compound (a decision carrying
+      // an evidence line is accepted only on stdin).
+      const stdin = value === '-' && ((name === '--file' && ['plan-new', 'plan-update'].includes(verb)) || (name === '--learning-decision' && verb === 'compound'));
+      if (!value || (value.startsWith('-') && !stdin) || /[\u0000-\u001f\u007f]/.test(value)) return null;
       values.set(name, value);
     }
     const name = values.get('--name');
