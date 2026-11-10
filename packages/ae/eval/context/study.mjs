@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { buildTaskContext } from '../../lib/context-policy.mjs';
 import { buildStructuralIndex } from '../../lib/repo-map/structural-index.mjs';
 import { lexicalV2 } from '../../lib/repo-map/treesitter-extractor.mjs';
@@ -73,7 +73,9 @@ export function snapshot(workspace) {
       const file = path.posix.join(dir, entry.name);
       if (GENERATED_METADATA.has(file) && entry.isFile()) continue;
       if (Object.keys(files).length > 1000) throw new Error('fixture file limit exceeded');
-      if (entry.isDirectory()) walk(file);
+      // An installed dependency tree is one entry, so `npm install` cannot exceed the limit; it is still a change if new.
+      if (entry.isDirectory() && entry.name === 'node_modules') files[`${file}/`] = 'excluded-directory';
+      else if (entry.isDirectory()) walk(file);
       else files[file] = entry.isFile() ? hash(fs.readFileSync(path.join(workspace, file))) : 'unsupported';
     }
   };
@@ -131,15 +133,86 @@ function integrity(fixture) {
   catch { return false; }
 }
 
+/** Process groups still running, killed if the runner exits or is signalled mid-task. */
+const liveGroups = new Set();
+let exitHookInstalled = false;
+
 /**
- * spawnSync in a new process group (POSIX), then a SIGKILL to the whole group once it returns, so a daemon that checked
- * code starts at import cannot outlive the check and touch later state. A process that starts its own session escapes.
+ * SIGKILLs every live process group. A group leaves the set when its leader exits, so a pid that has been reaped, and may
+ * have been reused, is never signalled from here.
  */
-export function spawnGrouped(command, args, options) {
-  const group = process.platform !== 'win32';
-  const result = spawnSync(command, args, { ...options, detached: group });
-  if (group && result.pid) { try { process.kill(-result.pid, 'SIGKILL'); } catch { /* group already gone */ } }
-  return result;
+export function killLiveGroups() {
+  for (const pid of liveGroups) {
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
+  }
+  liveGroups.clear();
+}
+
+/** How long the runner waits for the output pipes to close after the process exits or is killed. */
+const CLOSE_GRACE_MS = 1500;
+
+/**
+ * Runs a process in its own process group (POSIX) and resolves like spawnSync: { status, signal, stdout, stderr, error }.
+ * Agents and checkers both run through it. When the leader exits, the whole group is killed once, so a background process
+ * it left behind (even one that still holds the output pipes) cannot outlive it; after that exit the pid may be reused, so
+ * nothing signals it again. On timeout or overflow the group is killed too. The pipes then get a short grace period to close;
+ * a process that started its own session and still holds a pipe escapes the group kill but cannot delay the result past it.
+ * `status` is null whenever `error` is set, and stdout and stderr are cut at `maxBuffer` bytes each. `input`, when given, is
+ * written to stdin. On Windows only the direct child is killed.
+ */
+export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, maxBuffer = 20 * 1024 * 1024, closeGraceMs = CLOSE_GRACE_MS } = {}) {
+  return new Promise(resolve => {
+    const group = process.platform !== 'win32';
+    let child;
+    try { child = spawn(command, args, { cwd, env, detached: group, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
+    catch (caught) { resolve({ status: null, signal: null, stdout: '', stderr: '', error: caught }); return; }
+    if (group && child.pid) {
+      liveGroups.add(child.pid);
+      if (!exitHookInstalled) { process.on('exit', killLiveGroups); exitHookInstalled = true; }
+    }
+    const out = { stdout: [], stderr: [] };
+    const size = { stdout: 0, stderr: 0 };
+    let error = null, timer = null, grace = null, exited = null, settled = false, reaped = false;
+    // Only while the leader is unreaped: after its exit event the pid may belong to another process.
+    const kill = () => {
+      if (reaped) return;
+      try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      kill();
+      if (reaped) liveGroups.delete(child.pid);
+      for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+      const text = name => Buffer.concat(out[name]).toString('utf8');
+      resolve({ status: error ? null : exited?.status ?? null, signal: exited?.signal ?? null, stdout: text('stdout'), stderr: text('stderr'), error });
+    };
+    const startGrace = () => { if (!grace && !settled) grace = setTimeout(finish, closeGraceMs); };
+    for (const name of ['stdout', 'stderr']) {
+      child[name].on('data', chunk => {
+        if (settled) return;
+        const room = maxBuffer - size[name];
+        if (chunk.length <= room) { out[name].push(chunk); size[name] += chunk.length; return; }
+        if (room > 0) out[name].push(chunk.subarray(0, room));
+        size[name] = maxBuffer;
+        if (!error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); kill(); startGrace(); }
+      });
+    }
+    if (input !== undefined) { child.stdin.on('error', () => { /* the process stopped reading */ }); child.stdin.end(input); }
+    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('process timed out'), { code: 'ETIMEDOUT' }); kill(); startGrace(); }, timeoutMs);
+    child.on('error', caught => { error ||= caught; startGrace(); });
+    child.on('exit', (status, signal) => {
+      exited ||= { status, signal };
+      clearTimeout(timer);
+      kill();
+      reaped = true;
+      liveGroups.delete(child.pid);
+      startGrace();
+    });
+    child.on('close', (status, signal) => { exited ||= { status, signal }; finish(); });
+  });
 }
 
 /** `timeoutMs` is the outer checker timeout; a study passes its own protocol's `checkerTimeoutMs`. */
@@ -156,9 +229,9 @@ export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs
   // Verdicts cover every check the checker receives, which can be more than the task's own private checks.
   const count = JSON.parse(checkText).checks.length;
   // The checker gets a budget below the outer timeout, so a hang or exit in checked code still yields per-check verdicts.
-  // spawnSync blocks this event loop: a SIGINT or SIGTERM sent meanwhile is handled only after the checker returns (at most timeoutMs).
+  // It runs in its own process group, killed when the checker exits, so a process checked code left holding stdio cannot hold the result.
   const budget = Math.max(1000, timeoutMs - 3000);
-  const result = spawnGrouped(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 256_000 });
+  const result = await runGroupedProcess(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, timeoutMs, maxBuffer: 256_000 });
   const intact = integrity(fixture);
   const lines = (result.stdout || '').split(/\r?\n/);
   const completed = lines.includes(`harness-context-checked-v1:${challenge}:${count}`);
@@ -167,9 +240,9 @@ export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs
   return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, verdicts: intact && !result.error ? verdicts : verdicts.map(() => null), exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
 }
 
-export function runPublicChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
+export async function runPublicChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!fixture.verifyCmd) return null;
-  const result = spawnGrouped(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64_000 });
+  const result = await runGroupedProcess(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, timeoutMs, maxBuffer: 64_000 });
   return { pass: !result.error && result.status === 0, exitCode: result.status, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || null };
 }
 
@@ -248,7 +321,7 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
         const id = `${task.id}-${repeat + 1}-${policy}`;
         const fixture = await prepareCase({ task, root, id });
         const baseline = await runChecks(fixture);
-        const publicBaseline = runPublicChecks(fixture);
+        const publicBaseline = await runPublicChecks(fixture);
         if (baseline.pass || !baseline.integrity || baseline.error || publicBaseline?.pass || publicBaseline?.error) throw new Error(`invalid broken baseline: ${id}`);
         const startedAt = Date.now();
         let result = {}, error = null;

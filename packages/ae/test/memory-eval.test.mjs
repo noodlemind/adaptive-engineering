@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import {
-  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, episodeHashes, restoreEpisodeStore, runAgentProcess, snapshotEpisodeStore, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
+  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, captureMemory, episodeHashes, runAgentProcess, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol, writeMemory,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
@@ -98,10 +98,11 @@ function main() {
     const executor = scriptedExecutor(calls, hooks);
     const result = await runStudy({ root, catalog: { ...CATALOG, series: [ordering] }, arms: ARMS, repeats: 1, model: 'scripted-test', host: 'scripted-test',
       execute: async fixture => {
-        const runRoot = path.dirname(fixture.trial);
+        const taskRoot = path.dirname(fixture.trial);
+        const runDir = path.dirname(taskRoot);
         observations[`${fixture.arm.id}:${fixture.index}`] = {
           home: fs.readdirSync(fixture.env.HOME), homePath: fixture.env.HOME, tmp: fixture.env.TMPDIR, trial: fixture.trial,
-          runRoot: fs.readdirSync(runRoot).sort(), runRootPath: runRoot, studyParent: path.dirname(runRoot),
+          taskRoot: fs.readdirSync(taskRoot).sort(), taskRootPath: taskRoot, runDir: fs.readdirSync(runDir), runDirPath: runDir, studyParent: path.dirname(runDir),
           checkFile: fixture.checkFile ?? null, hasCheckText: typeof fixture.checkText === 'string', outFiles: fs.readdirSync(root).sort(), outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
           planPresent: fs.existsSync(path.join(fixture.harnessHome, 'projects')) && fs.readdirSync(path.join(fixture.harnessHome, 'projects')).some(id => fs.existsSync(path.join(fixture.harnessHome, 'projects', id, 'plans', 'scripted-plan.md'))),
         };
@@ -221,7 +222,9 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
   for (const [key, seen] of Object.entries(observations)) {
     assert.deepEqual(seen.home, [], `${key} HOME is empty`);
     const index = Number(key.split(':')[1]);
-    assert.deepEqual(seen.runRoot, ['copilot', 'state', `t${index + 1}`], `${key} sees only its own task`);
+    assert.deepEqual(seen.taskRoot, ['copilot', 'state', `t${index + 1}`], `${key} sees only its own task`);
+    assert.deepEqual(seen.runDir, [path.basename(seen.taskRootPath)], `${key} earlier task roots are gone`);
+    assert.match(path.basename(seen.taskRootPath), /^task-[A-Za-z0-9]{6}$/, `${key} task root has an unpredictable name`);
     assert.ok(seen.homePath.startsWith(seen.trial + path.sep), `${key} HOME belongs to this task only`);
     assert.ok(seen.tmp.startsWith(seen.trial + path.sep), `${key} TMPDIR belongs to this task only`);
     assert.deepEqual(fs.existsSync(seen.studyParent) ? fs.readdirSync(seen.studyParent) : [], [], `${key} study parent is removed`);
@@ -230,25 +233,24 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
     assert.equal(seen.checkFile, null, `${key} has no private check file`);
     assert.equal(seen.hasCheckText, true);
     assert.deepEqual(seen.outFiles, ['provenance.json'], `${key} output root holds no private checks or attempt records during the run`);
-    assert.equal(fs.existsSync(seen.runRootPath), false, `${key} run root is removed after the run`);
+    assert.equal(fs.existsSync(seen.taskRootPath), false, `${key} task root is removed after the task`);
+    assert.equal(fs.existsSync(seen.runDirPath), false, `${key} run root is removed after the run`);
   }
-  const runRoots = new Set(Object.entries(observations).map(([key, seen]) => `${key.split(':')[0]}=${seen.runRootPath}`));
-  assert.equal(new Set([...runRoots].map(entry => entry.split('=')[1])).size, ARMS.length, 'each run gets its own temporary root');
+  const seen = Object.values(observations);
+  assert.equal(new Set(seen.map(row => row.runDirPath)).size, ARMS.length, 'each run gets its own temporary root');
+  assert.equal(new Set(seen.map(row => row.taskRootPath)).size, seen.length, 'each task gets its own root');
   assert.ok(result.attempts.every(row => !JSON.stringify(row).includes('trap-checks.json')));
   assert.equal(fs.existsSync(path.join(root, 'private')), false);
 });
 
-test('the harness home persists across a series and is isolated between arms and repeats', async () => {
+test('every task gets fresh homes; the series store identity and recall memory carry across tasks', async () => {
   const { result, calls, inspected } = await main();
-  const homes = new Set();
   for (const arm of ARMS) {
     const armCalls = calls.filter(call => call.arm === arm);
     assert.equal(armCalls.length, 4);
-    assert.equal(new Set(armCalls.map(call => call.harnessHome)).size, 1, `${arm} keeps one home across its tasks`);
-    homes.add(armCalls[0].harnessHome);
-    assert.equal(new Set(rowsFor(result, arm).map(row => row.storeDir)).size, 1);
+    assert.equal(new Set(rowsFor(result, arm).map(row => row.storeId)).size, 1, `${arm} resolves one store id across its tasks`);
   }
-  assert.equal(homes.size, ARMS.length, 'every arm has its own home');
+  assert.equal(new Set(calls.map(call => call.harnessHome)).size, calls.length, 'every task has its own harness home');
   assert.ok(inspected[rowsFor(result, 'recall')[3].id].learnings.includes('eval-scripted-trap'), 'recall store kept the task 1 learning');
   for (const arm of ['stateless', 'capture-only']) assert.deepEqual(inspected[rowsFor(result, arm)[3].id].learnings, [], `${arm} store refused the write`);
   const { result: repeated } = await drift();
@@ -305,10 +307,11 @@ test('a learning added in task 1 is injected in task 3 under recall and absent u
   }
 });
 
-test('external plans in the shared home are cleared before every task', async () => {
+test('external plans an earlier task left never reach the next task, whose homes are fresh', async () => {
   const { result, observations } = await main();
   for (const arm of ARMS) {
-    assert.equal(rowsFor(result, arm)[1].externalPlansCleared, 1, `${arm} cleared the plan task 1 left`);
+    assert.equal(rowsFor(result, arm)[1].externalPlansCleared, 0, `${arm} task 2 had no plan to clear`);
+    assert.deepEqual(rowsFor(result, arm)[1].externalPlansRefused, []);
     assert.equal(observations[`${arm}:1`].planPresent, false);
   }
 });
@@ -540,7 +543,7 @@ test('controls: operator-granted checks, public examples in scoring, a protected
     assert.deepEqual(seen[`recall:${index}`].captured, { episode: true, manifest: true, index: true });
     for (const arm of ['capture-only', 'frozen-seed']) assert.deepEqual(seen[`${arm}:${index}`].captured, { episode: false, manifest: false, index: false }, `${arm} task ${index + 1}`);
   }
-  for (const row of result.attempts) assert.deepEqual(row.episodeStoreRefused, []);
+  for (const row of result.attempts) assert.deepEqual(row.carriedMemoryRefused, []);
   assert.ok(rowsFor(result, 'frozen-seed')[2].learningsInjected.includes(seedId(ordering)), 'frozen-seed keeps its seed');
   const tampered = rowsFor(result, 'capture-only')[3];
   assert.deepEqual(tampered.scope.unexpected, [SUPPLIED_FILES[0]]);
@@ -550,27 +553,92 @@ test('controls: operator-granted checks, public examples in scoring, a protected
   assert.equal(scratch.checks.pass, true);
 });
 
-test('restoring the episode store refuses a planted symlink and never writes outside the homes', t => {
+test('carried memory is copied into fresh homes as regular files and directories, and nothing else', t => {
   const root = directory(t);
-  const homes = { copilotHome: path.join(root, 'copilot'), harnessHome: path.join(root, 'state') };
-  homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
-  fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
-  fs.mkdirSync(homes.copilotHome);
-  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
-  const snapshot = snapshotEpisodeStore(homes);
-  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'later.md'), 'later\n');
-  assert.deepEqual(restoreEpisodeStore(snapshot).refused, []);
-  assert.deepEqual(fs.readdirSync(path.join(homes.projectDir, 'docs', 'solutions')), ['seed.md']);
-  const victim = path.join(root, 'victim');
-  fs.mkdirSync(victim);
-  fs.writeFileSync(path.join(victim, 'keep.md'), 'outside\n');
-  fs.rmSync(path.join(homes.projectDir, 'docs'), { recursive: true });
-  fs.symlinkSync(victim, path.join(homes.projectDir, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
-  assert.deepEqual(restoreEpisodeStore(snapshot).refused, ['projects/repo-id/docs/solutions']);
-  assert.deepEqual(fs.readdirSync(victim), ['keep.md']);
+  const make = name => {
+    const homes = { copilotHome: path.join(root, name, 'copilot'), harnessHome: path.join(root, name, 'state') };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(homes.copilotHome, { recursive: true });
+    fs.mkdirSync(homes.harnessHome, { recursive: true });
+    return homes;
+  };
+  const from = make('from');
+  fs.mkdirSync(path.join(from.projectDir, 'docs', 'solutions', 'eval'), { recursive: true });
+  fs.writeFileSync(path.join(from.projectDir, 'docs', 'solutions', 'eval', 'note.md'), 'note\n');
+  fs.mkdirSync(path.join(from.harnessHome, 'knowledge', 'repo-id', 'learnings'), { recursive: true });
+  fs.mkdirSync(path.join(from.harnessHome, 'knowledge', 'repo-id', 'empty'));
+  fs.writeFileSync(path.join(from.harnessHome, 'knowledge', 'repo-id', 'config.json'), '{"mode":"on"}\n');
+  fs.mkdirSync(path.join(from.copilotHome, 'knowledge'));
+  fs.writeFileSync(path.join(from.copilotHome, 'knowledge', 'manifest.md'), 'manifest\n');
+  // Not carried: storage aliases, plans and other project state.
+  fs.mkdirSync(path.join(from.harnessHome, 'storage-aliases'));
+  fs.writeFileSync(path.join(from.harnessHome, 'storage-aliases', 'repo-id.json'), 'garbage');
+  fs.mkdirSync(path.join(from.projectDir, 'plans'));
+  fs.writeFileSync(path.join(from.projectDir, 'plans', 'old.md'), 'plan\n');
+  fs.writeFileSync(path.join(from.projectDir, 'agent-context.md'), 'context\n');
+  const captured = captureMemory(from);
+  assert.deepEqual(captured.refused, []);
+  // The copy lives in memory: a later change to the source does not reach it.
+  fs.writeFileSync(path.join(from.projectDir, 'docs', 'solutions', 'eval', 'note.md'), 'changed\n');
+  const to = make('to');
+  writeMemory(to, captured);
+  assert.equal(fs.readFileSync(path.join(to.projectDir, 'docs', 'solutions', 'eval', 'note.md'), 'utf8'), 'note\n');
+  assert.equal(fs.readFileSync(path.join(to.copilotHome, 'knowledge', 'manifest.md'), 'utf8'), 'manifest\n');
+  assert.equal(fs.readFileSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'config.json'), 'utf8'), '{"mode":"on"}\n');
+  assert.ok(fs.statSync(path.join(to.harnessHome, 'knowledge', 'repo-id', 'empty')).isDirectory(), 'empty directories are kept');
+  assert.equal(fs.existsSync(path.join(to.harnessHome, 'index')), false, 'an absent target stays absent');
+  assert.equal(fs.existsSync(path.join(to.harnessHome, 'storage-aliases')), false);
+  assert.deepEqual(fs.readdirSync(to.projectDir), ['docs']);
 });
 
-test('a learning an agent writes mid-task in frozen-seed is gone after the restore; the seed stays', async t => {
+test('capturing memory refuses symlinks, special files and oversized stores', t => {
+  const root = directory(t);
+  const link = process.platform === 'win32' ? 'junction' : 'dir';
+  const make = name => {
+    const homes = { copilotHome: path.join(root, name, 'copilot'), harnessHome: path.join(root, name, 'state') };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
+    fs.mkdirSync(homes.copilotHome, { recursive: true });
+    fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
+    return homes;
+  };
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'secret.md'), 'outside\n');
+  const key = 'projects/repo-id/docs/solutions';
+  // A symlinked component on the way to a target.
+  const parent = make('parent');
+  fs.rmSync(path.join(parent.projectDir, 'docs'), { recursive: true });
+  fs.symlinkSync(outside, path.join(parent.projectDir, 'docs'), link);
+  let captured = captureMemory(parent);
+  assert.equal(captured.refused.length, 1);
+  assert.match(captured.refused[0], new RegExp(`^${key}: projects/repo-id/docs is not a real directory`));
+  assert.equal(captured.targets.some(row => row.rel.split(path.sep).join('/') === key), false, 'a refused target is left out');
+  // A symlinked directory inside a target.
+  const nested = make('nested');
+  fs.symlinkSync(outside, path.join(nested.projectDir, 'docs', 'solutions', 'linked'), link);
+  captured = captureMemory(nested);
+  assert.deepEqual(captured.refused, [`${key}: linked is a symlink or special file`]);
+  // A symlinked home.
+  const home = make('home');
+  fs.renameSync(home.copilotHome, `${home.copilotHome}-moved`);
+  fs.symlinkSync(outside, home.copilotHome, link);
+  assert.deepEqual(captureMemory(home).refused, ['knowledge: home is not a real directory']);
+  if (process.platform !== 'win32') {
+    const special = make('special');
+    fs.symlinkSync(path.join(outside, 'secret.md'), path.join(special.projectDir, 'docs', 'solutions', 'key.md'));
+    assert.deepEqual(captureMemory(special).refused, [`${key}: key.md is a symlink or special file`]);
+    const fifo = make('fifo');
+    assert.equal(spawnSync('mkfifo', [path.join(fifo.projectDir, 'docs', 'solutions', 'pipe.md')]).status, 0);
+    assert.deepEqual(captureMemory(fifo).refused, [`${key}: pipe.md is a symlink or special file`]);
+  }
+  // More files than the limit.
+  const large = make('large');
+  for (let i = 0; i < 2001; i++) fs.writeFileSync(path.join(large.projectDir, 'docs', 'solutions', `n${i}.md`), '');
+  assert.deepEqual(captureMemory(large).refused, [`${key}: more files than the memory limit`]);
+});
+
+test('a learning an agent writes mid-task in frozen-seed is not carried into later tasks; the seed stays', async t => {
   const calls = [];
   const written = {};
   const executor = scriptedExecutor(calls, {
@@ -599,60 +667,7 @@ test('a learning an agent writes mid-task in frozen-seed is gone after the resto
   }
   const rows = rowsFor(result, 'frozen-seed');
   assert.ok(rows[2].learningsInjected.includes(seedId(ordering)));
-  for (const row of rows) { assert.deepEqual(row.episodeStoreRefused, []); assert.equal(row.knowledgeMode, 'freeze'); }
-});
-
-test('restoring the episode store re-checks every component before removing and before writing', t => {
-  const root = directory(t);
-  const setup = () => {
-    fs.rmSync(path.join(root, 'homes'), { recursive: true, force: true });
-    const homes = { copilotHome: path.join(root, 'homes', 'copilot'), harnessHome: path.join(root, 'homes', 'state') };
-    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
-    fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
-    fs.mkdirSync(homes.copilotHome);
-    fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
-    return homes;
-  };
-  const victim = path.join(root, 'victim');
-  const plantVictim = name => {
-    fs.rmSync(victim, { recursive: true, force: true });
-    fs.mkdirSync(path.join(victim, name), { recursive: true });
-    fs.writeFileSync(path.join(victim, name, 'keep.md'), 'outside\n');
-  };
-  const swapDocs = homes => {
-    fs.renameSync(path.join(homes.projectDir, 'docs'), path.join(homes.projectDir, 'docs-moved'));
-    fs.symlinkSync(victim, path.join(homes.projectDir, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
-  };
-  const key = 'projects/repo-id/docs/solutions';
-  // A detached process swaps `docs` for a symlink after the first check and before the target is moved aside.
-  let homes = setup();
-  let snapshot = snapshotEpisodeStore(homes);
-  plantVictim('solutions');
-  assert.deepEqual(restoreEpisodeStore(snapshot, { [key]: { afterCheck: () => swapDocs(homes) } }).refused, [key]);
-  assert.deepEqual(fs.readdirSync(path.join(victim, 'solutions')), ['keep.md']);
-  // It swaps `docs` after the target is renamed aside: the renamed path no longer resolves inside the home, so nothing is deleted.
-  homes = setup();
-  snapshot = snapshotEpisodeStore(homes);
-  assert.deepEqual(restoreEpisodeStore(snapshot, { [key]: { afterRename: aside => { plantVictim(path.basename(aside)); swapDocs(homes); } } }).refused, [key]);
-  assert.equal(fs.readdirSync(victim).length, 1);
-  assert.deepEqual(fs.readdirSync(path.join(victim, fs.readdirSync(victim)[0])), ['keep.md']);
-  // It swaps `docs` after the old target is deleted and before the snapshot is written back: no file lands outside.
-  homes = setup();
-  snapshot = snapshotEpisodeStore(homes);
-  plantVictim('other');
-  const realRm = fs.rmSync;
-  t.mock.method(fs, 'rmSync', (...args) => { realRm(...args); if (String(args[0]).includes('.solutions.restore-')) swapDocs(homes); });
-  assert.deepEqual(restoreEpisodeStore(snapshot).refused, [key]);
-  t.mock.restoreAll();
-  assert.deepEqual(fs.readdirSync(victim), ['other']);
-  // A home replaced by a symlink after the snapshot is refused outright.
-  homes = setup();
-  snapshot = snapshotEpisodeStore(homes);
-  plantVictim('index');
-  fs.renameSync(homes.copilotHome, `${homes.copilotHome}-moved`);
-  fs.symlinkSync(victim, homes.copilotHome, process.platform === 'win32' ? 'junction' : 'dir');
-  assert.ok(restoreEpisodeStore(snapshot).refused.includes('knowledge'));
-  assert.deepEqual(fs.readdirSync(path.join(victim, 'index')), ['keep.md']);
+  for (const row of rows) { assert.deepEqual(row.carriedMemoryRefused, []); assert.equal(row.knowledgeMode, 'freeze'); }
 });
 
 test('the agent runs in its own process group and nothing it leaves running outlives the task', { skip: process.platform === 'win32' }, async t => {
@@ -694,14 +709,14 @@ test('a grandchild in its own session that holds the output pipes cannot delay t
   // The agent hangs: the timeout kills its group, and the detached sleep still holding stdout cannot hold the result.
   const hangMarker = path.join(root, 'hang.pid');
   let started = Date.now();
-  const hung = await runAgentProcess(process.execPath, ['-e', script(hangMarker, 'setInterval(() => {}, 1000);')], { cwd: root, env: process.env, timeoutMs: 1000 });
+  const hung = await runAgentProcess(process.execPath, ['-e', script(hangMarker, 'setInterval(() => {}, 1000);')], { cwd: root, env: process.env, timeoutMs: 1000, closeGraceMs: 300 });
   pids.push(Number(fs.readFileSync(hangMarker, 'utf8')));
   assert.equal(hung.error?.code, 'ETIMEDOUT');
   assert.ok(Date.now() - started < 3000, `resolved after ${Date.now() - started} ms`);
   // The agent exits 0 at once while the detached sleep holds the pipe: the result arrives promptly, with its output.
   const exitMarker = path.join(root, 'exit.pid');
   started = Date.now();
-  const done = await runAgentProcess(process.execPath, ['-e', script(exitMarker, `process.stdout.write('{"ok":true}');`)], { cwd: root, env: process.env, timeoutMs: 20_000 });
+  const done = await runAgentProcess(process.execPath, ['-e', script(exitMarker, `process.stdout.write('{"ok":true}');`)], { cwd: root, env: process.env, timeoutMs: 20_000, closeGraceMs: 300 });
   pids.push(Number(fs.readFileSync(exitMarker, 'utf8')));
   assert.equal(done.status, 0);
   assert.equal(done.error, null);
@@ -709,11 +724,18 @@ test('a grandchild in its own session that holds the output pipes cannot delay t
   assert.ok(Date.now() - started < 3000, `resolved after ${Date.now() - started} ms`);
 });
 
-test('agent output limits count bytes, not characters', { skip: process.platform === 'win32' }, async t => {
+test('agent output limits count bytes, not characters, and cut the output at the limit', { skip: process.platform === 'win32' }, async t => {
   const root = directory(t);
   // 600 three-byte characters are 1800 bytes: over a 1000-byte limit, though only 600 characters long.
   const result = await runAgentProcess(process.execPath, ['-e', `process.stdout.write('\\u20ac'.repeat(600)); setInterval(() => {}, 1000);`], { cwd: root, env: process.env, timeoutMs: 10_000, maxBuffer: 1000 });
   assert.equal(result.error?.code, 'ENOBUFS');
+  assert.equal(result.status, null, 'an errored run reports no exit status');
+  // 333 whole characters fit in 1000 bytes; the last byte is a cut character.
+  assert.ok(result.stdout.startsWith('\u20ac'.repeat(333)));
+  assert.ok(result.stdout.length <= 334, `kept ${result.stdout.length} characters`);
+  const slow = await runAgentProcess(process.execPath, ['-e', 'process.exitCode = 3; setInterval(() => {}, 1000)'], { cwd: root, env: process.env, timeoutMs: 200 });
+  assert.equal(slow.error?.code, 'ETIMEDOUT');
+  assert.equal(slow.status, null);
 });
 
 test('SIGTERM to the runner kills the detached agent process group', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
@@ -764,7 +786,7 @@ test('a stateless agent that turns knowledge on, compounds an insight and turns 
     } });
   assert.ok(recalled[0].length > 0, 'the insight is recallable in the task that wrote it');
   for (const index of [1, 2, 3]) assert.deepEqual(recalled[index], [], `task ${index + 1} recalls nothing`);
-  for (const row of rowsFor(result, 'stateless')) { assert.equal(row.valid, true); assert.deepEqual(row.episodeStoreRefused, []); }
+  for (const row of rowsFor(result, 'stateless')) { assert.equal(row.valid, true); assert.deepEqual(row.carriedMemoryRefused, []); }
 });
 
 test('an agent that swaps the store directory for a symlink invalidates later attempts without aborting the study', async t => {
@@ -782,30 +804,19 @@ test('an agent that swaps the store directory for a symlink invalidates later at
   assert.ok(result.summary, 'the study completes with a summary');
   const recall = rowsFor(result, 'recall');
   assert.equal(recall.length, 4);
+  // The recall arm reads what task 1 captured: the symlinked store is refused, so the memory chain is broken for the rest
+  // of the run and no agent runs on it. The link itself is never followed into the fresh homes.
   for (const row of recall.slice(1)) {
     assert.equal(row.valid, false);
-    assert.ok(row.invalidReasons.includes('arm-configuration-failed'), row.invalidReasons.join(','));
+    assert.ok(row.invalidReasons.includes('carried-memory-refused'), row.invalidReasons.join(','));
     assert.equal(row.kind, 'setup-error');
-    assert.equal(row.setupErrors[0].step, 'configure');
+    assert.match(row.carriedMemoryRefused[0], /^knowledge: .* is a symlink or special file$/);
+    assert.equal(row.status, null);
   }
-  // The stateless arm restores its stores before configuring, so the symlink is replaced and later tasks stay valid.
+  // The stateless arm copies task 1's memory as configured before its agent ran, so later tasks stay valid.
   const stateless = rowsFor(result, 'stateless');
   assert.equal(stateless.length, 4);
   for (const row of stateless.slice(1)) { assert.equal(row.valid, true, row.invalidReasons.join(',')); assert.deepEqual(row.setupErrors, []); }
-});
-
-test('a failed removal during the store restore refuses that target', t => {
-  const root = directory(t);
-  const homes = { copilotHome: path.join(root, 'copilot'), harnessHome: path.join(root, 'state') };
-  homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
-  fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
-  fs.mkdirSync(homes.copilotHome);
-  fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
-  const snapshot = snapshotEpisodeStore(homes);
-  const realRm = fs.rmSync;
-  t.mock.method(fs, 'rmSync', (...args) => { if (String(args[0]).includes('.solutions.restore-')) throw Object.assign(new Error('busy'), { code: 'EBUSY' }); return realRm(...args); });
-  assert.deepEqual(restoreEpisodeStore(snapshot).refused, ['projects/repo-id/docs/solutions']);
-  t.mock.restoreAll();
 });
 
 test('episode hashes count .md, .MD and .markdown notes', t => {
@@ -868,7 +879,7 @@ test('a crash mid-study saves finished attempt records and a partial results fil
   assert.equal(fs.readdirSync(path.join(root, 'attempts', results.attempts[0].run)).length, 2);
 });
 
-test('SIGTERM during a run removes the agent-facing temporary root', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+for (const [signal, code] of [['SIGTERM', 143], ['SIGHUP', 129], ['SIGQUIT', 131]]) test(`${signal} during a run removes the agent-facing temporary root`, { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
   const root = directory(t);
   const script = path.join(root, 'hang.mjs');
   const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
@@ -882,12 +893,11 @@ await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, catalog: { ...
     child.stdout.on('data', chunk => { output += chunk; const match = output.match(/READY (.+)\n/); if (match) resolve(match[1]); });
     child.on('exit', code => reject(new Error(`exited early: ${code}`)));
   });
-  const parent = path.dirname(path.dirname(trial));
+  const parent = path.dirname(path.dirname(path.dirname(trial)));
   assert.ok(fs.existsSync(parent));
   const exited = new Promise(resolve => child.on('exit', (code, signal) => resolve({ code, signal })));
-  child.kill('SIGTERM');
-  const { code } = await exited;
-  assert.equal(code, 143);
+  child.kill(signal);
+  assert.equal((await exited).code, code);
   assert.equal(fs.existsSync(parent), false, 'the study parent and its run root are gone');
   // The finished first attempt survives the signal, marked partial.
   const results = JSON.parse(fs.readFileSync(path.join(root, 'out', 'results.json'), 'utf8'));
@@ -913,7 +923,7 @@ test('compareArms reports unscored rates and rejects arms whose unscored rates d
   assert.ok(wide.reasons.includes('unscored-rates-differ'));
 });
 
-test('an origin rewrite the runner cannot undo and a refused plan clear each invalidate their attempt', async t => {
+test('an origin rewrite the runner cannot undo invalidates its attempt, and a planted plans link does not reach the next task', async t => {
   const victim = path.join(directory(t), 'victim');
   fs.mkdirSync(victim);
   fs.writeFileSync(path.join(victim, 'keep.md'), 'outside\n');
@@ -924,7 +934,7 @@ test('an origin rewrite the runner cannot undo and a refused plan clear each inv
       fs.writeFileSync(path.join(workspace, '.git', 'rewrite.cfg'), '[url "https://eval.invalid/other/"]\n\tinsteadOf = https://eval.invalid/ae-memory/\n');
       spawnSync('git', ['config', '--local', 'include.path', 'rewrite.cfg'], { cwd: workspace });
     },
-    // A planted symlink for the project's plans folder makes the next task's plan clear refuse.
+    // A planted symlink for the project's plans folder stays in the abandoned home; the next task's home is fresh.
     'stateless:2': ({ workspace, harnessHome }) => {
       const project = path.join(harnessHome, 'projects', path.basename(storeDir(workspace, { home: harnessHome })));
       fs.mkdirSync(project, { recursive: true });
@@ -938,9 +948,54 @@ test('an origin rewrite the runner cannot undo and a refused plan clear each inv
   assert.equal(second.valid, false);
   assert.deepEqual(second.invalidReasons, ['origin-restore-failed']);
   assert.equal(third.valid, true, 'each task gets a fresh checkout, so the rewrite does not carry over');
+  assert.equal(fourth.valid, true, fourth.invalidReasons.join(','));
+  assert.deepEqual(fourth.externalPlansRefused, []);
+  assert.equal(fs.readFileSync(path.join(victim, 'keep.md'), 'utf8'), 'outside\n', 'removing the old root never follows the link');
+});
+
+test('a workspace the agent filled past the snapshot limit makes that attempt invalid; node_modules is one changed entry', async t => {
+  const fill = (workspace, dir) => {
+    fs.mkdirSync(path.join(workspace, dir), { recursive: true });
+    for (let i = 0; i < 1005; i++) fs.writeFileSync(path.join(workspace, dir, `f${i}.js`), '');
+  };
+  const hooks = {
+    // As after `npm install`: the tree is excluded from the snapshot and reported as one unexpected change.
+    'stateless:1': ({ workspace }) => fill(workspace, 'node_modules/pkg'),
+    // Anywhere else, the snapshot limit throws; the attempt is invalid and the study continues.
+    'stateless:3': ({ workspace }) => fill(workspace, 'vendor'),
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  assert.ok(result.summary, 'the study completes with a summary');
+  const [, second, third, fourth] = rowsFor(result, 'stateless');
+  assert.equal(second.valid, true, second.invalidReasons.join(','));
+  assert.deepEqual(second.scope.unexpected, ['node_modules/']);
+  assert.equal(second.pass, false);
+  assert.equal(third.valid, true);
   assert.equal(fourth.valid, false);
-  assert.ok(fourth.invalidReasons.includes('external-plans-not-cleared'));
-  assert.equal(fs.readFileSync(path.join(victim, 'keep.md'), 'utf8'), 'outside\n');
+  assert.deepEqual(fourth.invalidReasons, ['scope-unmeasurable']);
+  assert.equal(fourth.measurementErrors[0].step, 'scope');
+  assert.match(fourth.measurementErrors[0].message, /fixture file limit exceeded/);
+  assert.equal(fourth.pass, false);
+});
+
+test('a malformed storage alias an agent plants stays in its own task; later tasks resolve the series identity', async t => {
+  const hooks = {
+    'recall:0': ({ workspace, harnessHome }) => {
+      const id = storeDir(workspace, { home: harnessHome }).split(path.sep).at(-1);
+      fs.mkdirSync(path.join(harnessHome, 'storage-aliases'), { recursive: true });
+      fs.writeFileSync(path.join(harnessHome, 'storage-aliases', `${id}.json`), 'not json');
+    },
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['recall'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  assert.ok(result.summary, 'the study completes with a summary');
+  const rows = rowsFor(result, 'recall');
+  assert.equal(rows.length, 4);
+  for (const row of rows.slice(1)) {
+    assert.equal(row.valid, true, row.invalidReasons.join(','));
+    assert.deepEqual(row.setupErrors, []);
+    assert.equal(row.repoId, rows[0].repoId);
+  }
+  assert.ok(rows[2].learningsInjected.includes(LEARNING_ID), 'the task 1 learning still reaches the recurrence task');
 });
 
 test('output directory must be new and outside the checkout', t => {

@@ -266,9 +266,27 @@ test('a daemon that checked code starts at import does not outlive the private o
   assert.ok(pids().length >= 1, 'the checked module started a daemon');
   assert.equal(await allDead(), true, 'the private checker daemon was killed with its group');
   const before = pids().length;
-  assert.equal(runPublicChecks(fixture).pass, true);
+  assert.equal((await runPublicChecks(fixture)).pass, true);
   assert.ok(pids().length > before, 'the public verifier started a daemon');
   assert.equal(await allDead(), true, 'the public verifier daemon was killed with its group');
+});
+
+test('a process checked code leaves holding the checker output cannot hold the check result', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'holders');
+  // The holder inherits stdio, so it keeps the checker's stderr pipe open after the checker exits.
+  const source = `import { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nconst c = spawn('sleep', ['30'], { stdio: 'inherit' });\nc.unref();\nfs.appendFileSync(${JSON.stringify(marker)}, c.pid + '\\n');\nexport const value = 2;\nexport const version = 1;\n`;
+  const fixture = await prepareCase({ root, id: 'holder', task: { ...publicTask, files: { 'src/value.mjs': source } } });
+  const pids = () => fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).map(Number) : [];
+  t.after(() => { for (const pid of pids()) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  let started = Date.now();
+  const checked = await runChecks(fixture, { timeoutMs: 20_000 });
+  assert.equal(checked.pass, true, checked.diagnostic);
+  assert.ok(Date.now() - started < 8000, `private checks resolved after ${Date.now() - started} ms`);
+  started = Date.now();
+  const verified = await runPublicChecks(fixture, { timeoutMs: 20_000 });
+  assert.equal(verified.pass, true, verified.diagnostic);
+  assert.ok(Date.now() - started < 8000, `public checks resolved after ${Date.now() - started} ms`);
 });
 
 test('source cannot pass acceptance by exiting before the assertions run', async t => {

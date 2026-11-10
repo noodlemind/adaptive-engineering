@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { resolveStudyOutput, runChecks, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { killLiveGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
 import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
@@ -131,68 +131,12 @@ export function memoryAgentArgs({ task, workspace, copilotHome, harnessHome, mod
     ...task.seeds.flatMap(file => ['--file', file]), '--workspace', workspace, '--copilot-home', copilotHome, '--harness-home', harnessHome, '--no-events', '--json'];
 }
 
-/** Agent process groups still running, killed if the runner exits or is signalled mid-task. */
-const liveAgents = new Set();
-let exitHookInstalled = false;
-
-/** SIGKILLs every live agent process group. Best effort: a group that is already gone is skipped. */
-function killLiveAgents() {
-  for (const pid of liveAgents) {
-    try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
-  }
-  liveAgents.clear();
-}
-
-/** How long the runner waits for the output pipes to close after the agent exits or is killed. */
-const CLOSE_GRACE_MS = 1500;
-
 /**
- * Runs an agent process in its own process group (POSIX), then kills the whole group, so a background process the agent
- * started cannot outlive its task and touch the next task's stores. Resolves like spawnSync: { status, signal, stdout,
- * stderr, error }. When the agent exits, or is killed on timeout or overflow, the group is killed and the output pipes get
- * a short grace period to close; a process that started its own session and still holds a pipe cannot delay the result
- * past it. That process escapes the group kill; the restore re-checks still hold then.
+ * Runs an agent process in its own process group (POSIX), so a background process the agent started cannot outlive its task.
+ * The group is killed once when the agent exits, and on timeout or output overflow; see `runGroupedProcess`. A process that
+ * started its own session escapes the group kill, but the next task's fresh homes never hold anything it can still reach.
  */
-export function runAgentProcess(command, args, { cwd, env, timeoutMs, maxBuffer = 20 * 1024 * 1024, closeGraceMs = CLOSE_GRACE_MS } = {}) {
-  return new Promise(resolve => {
-    const group = process.platform !== 'win32';
-    const child = spawn(command, args, { cwd, env, detached: group, stdio: ['ignore', 'pipe', 'pipe'] });
-    if (group && child.pid) {
-      liveAgents.add(child.pid);
-      if (!exitHookInstalled) { process.on('exit', killLiveAgents); exitHookInstalled = true; }
-    }
-    const out = { stdout: [], stderr: [] };
-    const size = { stdout: 0, stderr: 0 };
-    let error = null, timer = null, grace = null, exited = null, settled = false;
-    const killGroup = () => {
-      try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
-    };
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      clearTimeout(grace);
-      killGroup();
-      liveAgents.delete(child.pid);
-      for (const name of ['stdout', 'stderr']) child[name].destroy();
-      resolve({ status: exited?.status ?? null, signal: exited?.signal ?? null, stdout: out.stdout.join(''), stderr: out.stderr.join(''), error });
-    };
-    const startGrace = () => { if (!grace && !settled) grace = setTimeout(finish, closeGraceMs); };
-    for (const name of ['stdout', 'stderr']) {
-      child[name].setEncoding('utf8');
-      child[name].on('data', chunk => {
-        if (settled) return;
-        out[name].push(chunk);
-        size[name] += Buffer.byteLength(chunk, 'utf8');
-        if (size[name] > maxBuffer && !error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); killGroup(); startGrace(); }
-      });
-    }
-    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('agent timed out'), { code: 'ETIMEDOUT' }); killGroup(); startGrace(); }, timeoutMs);
-    child.on('error', caught => { error ||= caught; startGrace(); });
-    child.on('exit', (status, signal) => { exited ||= { status, signal }; killGroup(); startGrace(); });
-    child.on('close', (status, signal) => { exited ||= { status, signal }; finish(); });
-  });
-}
+export const runAgentProcess = runGroupedProcess;
 
 function gitEnv() {
   return { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'Memory Eval', GIT_AUTHOR_EMAIL: 'memory@example.test', GIT_COMMITTER_NAME: 'Memory Eval', GIT_COMMITTER_EMAIL: 'memory@example.test' };
@@ -230,126 +174,100 @@ export const readsCapturedMemory = arm => arm.mode === 'on' || arm.mode === 'sug
  * Arms whose recallable memory is fixed for the whole run: every arm that does not read captured memory. `stateless` keeps
  * the empty state it started with, `capture-only` keeps the state it started with, and `frozen-seed` (mode freeze) keeps
  * its seeded state. Compound still writes episodes in capture-only and freeze, an agent in any arm can turn knowledge on and
- * compound before turning it off again, and orient recalls episodes whatever the knowledge mode, so the runner restores the
- * episode store, retrieval index and learnings store before every later task.
+ * compound before turning it off again, and orient recalls episodes whatever the knowledge mode, so every later task's fresh
+ * homes get the first task's memory, captured after configuration and before its agent ran.
  */
 export const fixesRecallableMemory = arm => !readsCapturedMemory(arm);
 
-const EPISODE_STORE_FILE_LIMIT = 2000;
-const EPISODE_STORE_BYTE_LIMIT = 32 * 1024 * 1024;
+const MEMORY_FILE_LIMIT = 2000;
+const MEMORY_BYTE_LIMIT = 32 * 1024 * 1024;
+const OPEN_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 
 /**
- * Episode files, the recall manifest, its postings index, the learnings store and the project's docs/solutions notes, as
- * [root, path under root]. The learnings store (harnessHome/knowledge, every storage id) holds the seeded learning and the
- * knowledge mode and feedback config the runner wrote before the snapshot; an agent could otherwise turn knowledge on, add a
- * learning and freeze again, and orient would inject it into later frozen-seed tasks.
+ * The memory carried from one task's homes into the next task's fresh homes, as [root, path under root]: the project
+ * store's episodes (docs/solutions), the recall manifest, its postings index and the learnings store (harnessHome/knowledge,
+ * every storage id), which holds the learnings and the knowledge mode and feedback config. Nothing else in the homes is
+ * carried: storage aliases, plans, todos, feedback records, trust and check configuration all start fresh in every task.
  */
-function episodeStoreTargets({ copilotHome, harnessHome, projectDir }) {
+function memoryTargets({ copilotHome, harnessHome, projectDir }) {
   return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge'], [harnessHome, path.relative(harnessHome, path.join(projectDir, 'docs', 'solutions'))]];
 }
 
-/**
- * Whether `root` and every component of `rel` under it that exists is a real directory, never a symlink, whose realpath is
- * still the expected place under `rootReal`; and whether the target exists. Called again immediately before every removal
- * and write, which narrows the window in which a component swapped for a symlink would be followed; it cannot close it.
- */
-function realDirectoryPath(root, rel, rootReal = null) {
-  const inside = (current, expected) => {
-    if (rootReal === null) return true;
-    try { return fs.realpathSync(current) === expected; } catch { return false; }
-  };
-  try {
-    const stat = fs.lstatSync(root);
-    if (stat.isSymbolicLink() || !stat.isDirectory() || !inside(root, rootReal)) return { safe: false, exists: true };
-  } catch { return { safe: false, exists: false }; }
-  let current = root, expected = rootReal;
-  for (const part of rel.split(path.sep).filter(Boolean)) {
-    if (part === '..' || part === '.') return { safe: false, exists: false };
-    current = path.join(current, part);
-    if (expected !== null) expected = path.join(expected, part);
-    let stat;
-    try { stat = fs.lstatSync(current); } catch { return { safe: true, exists: false }; }
-    if (stat.isSymbolicLink() || !stat.isDirectory() || !inside(current, expected)) return { safe: false, exists: true };
-  }
-  return { safe: true, exists: true };
-}
+const refusal = message => Object.assign(new Error(message), { refusal: true });
 
-/** Creates `rel` under `root` one component at a time, re-checking each with lstat and realpath; false on any mismatch. */
-function makeRealDirectory(root, rel, rootReal) {
-  let sofar = '';
-  for (const part of rel.split(path.sep).filter(Boolean)) {
-    sofar = sofar ? path.join(sofar, part) : part;
-    const checked = realDirectoryPath(root, sofar, rootReal);
-    if (!checked.safe) return false;
-    if (!checked.exists) {
-      try { fs.mkdirSync(path.join(root, sofar)); } catch (error) { if (error.code !== 'EEXIST') return false; }
-      if (!realDirectoryPath(root, sofar, rootReal).safe) return false;
+/**
+ * Reads the carried memory of one task's homes into this process's memory, as validated regular files and directories, so
+ * nothing an agent does afterwards can change the copy. Every path is checked with lstat, every directory's realpath must
+ * still be its place under the home, and every file is opened without following a final symlink and checked again on the
+ * open descriptor. A symlink, a special file, an unreadable entry, or a capture over the file count or byte limit refuses
+ * its target: the target is left out and `refused` names it, which makes the next attempt invalid. An absent target is
+ * recorded as absent.
+ */
+export function captureMemory(homes) {
+  const refused = [];
+  const targets = [];
+  let entries = 0, bytes = 0;
+  for (const [slot, [root, rel]] of memoryTargets(homes).entries()) {
+    const key = rel.split(path.sep).join('/');
+    try {
+      const rootStat = fs.lstatSync(root);
+      if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw refusal('home is not a real directory');
+      const rootReal = fs.realpathSync(root);
+      let current = root, absent = false;
+      for (const part of rel.split(path.sep).filter(Boolean)) {
+        current = path.join(current, part);
+        const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+        if (!stat) { absent = true; break; }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw refusal(`${path.relative(root, current).split(path.sep).join('/')} is not a real directory`);
+      }
+      if (absent) { targets.push({ slot, rel, entries: null }); continue; }
+      const saved = [];
+      const walk = sub => {
+        const dir = path.join(root, rel, sub);
+        if (fs.realpathSync(dir) !== path.join(rootReal, rel, sub)) throw refusal(`${sub || '.'} resolves outside the home`);
+        for (const name of fs.readdirSync(dir).sort()) {
+          const entryRel = sub ? path.join(sub, name) : name;
+          const full = path.join(dir, name);
+          const stat = fs.lstatSync(full);
+          if (++entries > MEMORY_FILE_LIMIT) throw refusal('more files than the memory limit');
+          if (stat.isDirectory()) { saved.push({ path: entryRel, directory: true }); walk(entryRel); continue; }
+          if (!stat.isFile()) throw refusal(`${entryRel.split(path.sep).join('/')} is a symlink or special file`);
+          const fd = fs.openSync(full, OPEN_NO_FOLLOW);
+          let content;
+          try {
+            if (!fs.fstatSync(fd).isFile()) throw refusal(`${entryRel.split(path.sep).join('/')} is not a regular file`);
+            content = fs.readFileSync(fd);
+          } finally { fs.closeSync(fd); }
+          bytes += content.length;
+          if (bytes > MEMORY_BYTE_LIMIT) throw refusal('more bytes than the memory limit');
+          saved.push({ path: entryRel, content });
+        }
+      };
+      walk('');
+      targets.push({ slot, rel, entries: saved });
+    } catch (error) {
+      refused.push(`${key}: ${error.refusal ? error.message : `unreadable (${error.code || error.message})`}`);
     }
   }
-  return true;
+  return { targets, refused };
 }
 
 /**
- * Snapshot of the episode store held in this process's memory, so an agent cannot edit the copy it will be restored from.
- * Taken by the runner before the first task's agent runs; symlinks are refused, as in a real checkout of the store.
+ * Writes captured memory into a task's fresh homes. The runner made those homes moments earlier under an unpredictable name
+ * and no agent has run in them, so there is nothing to remove first; every file is created exclusively.
  */
-export function snapshotEpisodeStore(homes) {
-  let files = 0, bytes = 0;
-  return episodeStoreTargets(homes).map(([root, rel]) => {
-    const checked = realDirectoryPath(root, rel);
-    if (!checked.safe) throw new Error(`episode store path is not a real directory: ${rel}`);
-    const saved = checked.exists ? Object.entries(listFiles(path.join(root, rel))).map(([file, full]) => {
-      const content = fs.readFileSync(full);
-      files += 1; bytes += content.length;
-      if (files > EPISODE_STORE_FILE_LIMIT || bytes > EPISODE_STORE_BYTE_LIMIT) throw new Error('episode store exceeds the snapshot limit');
-      return [file, content];
-    }) : null;
-    return { root, rootReal: fs.realpathSync(root), rel, saved };
-  });
-}
-
-/**
- * Restores one target, failing closed: false leaves the attempt invalid. An existing target is first renamed to a random
- * sibling, the renamed path is re-verified (real directories all the way, realpath still inside the home) and only then
- * deleted. Every directory is created one component at a time and re-checked, and every file is re-checked and written
- * with an exclusive create. These re-checks narrow the window in which a detached process could swap a component for a
- * symlink between steps; a swap the checks see is refused. A failed removal also refuses the target. `hooks` lets tests
- * act between the steps.
- */
-function restoreTarget({ root, rootReal, rel, saved }, hooks = {}) {
-  const checked = realDirectoryPath(root, rel, rootReal);
-  if (!checked.safe) return false;
-  hooks.afterCheck?.();
-  if (checked.exists) {
-    if (!realDirectoryPath(root, rel, rootReal).safe) return false;
-    const parentRel = path.dirname(rel) === '.' ? '' : path.dirname(rel);
-    const asideRel = path.join(parentRel, `.${path.basename(rel)}.restore-${randomBytes(6).toString('hex')}`);
-    try { fs.renameSync(path.join(root, rel), path.join(root, asideRel)); } catch { return false; }
-    hooks.afterRename?.(path.join(root, asideRel));
-    const aside = realDirectoryPath(root, asideRel, rootReal);
-    if (!aside.safe || !aside.exists) return false;
-    try { fs.rmSync(path.join(root, asideRel), { recursive: true, force: true, maxRetries: 3 }); } catch { return false; }
+export function writeMemory(homes, captured) {
+  for (const [slot, [root, rel]] of memoryTargets(homes).entries()) {
+    const target = captured.targets.find(row => row.slot === slot && row.rel === rel);
+    if (!target?.entries) continue;
+    const base = path.join(root, rel);
+    fs.mkdirSync(base, { recursive: true });
+    for (const entry of target.entries) {
+      const full = path.join(base, entry.path);
+      if (entry.directory) fs.mkdirSync(full, { recursive: true });
+      else fs.writeFileSync(full, entry.content, { flag: 'wx' });
+    }
   }
-  if (!saved) return true;
-  if (!makeRealDirectory(root, rel, rootReal)) return false;
-  for (const [file, content] of saved) {
-    const fileRel = path.join(rel, ...file.split('/'));
-    if (!makeRealDirectory(root, path.dirname(fileRel), rootReal)) return false;
-    try { fs.writeFileSync(path.join(root, fileRel), content, { flag: 'wx' }); } catch { return false; }
-  }
-  return true;
-}
-
-/**
- * Restores a snapshot: each target is removed and rewritten from memory, or left absent if it was absent. A target whose
- * path is seen to hold a symlink or a non-directory, before or during the restore, is refused, and the attempt becomes invalid.
- */
-export function restoreEpisodeStore(snapshot, hooks = {}) {
-  const refused = [];
-  for (const target of snapshot) {
-    if (!restoreTarget(target, hooks[target.rel.split(path.sep).join('/')] || {})) refused.push(target.rel.split(path.sep).join('/'));
-  }
-  return { refused };
 }
 
 /** Named check that runs the runner-supplied public verifier; the Deliver completion gate needs named evidence. */
@@ -359,7 +277,7 @@ export const PUBLIC_CHECK = 'public-checks';
  * Operator setup before an agent runs: registers the public verifier as the named check PUBLIC_CHECK in the series project
  * authority under the harness home, then approves project trust for this checkout. The runner grants trust as the operator;
  * the agent itself may only read trust status. Without both, `ae verify` reports the check unavailable and a correct Deliver
- * run can never finish with status ok. Idempotent across the tasks of a series, which share the harness home.
+ * run can never finish with status ok. Runs in every task, because every task starts from fresh homes.
  */
 export function authorizeFixtureChecks({ workspace, copilotHome, harnessHome }) {
   const current = inspectCheckConfiguration({ workspace, home: harnessHome });
@@ -374,7 +292,8 @@ export function authorizeFixtureChecks({ workspace, copilotHome, harnessHome }) 
 
 /**
  * Fresh checkout of the series state for one task, with carried-forward episodes committed and origin pinned before any ae command.
- * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`. Private checks stay in this
+ * Agent-reachable material (workspace, empty HOME, runtime wrapper) lives under `runRoot`, the task's own root, which the
+ * study creates with an unpredictable name next to that task's fresh homes. Private checks stay in this
  * process's memory and reach the checker on stdin, so no file holds them while an agent runs.
  */
 export function prepareTask({ series, index, runRoot, carried = {}, extraFiles = {}, origin = seriesOrigin(series.id), copilotHome, harnessHome }) {
@@ -445,9 +364,6 @@ function filesInside(base, rel) {
   return listFiles(current);
 }
 
-/** Project-store directory for the series identity, independent of the workspace's current origin. */
-const projectDirFor = (home, identity) => path.join(home, 'projects', path.basename(identity.storeDir));
-
 /** Episode-shaped files (Markdown notes under docs/solutions, .md or .markdown in any case) in the workspace and in the series project store. */
 export function episodeHashes(workspace, projectDir) {
   const roots = { workspace: [workspace, PROTOCOL.carryForward], project: [projectDir, 'docs/solutions'] };
@@ -459,7 +375,7 @@ export function episodeHashes(workspace, projectDir) {
 }
 
 /**
- * Plans persisted outside the checkout survive between tasks through the shared home; every arm clears them before a task.
+ * Plans kept outside the checkout. Every task starts from fresh homes, so none should exist; the clear stays as a check.
  * Every path component from the harness home down must be a real directory that resolves inside the harness home, so a
  * planted symlink cannot redirect the deletion. A refused clear is reported and makes the attempt invalid.
  */
@@ -587,7 +503,7 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
     corpusHash: hash(JSON.stringify(catalog)), checkerHash: hash(fs.readFileSync(checker)), protocolHash: hash(JSON.stringify(protocol)),
     runtime: process.version, platform: process.platform, arch: process.arch, host, model,
     modelSelection: model?.trim().toLowerCase() === 'auto' ? 'automatic' : 'fixed',
-    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-run-temporary-root-v2',
+    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-task-fresh-homes-v3',
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(),
     sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim()),
     profile: protocol.profile, publicVerifier: protocol.publicVerifier, maxTurns: protocol.maxTurns, maxSeconds: protocol.maxSeconds,
@@ -636,24 +552,27 @@ export function sweepStaleStudies(base = os.tmpdir()) {
   return swept;
 }
 
+/** Signals that remove the study parent and end the runner. SIGQUIT does not exist on Windows. */
+const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGHUP'] : ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
+
 /**
- * One temporary parent per study, removed on normal exit and on SIGINT/SIGTERM. Run roots are created inside it.
- * `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
+ * One temporary parent per study, removed on normal exit and on SIGINT, SIGTERM, SIGHUP or SIGQUIT. Run roots are created
+ * inside it. `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
+ * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group.
  */
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
   const parent = fs.mkdtempSync(path.join(base, `${STUDY_PREFIX}${process.pid}-`));
-  const remove = () => { killLiveAgents(); try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
+  const remove = () => { killLiveGroups(); try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
   const onSignal = signal => {
     // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
     try { onAbort(signal); } catch { /* best effort */ }
-    process.exit(signal === 'SIGINT' ? 130 : 143);
+    process.exit(128 + (os.constants.signals[signal] ?? 15));
   };
   process.on('exit', remove);
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
-  return { parent, close() { remove(); process.off('exit', remove); process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); } };
+  for (const signal of STUDY_SIGNALS) process.once(signal, onSignal);
+  return { parent, close() { remove(); process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); } };
 }
 
 /**
@@ -674,13 +593,15 @@ function writeStudyOutput({ root, provenance, runs, attempts, protocol, partial 
 }
 
 /**
- * Runs every (series, arm, repeat) with one harness home shared across the series's tasks and a fresh checkout per task.
- * Each run's agent-facing files live in a fresh temporary root outside `root`, deleted after the run; each task's checkout
- * is deleted after its attempt, so an agent cannot casually list sibling runs, earlier tasks or private checks. This guards
- * against casual leakage only: an agent running as this user can read this process's memory. Real protection needs a
- * separate user ID or a sandbox. `studyBase` sets where the study parent is created (tests use a private directory).
- * `originFor(series, index)` lets tests prove identity drift is caught; `inspect(fixture, attempt)` lets tests look at a
- * task before its checkout is removed. Production runs use neither.
+ * Runs every (series, arm, repeat). Every task gets a new root with an unpredictable name (fs.mkdtempSync) inside the run's
+ * temporary root, outside `root`, holding fresh Copilot and harness homes and a fresh checkout. Only the carried memory
+ * targets reach a later task's homes, as validated regular files: arms that read captured memory get the previous task's
+ * memory, and the other arms get the first task's memory as configured before its agent ran. Everything else in the homes,
+ * storage aliases included, starts fresh, and each task's root is deleted once its measurements are read, so an agent cannot
+ * casually list sibling runs, earlier tasks or private checks. This guards against casual leakage only: an agent running as
+ * this user can read this process's memory. Real protection needs a separate user ID or a sandbox. `studyBase` sets where
+ * the study parent is created (tests use a private directory). `originFor(series, index)` lets tests prove identity drift is
+ * caught; `inspect(fixture, attempt)` lets tests look at a task before its root is removed. Production runs use neither.
  */
 export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, arms = runnableArms(protocol), repeats = protocol.repeats, split = 'all', dryRun = false, execute, model = null, host = null, originFor = series => seriesOrigin(series.id), inspect = null, studyBase = os.tmpdir() }) {
   validateProtocol(protocol);
@@ -712,45 +633,64 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
         const arm = armById(protocol, armId);
         const runId = `${item.id}-${armSlug(armId)}-r${repeat + 1}`;
         const runRoot = fs.mkdtempSync(path.join(study.parent, 'run-'));
-        const copilotHome = path.join(runRoot, 'copilot');
-        const harnessHome = path.join(runRoot, 'state');
-        for (const dir of [copilotHome, harnessHome]) fs.mkdirSync(dir);
         let carried = {};
+        // The series identity from task 1: its repository id and its store directory relative to the harness home.
         let first = null;
         let seeded = null;
-        let storeSnapshot = null;
+        // Fixed arms: task 1's memory after configuration. Arms that read captured memory: the previous task's memory.
+        let fixedMemory = null;
+        let previousMemory = null;
+        // A refused capture breaks the memory chain, so every later task of the run is invalid.
+        const carryRefused = [];
         const runAttempts = [];
         try {
           for (let index = 0; index < item.tasks.length; index++) {
             const task = item.tasks[index];
+            const taskRoot = fs.mkdtempSync(path.join(runRoot, 'task-'));
+            const copilotHome = path.join(taskRoot, 'copilot');
+            const harnessHome = path.join(taskRoot, 'state');
+            for (const dir of [copilotHome, harnessHome]) fs.mkdirSync(dir);
+            try {
             const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
-            const fixture = prepareTask({ series: item, index, runRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
-            const identity = { repoId: repoId(fixture.workspace), storeDir: storeDir(fixture.workspace, { home: harnessHome }) };
-            if (!first) first = identity;
-            const projectDir = projectDirFor(harnessHome, first);
+            const fixture = prepareTask({ series: item, index, runRoot: taskRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
             // What an earlier agent left behind can make setup fail; that fails this attempt, never the whole study.
             const setupErrors = [];
             const setupStep = (step, action, fallback) => {
               try { return action(); } catch (caught) { setupErrors.push({ step, message: String(caught?.message ?? caught).slice(0, 500) }); return fallback; }
             };
-            // Arms with fixed recallable memory start every later task from the stores their first task started with. The
-            // restore runs before configuration, so a store an agent broke (for example a symlinked store directory) is
-            // replaced from the snapshot first.
-            let storeRestore = { refused: [] };
+            // Identity reads Git and the storage aliases, so it runs as a setup step too.
+            const identity = setupStep('identity', () => {
+              const dir = storeDir(fixture.workspace, { home: harnessHome });
+              return { repoId: repoId(fixture.workspace), storeDir: dir, storeId: path.relative(harnessHome, dir) };
+            }, null);
+            if (!first && index === 0) first = identity;
+            if (!first && index > 0) setupStep('identity', () => { throw new Error('the series identity is unknown: task 1 could not resolve it'); });
+            const seriesStore = path.join(harnessHome, first ? first.storeId : path.join('knowledge', '.unresolved'));
+            const projectDir = path.join(harnessHome, 'projects', path.basename(seriesStore));
+            const homes = { copilotHome, harnessHome, projectDir };
             const fixed = fixesRecallableMemory(arm);
-            if (fixed && index > 0) {
-              storeRestore = storeSnapshot ? setupStep('restore', () => restoreEpisodeStore(storeSnapshot), { refused: ['(restore failed)'] }) : { refused: ['(no snapshot)'] };
+            const memoryRefused = [...carryRefused];
+            // Carried memory is written before configuration, so the arm's mode and feedback state always win.
+            if (index > 0 && first) {
+              const source = fixed ? fixedMemory : previousMemory;
+              if (source) setupStep('carry-memory', () => writeMemory(homes, source));
+              else if (!memoryRefused.length) memoryRefused.push('(no captured memory)');
             }
             const configured = setupStep('configure', () => configureArm({ workspace: fixture.workspace, home: harnessHome, arm, series: item, seed: index === 0 }), { seeded: null });
             if (index === 0) seeded = configured.seeded;
-            if (fixed && index === 0) storeSnapshot = setupStep('snapshot', () => snapshotEpisodeStore({ copilotHome, harnessHome, projectDir }), null);
+            if (fixed && index === 0) {
+              fixedMemory = setupStep('snapshot', () => captureMemory(homes), null);
+              for (const reason of fixedMemory?.refused || []) { carryRefused.push(reason); memoryRefused.push(reason); }
+            }
             const plans = setupStep('clear-plans', () => clearExternalPlans(harnessHome, projectDir), { cleared: 0, refused: ['(clear failed)'] });
-            const setupFailed = setupErrors.length > 0;
-            const before = { ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) };
+            const before = setupStep('read-config', () => ({ ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) }),
+              { mode: null, feedback: null, observed: null, feedbackObserved: null });
+            // A refused copy or plan clear counts as a failed setup too, so no agent runs on stores that may be contaminated.
+            const setupFailed = setupErrors.length > 0 || memoryRefused.length > 0 || plans.refused.length > 0;
             // Both checkers run under this study's own protocol timeout, the value recorded in provenance.
             const checkerOptions = { timeoutMs: protocol.checkerTimeoutMs };
             const baseline = await runChecks(fixture, checkerOptions);
-            const publicBaseline = runPublicChecks(fixture, checkerOptions);
+            const publicBaseline = await runPublicChecks(fixture, checkerOptions);
             const trapBaseline = task.trap ? subsetResult(task, baseline, true) : null;
             if (baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
             const episodesBefore = episodeHashes(fixture.workspace, projectDir);
@@ -759,8 +699,10 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             let result = {}, error = null;
             // A task whose setup failed is invalid whatever the agent does, so no agent runs for it.
             const ran = !dryRun && !setupFailed;
-            if (setupFailed) error = `setup failed: ${setupErrors.map(row => `${row.step}: ${row.message}`).join('; ')}`.slice(0, 2000);
-            else if (!dryRun) {
+            if (setupFailed) {
+              const failures = [...setupErrors.map(row => `${row.step}: ${row.message}`), ...memoryRefused.map(reason => `carry-memory: ${reason}`), ...plans.refused.map(rel => `clear-plans: refused ${rel}`)];
+              error = `setup failed: ${failures.join('; ')}`.slice(0, 2000);
+            } else if (!dryRun) {
               try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
               catch (caught) { error = String(caught.message).slice(0, 2000); }
             }
@@ -769,7 +711,13 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             // One checker run scores the whole task; trap and non-trap results are subsets of its per-check verdicts.
             const trapChecks = !ran || !task.trap ? null : subsetResult(task, checks, true);
             const otherChecks = !ran || !task.trap ? null : subsetResult(task, checks, false);
-            const scope = scopeResult(fixture);
+            // What the agent left in the workspace can make a measurement throw (for example a file count over the snapshot
+            // limit). That makes this attempt invalid as scope-unmeasurable; the study continues.
+            const measurementErrors = [];
+            const measure = (step, action, fallback) => {
+              try { return action(); } catch (caught) { measurementErrors.push({ step, message: String(caught?.message ?? caught).slice(0, 500) }); return fallback; }
+            };
+            const scope = measure('scope', () => scopeResult(fixture), { pass: false, changed: [], unexpected: [], metadataExcluded: [] });
             // Ordinary Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
             // Runner-supplied files under .harness/, such as the public verifier, stay protected.
             const unexpected = scope.unexpected.filter(file => SUPPLIED_FILES.includes(file) || (!file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`)));
@@ -777,34 +725,39 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const originUnchanged = originAfter.configured === fixture.origin && originAfter.effective === fixture.origin;
             // Read every after-state through the series identity, never through an origin the agent may have changed.
             const originRestored = originUnchanged || restoreOrigin(fixture.workspace, fixture.origin);
-            const after = storedConfig(first.storeDir);
-            const episodesAfter = episodeHashes(fixture.workspace, projectDir);
+            const after = storedConfig(seriesStore);
+            const episodesAfter = measure('episodes', () => episodeHashes(fixture.workspace, projectDir), episodesBefore);
             const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
             const kind = setupFailed ? 'setup-error' : dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
             const executed = kind === 'live' || kind === 'scripted';
             const invalidReasons = [
-              identity.repoId !== first.repoId && 'repo-identity-drift',
-              identity.storeDir !== first.storeDir && 'store-directory-drift',
+              identity && first && identity.repoId !== first.repoId && 'repo-identity-drift',
+              identity && first && identity.storeId !== first.storeId && 'store-directory-drift',
               before.observed !== arm.mode && 'knowledge-mode-mismatch',
               before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
               plans.refused.length > 0 && 'external-plans-not-cleared',
-              storeRestore.refused.length > 0 && 'episode-store-not-restored',
-              setupErrors.some(row => row.step === 'restore') && 'episode-store-restore-failed',
-              setupErrors.some(row => row.step === 'snapshot') && 'episode-store-snapshot-failed',
+              memoryRefused.length > 0 && 'carried-memory-refused',
+              setupErrors.some(row => row.step === 'identity') && 'identity-resolution-failed',
+              setupErrors.some(row => row.step === 'carry-memory') && 'carried-memory-write-failed',
+              setupErrors.some(row => row.step === 'snapshot') && 'memory-snapshot-failed',
               setupErrors.some(row => row.step === 'configure') && 'arm-configuration-failed',
               setupErrors.some(row => row.step === 'clear-plans') && 'external-plans-clear-failed',
+              setupErrors.some(row => row.step === 'read-config') && 'arm-configuration-unreadable',
               !originRestored && 'origin-restore-failed',
             ].filter(Boolean);
-            const valid = invalidReasons.length === 0;
             const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
             const usage = usageOf(result);
             let repeatMistake = null;
-            if (executed && valid && task.trap) {
-              const evidence = repeatEvidenceFromServed({ workspace: fixture.workspace, home: harnessHome, session: { lastQuery: memoryPrompt(task), files: task.seeds }, delivered: addedDiff(fixture.workspace, task.editable) });
-              repeatMistake = { flagged: evidence.length > 0, learnings: evidence.map(row => row.learning) };
+            if (executed && invalidReasons.length === 0 && measurementErrors.length === 0 && task.trap) {
+              const evidence = measure('repeat-evidence', () => repeatEvidenceFromServed({ workspace: fixture.workspace, home: harnessHome, session: { lastQuery: memoryPrompt(task), files: task.seeds }, delivered: addedDiff(fixture.workspace, task.editable) }), null);
+              if (evidence) repeatMistake = { flagged: evidence.length > 0, learnings: evidence.map(row => row.learning) };
             }
+            if (measurementErrors.length) invalidReasons.push('scope-unmeasurable');
+            const valid = invalidReasons.length === 0;
             // A recurrence is scored only when the rest of the task was solved; an unsolved task says nothing about the trap.
             const scorable = executed && valid && task.trap === 'recurrence';
+            // A checker that timed out, overflowed or lost integrity reports no verdicts; that recurrence is unscored and says why.
+            const checkerIncomplete = Boolean(checks && (checks.error || !checks.integrity || checks.verdicts?.some(verdict => verdict === null)));
             const attempt = {
               batch: provenance.batch,
               id: `${runId}-t${index + 1}`, run: runId, series: item.id, split: item.split, trapId: item.trap.id, arm: armId, repeat: repeat + 1,
@@ -812,14 +765,14 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               pass: executed && valid && result.status === 'ok' && checks?.pass === true && unexpected.length === 0 && originUnchanged && modeUnchanged,
               baseline, publicBaseline, trapBaseline, checks, trapChecks, otherChecks,
               trapRecurred: scorable && otherChecks?.pass ? !trapChecks.pass : null,
-              recurrenceUnscored: scorable && !otherChecks?.pass ? 'rest-of-task-unsolved' : null,
+              recurrenceUnscored: scorable && !otherChecks?.pass ? (checkerIncomplete ? 'checker-incomplete' : 'rest-of-task-unsolved') : null,
               trapFirstFailed: executed && valid && task.trap === 'first' && otherChecks?.pass ? !trapChecks.pass : null,
               repeatMistake,
               scope: { ...scope, pass: unexpected.length === 0, unexpected },
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
-              repoId: identity.repoId, storeDir: identity.storeDir, knowledgeMode: before.observed, feedback: before.feedbackObserved,
+              repoId: identity?.repoId ?? null, storeDir: identity?.storeDir ?? null, storeId: identity?.storeId ?? null, knowledgeMode: before.observed, feedback: before.feedbackObserved,
               knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !modeUnchanged, seeded,
-              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, episodeStoreRefused: storeRestore.refused, setupErrors,
+              carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, carriedMemoryRefused: memoryRefused, setupErrors, measurementErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
@@ -829,9 +782,17 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             };
             attempts.push(attempt);
             runAttempts.push(attempt);
-            carried = readsCapturedMemory(arm) ? collectCarryForward(fixture.workspace) : {};
+            if (readsCapturedMemory(arm)) {
+              try { carried = collectCarryForward(fixture.workspace); }
+              catch (caught) { carried = {}; carryRefused.push(`${protocol.carryForward}: unreadable (${caught?.code || caught?.message})`); }
+              previousMemory = captureMemory(homes);
+              carryRefused.push(...previousMemory.refused);
+            } else carried = {};
             if (inspect) await inspect(fixture, attempt);
-            fs.rmSync(fixture.trial, { recursive: true, force: true });
+            } finally {
+              // The task's root goes once its measurements are read; rmSync removes links without following them.
+              try { fs.rmSync(taskRoot, { recursive: true, force: true, maxRetries: 3 }); } catch { /* the run root removal retries */ }
+            }
           }
         } finally {
           fs.rmSync(runRoot, { recursive: true, force: true });
@@ -875,6 +836,8 @@ export function armStatistics({ attempts, runs, arm, split }) {
     recurrenceAttempts: recurrence.length, recurred: recurrence.filter(row => row.trapRecurred).length,
     recurrenceRate: rate(recurrence.filter(row => row.trapRecurred).length, recurrence.length),
     recurrenceUnscored: valid.filter(row => row.recurrenceUnscored).length,
+    // Recurrence rows whose checker reported no verdicts (timeout, overflow, integrity); they also count as unscored.
+    recurrenceCheckerIncomplete: valid.filter(row => row.recurrenceUnscored === 'checker-incomplete').length,
     unscoredRate: rate(valid.filter(row => row.recurrenceUnscored).length, recurrenceRows.length),
     configChangedByAgent: valid.filter(row => row.configChangedByAgent).length,
     repeatMistakesFlagged: valid.filter(row => row.repeatMistake?.flagged).length,
