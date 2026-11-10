@@ -25,6 +25,21 @@ function running(pid) {
   try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
 }
 
+/**
+ * PIDs verified dead at runtime: each is a short-lived child's, spawned and reaped here, and checked again before use, so no
+ * test relies on a fixed PID being unused.
+ */
+function deadPids(count) {
+  const pids = new Set();
+  while (pids.size < count) {
+    const pid = spawnSync(process.execPath, ['-e', '']).pid;
+    let dead = false;
+    try { process.kill(pid, 0); } catch (error) { dead = error.code === 'ESRCH'; }
+    if (dead) pids.add(pid);
+  }
+  return [...pids];
+}
+
 async function waitDead(pid, tries = 100) {
   for (let i = 0; i < tries; i++) {
     if (!running(pid)) return true;
@@ -94,17 +109,18 @@ test('the unlisted mode gives the owner write and search only', () => {
 
 test('sweepStaleStudies never follows or chmods a planted symlink, and skips entries another user owns', { skip: !posix && 'POSIX modes and symlinks' }, t => {
   const base = directory(t);
+  const [linkPid, stalePid, foreignPid] = deadPids(3);
   const victim = path.join(base, 'victim');
   fs.mkdirSync(victim);
   fs.writeFileSync(path.join(victim, 'keep'), 'x');
   fs.chmodSync(victim, 0o755);
-  const link = path.join(base, 'aem-study-999999-abcdef');
+  const link = path.join(base, `aem-study-${linkPid}-abcdef`);
   fs.symlinkSync(victim, link);
   // A stale parent of this user holding a planted run- link: the parent goes, the link's target keeps its mode.
   const inner = path.join(base, 'inner-victim');
   fs.mkdirSync(inner);
   fs.chmodSync(inner, 0o755);
-  const stale = path.join(base, 'aem-study-999998-ghijkl');
+  const stale = path.join(base, `aem-study-${stalePid}-ghijkl`);
   fs.mkdirSync(stale);
   fs.symlinkSync(inner, path.join(stale, 'run-abcdef'));
   const swept = sweepStaleStudies(base);
@@ -116,7 +132,7 @@ test('sweepStaleStudies never follows or chmods a planted symlink, and skips ent
   assert.equal(fs.lstatSync(inner).mode & 0o7777, 0o755, 'a run- link inside a stale parent is not followed');
   if (root) {
     // Only root can make a directory another user owns; the sweep must leave it, mode included.
-    const foreign = path.join(base, 'aem-study-999997-mnopqr');
+    const foreign = path.join(base, `aem-study-${foreignPid}-mnopqr`);
     fs.mkdirSync(foreign, { mode: 0o755 });
     fs.chmodSync(foreign, 0o755);
     fs.chownSync(foreign, 12345, 12345);
@@ -128,7 +144,8 @@ test('sweepStaleStudies never follows or chmods a planted symlink, and skips ent
 
 test('sweepStaleStudies removes a stale parent holding a read-only directory deep inside it', { skip: !posix && 'POSIX modes' }, t => {
   const base = directory(t);
-  const stale = path.join(base, 'aem-study-999996-stuvwx');
+  const [stalePid] = deadPids(1);
+  const stale = path.join(base, `aem-study-${stalePid}-stuvwx`);
   const deep = path.join(stale, 'run-abcdef', 'task-ghijkl', 'workspace', 'src');
   fs.mkdirSync(deep, { recursive: true });
   fs.writeFileSync(path.join(deep, 'file.js'), 'x');
@@ -160,18 +177,71 @@ test('collectCarryForward counts the notes it drops for size and for the file li
   const workspace = directory(t);
   const notes = path.join(workspace, 'docs', 'solutions', 'eval');
   fs.mkdirSync(notes, { recursive: true });
-  const dropped = { oversized: 0, overFileLimit: 0 };
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 };
   fs.writeFileSync(path.join(notes, 'a-large.md'), Buffer.alloc(256 * 1024 + 1, 'x'));
   fs.writeFileSync(path.join(notes, 'a-small.md'), 'note\n');
   assert.deepEqual(Object.keys(collectCarryForward(workspace, dropped)), ['docs/solutions/eval/a-small.md']);
-  assert.deepEqual(dropped, { oversized: 1, overFileLimit: 0 });
+  assert.deepEqual(dropped, { oversized: 1, overFileLimit: 0, unsafe: 0 });
   for (let i = 0; i < 205; i++) fs.writeFileSync(path.join(notes, `n${String(i).padStart(3, '0')}.md`), 'n\n');
-  const more = { oversized: 0, overFileLimit: 0 };
+  const more = { oversized: 0, overFileLimit: 0, unsafe: 0 };
   const carried = collectCarryForward(workspace, more);
   // 207 files: the first 200 by path are considered (the large one among them), the last 7 are past the limit.
   assert.equal(Object.keys(carried).length, 199);
-  assert.deepEqual(more, { oversized: 1, overFileLimit: 7 });
+  assert.deepEqual(more, { oversized: 1, overFileLimit: 7, unsafe: 0 });
   assert.equal(carried['docs/solutions/eval/n204.md'], undefined);
+});
+
+test('collectCarryForward cuts at the first 200 paths by code point, and counts unsafe paths without giving them a slot', { skip: !posix && 'backslash file names' }, t => {
+  const workspace = directory(t);
+  const notes = path.join(workspace, 'docs', 'solutions', 'eval');
+  fs.mkdirSync(notes, { recursive: true });
+  for (let i = 0; i < 200; i++) fs.writeFileSync(path.join(notes, `n${String(i).padStart(3, '0')}.md`), 'n\n');
+  // Upper case sorts before lower case by code point, whatever the machine's locale; a locale collation puts it last.
+  fs.writeFileSync(path.join(notes, 'Z.md'), 'z\n');
+  // Paths a fixture may not hold sort first, so they would take slots if they were counted before the cut.
+  fs.writeFileSync(path.join(notes, '0\\a.md'), 'x\n');
+  fs.mkdirSync(path.join(notes, '.git'));
+  fs.writeFileSync(path.join(notes, '.git', 'HEAD'), 'x\n');
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 };
+  const carried = collectCarryForward(workspace, dropped);
+  assert.deepEqual(dropped, { oversized: 0, overFileLimit: 1, unsafe: 2 });
+  assert.equal(Object.keys(carried).length, 200);
+  assert.ok(carried['docs/solutions/eval/Z.md'], 'Z.md is within the first 200 by code point');
+  assert.ok(carried['docs/solutions/eval/n198.md'], 'unsafe paths take no slot');
+  assert.equal(carried['docs/solutions/eval/n199.md'], undefined, 'the last path by code point is past the limit');
+});
+
+test('memory limits apply to each target on its own, and structural caches keyed by an earlier checkout are not carried', t => {
+  const base = directory(t);
+  const make = name => {
+    const homes = { copilotHome: path.join(base, name, 'copilot'), harnessHome: path.join(base, name, 'state'), feedback: true };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(homes.copilotHome, { recursive: true });
+    fs.mkdirSync(homes.harnessHome, { recursive: true });
+    return homes;
+  };
+  const from = make('from');
+  const put = (file, text = 'x\n') => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
+  // 1,990 index files, 20 notes and 1 feedback record: over 2,000 entries together, well under it for each target.
+  const postings = path.join(from.harnessHome, 'index', 'repo-id', 'knowledge');
+  for (let i = 0; i < 1990; i++) put(path.join(postings, `p${i}.json`));
+  for (let i = 0; i < 20; i++) put(path.join(from.projectDir, 'docs', 'solutions', 'eval', `n${i}.md`), 'note\n');
+  put(path.join(from.projectDir, 'feedback', 'r1.json'), '{}\n');
+  // An earlier task's structural cache, keyed by that checkout's path, which no later checkout reads.
+  const cache = path.join(from.harnessHome, 'index', 'repo-id', 'wt-0123456789ab', 'structural');
+  for (let i = 0; i < 20; i++) put(path.join(cache, `s${i}.json`));
+  const captured = captureMemory(from);
+  assert.deepEqual(captured.refused, []);
+  const to = make('to');
+  writeMemory(to, captured);
+  assert.equal(fs.readdirSync(path.join(to.harnessHome, 'index', 'repo-id', 'knowledge')).length, 1990);
+  assert.equal(fs.readdirSync(path.join(to.projectDir, 'docs', 'solutions', 'eval')).length, 20);
+  assert.deepEqual(fs.readdirSync(path.join(to.projectDir, 'feedback')), ['r1.json']);
+  assert.deepEqual(fs.readdirSync(path.join(to.harnessHome, 'index', 'repo-id')), ['knowledge'], 'the structural cache stays behind');
+  // One target over the limit on its own is still refused, and the refusal names it.
+  for (let i = 1990; i < 2001; i++) put(path.join(postings, `p${i}.json`));
+  const over = captureMemory(from);
+  assert.deepEqual(over.refused, ['index: more files than the memory limit']);
 });
 
 test('only lock state the lock code writes is skipped; notes with lock-like names are carried', t => {

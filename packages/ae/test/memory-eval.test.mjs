@@ -312,7 +312,10 @@ test('a learning added in task 1 is injected in task 3 under recall and absent u
   const note = `docs/solutions/eval/${ordering.trap.id}.md`;
   for (const arm of ARMS) assert.equal(rowsFor(result, arm)[0].episodesWritten, 1, `${arm} task 1 wrote one episode`);
   assert.ok(third('recall').carriedForward.includes(note), 'recall carried the episode forward');
-  for (const arm of ARMS) assert.deepEqual(rowsFor(result, arm)[0].carryForwardDropped, { oversized: 0, overFileLimit: 0 }, `${arm} task 1 dropped no notes`);
+  assert.deepEqual(rowsFor(result, 'recall')[0].carryForwardDropped, { oversized: 0, overFileLimit: 0, unsafe: 0 }, 'recall task 1 dropped no notes');
+  // Nothing is carried from arms that do not read captured memory, or from a series' last task, so nothing is counted there.
+  for (const arm of ['stateless', 'capture-only']) assert.equal(rowsFor(result, arm)[0].carryForwardDropped, null, `${arm} carries nothing`);
+  for (const arm of ARMS) assert.equal(rowsFor(result, arm).at(-1).carryForwardDropped, null, `${arm} last task carries nothing`);
   assert.ok(inspected[third('recall').id].tracked.includes(note), 'carried episodes are committed in the next checkout');
   // capture-only writes memory but never reads it back, so its notes stay behind like stateless ones.
   for (const arm of ['stateless', 'capture-only']) {
@@ -528,6 +531,22 @@ test('a study whose parent cannot be opened leaves no output directory behind, s
   const root = path.join(directory(t), 'out');
   await assert.rejects(runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: path.join(directory(t), 'missing') }));
   assert.equal(fs.existsSync(root), false);
+});
+
+test('the final results are written while the study\'s signal handlers are still installed', async t => {
+  const root = path.join(directory(t), 'out');
+  const before = process.listenerCount('SIGTERM');
+  const seen = [];
+  const write = fs.writeFileSync;
+  t.mock.method(fs, 'writeFileSync', function (file, ...rest) {
+    if (String(file) === path.join(root, 'results.json')) seen.push(process.listenerCount('SIGTERM'));
+    return write.call(this, file, ...rest);
+  });
+  await runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t) });
+  t.mock.restoreAll();
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0] > before, 'a signal during the write waits for it instead of killing the runner mid-write');
+  assert.equal(process.listenerCount('SIGTERM'), before, 'the handlers go once the results are written');
 });
 
 test('one runtime error makes a live batch ineligible, and the summary names that attempt', async t => {

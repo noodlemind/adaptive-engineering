@@ -380,13 +380,14 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
     }
   }
   });
+  // Written while the signal handlers are still installed, so a signal waits for the (synchronous) write to finish.
+  const result = { schema: 1, provenance, attempts, summary: summarizeStudy(attempts, provenance) };
+  fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2));
+  return result;
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     killLiveGroups(groups);
   }
-  const result = { schema: 1, provenance, attempts, summary: summarizeStudy(attempts, provenance) };
-  fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2));
-  return result;
 }
 
 export function summarizeStudy(attempts, provenance) {

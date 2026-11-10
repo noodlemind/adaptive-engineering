@@ -428,6 +428,22 @@ test('study counts failures and scope violations across fresh arm workspaces', a
   assert.ok(result.provenance.protocolHash);
 });
 
+test('the context study writes its results while its signal handlers are still installed', async t => {
+  const root = directory(t);
+  const before = process.listenerCount('SIGTERM');
+  const seen = [];
+  const write = fs.writeFileSync;
+  t.mock.method(fs, 'writeFileSync', function (file, ...rest) {
+    if (String(file) === path.join(root, 'results.json')) seen.push(process.listenerCount('SIGTERM'));
+    return write.call(this, file, ...rest);
+  });
+  await runStudy({ root, cases: [simple], policies: ['legacy'], repeats: 1, dryRun: true });
+  t.mock.restoreAll();
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0] > before, 'a signal during the write waits for it instead of killing the runner mid-write');
+  assert.equal(process.listenerCount('SIGTERM'), before);
+});
+
 test('dry run and unavailable model remain inconclusive and never count as accepted tasks', async (t) => {
   const dry = await runStudy({ root: directory(t), cases: [simple], policies: ['legacy'], repeats: 1, dryRun: true });
   assert.equal(dry.attempts[0].kind, 'dry-run');

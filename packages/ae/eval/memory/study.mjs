@@ -191,12 +191,21 @@ const OPEN_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | 
  * alone (see STORE_CONFIG and configureArm). With `feedback` (arms that read
  * captured memory) the project store's feedback records are carried too, since recall+feedback reads them back; without
  * them recall+feedback would measure the same memory as recall. Nothing else in the homes is carried: storage aliases,
- * plans, todos, trust and check configuration all start fresh in every task.
+ * plans, todos, trust and check configuration all start fresh in every task, and so do the structural caches under the
+ * index (see WORKTREE_CACHE).
  */
 function memoryTargets({ copilotHome, harnessHome, projectDir, feedback = false }) {
   const project = rel => path.relative(harnessHome, path.join(projectDir, ...rel));
-  return [[copilotHome, 'knowledge', USAGE_LOCK], [harnessHome, 'index'], [harnessHome, 'knowledge', rel => STORE_CONFIG(rel) || STORE_LOCK(rel)], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
+  return [[copilotHome, 'knowledge', USAGE_LOCK], [harnessHome, 'index', WORKTREE_CACHE], [harnessHome, 'knowledge', rel => STORE_CONFIG(rel) || STORE_LOCK(rel)], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
 }
+
+/**
+ * A structural cache under harnessHome/index, `<repo id>/wt-<12 hex>` (lib/structural/shape.mjs), which is never carried.
+ * It is keyed by the checkout's path, so the next task's checkout never reads an earlier task's cache: it is rebuildable
+ * derived data that would only pile up in the carried index and push it toward the memory limit. Recall reads the
+ * postings under `<repo id>/knowledge`, which are carried.
+ */
+const WORKTREE_CACHE = rel => /^[^/]+\/wt-[0-9a-f]{12}$/.test(rel);
 
 /** A learnings store's config file, `<storage id>/config.json` under harnessHome/knowledge, which is never carried. */
 const STORE_CONFIG = rel => /^[^/]+\/config\.json$/.test(rel);
@@ -218,16 +227,17 @@ const refusal = message => Object.assign(new Error(message), { refusal: true });
  * Reads the carried memory of one task's homes into this process's memory, as validated regular files and directories, so
  * nothing an agent does afterwards can change the copy. Every path is checked with lstat, every directory's realpath must
  * still be its place under the home, and every file is opened without following a final symlink and checked again on the
- * open descriptor. A symlink, a special file, an unreadable entry, or a capture over the file count or byte limit refuses
- * its target: the target is left out and `refused` names it, which makes the next attempt invalid. An absent target is
- * recorded as absent. Lock state (see STORE_LOCK) and store configs are skipped, never carried.
+ * open descriptor. A symlink, a special file, an unreadable entry, or a target over the file count or byte limit (each
+ * target counted on its own) refuses that target: it is left out and `refused` names it, which makes the next attempt
+ * invalid. An absent target is recorded as absent. Lock state (see STORE_LOCK), store configs and structural caches (see
+ * WORKTREE_CACHE) are skipped, never carried.
  */
 export function captureMemory(homes) {
   const refused = [];
   const targets = [];
-  let entries = 0, bytes = 0;
   for (const [slot, [root, rel, skip = () => false]] of memoryTargets(homes).entries()) {
     const key = rel.split(path.sep).join('/');
+    let entries = 0, bytes = 0;
     try {
       const rootStat = fs.lstatSync(root);
       if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw refusal('home is not a real directory');
@@ -425,17 +435,20 @@ export function clearExternalPlans(harnessHome, projectDir) {
 }
 
 /**
- * Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. Notes over
- * CARRY_BYTE_LIMIT and files past the first CARRY_FILE_LIMIT (by path) are not carried; `dropped` counts them, so the
- * attempt that wrote them can say so.
+ * Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. Paths a fixture may not
+ * hold (see safePath), notes over CARRY_BYTE_LIMIT and files past the first CARRY_FILE_LIMIT safe paths (by code point, so
+ * the cut is the same on every machine) are not carried; `dropped` counts them, so the attempt that wrote them can say so.
  */
-export function collectCarryForward(workspace, dropped = { oversized: 0, overFileLimit: 0 }) {
+export function collectCarryForward(workspace, dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 }) {
   const carried = {};
-  const files = Object.entries(filesInside(workspace, PROTOCOL.carryForward)).sort(([a], [b]) => a.localeCompare(b));
-  dropped.overFileLimit += Math.max(0, files.length - CARRY_FILE_LIMIT);
-  for (const [rel, file] of files.slice(0, CARRY_FILE_LIMIT)) {
+  const files = [];
+  for (const [rel, file] of Object.entries(filesInside(workspace, PROTOCOL.carryForward))) {
     const target = `${PROTOCOL.carryForward}/${rel}`;
-    try { safePath(target); } catch { continue; }
+    try { safePath(target); files.push([target, file]); } catch { dropped.unsafe = (dropped.unsafe || 0) + 1; }
+  }
+  files.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  dropped.overFileLimit += Math.max(0, files.length - CARRY_FILE_LIMIT);
+  for (const [target, file] of files.slice(0, CARRY_FILE_LIMIT)) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile()) continue;
     if (stat.size > CARRY_BYTE_LIMIT) { dropped.oversized++; continue; }
@@ -567,6 +580,8 @@ const unlist = dir => { try { fs.chmodSync(dir, UNLISTED_DIR_MODE); } catch { /*
  * made read-only (chmod 555) or the runner made unlisted cannot stop the removal. Errors are ignored.
  */
 function unlockTree(dir) {
+  // lstat then chmod/readdir by path can race a symlink swap; an agent running as this user could chmod anything anyway,
+  // so that race is outside the threat model.
   const stack = [dir];
   while (stack.length) {
     const current = stack.pop();
@@ -695,7 +710,7 @@ const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGH
  * has recorded, with the parent's removal failures.
  * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group. `groups`
  * holds the process groups this study started; removal kills those, then the stragglers still working under the parent
- * (see killStragglers), then removes the tree. `close()` returns removal failures.
+ * (see killStragglers), then removes the tree. `close()` returns removal failures; `detach()` removes the handlers.
  */
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
@@ -714,7 +729,13 @@ function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   };
   process.on('exit', remove);
   for (const signal of STUDY_SIGNALS) process.once(signal, onSignal);
-  return { parent, groups, close() { remove(); process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); return failures; } };
+  // `close()` removes the parent but keeps the signal handlers, so a signal while the final results are written waits for the
+  // (synchronous) write; `detach()` removes the handlers afterwards.
+  return {
+    parent, groups,
+    close() { remove(); return failures; },
+    detach() { process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); },
+  };
 }
 
 /**
@@ -760,7 +781,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   const provenance = provenanceFor({ catalog, protocol, arms, repeats, model, host, series });
   const attempts = [];
   const runs = [];
-  let finished = false, owned = false, studyCleanupErrors = [];
+  let finished = false, owned = false, studyCleanupErrors = [], output = null;
   // Provenance is computed and the study parent opened before anything exists at `root`, so a failure in either leaves no
   // directory or provenance.json behind to block a retry into the same root. A root this call created is removed again if
   // claiming it fails. Partial output is written only into a root this study claimed with provenance.json, never over
@@ -802,6 +823,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
         try {
           for (let index = 0; index < item.tasks.length; index++) {
             const task = item.tasks[index];
+            // Arms that read captured memory carry this task's notes and memory into the next task, if there is one.
+            const carriesNext = readsCapturedMemory(arm) && index < item.tasks.length - 1;
             // A daemon an earlier task detached cannot reach this one: anything still working under the study parent goes.
             const stragglersKilled = killStragglers(study.parent).length;
             const taskRoot = fs.mkdtempSync(path.join(runRoot, 'task-'));
@@ -953,8 +976,9 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, carriedMemoryRefused: memoryRefused, setupErrors, measurementErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
-              // Notes this task left that were too large or too many to carry into the next task (arms that read memory).
-              carryForwardDropped: { oversized: 0, overFileLimit: 0 },
+              // Notes this task left that were unsafe, too large or too many to carry into the next task. Null where nothing
+              // is carried next: an arm that does not read captured memory, or the series' last task.
+              carryForwardDropped: carriesNext ? { oversized: 0, overFileLimit: 0, unsafe: 0 } : null,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
               requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
@@ -962,7 +986,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             };
             attempts.push(attempt);
             runAttempts.push(attempt);
-            if (readsCapturedMemory(arm)) {
+            if (carriesNext) {
               try { carried = collectCarryForward(fixture.workspace, attempt.carryForwardDropped); }
               catch (caught) { carried = {}; carryRefused.push(`${protocol.carryForward}: unreadable (${caught?.code || caught?.message})`); }
               previousMemory = captureMemory(homes);
@@ -988,11 +1012,15 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   finished = true;
   } finally {
     studyCleanupErrors = study.close();
-    // A crash still saves every finished attempt, marked partial; a normal end writes the full results below.
-    // A failed partial write must never replace the error that ended the study.
-    if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true, cleanupErrors: studyCleanupErrors }); } catch { /* keep the original error */ } }
+    try {
+      // A crash still saves every finished attempt, marked partial; a normal end writes the full results. Both writes happen
+      // before the signal handlers go, so a signal cannot cut them short. A failed partial write must never replace the
+      // error that ended the study.
+      if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true, cleanupErrors: studyCleanupErrors }); } catch { /* keep the original error */ } }
+      if (finished) output = writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false, cleanupErrors: studyCleanupErrors });
+    } finally { study.detach(); }
   }
-  return writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false, cleanupErrors: studyCleanupErrors });
+  return output;
 }
 
 function rate(numerator, denominator) {
