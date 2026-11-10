@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scanSecrets, redactSecrets } from '../lib/secret-scan.mjs';
+import { scanSecrets, redactSecrets, maskSecrets } from '../lib/secret-scan.mjs';
+
+test('maskSecrets merges overlapping matches so no credential suffix stays visible', () => {
+  const rest = '-SensitiveRemainingCredentialValue';
+  const clientSecret = maskSecrets(`client_secret=AKIAABCDEFGHIJKLMNOP${rest} done`);
+  assert.equal(clientSecret, '[redacted: generic-api-key] done');
+  const bearer = maskSecrets(`Authorization: Bearer AKIAABCDEFGHIJKLMNOP${rest} done`);
+  assert.equal(bearer, 'Authorization: [redacted: bearer-token] done');
+  // The outermost (first-starting) match names the merged span.
+  assert.equal(maskSecrets('x postgres://AKIAABCDEFGHIJKLMNOP:S3cr3tPassw0rdValue@db.internal/app y'), 'x [redacted: connection-string]/app y');
+  // Separate secrets stay separate, with the text between them kept.
+  assert.equal(maskSecrets(`a AKIAABCDEFGHIJKLMNOP b ghp_${'a'.repeat(36)} c`), 'a [redacted: aws-access-key] b [redacted: github-token] c');
+  assert.equal(maskSecrets('nothing secret here'), 'nothing secret here');
+  // redactSecrets scans the original text and replaces the whole field, so overlaps cannot leave a suffix.
+  assert.equal(redactSecrets(`client_secret=AKIAABCDEFGHIJKLMNOP${rest}`), '[redacted: aws-access-key, generic-api-key]');
+});
 
 test('scanSecrets flags common credential shapes with line numbers', () => {
   const text = ['title: ok', 'key=AKIAIOSFODNN7EXAMPLE', 'token: ghp_' + 'a'.repeat(36)].join('\n');

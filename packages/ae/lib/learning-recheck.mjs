@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { readFileNoFollow, readFileTailNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
-import { redactSecrets, maskSecrets } from './secret-scan.mjs';
+import { redactSecrets, secretSpans, maskSpans } from './secret-scan.mjs';
 import { foldRuns, RUNS_FILE } from './run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
 import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
@@ -24,14 +24,30 @@ const RECHECK_LONG_TOKEN = 1024;
 // CSI (7- and 8-bit, any parameter bytes), OSC to BEL or ST (7- and 8-bit, unterminated too),
 // and the remaining two- and three-byte escapes such as the `\x1b(B` charset reset.
 const ANSI_ESCAPE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -\/]*[0-~]?/g;
-// C0 and C1 controls, DEL, and the zero-width characters that can split a keyword from its value.
-const EXCERPT_BREAKS = /[\x00-\x1f\x7f-\x9f\u200b-\u200d\u2060\ufeff]/g;
+// C0 and C1 controls and DEL break words, as whitespace does.
+const EXCERPT_CONTROLS = /[\x00-\x1f\x7f-\x9f]/g;
+// Characters that render as nothing: format characters (zero-width, soft hyphen, bidi controls and the rest)
+// and default-ignorable code points (variation selectors, Hangul fillers). The excerpt's private-use
+// sentinel is listed too, so input cannot forge one.
+const EXCERPT_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]/gu;
+// Stands in for a run of invisible characters until both readings (removed, and split) are taken.
+const SEP = '\ue000';
+const PRIVATE_KEY = /PRIVATE\s*KEY/;
+// Fields dropped from the front of a cut masking window. The widest keyword context ahead of a value
+// in secret-scan's patterns is three fields (basic-auth: `Authorization"`, `:`, `"Basic`), and the cut
+// can split one more, so a value whose keyword fell outside the window sits in the first four fields.
+const RECHECK_CUT_FIELDS = 4;
 /** `derived_from` reference to a failure cluster. The ID is a stable digest of the cluster key. */
 export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
 const SCAN_CAP = 512;
 const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
 const FINDING_TITLE_CAP = 120;
+// A title is cut to this before it is screened (the generic-api-key pattern is superlinear on long input).
+// Only the first 120 characters are shown. A secret that reaches into them needs well under 512 characters
+// for its pattern to match, so it is still redacted; text past the cap is never shown, so a secret the cap
+// cuts cannot expose its tail.
+const FINDING_TITLE_SCAN_CAP = 512;
 const HASH_FILE = /^[a-f0-9]{64}\.json$/;
 const JOURNAL_BYTE_CAP = 8 * 1024 * 1024;
 
@@ -91,28 +107,68 @@ function readJson(root, rel) {
 }
 
 /**
- * Bounded, secret-screened tail of a failing check's retained output. Any
- * private-key header withholds it. ANSI escapes (CSI, OSC and the short
+ * Normalize retained output for masking. ANSI escapes (CSI, OSC and the short
  * forms, in 7- and 8-bit encodings) are stripped, so a colour code or
- * hyperlink cannot sit between a keyword and its value. C0 and C1 controls,
- * zero-width characters and whitespace runs are then collapsed, so padding cannot push a keyword
- * such as `client_secret=` or `Authorization: Bearer` out of the masking
- * window while its value stays in the tail. Any unbroken run of
- * `RECHECK_LONG_TOKEN` or more non-space characters is withheld whole, so the
- * tail of a secret longer than the window cannot survive without its keyword.
- * Masking then runs over a bounded window (some patterns are superlinear on
- * long output), well wider than the tail, before the last characters are kept
- * and screened once more.
+ * hyperlink cannot sit between a keyword and its value. NFKC folds fullwidth
+ * and compatibility forms (`＝`, `ｋｅｙ`) to the ASCII the patterns match.
+ * C0 and C1 controls become spaces. Every run of invisible characters
+ * becomes one `SEP`, and whitespace runs
+ * (with any `SEP` touching them) collapse to one space, so padding cannot push
+ * a keyword such as `client_secret=` or `Authorization: Bearer` out of the
+ * masking window while its value stays in the tail. Every step is linear.
+ */
+function normalizeExcerpt(raw) {
+  return raw.replace(ANSI_ESCAPE, '').normalize('NFKC').replace(EXCERPT_CONTROLS, ' ').replace(EXCERPT_INVISIBLE, SEP)
+    .replace(/\ue000+/g, SEP).replace(/\ue000?\s[\s\ue000]*/g, ' ').replace(/^[ \ue000]+|[ \ue000]+$/g, '');
+}
+
+/**
+ * Bounded, secret-screened tail of a failing check's retained output.
+ *
+ * Any private-key header withholds it, checked on the raw text without
+ * controls or invisible characters and on the fully normalized text, before
+ * any token is withheld or window taken, so neither a colour code nor a
+ * zero-width character inside `PRIVATE KEY` hides the key body.
+ *
+ * An invisible character inside a word is read two ways, and a secret either
+ * reading finds is masked: removed (so `api<ZWSP>_key` reads `api_key`, and
+ * that joined text is what the excerpt shows) and as a space (so
+ * `x<ZWSP>Bearer` still has a word boundary before `Bearer`).
+ *
+ * Any unbroken run of `RECHECK_LONG_TOKEN` or more non-space characters is
+ * withheld whole, so the tail of a secret longer than the window cannot
+ * survive without its keyword. Masking runs over a bounded window of the
+ * output's end (some patterns are superlinear on long output). Masking can
+ * shrink that window enough for the kept tail to reach its start, where the
+ * cut may have separated a value from its keyword, so when the window is cut
+ * its first `RECHECK_CUT_FIELDS` fields are never shown. The last characters
+ * are then kept and screened once more.
  */
 export function failureExcerpt(check) {
   const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
   if (!raw) return null;
-  if (/PRIVATE KEY/.test(raw)) return '[withheld: private-key]';
+  const text = normalizeExcerpt(raw);
+  if (PRIVATE_KEY.test(raw.replace(/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, '').normalize('NFKC')) || PRIVATE_KEY.test(text.replaceAll(SEP, ''))) return '[withheld: private-key]';
   // Split rather than match `\S{1024,}`: that regex rescans every run just under the threshold.
-  const flat = raw.replace(ANSI_ESCAPE, '').replace(EXCERPT_BREAKS, ' ').replace(/\s+/g, ' ').trim()
-    .split(' ').map(run => (run.length >= RECHECK_LONG_TOKEN ? '[withheld: long-token]' : run)).join(' ');
-  const masked = maskSecrets(flat.slice(-RECHECK_MASK_WINDOW));
-  return redactSecrets(masked.slice(-RECHECK_EXCERPT_CAP));
+  const flat = text.split(' ').map(run => (run.length >= RECHECK_LONG_TOKEN ? '[withheld: long-token]' : run)).join(' ');
+  const cut = flat.length > RECHECK_MASK_WINDOW;
+  const window = cut ? flat.slice(-RECHECK_MASK_WINDOW) : flat;
+  // `joined` drops each SEP; `split` turns it into a space. `toJoined` maps a `split` offset to `joined`.
+  const toJoined = new Array(window.length + 1);
+  let joined = '', split = '';
+  for (let i = 0; i < window.length; i += 1) {
+    toJoined[i] = joined.length;
+    if (window[i] === SEP) split += ' ';
+    else { joined += window[i]; split += window[i]; }
+  }
+  toJoined[window.length] = joined.length;
+  const spans = [...secretSpans(joined), ...secretSpans(split).map(span => ({ ...span, start: toJoined[span.start], end: toJoined[span.end] }))];
+  let from = 0;
+  for (let field = 0; cut && field < RECHECK_CUT_FIELDS; field += 1) {
+    const space = joined.indexOf(' ', from);
+    from = space === -1 ? joined.length : space + 1;
+  }
+  return redactSecrets(maskSpans(joined, spans, from).slice(-RECHECK_EXCERPT_CAP)) || null;
 }
 
 /**
@@ -231,7 +287,7 @@ function findingClusters(workspace) {
         const row = clusters.get(key) || { id: findingClusterId(key), category, file: inertLine(file).slice(0, 512), plans: new Set(), findings: 0, titles: [] };
         row.plans.add(plan);
         row.findings += 1;
-        const title = typeof finding.title === 'string' ? inertLine(redactSecrets(finding.title.trim())).slice(0, FINDING_TITLE_CAP) : '';
+        const title = typeof finding.title === 'string' ? inertLine(redactSecrets(finding.title.trim().slice(0, FINDING_TITLE_SCAN_CAP))).slice(0, FINDING_TITLE_CAP) : '';
         if (title && row.titles.length < 3 && !row.titles.includes(title)) row.titles.push(title);
         clusters.set(key, row);
       }

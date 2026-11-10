@@ -47,18 +47,53 @@ export function redactSecrets(text) {
   return `[redacted: ${[...new Set(hits.map((h) => h.id))].join(', ')}]`;
 }
 
-// A connection string runs first: an earlier marker (it contains a space)
-// inside its user part would otherwise stop it matching the password.
-const MASK_ORDER = [...PATTERNS.filter(p => p.id === 'connection-string'), ...PATTERNS.filter(p => p.id !== 'connection-string')];
+/**
+ * Every pattern's matches against the original text, unmerged, as
+ * `{ id, start, end, order }` spans. Each pattern runs on the original, never
+ * on text an earlier pattern already masked: masking one pattern after another
+ * breaks the later, wider match (`client_secret=AKIA...-rest` loses its
+ * `client_secret` match once the AWS key is masked) and leaves the rest of the
+ * credential visible.
+ */
+export function secretSpans(text) {
+  const s = String(text ?? '');
+  const spans = [];
+  PATTERNS.forEach(({ id, re }, order) => {
+    for (const match of s.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
+      if (match[0]) spans.push({ id, start: match.index, end: match.index + match[0].length, order });
+    }
+  });
+  return spans;
+}
+
+/**
+ * Render `text` from offset `from` with `spans` masked. Overlapping or
+ * adjacent spans merge and are replaced once, labelled with the span that
+ * starts first (the longest of those, then pattern order), so the outermost
+ * match names the marker. A span that starts before `from` and ends after it
+ * is still masked.
+ */
+export function maskSpans(text, spans, from = 0) {
+  const s = String(text ?? '');
+  const sorted = spans.filter(span => span.end > from).toSorted((a, b) => a.start - b.start || b.end - a.end || (a.order ?? 0) - (b.order ?? 0));
+  let out = '', at = from;
+  for (let i = 0; i < sorted.length;) {
+    const { id, start } = sorted[i];
+    let end = sorted[i].end;
+    for (i += 1; i < sorted.length && sorted[i].start <= end; i += 1) end = Math.max(end, sorted[i].end);
+    if (start > at) out += s.slice(at, start);
+    out += `[redacted: ${id}]`;
+    at = Math.max(at, end);
+  }
+  return out + s.slice(at);
+}
 
 /**
  * Replace each matched secret span with a marker naming its pattern, keeping
  * the surrounding text. Same regex-grade caveat as scanSecrets.
  */
 export function maskSecrets(text) {
-  let out = String(text ?? '');
-  for (const { id, re } of MASK_ORDER) out = out.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`), `[redacted: ${id}]`);
-  return out;
+  return maskSpans(text, secretSpans(text));
 }
 
 const RECALL_UNTRUSTED_STRING_FIELDS = ['docid', 'path', 'title', 'summary', 'snippet'];

@@ -553,3 +553,79 @@ test('escape stripping stays fast on 1 MiB of unterminated escape introducers', 
     assert.ok(excerpt === null || excerpt.length <= RECHECK_EXCERPT_CAP);
   }
 });
+
+test('C1: an escape or invisible character inside a private-key header still withholds the key body', () => {
+  const body = 'MIIEowIBAAKCAQEAsecretkeybody';
+  for (const header of [
+    '-----BEGIN PRIVATE \x1b[31mKEY-----',
+    '-----BEGIN RSA PRIVATE\x1b[0m KEY-----',
+    '-----BEGIN PRIVATE​KEY-----',
+    '-----BEGIN PRIVATE ­KEY-----',
+    '-----BEGIN PRIVATE\x1bKEY-----',
+    '-----BEGIN ＰＲＩＶＡＴＥ ＫＥＹ-----',
+  ]) {
+    // No END line: the header alone must withhold the body.
+    assert.equal(failureExcerpt({ stderr: `${header}\n${body}` }), '[withheld: private-key]', JSON.stringify(header));
+  }
+});
+
+test('C2: a credential whose prefix matches another pattern is masked whole in the excerpt', () => {
+  const rest = '-SensitiveRemainingCredentialValue';
+  for (const stderr of [`failed: client_secret=AKIAABCDEFGHIJKLMNOP${rest} done`, `failed: Authorization: Bearer AKIAABCDEFGHIJKLMNOP${rest} done`]) {
+    const excerpt = failureExcerpt({ stderr });
+    assert.equal(excerpt.includes('Sensitive'), false, excerpt);
+    assert.match(excerpt, /^failed: .*\[redacted: [a-z-]+\] done$/);
+  }
+});
+
+test('R1: masking shrinkage cannot pull a value whose keyword was cut off the window into the tail', () => {
+  const jwt = `eyJ${'a'.repeat(250)}.${'b'.repeat(250)}.${'c'.repeat(270)}`;
+  const secret = 'SuperSecretValue1234567890abcdef';
+  const excerpt = failureExcerpt({ stderr: `${'x '.repeat(3000)}Authorization: Bearer ${secret} ${'y'.repeat(57)}${` ${jwt}`.repeat(4)}` });
+  assert.equal(excerpt.includes(secret.slice(0, 12)), false, excerpt);
+  assert.equal(excerpt.includes('earer'), false, excerpt);
+  assert.ok(excerpt.length <= RECHECK_EXCERPT_CAP);
+  // Slide the cut across the keyword context and the value: no offset leaks any part of the value.
+  for (let shift = 0; shift < 80; shift += 1) {
+    for (const lead of [`Authorization: Bearer ${secret}`, `Authorization: Basic ${secret}`, `client_secret = "${secret}`, `Authorization" : "Basic ${secret}`]) {
+      const out = failureExcerpt({ stderr: `${'x '.repeat(3000)}${'z'.repeat(shift)} ${lead} ${'y'.repeat(57)}${` ${jwt}`.repeat(4)}` });
+      assert.equal(out?.includes('SuperSecret') || out?.includes('7890abcdef'), false, `shift ${shift}: ${out}`);
+    }
+  }
+  // An uncut window keeps its head.
+  assert.equal(failureExcerpt({ stderr: `head Bearer ${secret} ${jwt}` }), 'head [redacted: bearer-token] [redacted: jwt]');
+});
+
+test('R3: invisible characters and fullwidth forms inside a keyword do not split it from its value', () => {
+  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
+  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
+  const invisibles = { 'zero-width space': '​', 'soft hyphen': '­', 'LRE': '‪', 'RLO': '‮', 'LRI': '⁦', 'PDI': '⁩', 'variation selector': '️', 'Hangul filler': 'ㅤ' };
+  for (const [name, ch] of Object.entries(invisibles)) {
+    for (const stderr of [`failed: api${ch}_key=${key} done`, `failed: client${ch}_secret${ch}=${ch}${key} done`, `failed: Bea${ch}rer ${token} done`, `failed: x${ch}Bearer ${token} done`]) {
+      const excerpt = failureExcerpt({ stderr });
+      assert.equal(excerpt.includes(key) || excerpt.includes(token), false, `${name}: ${JSON.stringify(excerpt)}`);
+      assert.equal(excerpt.includes(ch), false, `${name}: removed from the excerpt`);
+    }
+  }
+  const fullwidth = failureExcerpt({ stderr: `failed: api_key＝${key} done` });
+  assert.equal(fullwidth, 'failed: [redacted: generic-api-key] done');
+  assert.equal(failureExcerpt({ stderr: 'tab\tand\nnew\r\nline kept apart' }), 'tab and new line kept apart', 'real whitespace still separates words');
+});
+
+test('R2: a very long finding title is capped before it is screened, and a secret cut by the cap stays hidden', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const finding = title => ({ file: 'src/slow.mjs', line: 1, title, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
+  f.observation(PLAN_A, 'correctness', [finding(`Slow title ${'a-'.repeat(100000)}`)]);
+  f.observation(PLAN_B, 'correctness', [finding(`Cut secret ghp_${'A1b2C3d4E5'.repeat(60)}`)]);
+  const started = performance.now();
+  f.status();
+  assert.ok(performance.now() - started < 1000, 'a 200k title is screened in bounded time');
+  const [cluster] = f.packet({ recheck: true }).recheck.finding_clusters;
+  assert.equal(cluster.file, 'src/slow.mjs');
+  assert.ok(cluster.titles.every(title => title.length <= 120));
+  assert.ok(cluster.titles.some(title => title.startsWith('Slow title a-a-')));
+  assert.equal(JSON.stringify(cluster).includes('A1b2C3d4E5'), false, 'the secret the cap cuts is still redacted');
+  assert.ok(cluster.titles.includes('[redacted: github-token]'));
+});
