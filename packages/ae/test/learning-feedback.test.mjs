@@ -454,11 +454,11 @@ test('third pass D: a twin line truncated after the layer mark opens does not cr
   assert.equal(learningRendered(pack('- [sql/dup] [unverified memory — advisory] t → c\n'), golden), true, 'a golden fence is not a twin mark');
 });
 
-test('fourth pass 1: a golden trigger starting with [b is credited; a twin line cut to "- [id] " or "- [id] [" is not', () => {
+test('fourth pass 1: a golden trigger starting with [b is credited; a twin line cut to "- [id] [" is not', () => {
   const golden = { id: 'sql/dup' };
   const pack = line => `# Harness Context Pack\n\n## Learnings (memory)\n${line}`;
   assert.equal(learningRendered(pack('- [sql/dup] [bugfix] retry the lock → take it in order\n'), golden), true, 'a [bugfix] trigger is the golden line');
-  for (const cut of ['- [sql/dup] ', '- [sql/dup] [']) {
+  for (const cut of ['- [sql/dup] [']) {
     assert.equal(learningRendered(pack(cut), golden), false, `${JSON.stringify(cut)} at end of text`);
     assert.equal(learningRendered(pack(`${cut}\n\n…(truncated to 2KB budget)\n`), golden), false, `${JSON.stringify(cut)} at end of line`);
   }

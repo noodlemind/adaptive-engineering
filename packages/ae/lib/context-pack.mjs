@@ -32,8 +32,9 @@ function learningsSectionLines(packBody) {
  * pack's learnings section, so a twin's line never credits the other layer. A
  * golden match is a branch line when the rest starts with a whole mark the
  * renderer adds (` [branch-local]` or ` [branch-local, subordinate]`), or is a
- * nonempty prefix of one cut off by truncation. A golden learning whose own text
- * starts with `[branch-local` but is not one of those marks is credited.
+ * prefix of one cut off by truncation that reaches ` [`; a line that ends at the
+ * ID is not credited, and one that ends at the ID and a space is. A golden learning whose own text starts with `[branch-local`
+ * but is not one of those marks is credited.
  */
 export function learningRendered(packBody, l) {
   const mark = learningLayerMark(l);
@@ -42,7 +43,9 @@ export function learningRendered(packBody, l) {
     if (!line.startsWith(prefix)) continue;
     if (mark) return true;
     const rest = line.slice(prefix.length);
-    if ([BRANCH_MARK, TWIN_MARK].some((m) => rest.startsWith(m) || (rest && m.startsWith(rest)))) continue;
+    // A line that ends at the ID cannot tell the layers apart, so it is not credited. A cut-off mark
+    // counts once it reaches ` [`: a golden line cut to `- [X] ` is credited, one cut to `- [X] [` is not.
+    if (!rest || [BRANCH_MARK, TWIN_MARK].some((m) => rest.startsWith(m) || (rest.length >= 2 && m.startsWith(rest)))) continue;
     return true;
   }
   return false;

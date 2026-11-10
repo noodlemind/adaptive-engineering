@@ -96,7 +96,9 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   const clamp = value => exposureTime(value) > nowMs ? new Date(nowMs).toISOString() : value;
   const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(({ firstExposedAt, ...entry }) => [entryKey(entry), {
     ...entry,
-    ...(exposureTime(firstExposedAt) !== null ? { firstExposedAt: clamp(firstExposedAt) } : {}),
+    // A first exposure later than the last (an earlier writer, after a backward clock correction) is
+    // read as the last one, never dropped with its count.
+    ...(exposureTime(firstExposedAt) !== null ? { firstExposedAt: clamp(exposureTime(firstExposedAt) > exposureTime(entry.lastExposedAt) ? entry.lastExposedAt : firstExposedAt) } : {}),
     lastExposedAt: clamp(entry.lastExposedAt),
   }]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
@@ -397,13 +399,13 @@ const clampedExposureTime = (value, nowMs = Date.now()) => {
 // One exposure entry as read back from disk. The writer carries forward, the reader counts and the
 // delivered gate accepts exactly the entries that pass this test: a learning ID, a count of at least
 // one, a version that is absent or a content hash, a strict ISO exposure time, and a first exposure that
-// is absent or a strict ISO time no later than the last one (beyond a small skew). A future last time is
-// valid (a backward clock correction); every comparison clamps it to the present.
-const EXPOSURE_SKEW_MS = 60 * 1000;
+// is absent or a strict ISO time. A future last time is valid (a backward clock correction); every
+// comparison clamps it to the present. A first exposure later than the last is valid for the same reason
+// and is carried forward clamped to the last.
 const wellFormedExposure = entry => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
   && Number.isSafeInteger(entry.count) && entry.count >= 1 && (entry.version === undefined || ID.test(entry.version))
   && exposureTime(entry.lastExposedAt) !== null
-  && (entry.firstExposedAt === undefined || (exposureTime(entry.firstExposedAt) !== null && exposureTime(entry.firstExposedAt) <= exposureTime(entry.lastExposedAt) + EXPOSURE_SKEW_MS));
+  && (entry.firstExposedAt === undefined || exposureTime(entry.firstExposedAt) !== null);
 const later = (a, b, nowMs = Date.now()) => {
   const next = clampedExposureTime(b, nowMs);
   if (next === null) return a;

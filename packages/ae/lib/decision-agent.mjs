@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, READINESS_SWEEP_INTERVAL_MS } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, READINESS_SWEEP_INTERVAL_MS, MAX_SWEEP_RECORDS } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -447,20 +447,25 @@ export function recordDecision(options) {
 const STATUS_PLAN_SAMPLE = 8;
 /** The one derived readiness-index warning, or none. Recomputed from the index on every call. */
 function readinessWarnings(loc, state) {
-  const { stale, untracked, sweep } = readinessIndexHealth(loc, state);
+  const { stale, untracked, sweep, archive, blocked = [] } = readinessIndexHealth(loc, state);
   if (!stale.length && !untracked) return [];
   const shown = stale.slice(0, STATUS_PLAN_SAMPLE);
   const parts = [];
-  if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations use the archived receipt and the index write is retried on the next decision prepare or record`);
+  if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations for these plans use the noted archived receipt and the index write is retried on the next decision prepare or record`);
+  if (blocked.length) parts.push(`the readiness index file(s) ${blocked.join(', ')} under ${archive} are symlinks or not regular files, which are never followed or replaced, so the warning stays until they are removed; remove them and the next decision prepare or record rebuilds them`);
+  const offenders = sweep?.last?.offenders || [];
   if (untracked) {
     const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision prepare or record';
     const last = sweep.last ? [sweep.last.unreadable ? `${sweep.last.unreadable} unreadable request record(s)` : null, sweep.last.failed ? `${sweep.last.failed} refused index write(s)` : null].filter(Boolean) : [];
     const interval = Math.round(READINESS_SWEEP_INTERVAL_MS / 1000);
     parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive, one bounded slice at most every ${interval} seconds on decision prepare or record; status only reports it (${progress})`
+      + '; citations for plans not yet reconciled may cite an older receipt until the warning clears'
       + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them, and it stays for good while those records remain unreadable or those writes keep being refused` : '')
-      + (sweep.last?.overCap ? '; the request archive holds more records than one sweep can list, so no sweep can complete and the warning stays until the archive is smaller' : ''));
+      + (offenders.length ? `; files under ${archive} it could not use${offenders.length < (sweep.last.unreadable + sweep.last.failed) ? ' (first ' + offenders.length + ')' : ''}: ${offenders.join(', ')}; restore an unreadable request record from a backup, or move it out of the archive if it cannot be restored (its exact-ID lookup is then lost), and remove a readiness index file that is a symlink or not a regular file; the next full sweep then completes` : '')
+      + (sweep.last?.overCap ? `; the request archive holds more records than one sweep can list, so no sweep can complete and the warning stays until the archive holds at most ${MAX_SWEEP_RECORDS} request records: move request records you no longer need to look up by ID out of ${path.join(archive, 'requests')}` : ''));
   }
   return [{ fault: 'readiness-index', planCount: stale.length, ...(untracked ? { atLeast: true, untrackedPlans: untracked, reconciling: { swept: sweep.swept, total: sweep.total, ...(sweep.last ? { previous: sweep.last } : {}) } } : {}), plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: stale.length - shown.length,
+    ...(blocked.length || offenders.length ? { archive, files: [...new Set([...blocked, ...offenders])] } : {}),
     message: parts.join('; ') }];
 }
 
