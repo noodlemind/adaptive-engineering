@@ -26,8 +26,19 @@ const DEFAULT_PATTERNS = [
     // every start inside one run succeeds or fails alike; the old pattern matched from the first letter in
     // the run that follows a non-word character. The second group skips to that letter (digits and
     // `+.-`, and letters that follow a word character) and is put back unchanged, so the output is the
-    // same. The credential tail `[^\\/?#\s]+@` is unchanged and still scans to the end of its segment.
-    re: /(?:((?:\b(?:https?|wss?|ftp):[\\/]*|(?<![:\w])[\\/]{2,}))|(?<![a-z0-9+.-])((?:[0-9+.-]|(?<=\w)[a-z])*)(\b[a-z][a-z0-9+.-]*:[\\/]{2,}))[^\\/?#\s]+@/i,
+    // same. The credential tail `[^\\/?#\s]+@` is unchanged; two starts are skipped so it is not rescanned
+    // from every start in one segment (quadratic on `ftp:ftp:...` and `////...`), and both skips only drop
+    // starts the old pattern could not match from:
+    // - A slash run (`(?<![:\w])[\\/]{2,}`) is entered only at its first slash, or its second when a `:` or
+    //   word character precedes the run (the first then fails the old lookbehind). The tail cannot start on
+    //   a slash, so every start in one run ends the run at the same place and fails or succeeds alike, and
+    //   the old pattern matched from the earliest.
+    // - `ftp:` (or `http:`, `https:`, `ws:`, `wss:`) with no slash after it is skipped when an earlier such
+    //   scheme is in the same segment with no `@` between them. That earlier start was tried first (or an
+    //   earlier match covers both): if its tail failed there is no `@` later in the segment, so this one
+    //   fails too; if it matched, the match runs to an `@` past this start, which is then never tried. The lazy lookbehind stops at the nearest
+    //   earlier scheme.
+    re: /(?:((?:\b(?:https?|wss?|ftp):(?:[\\/]+|(?<!\b(?:https?|wss?|ftp):[^\\/?#\s@]+?))|(?:(?<![:\w\\/])|(?<=[:\w][\\/]))[\\/]{2,}))|(?<![a-z0-9+.-])((?:[0-9+.-]|(?<=\w)[a-z])*)(\b[a-z][a-z0-9+.-]*:[\\/]{2,}))[^\\/?#\s]+@/i,
     mask: (_match, scheme, lead, generic) => `${lead ?? ''}${scheme ?? generic}${mask('url-credentials')}@`,
   },
   {

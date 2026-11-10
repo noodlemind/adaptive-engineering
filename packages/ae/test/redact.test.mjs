@@ -731,3 +731,34 @@ test('url-credentials: the run-start form masks exactly what the old scheme form
     assert.ok(ms < 1000, `${long.length} characters took ${Math.round(ms)} ms`);
   }
 });
+
+test('url-credentials: the credential tail is not rescanned from every start in one segment, and output still matches the old form', () => {
+  const oldRe = /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/gi;
+  const oldRedact = text => text.replace(oldRe, (_m, scheme) => `${scheme}«redacted:url-credentials»@`);
+  const r = redactor();
+  const fixed = ['ftp:ftp:u@h', 'ftp:xftp://u@h', 'ftp:a@bftp:c@d', 'http:https:wss:u@h', 'ftp: ftp:u@h', 'ftp:?ftp:u@h', 'ftp:@ftp:u@h', 'FTP:ftp:U@H',
+    'a///u@h', 'a//u@h', ':///u@h', '////u@h', '\\\\u@h', 'x:\\/\\u@h', 'ftp://ftp:u@h', 'ftp:/ftp:/u@h', 'see ftp:ftp:a@b and //c@d'];
+  for (const text of fixed) assert.equal(r.redactText(text), oldRedact(text), JSON.stringify(text));
+  // Scheme words, slash runs, separators and `@` are frequent, so starts share segments and slash runs often.
+  const alphabet = ['a', 'h', 't', 'p', 's', 'f', 'w', 'A', 'F', '1', '-', '+', '.', '_', ':', '/', '\\', '@', '@', '?', '#', ' ', '\n',
+    'http', 'https', 'ftp', 'FTP:', 'ftp:', 'http:', 'wss:', 'ws:', '://', '//', ':/', 'git+ssh', 'x1'];
+  let seed = 7;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  let fired = 0;
+  for (let i = 0; i < 100000; i++) {
+    let text = '';
+    for (let n = next() % 30; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    const expected = oldRedact(text);
+    if (expected !== text) fired += 1;
+    assert.equal(r.redactText(text), expected, JSON.stringify(text));
+  }
+  assert.ok(fired > 5000, `the random inputs exercise the pattern (${fired})`);
+
+  // Each took over a second with the old form and the earlier rewrite; every start shared one segment or slash run.
+  for (const long of ['ftp:'.repeat(20000), 'http:'.repeat(16000), `${'ftp:'.repeat(20000)} @`, ':wss'.repeat(20000), '//'.repeat(20000), '\\'.repeat(40000)]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 300, `${JSON.stringify(long.slice(0, 8))}... (${long.length} characters) took ${Math.round(ms)} ms`);
+  }
+});
