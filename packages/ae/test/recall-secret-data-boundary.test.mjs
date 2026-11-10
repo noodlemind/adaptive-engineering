@@ -254,7 +254,7 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, ...DEFAULT_IGNORABLE]) {
     const ch = String.fromCodePoint(point);
     assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
-    assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
+    assert.equal(inertLine(`a${ch}b`), `a${ch}b`, `the shared inertLine keeps U+${point.toString(16)}; only the quote packet blanks it`);
   }
   const euros = inertEvidenceQuote('€'.repeat(1000));
   assert.equal(Buffer.byteLength(euros), EVIDENCE_QUOTE_CAP);
@@ -483,13 +483,19 @@ test('a doc that explains evidence_quote keeps its body, with only the quote lin
   assert.equal(episodeBody('Set `evidence_quote:` in frontmatter.'), 'Set `evidence_quote:` in frontmatter.', 'a mention mid-line is not a field line');
 });
 
-test('inertLine blanks invisible characters, so a token broken by one stays broken', () => {
-  assert.equal(inertLine('\u0600123'), ' 123');
-  assert.equal(inertLine('a\x00b\x85c\u2028d'), 'a b c d', 'controls and line separators become spaces');
+test('inertLine blanks only C0 controls and DEL, and leaves a token broken by an invisible character broken', () => {
+  assert.equal(inertLine('a\x00b\x1fc\x7fd'), 'a b c d', 'C0 controls and DEL become spaces');
+  assert.equal(inertLine('a\x85b\u2028c\u0600d'), 'a\x85b\u2028c\u0600d', 'every other character is kept');
   const token = `ghp_${'A'.repeat(18)}\u200b${'A'.repeat(18)}`;
   const rendered = inertLine(redactSecrets(token));
   assert.ok(!rendered.includes(`ghp_${'A'.repeat(36)}`), rendered);
-  assert.equal(rendered, `ghp_${'A'.repeat(18)} ${'A'.repeat(18)}`);
+  assert.equal(rendered, token, 'the zero-width space stays in place, so the key is never contiguous');
+});
+
+test('inertLine keeps emoji sequences and variation selectors byte-identical, so paths display as written', () => {
+  for (const text of ['family-\u{1F468}\u200d\u{1F469}\u200d\u{1F467}.md', '\u26a0\ufe0f build note', '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}', '\u26a0\ufe0f']) {
+    assert.equal(Buffer.compare(Buffer.from(inertLine(text)), Buffer.from(text)), 0, JSON.stringify(text));
+  }
 });
 
 test('a control or line-break character at a line edge cannot hide a split secret on read', () => {
@@ -571,9 +577,38 @@ test('real multi-line error output with short words still passes the split scree
     assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
     assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
   }
-  // The rule does not know what a token is: a line ending in a long path
-  // glued to a word on the next line forms a long run, and fails closed.
-  assert.match(evidenceQuoteError('FAIL test/retry.test.mjs\n  retry') || '', /split across lines \(split-token\)/);
+  // A line ending in a long path glued to a short word line forms a long run,
+  // but neither line is a whole-line token fragment, so it is ordinary output.
+  for (const quote of [
+    'FAIL test/retry.test.mjs\n  retry',
+    'FAIL test/retry.test.mjs\n  retry\n    backoff\n      x gives up after 3 tries',
+    'at Object.<anonymous> (/srv/app/test/orders/retry-policy.test.mjs\n  orders',
+    'running 1 test\ntest tests::retry_gives_up ... FAILED\n\nfailures:\n\n---- tests::retry_gives_up stdout ----\nthread panicked at src/lib.rs:10:5',
+    'File "/srv/app/services/orders/retry_policy.py", line 3\n  raise\nValueError',
+  ]) {
+    assert.equal(screenSecrets(quote), null, JSON.stringify(quote));
+    assert.equal(evidenceQuoteError(quote), null, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), inertLine(quote), JSON.stringify(quote));
+  }
+});
+
+test('a wrapped token next to a whole-line fragment is still withheld as a split token', () => {
+  const generic = 'abcdefghij0123456789klmnopqrst';
+  for (const quote of [
+    'AKIAIOSF\n\n\n\n\nODNN7EXAMPLE',
+    'AK\nI\nA\nIOSF\nODNN\n7EXAMPLE',
+    `${'abcd\n'.repeat(4)}abcd`,
+    `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}`,
+    'postgres://reader:hunter2pass\n@db.example',
+    // A generic token whose fragment line is long enough on its own.
+    `token rejected: ${generic.slice(0, 12)}\n${generic.slice(12)}`,
+    `key ${generic.slice(0, 6)}\n${generic.slice(6, 10)}\n${generic.slice(10, 14)}\n${generic.slice(14, 18)}\n${generic.slice(18, 22)}\n${generic.slice(22, 26)}\n${generic.slice(26)} rejected`,
+  ]) {
+    assert.equal(screenSecrets(quote)?.split, true, JSON.stringify(quote));
+    assert.match(evidenceQuoteError(quote) || '', /split across lines/, JSON.stringify(quote));
+    assert.equal(inertEvidenceQuote(quote), '[redacted: split-secret]', JSON.stringify(quote));
+  }
+  assert.deepEqual(screenSecrets(`token rejected: ${generic.slice(0, 12)}\n${generic.slice(12)}`).ids, ['split-token']);
 });
 
 test('a fullwidth credential is screened in its compatibility form on write and read', () => {
@@ -603,7 +638,8 @@ test('a key broken by a zero-width space is refused at capture and stays broken 
   for (const w of windows) assert.ok(!refusedPacket.includes(w), `${w} reached the packet: ${refusedPacket}`);
 
   // Episodes captured before the write gate, or edited by hand, still render
-  // with the zero-width space blanked, never removed, so the key stays broken.
+  // with the zero-width space in place, never removed, so the key is never
+  // shown contiguous.
   const dir = path.join(copilotHome, 'knowledge', 'solutions', 'insights');
   fs.mkdirSync(dir, { recursive: true });
   for (let n = 0; n < 5; n++) {
@@ -614,7 +650,8 @@ test('a key broken by a zero-width space is refused at capture and stays broken 
   const legacyPacket = JSON.stringify(entries);
   const crossing = windows.filter(w => AWS.indexOf(w) > 0 && AWS.indexOf(w) < 8);
   for (const w of crossing) assert.ok(!legacyPacket.includes(w), `${w} reached the packet: ${legacyPacket}`);
-  assert.ok(entries.every(e => e.title.includes('AKIAIOSF ODNN7EXAMPLE') && e.excerpt.includes('AKIAIOSF ODNN7EXAMPLE') && e.tags.some(t => t.includes('AKIAIOSF ODNN7EXAMPLE'))), legacyPacket);
+  assert.ok(!legacyPacket.includes(AWS), legacyPacket);
+  assert.ok(entries.every(e => e.title.includes(broken) && e.excerpt.includes(broken) && e.tags.some(t => t.includes(broken))), legacyPacket);
 });
 
 test('the write gate scan sees a key broken by an invisible character or written fullwidth', () => {

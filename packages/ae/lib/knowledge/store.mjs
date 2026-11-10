@@ -721,23 +721,16 @@ function yamlQuote(v) {
  * into a single-line markdown bullet (`- [id] trigger → claim`) would inject
  * extra "lines" — fake headings, extra bullets, anything — into what is
  * otherwise a trusted context surface. Collapses every C0 control char
- * (0x00-0x1F), DEL (0x7F), every C1 control (0x80-0x9F, such as the CSI
- * terminal escape) and the bidirectional overrides and isolates
- * (U+202A-U+202E, U+2066-U+2069), the bidirectional marks (U+200E, U+200F,
- * U+061C), the Unicode line and paragraph separators (U+2028, U+2029), the
- * zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
- * U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB), the tag
- * characters (U+E0000-U+E007F), and every other default-ignorable code point
- * or format (Cf) character, such as U+034F, the variation selectors and the
- * Hangul fillers, to a single space so the
- * text always renders as ONE visible line in its stored order, wherever it's
- * interpolated.
+ * (0x00-0x1F) and DEL (0x7F) to a single space so the text always renders as
+ * ONE line, wherever it's interpolated. Every other character, including
+ * emoji joiners and variation selectors, is kept byte-identical, so paths and
+ * titles display as written. Invisible characters stay in place: a token
+ * broken by one stays broken. The evidence-quote packet applies its own
+ * stricter screen and blanking (see evidence-quote.mjs).
  */
 export function inertLine(text) {
-  return String(text ?? '').replace(INERT_LINE_CHARS, ' ');
+  return String(text ?? '').replace(/[\x00-\x1f\x7f]/g, ' ');
 }
-
-const INERT_LINE_CHARS = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
 
 // Every default-ignorable code point and every format (Cf) character: what a
 // renderer may draw as nothing, such as U+034F, the variation selectors

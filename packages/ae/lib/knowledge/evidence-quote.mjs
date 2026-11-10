@@ -41,6 +41,13 @@ const ANSI_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x
 const SGR_REMNANT = /\[[0-9;]*m/g;
 
 const stripAnsi = text => text.replace(ANSI_SEQUENCE, '');
+
+// The shared inertLine blanks only C0 controls and DEL, so it never changes
+// how a path or title displays. A quote also has every C1 control (such as NEL
+// and the CSI byte) and the Unicode line and paragraph separators blanked, so
+// it always renders as one line wherever it is shown.
+const QUOTE_LINE_BREAKERS = /[\x80-\x9f\u2028\u2029]/g;
+const inertQuoteLine = text => inertLine(text).replace(QUOTE_LINE_BREAKERS, ' ');
 const secretIds = forms => [...new Set(forms.flatMap(form => scanSecrets(form).map(hit => hit.id)))];
 
 const GLOBAL_PATTERNS = SECRET_PATTERNS.map(({ id, re }) => ({ id, re: new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`) }));
@@ -59,9 +66,53 @@ function matchesAcrossJoin(re, text, joins) {
 }
 
 // A run of token characters (what a key, token or password is made of) this
-// long that only exists once lines are joined is a split secret.
+// long that only exists once lines are joined is a split secret, when a
+// wrapped-token fragment sits next to one of its joins (see splitIds).
 export const SPLIT_TOKEN_MIN = 20;
+// A whole line of token characters this long reads as a fragment of a wrapped
+// token rather than a word.
+export const SPLIT_FRAGMENT_MIN = 8;
 const TOKEN_RUN = new RegExp(`[A-Za-z0-9_+/=.-]{${SPLIT_TOKEN_MIN},}`, 'g');
+const TOKEN_LINE = /^[A-Za-z0-9_+/=.-]+$/;
+
+// Which lines are wrapped-token fragments: a whole line of token characters
+// that is SPLIT_FRAGMENT_MIN or longer, or that belongs to a maximal sequence
+// of consecutive whole-token lines whose joined length is SPLIT_TOKEN_MIN or
+// more (a token wrapped over many short lines).
+function fragmentLines(lines) {
+  const fragment = lines.map(() => false);
+  for (let i = 0; i < lines.length;) {
+    if (!TOKEN_LINE.test(lines[i])) { i++; continue; }
+    let j = i;
+    let chain = 0;
+    while (j < lines.length && TOKEN_LINE.test(lines[j])) chain += lines[j++].length;
+    for (let k = i; k < j; k++) fragment[k] = chain >= SPLIT_TOKEN_MIN || lines[k].length >= SPLIT_FRAGMENT_MIN;
+    i = j;
+  }
+  return fragment;
+}
+
+// Whether a run of SPLIT_TOKEN_MIN or more token characters crosses a join
+// with a fragment line on either side of that join. A whole-token line lies
+// entirely inside any run that touches it, since runs are maximal.
+function splitTokenRun(text, lines, joins) {
+  const fragment = fragmentLines(lines);
+  // lineStart[i] is where line i begins in the joined text.
+  const lineStart = [0, ...joins];
+  TOKEN_RUN.lastIndex = 0;
+  let line = 0;
+  let m;
+  while ((m = TOKEN_RUN.exec(text)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    while (line + 1 < lines.length && lineStart[line + 1] <= start) line++;
+    // Each join inside the run sits between line k - 1 and line k.
+    for (let k = line + 1; k < lines.length && lineStart[k] < end; k++) {
+      if (fragment[k - 1] || fragment[k]) return true;
+    }
+  }
+  return false;
+}
 
 // A line ends at CRLF, CR, LF, NEL (U+0085) or the Unicode line and paragraph
 // separators. Before a line is trimmed, every control character but tab and
@@ -80,10 +131,14 @@ const LINE_NOISE = /[\x00-\x08\x0a-\x1f\x7f-\x9f\p{Default_Ignorable_Code_Point}
 // bounded by a line count:
 //
 // - `split-token`: a maximal run of token characters ([A-Za-z0-9_+/=.-]) of
-//   SPLIT_TOKEN_MIN or more that crosses a join. This does not depend on any
-//   secret pattern, so a key wrapped over any number of short lines is caught
-//   whatever its shape. Ordinary multi-line output with short words, or lines
-//   that end or start in punctuation, does not form such a run.
+//   SPLIT_TOKEN_MIN or more that crosses a join, where a line on either side
+//   of that join is a wrapped-token fragment: a whole line of token characters
+//   of SPLIT_FRAGMENT_MIN or more, or part of a sequence of consecutive
+//   whole-token lines whose joined length is SPLIT_TOKEN_MIN or more. This
+//   does not depend on any secret pattern, so a key wrapped over any number of
+//   lines is caught whatever its shape. A line ending in a long path followed
+//   by a short word line (`FAIL test/retry.test.mjs` then `  retry`) is
+//   ordinary output: neither line is a fragment.
 // - a secret pattern that matches across a join. This keeps connection
 //   strings fail-closed: `@`, `:` and `//` are not token characters, so a
 //   line ending in `scheme://host:port` followed by a line starting with an
@@ -94,7 +149,7 @@ const LINE_NOISE = /[\x00-\x08\x0a-\x1f\x7f-\x9f\p{Default_Ignorable_Code_Point}
 //
 // Splitting, trim() and one scan per pattern keep the cost linear.
 function splitIds(form) {
-  const lines = form.split(LINE_BREAK).map(line => inertLine(line.replace(LINE_NOISE, '').trim())).filter(Boolean);
+  const lines = form.split(LINE_BREAK).map(line => inertQuoteLine(line.replace(LINE_NOISE, '').trim())).filter(Boolean);
   if (lines.length < 2) return [];
   const joins = [];
   let text = lines[0];
@@ -103,7 +158,7 @@ function splitIds(form) {
     text += lines[i];
   }
   const ids = GLOBAL_PATTERNS.filter(({ re }) => matchesAcrossJoin(re, text, joins)).map(({ id }) => id);
-  if (!ids.length && matchesAcrossJoin(TOKEN_RUN, text, joins)) ids.push('split-token');
+  if (!ids.length && splitTokenRun(text, lines, joins)) ids.push('split-token');
   return ids;
 }
 
@@ -131,7 +186,7 @@ export function screenSecrets(value) {
   const written = [raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, '')];
   const visible = [...written, ...written.map(stripInvisible)];
   const bases = [...new Set([...visible, ...visible.map(form => form.normalize('NFKC'))])];
-  const direct = secretIds([...bases, ...bases.map(inertLine)]);
+  const direct = secretIds([...bases, ...bases.map(inertQuoteLine)]);
   if (direct.length) return { ids: direct, split: false };
   const split = [...new Set(bases.flatMap(splitIds))];
   return split.length ? { ids: split, split: true } : null;
@@ -191,13 +246,13 @@ function capBytes(text, max) {
  * matched patterns, or `split-secret` when only the compact form matched.
  * Otherwise invisible characters (default-ignorable and format characters)
  * are removed outright, exactly as in the form screened without them, and the
- * quote is joined to one line by inertLine (which blanks C0, C1 and line
- * separator characters) and capped in bytes at a code-point boundary.
+ * quote is joined to one line (C0, DEL, C1 and the line and paragraph
+ * separators become spaces) and capped in bytes at a code-point boundary.
  */
 export function inertEvidenceQuote(value) {
   const text = String(value ?? '');
   if (Buffer.byteLength(text, 'utf8') > EVIDENCE_QUOTE_READ_CAP) return '[redacted: oversize]';
   const screen = screenSecrets(text);
   if (screen) return screen.split ? '[redacted: split-secret]' : `[redacted: ${screen.ids.join(', ')}]`;
-  return capBytes(inertLine(stripInvisible(stripAnsi(text))), EVIDENCE_QUOTE_CAP);
+  return capBytes(inertQuoteLine(stripInvisible(stripAnsi(text))), EVIDENCE_QUOTE_CAP);
 }
