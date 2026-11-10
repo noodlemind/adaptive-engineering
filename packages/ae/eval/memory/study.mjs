@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { resolveStudyOutput, runChecks, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
 import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
@@ -131,6 +131,37 @@ export function memoryAgentArgs({ task, workspace, copilotHome, harnessHome, mod
     ...task.seeds.flatMap(file => ['--file', file]), '--workspace', workspace, '--copilot-home', copilotHome, '--harness-home', harnessHome, '--no-events', '--json'];
 }
 
+/**
+ * Runs an agent process to completion in its own process group (POSIX), then kills the whole group, so a background process
+ * the agent started cannot outlive its task and touch the next task's stores. Resolves like spawnSync: { status, signal,
+ * stdout, stderr, error }. A process that starts its own session escapes the group; the restore re-checks still hold then.
+ */
+export function runAgentProcess(command, args, { cwd, env, timeoutMs, maxBuffer = 20 * 1024 * 1024 } = {}) {
+  return new Promise(resolve => {
+    const group = process.platform !== 'win32';
+    const child = spawn(command, args, { cwd, env, detached: group, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = { stdout: '', stderr: '' };
+    let error = null, timer = null;
+    const killGroup = () => {
+      try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
+    };
+    for (const name of ['stdout', 'stderr']) {
+      child[name].setEncoding('utf8');
+      child[name].on('data', chunk => {
+        out[name] += chunk;
+        if (out[name].length > maxBuffer && !error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); killGroup(); }
+      });
+    }
+    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('agent timed out'), { code: 'ETIMEDOUT' }); killGroup(); }, timeoutMs);
+    child.on('error', caught => { error ||= caught; });
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      killGroup();
+      resolve({ status, signal, stdout: out.stdout, stderr: out.stderr, error });
+    });
+  });
+}
+
 function gitEnv() {
   return { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'Memory Eval', GIT_AUTHOR_EMAIL: 'memory@example.test', GIT_COMMITTER_NAME: 'Memory Eval', GIT_COMMITTER_EMAIL: 'memory@example.test' };
 }
@@ -173,22 +204,55 @@ export const fixesRecallableMemory = arm => arm.mode === 'capture-only' || arm.m
 const EPISODE_STORE_FILE_LIMIT = 2000;
 const EPISODE_STORE_BYTE_LIMIT = 32 * 1024 * 1024;
 
-/** Episode files, the recall manifest and its postings index, as [root, path under root]. */
+/**
+ * Episode files, the recall manifest, its postings index, the learnings store and the project's docs/solutions notes, as
+ * [root, path under root]. The learnings store (harnessHome/knowledge, every storage id) holds the seeded learning and the
+ * knowledge mode and feedback config the runner wrote before the snapshot; an agent could otherwise turn knowledge on, add a
+ * learning and freeze again, and orient would inject it into later frozen-seed tasks.
+ */
 function episodeStoreTargets({ copilotHome, harnessHome, projectDir }) {
-  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, path.relative(harnessHome, path.join(projectDir, 'docs', 'solutions'))]];
+  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge'], [harnessHome, path.relative(harnessHome, path.join(projectDir, 'docs', 'solutions'))]];
 }
 
-/** Whether every component of `rel` under `root` that exists is a real directory, never a symlink; and whether the target exists. */
-function realDirectoryPath(root, rel) {
-  let current = root;
+/**
+ * Whether `root` and every component of `rel` under it that exists is a real directory, never a symlink, whose realpath is
+ * still the expected place under `rootReal`; and whether the target exists. Called again immediately before every removal
+ * and write, so a component swapped for a symlink after an earlier check is refused rather than followed.
+ */
+function realDirectoryPath(root, rel, rootReal = null) {
+  const inside = (current, expected) => {
+    if (rootReal === null) return true;
+    try { return fs.realpathSync(current) === expected; } catch { return false; }
+  };
+  try {
+    const stat = fs.lstatSync(root);
+    if (stat.isSymbolicLink() || !stat.isDirectory() || !inside(root, rootReal)) return { safe: false, exists: true };
+  } catch { return { safe: false, exists: false }; }
+  let current = root, expected = rootReal;
   for (const part of rel.split(path.sep).filter(Boolean)) {
-    if (part === '..') return { safe: false, exists: false };
+    if (part === '..' || part === '.') return { safe: false, exists: false };
     current = path.join(current, part);
+    if (expected !== null) expected = path.join(expected, part);
     let stat;
     try { stat = fs.lstatSync(current); } catch { return { safe: true, exists: false }; }
-    if (stat.isSymbolicLink() || !stat.isDirectory()) return { safe: false, exists: true };
+    if (stat.isSymbolicLink() || !stat.isDirectory() || !inside(current, expected)) return { safe: false, exists: true };
   }
   return { safe: true, exists: true };
+}
+
+/** Creates `rel` under `root` one component at a time, re-checking each with lstat and realpath; false on any mismatch. */
+function makeRealDirectory(root, rel, rootReal) {
+  let sofar = '';
+  for (const part of rel.split(path.sep).filter(Boolean)) {
+    sofar = sofar ? path.join(sofar, part) : part;
+    const checked = realDirectoryPath(root, sofar, rootReal);
+    if (!checked.safe) return false;
+    if (!checked.exists) {
+      try { fs.mkdirSync(path.join(root, sofar)); } catch (error) { if (error.code !== 'EEXIST') return false; }
+      if (!realDirectoryPath(root, sofar, rootReal).safe) return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -206,26 +270,49 @@ export function snapshotEpisodeStore(homes) {
       if (files > EPISODE_STORE_FILE_LIMIT || bytes > EPISODE_STORE_BYTE_LIMIT) throw new Error('episode store exceeds the snapshot limit');
       return [file, content];
     }) : null;
-    return { root, rel, saved };
+    return { root, rootReal: fs.realpathSync(root), rel, saved };
   });
 }
 
 /**
- * Restores a snapshot: each target is removed and rewritten from memory, or left absent if it was absent. A target whose
- * path holds a symlink or a non-directory is refused and left untouched, and the attempt becomes invalid.
+ * Restores one target, failing closed: false leaves the attempt invalid. An existing target is first renamed to a random
+ * sibling, the renamed path is re-verified (real directories all the way, realpath still inside the home) and only then
+ * deleted. Every directory is created one component at a time and re-checked, and every file is re-checked and written
+ * with an exclusive create, so a component a detached process swaps for a symlink between steps is refused, not followed.
+ * `hooks` lets tests act between the steps.
  */
-export function restoreEpisodeStore(snapshot) {
+function restoreTarget({ root, rootReal, rel, saved }, hooks = {}) {
+  const checked = realDirectoryPath(root, rel, rootReal);
+  if (!checked.safe) return false;
+  hooks.afterCheck?.();
+  if (checked.exists) {
+    if (!realDirectoryPath(root, rel, rootReal).safe) return false;
+    const parentRel = path.dirname(rel) === '.' ? '' : path.dirname(rel);
+    const asideRel = path.join(parentRel, `.${path.basename(rel)}.restore-${randomBytes(6).toString('hex')}`);
+    try { fs.renameSync(path.join(root, rel), path.join(root, asideRel)); } catch { return false; }
+    hooks.afterRename?.(path.join(root, asideRel));
+    const aside = realDirectoryPath(root, asideRel, rootReal);
+    if (!aside.safe || !aside.exists) return false;
+    fs.rmSync(path.join(root, asideRel), { recursive: true, force: true });
+  }
+  if (!saved) return true;
+  if (!makeRealDirectory(root, rel, rootReal)) return false;
+  for (const [file, content] of saved) {
+    const fileRel = path.join(rel, ...file.split('/'));
+    if (!makeRealDirectory(root, path.dirname(fileRel), rootReal)) return false;
+    try { fs.writeFileSync(path.join(root, fileRel), content, { flag: 'wx' }); } catch { return false; }
+  }
+  return true;
+}
+
+/**
+ * Restores a snapshot: each target is removed and rewritten from memory, or left absent if it was absent. A target whose
+ * path holds a symlink or a non-directory, before or during the restore, is refused, and the attempt becomes invalid.
+ */
+export function restoreEpisodeStore(snapshot, hooks = {}) {
   const refused = [];
-  for (const { root, rel, saved } of snapshot) {
-    const checked = realDirectoryPath(root, rel);
-    if (!checked.safe) { refused.push(rel.split(path.sep).join('/')); continue; }
-    const target = path.join(root, rel);
-    if (checked.exists) fs.rmSync(target, { recursive: true, force: true });
-    for (const [file, content] of saved || []) {
-      fs.mkdirSync(path.dirname(path.join(target, file)), { recursive: true });
-      fs.writeFileSync(path.join(target, file), content);
-    }
-    if (saved && !saved.length) fs.mkdirSync(target, { recursive: true });
+  for (const target of snapshot) {
+    if (!restoreTarget(target, hooks[target.rel.split(path.sep).join('/')] || {})) refused.push(target.rel.split(path.sep).join('/'));
   }
   return { refused };
 }

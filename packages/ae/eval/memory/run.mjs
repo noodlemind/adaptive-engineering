@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { authorizeFixtureChecks, memoryAgentArgs, resolveStudyOutput, runStudy, runnableArms } from './study.mjs';
+import { authorizeFixtureChecks, memoryAgentArgs, runAgentProcess, resolveStudyOutput, runStudy, runnableArms } from './study.mjs';
 import { PROVIDERS } from '../../lib/provider.mjs';
 
 const args = process.argv.slice(2);
@@ -27,14 +27,15 @@ const split = options.split || 'all';
 if (!['all', 'development', 'held-out'].includes(split)) throw new Error('split must be all, development or held-out');
 const bin = path.resolve(import.meta.dirname, '../../bin/ae.mjs');
 
-function execute(fixture) {
+async function execute(fixture) {
   const { workspace, copilotHome, harnessHome, protocol, env } = fixture;
   const common = ['--workspace', workspace, '--copilot-home', copilotHome, '--harness-home', harnessHome, '--no-events', '--json'];
   const setup = spawnSync(process.execPath, [bin, 'config', 'set', 'agent.enabled', 'true', '--scope', 'user', ...common], { env, encoding: 'utf8', timeout: 15_000 });
   if (setup.error || setup.status !== 0) throw new Error(`fixture configuration failed: ${setup.error?.code || setup.stderr?.slice(0, 1000)}`);
   // The operator, not the agent, registers the public verifier as a named check and grants fixture trust.
   authorizeFixtureChecks(fixture);
-  const result = spawnSync(process.execPath, [bin, 'agent', ...memoryAgentArgs({ ...fixture, provider: options.provider })], { cwd: workspace, env, encoding: 'utf8', timeout: (protocol.maxSeconds + 30) * 1000, maxBuffer: 20 * 1024 * 1024 });
+  // Its own process group, killed after the task, so nothing the agent left running reaches the next task's restore.
+  const result = await runAgentProcess(process.execPath, [bin, 'agent', ...memoryAgentArgs({ ...fixture, provider: options.provider })], { cwd: workspace, env, timeoutMs: (protocol.maxSeconds + 30) * 1000, maxBuffer: 20 * 1024 * 1024 });
   if (result.error) throw new Error(`agent process failed: ${result.error.code}`);
   try { return JSON.parse(result.stdout); }
   catch { throw new Error(`agent returned no result (exit ${result.status}): ${result.stderr?.slice(0, 1000)}`); }

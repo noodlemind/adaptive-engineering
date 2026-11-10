@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import {
-  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, episodeHashes, restoreEpisodeStore, snapshotEpisodeStore, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
+  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, episodeHashes, restoreEpisodeStore, runAgentProcess, snapshotEpisodeStore, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { storeDir, writeStoreConfig } from '../lib/knowledge/store.mjs';
@@ -566,6 +566,111 @@ test('restoring the episode store refuses a planted symlink and never writes out
   fs.symlinkSync(victim, path.join(homes.projectDir, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(restoreEpisodeStore(snapshot).refused, ['projects/repo-id/docs/solutions']);
   assert.deepEqual(fs.readdirSync(victim), ['keep.md']);
+});
+
+test('a learning an agent writes mid-task in frozen-seed is gone after the restore; the seed stays', async t => {
+  const calls = [];
+  const written = {};
+  const executor = scriptedExecutor(calls, {
+    'frozen-seed:0': ({ workspace, harnessHome, series }) => {
+      // The agent turns knowledge on, records a learning and freezes again, as `ae knowledge on/freeze` would.
+      assert.equal(writeStoreConfig(workspace, { home: harnessHome, mode: 'on' }).pass, true);
+      const rel = `docs/solutions/eval/${series.trap.id}.md`;
+      const text = fs.readFileSync(path.join(workspace, rel), 'utf8');
+      applyOps({ workspace, home: harnessHome, operations: { schema: 1, ops: [{ op: 'ADD', domain: 'javascript', slug: 'eval-scripted-trap', trigger: series.seed.op.trigger, body: series.seed.op.body,
+        episodes: [{ path: rel, sha256: crypto.createHash('sha256').update(text).digest('hex'), kind: 'fix', plan: null }] }] } });
+      assert.equal(writeStoreConfig(workspace, { home: harnessHome, mode: 'freeze' }).pass, true);
+      written.task1 = storedLearnings(storeDir(workspace, { home: harnessHome }));
+    },
+  });
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['frozen-seed'], repeats: 1,
+    model: 'scripted-test', host: 'scripted-test', studyBase: directory(t),
+    execute: async fixture => {
+      if (fixture.index > 0) written[`task${fixture.index + 1}`] = storedLearnings(storeDir(fixture.workspace, { home: fixture.harnessHome }));
+      return executor(fixture);
+    } });
+  assert.ok(written.task1.includes('eval-scripted-trap'), 'the mid-task learning was written');
+  for (const index of [1, 2, 3]) {
+    assert.ok(!written[`task${index + 1}`].includes('eval-scripted-trap'), `task ${index + 1} store has no mid-task learning`);
+    assert.ok(written[`task${index + 1}`].includes(ordering.seed.op.slug), `task ${index + 1} store keeps the seed`);
+    assert.ok(!calls[index].injected.includes(LEARNING_ID), `task ${index + 1} is not injected the mid-task learning`);
+  }
+  const rows = rowsFor(result, 'frozen-seed');
+  assert.ok(rows[2].learningsInjected.includes(seedId(ordering)));
+  for (const row of rows) { assert.deepEqual(row.episodeStoreRefused, []); assert.equal(row.knowledgeMode, 'freeze'); }
+});
+
+test('restoring the episode store re-checks every component before removing and before writing', t => {
+  const root = directory(t);
+  const setup = () => {
+    fs.rmSync(path.join(root, 'homes'), { recursive: true, force: true });
+    const homes = { copilotHome: path.join(root, 'homes', 'copilot'), harnessHome: path.join(root, 'homes', 'state') };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(path.join(homes.projectDir, 'docs', 'solutions'), { recursive: true });
+    fs.mkdirSync(homes.copilotHome);
+    fs.writeFileSync(path.join(homes.projectDir, 'docs', 'solutions', 'seed.md'), 'seed\n');
+    return homes;
+  };
+  const victim = path.join(root, 'victim');
+  const plantVictim = name => {
+    fs.rmSync(victim, { recursive: true, force: true });
+    fs.mkdirSync(path.join(victim, name), { recursive: true });
+    fs.writeFileSync(path.join(victim, name, 'keep.md'), 'outside\n');
+  };
+  const swapDocs = homes => {
+    fs.renameSync(path.join(homes.projectDir, 'docs'), path.join(homes.projectDir, 'docs-moved'));
+    fs.symlinkSync(victim, path.join(homes.projectDir, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
+  };
+  const key = 'projects/repo-id/docs/solutions';
+  // A detached process swaps `docs` for a symlink after the first check and before the target is moved aside.
+  let homes = setup();
+  let snapshot = snapshotEpisodeStore(homes);
+  plantVictim('solutions');
+  assert.deepEqual(restoreEpisodeStore(snapshot, { [key]: { afterCheck: () => swapDocs(homes) } }).refused, [key]);
+  assert.deepEqual(fs.readdirSync(path.join(victim, 'solutions')), ['keep.md']);
+  // It swaps `docs` after the target is renamed aside: the renamed path no longer resolves inside the home, so nothing is deleted.
+  homes = setup();
+  snapshot = snapshotEpisodeStore(homes);
+  assert.deepEqual(restoreEpisodeStore(snapshot, { [key]: { afterRename: aside => { plantVictim(path.basename(aside)); swapDocs(homes); } } }).refused, [key]);
+  assert.equal(fs.readdirSync(victim).length, 1);
+  assert.deepEqual(fs.readdirSync(path.join(victim, fs.readdirSync(victim)[0])), ['keep.md']);
+  // It swaps `docs` after the old target is deleted and before the snapshot is written back: no file lands outside.
+  homes = setup();
+  snapshot = snapshotEpisodeStore(homes);
+  plantVictim('other');
+  const realRm = fs.rmSync;
+  t.mock.method(fs, 'rmSync', (...args) => { realRm(...args); if (String(args[0]).includes('.solutions.restore-')) swapDocs(homes); });
+  assert.deepEqual(restoreEpisodeStore(snapshot).refused, [key]);
+  t.mock.restoreAll();
+  assert.deepEqual(fs.readdirSync(victim), ['other']);
+  // A home replaced by a symlink after the snapshot is refused outright.
+  homes = setup();
+  snapshot = snapshotEpisodeStore(homes);
+  plantVictim('index');
+  fs.renameSync(homes.copilotHome, `${homes.copilotHome}-moved`);
+  fs.symlinkSync(victim, homes.copilotHome, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.ok(restoreEpisodeStore(snapshot).refused.includes('knowledge'));
+  assert.deepEqual(fs.readdirSync(path.join(victim, 'index')), ['keep.md']);
+});
+
+test('the agent runs in its own process group and nothing it leaves running outlives the task', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'grandchild.pid');
+  const script = `const { spawn } = require('node:child_process'); const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(c.pid)); c.unref(); process.stdout.write('{"ok":true}');`;
+  const result = await runAgentProcess(process.execPath, ['-e', script], { cwd: root, env: process.env, timeoutMs: 10_000 });
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+  const pid = Number(fs.readFileSync(marker, 'utf8'));
+  // A killed process that no init reaps stays a zombie; on Linux its /proc state says so.
+  const running = () => {
+    try { process.kill(pid, 0); } catch { return false; }
+    try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
+  };
+  let alive = true;
+  for (let i = 0; i < 50 && (alive = running()); i++) await new Promise(done => setTimeout(done, 20));
+  assert.equal(alive, false, 'the grandchild was killed with the group');
+  const slow = await runAgentProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: root, env: process.env, timeoutMs: 200 });
+  assert.equal(slow.error?.code, 'ETIMEDOUT');
 });
 
 test('stale study parents from dead runners are swept; live, foreign and unremovable ones are kept', t => {
