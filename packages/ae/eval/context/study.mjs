@@ -42,6 +42,35 @@ export function safePath(file) {
   return file;
 }
 
+/**
+ * Swaps a study's signal handlers (`handler`) for recorders, for the study's final synchronous phase: removing its files and
+ * writing its results. A handler cannot run before the event loop turns, and once the last listener for a signal goes, Node
+ * restores the default action and discards a signal that arrived meanwhile; removing the handlers straight after the write
+ * would drop a signal sent during it, and the runner would exit 0. The recorders stay installed until `release()` has let
+ * the event loop turn twice, so a signal sent during the final phase reaches one; `release()` then removes them and returns
+ * the first signal recorded, or null, and the caller ends the process for it with `exitForSignal`. A recorder never writes
+ * anything, so complete results already written are never replaced by partial ones.
+ */
+export function holdSignals(signals, handler = null) {
+  const held = [];
+  const record = signal => { held.push(signal); };
+  for (const signal of signals) process.on(signal, record);
+  if (handler) for (const signal of signals) process.off(signal, handler);
+  return {
+    async release() {
+      // A signal raised during a synchronous write is read in the next poll phase; the second turn makes sure that phase ran.
+      for (let turn = 0; turn < 2; turn++) await new Promise(resolve => setImmediate(resolve));
+      for (const signal of signals) process.off(signal, record);
+      return held[0] ?? null;
+    },
+  };
+}
+
+/** Ends the runner for a handled signal with the shell's status for it, 128 plus the signal number. */
+export function exitForSignal(signal) {
+  process.exit(128 + (os.constants.signals[signal] ?? 15));
+}
+
 export function writeFiles(workspace, files = {}) {
   for (const [file, content] of Object.entries(files)) {
     const target = path.join(workspace, safePath(file));
@@ -340,8 +369,9 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
   // Checker groups run detached, so a signal to the runner does not reach them; this study's handler kills its own first.
   const groups = new Set();
   const signals = ['SIGINT', 'SIGTERM'];
-  const onSignal = signal => { killLiveGroups(groups); process.exit(128 + (os.constants.signals[signal] ?? 15)); };
+  const onSignal = signal => { killLiveGroups(groups); exitForSignal(signal); };
   for (const signal of signals) process.once(signal, onSignal);
+  let hold = null;
   try {
   await trackStudyGroups(groups, async () => {
   for (const [caseIndex, task] of cases.entries()) {
@@ -380,13 +410,18 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
     }
   }
   });
-  // Written while the signal handlers are still installed, so a signal waits for the (synchronous) write to finish.
+  // A signal during the (synchronous) final write is recorded, not lost: the write finishes, then the runner exits for it.
+  hold = holdSignals(signals, onSignal);
   const result = { schema: 1, provenance, attempts, summary: summarizeStudy(attempts, provenance) };
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2));
   return result;
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     killLiveGroups(groups);
+    if (hold) {
+      const signal = await hold.release();
+      if (signal) exitForSignal(signal);
+    }
   }
 }
 

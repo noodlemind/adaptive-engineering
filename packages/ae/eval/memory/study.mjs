@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { killLiveGroups, trackStudyGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
+import { exitForSignal, holdSignals, killLiveGroups, trackStudyGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
 import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
@@ -361,8 +361,11 @@ export function prepareTask({ series, index, runRoot, carried = {}, extraFiles =
   return fixture;
 }
 
-/** Regular files under `root`, never following a symlink: `root` and every directory walked are lstat'd, and links are skipped. */
-function listFiles(root, base = '') {
+/**
+ * Regular files under `root`, never following a symlink: `root` and every directory walked are lstat'd, and links are skipped.
+ * With `skipped`, each skipped entry (a symlink, FIFO, socket or device) adds one to `skipped.nonRegular`.
+ */
+function listFiles(root, base = '', skipped = null) {
   const found = {};
   let entries;
   try {
@@ -373,8 +376,9 @@ function listFiles(root, base = '') {
     const rel = path.posix.join(base, name);
     let stat;
     try { stat = fs.lstatSync(path.join(root, rel)); } catch { continue; }
-    if (stat.isDirectory()) Object.assign(found, listFiles(root, rel));
+    if (stat.isDirectory()) Object.assign(found, listFiles(root, rel, skipped));
     else if (stat.isFile()) found[rel] = path.join(root, rel);
+    else if (skipped) skipped.nonRegular = (skipped.nonRegular || 0) + 1;
   }
   return found;
 }
@@ -383,7 +387,7 @@ function listFiles(root, base = '') {
  * Regular files under `base/rel` as a real checkout would hold them: every path component from `base` down must be a real
  * directory, not a symlink, so a linked `docs` or `docs/solutions` cannot pull files from outside into the count or the next task.
  */
-function filesInside(base, rel) {
+function filesInside(base, rel, skipped = null) {
   let current = base;
   for (const part of rel.split('/').filter(Boolean)) {
     current = path.join(current, part);
@@ -391,7 +395,7 @@ function filesInside(base, rel) {
     try { stat = fs.lstatSync(current); } catch { return {}; }
     if (stat.isSymbolicLink() || !stat.isDirectory()) return {};
   }
-  return listFiles(current);
+  return listFiles(current, '', skipped);
 }
 
 /** Episode-shaped files (Markdown notes under docs/solutions, .md or .markdown in any case) in the workspace and in the series project store. */
@@ -434,27 +438,89 @@ export function clearExternalPlans(harnessHome, projectDir) {
   return { cleared, refused };
 }
 
+/** Characters HFS+ ignores in names, which Git strips before it compares a component with `.git` (core.protectHFS). */
+const HFS_IGNORABLE = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g;
+/** Names Git refuses to add or treats as its own control files: compared after NTFS and HFS+ normalization, in any case. */
+const GIT_CONTROLLED = new Set(['.git', '.gitmodules', '.gitattributes', '.gitignore', '.harness']);
+/** NTFS 8.3 short names of those entries (`git~1`, `gitmod~1`, ...), which Git's NTFS protection also refuses. */
+const SHORT_NAME = /^(git|gitmod|gitatt|gitign|gi7eba|gi250a|gi7d29)~\d+$/;
+
+/**
+ * Whether `target` can be carried into the next checkout and committed there. Beyond `safePath`, a component that Git would
+ * refuse to add (core.protectNTFS is on by default on every platform) or that names one of Git's control files is refused:
+ * the name is compared in lower case, cut at an NTFS stream separator (`:`), without trailing dots or spaces and without
+ * HFS+-ignorable characters, and 8.3 short names are refused too. So `.GIT`, `.git.`, `.git ` and `git~1` are refused, and
+ * so is an agent-written `.gitignore`, which could otherwise stop other carried notes from being committed.
+ */
+export function carryablePath(target) {
+  safePath(target);
+  for (const part of target.split('/')) {
+    const name = part.replace(HFS_IGNORABLE, '').split(':')[0].replace(/[. ]+$/, '').toLowerCase();
+    if (GIT_CONTROLLED.has(name) || SHORT_NAME.test(name)) throw new TypeError(`path Git would refuse or control: ${target}`);
+  }
+  return target;
+}
+
 /**
  * Episodes a real checkout would have committed: every regular file under docs/solutions, bounded. Paths a fixture may not
- * hold (see safePath), notes over CARRY_BYTE_LIMIT and files past the first CARRY_FILE_LIMIT safe paths (by code point, so
- * the cut is the same on every machine) are not carried; `dropped` counts them, so the attempt that wrote them can say so.
+ * hold or Git would refuse (see carryablePath), entries that are not regular files (symlinks, FIFOs, sockets), notes over
+ * CARRY_BYTE_LIMIT and files past the first CARRY_FILE_LIMIT carryable regular files (by code point, so the cut is the same
+ * on every machine) are not carried; `dropped` counts them, so the attempt that wrote them can say so. Unsafe and
+ * non-regular entries are filtered before the cut and take no slot. Each note is read through a descriptor opened without
+ * following links and checked again with fstat, so a file swapped for a link after the listing is not followed.
  */
-export function collectCarryForward(workspace, dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 }) {
+export function collectCarryForward(workspace, dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 }) {
   const carried = {};
   const files = [];
-  for (const [rel, file] of Object.entries(filesInside(workspace, PROTOCOL.carryForward))) {
+  const skipped = { nonRegular: 0 };
+  for (const [rel, file] of Object.entries(filesInside(workspace, PROTOCOL.carryForward, skipped))) {
     const target = `${PROTOCOL.carryForward}/${rel}`;
-    try { safePath(target); files.push([target, file]); } catch { dropped.unsafe = (dropped.unsafe || 0) + 1; }
+    try { carryablePath(target); files.push([target, file]); } catch { dropped.unsafe = (dropped.unsafe || 0) + 1; }
   }
+  dropped.nonRegular = (dropped.nonRegular || 0) + skipped.nonRegular;
   files.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   dropped.overFileLimit += Math.max(0, files.length - CARRY_FILE_LIMIT);
   for (const [target, file] of files.slice(0, CARRY_FILE_LIMIT)) {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile()) continue;
-    if (stat.size > CARRY_BYTE_LIMIT) { dropped.oversized++; continue; }
-    carried[target] = fs.readFileSync(file);
+    let fd;
+    try { fd = fs.openSync(file, OPEN_NO_FOLLOW); }
+    catch (error) {
+      // Replaced by a link (or a FIFO) since the listing.
+      if (error.code === 'ELOOP' || error.code === 'EMLINK') { dropped.nonRegular++; continue; }
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) { dropped.nonRegular++; continue; }
+      if (stat.size > CARRY_BYTE_LIMIT) { dropped.oversized++; continue; }
+      const content = fs.readFileSync(fd);
+      if (content.length > CARRY_BYTE_LIMIT) { dropped.oversized++; continue; }
+      carried[target] = content;
+    } finally { fs.closeSync(fd); }
   }
   return carried;
+}
+
+/**
+ * The attempt record for a task whose checkout could not be built: invalid as `fixture-setup-failed`, kind `setup-error`, with
+ * no agent run, no checks and no measurements. It has every field an ordinary attempt has, so summaries read it the same way.
+ */
+function fixtureSetupFailure({ provenance, model, runId, item, armId, repeat, task, index, carried, carriesNext, stragglersKilled, message }) {
+  return {
+    batch: provenance.batch,
+    id: `${runId}-t${index + 1}`, run: runId, series: item.id, split: item.split, trapId: item.trap.id, arm: armId, repeat: repeat + 1,
+    task: task.id, taskIndex: index + 1, trapRole: task.trap ?? null, kind: 'setup-error', valid: false, invalidReasons: ['fixture-setup-failed'],
+    pass: false, baseline: null, publicBaseline: null, trapBaseline: null, checks: null, trapChecks: null, otherChecks: null,
+    trapRecurred: null, recurrenceUnscored: null, trapFirstFailed: null, repeatMistake: null,
+    scope: null, origin: null, repoId: null, storeDir: null, storeId: null, knowledgeMode: null, feedback: null,
+    knowledgeModeAfter: null, feedbackAfter: null, configChangedByAgent: false, seeded: null,
+    carriedForward: Object.keys(carried).sort(), externalPlansCleared: 0, externalPlansRefused: [], carriedMemoryRefused: [],
+    setupErrors: [{ step: 'fixture', message }], measurementErrors: [],
+    learningsInjected: [], learningsBytes: 0, injectionError: null, episodesWritten: 0,
+    carryForwardDropped: carriesNext ? { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 } : null,
+    turns: null, inputTokens: null, outputTokens: null, usageCoverage: 'unavailable',
+    requestedModel: model, observedModels: [], actualModel: null, provider: null,
+    status: null, stopReason: null, error: `setup failed: fixture: ${message}`.slice(0, 2000), durationMs: 0, stragglersKilled,
+  };
 }
 
 /** Writes the series seed learning while the store is briefly on. The seed episode must already be committed. */
@@ -710,7 +776,8 @@ const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGH
  * has recorded, with the parent's removal failures.
  * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group. `groups`
  * holds the process groups this study started; removal kills those, then the stragglers still working under the parent
- * (see killStragglers), then removes the tree. `close()` returns removal failures; `detach()` removes the handlers.
+ * (see killStragglers), then removes the tree. `close()` returns removal failures; `hold()` swaps the signal handlers for
+ * recorders for the final phase (see holdSignals); `detach()` removes the handlers.
  */
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
@@ -725,14 +792,15 @@ function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
     // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
     try { onAbort(signal, failures); } catch { /* best effort */ }
-    process.exit(128 + (os.constants.signals[signal] ?? 15));
+    exitForSignal(signal);
   };
   process.on('exit', remove);
   for (const signal of STUDY_SIGNALS) process.once(signal, onSignal);
-  // `close()` removes the parent but keeps the signal handlers, so a signal while the final results are written waits for the
-  // (synchronous) write; `detach()` removes the handlers afterwards.
+  // In the final phase `hold()` replaces the handlers with recorders, so a signal while the parent is removed and the final
+  // results are written neither runs onAbort over them nor is lost; the runner exits for it after `detach()`.
   return {
     parent, groups,
+    hold() { return holdSignals(STUDY_SIGNALS, onSignal); },
     close() { remove(); return failures; },
     detach() { process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); },
   };
@@ -833,8 +901,20 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             for (const dir of [copilotHome, harnessHome]) fs.mkdirSync(dir);
             try {
             const extraFiles = arm.seed ? { [item.seed.episode.path]: item.seed.episode.content } : {};
-            const fixture = prepareTask({ series: item, index, runRoot: taskRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome });
-            // What an earlier agent left behind can make setup fail; that fails this attempt, never the whole study.
+            // What an earlier agent left behind can make setup fail; that fails this attempt, never the whole study. A
+            // checkout that cannot be built (a carried note Git refuses, for example) leaves nothing to measure, so the
+            // attempt is recorded as a setup error at once.
+            let fixture;
+            try { fixture = prepareTask({ series: item, index, runRoot: taskRoot, carried, extraFiles, origin: originFor(item, index), copilotHome, harnessHome }); }
+            catch (caught) {
+              const attempt = fixtureSetupFailure({ provenance, model, runId, item, armId, repeat, task, index, carried, carriesNext, stragglersKilled, message: String(caught?.message ?? caught).slice(0, 500) });
+              attempts.push(attempt);
+              runAttempts.push(attempt);
+              // This task's memory was never written into its homes, so the next task has no current memory to inherit.
+              if (carriesNext) carryRefused.push('fixture: this task\'s checkout could not be built, so its memory was not carried');
+              carried = {};
+              continue;
+            }
             const setupErrors = [];
             const setupStep = (step, action, fallback) => {
               try { return action(); } catch (caught) { setupErrors.push({ step, message: String(caught?.message ?? caught).slice(0, 500) }); return fallback; }
@@ -978,7 +1058,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               episodesWritten,
               // Notes this task left that were unsafe, too large or too many to carry into the next task. Null where nothing
               // is carried next: an arm that does not read captured memory, or the series' last task.
-              carryForwardDropped: carriesNext ? { oversized: 0, overFileLimit: 0, unsafe: 0 } : null,
+              carryForwardDropped: carriesNext ? { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 } : null,
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
               requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
@@ -1011,14 +1091,20 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   });
   finished = true;
   } finally {
+    // From here a signal is only recorded, so it can neither cut the final writes short nor have onAbort replace complete
+    // results with partial ones; once they are written the runner exits for it (128 plus the signal number).
+    const hold = study.hold();
     studyCleanupErrors = study.close();
     try {
-      // A crash still saves every finished attempt, marked partial; a normal end writes the full results. Both writes happen
-      // before the signal handlers go, so a signal cannot cut them short. A failed partial write must never replace the
-      // error that ended the study.
+      // A crash still saves every finished attempt, marked partial; a normal end writes the full results. A failed partial
+      // write must never replace the error that ended the study.
       if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true, cleanupErrors: studyCleanupErrors }); } catch { /* keep the original error */ } }
       if (finished) output = writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false, cleanupErrors: studyCleanupErrors });
-    } finally { study.detach(); }
+    } finally {
+      const signal = await hold.release();
+      study.detach();
+      if (signal) exitForSignal(signal);
+    }
   }
   return output;
 }

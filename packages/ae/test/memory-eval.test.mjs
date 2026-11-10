@@ -312,7 +312,7 @@ test('a learning added in task 1 is injected in task 3 under recall and absent u
   const note = `docs/solutions/eval/${ordering.trap.id}.md`;
   for (const arm of ARMS) assert.equal(rowsFor(result, arm)[0].episodesWritten, 1, `${arm} task 1 wrote one episode`);
   assert.ok(third('recall').carriedForward.includes(note), 'recall carried the episode forward');
-  assert.deepEqual(rowsFor(result, 'recall')[0].carryForwardDropped, { oversized: 0, overFileLimit: 0, unsafe: 0 }, 'recall task 1 dropped no notes');
+  assert.deepEqual(rowsFor(result, 'recall')[0].carryForwardDropped, { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 }, 'recall task 1 dropped no notes');
   // Nothing is carried from arms that do not read captured memory, or from a series' last task, so nothing is counted there.
   for (const arm of ['stateless', 'capture-only']) assert.equal(rowsFor(result, arm)[0].carryForwardDropped, null, `${arm} carries nothing`);
   for (const arm of ARMS) assert.equal(rowsFor(result, arm).at(-1).carryForwardDropped, null, `${arm} last task carries nothing`);
@@ -533,20 +533,48 @@ test('a study whose parent cannot be opened leaves no output directory behind, s
   assert.equal(fs.existsSync(root), false);
 });
 
-test('the final results are written while the study\'s signal handlers are still installed', async t => {
+test('a SIGTERM during the final results write leaves complete results and still ends the runner with 143', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const out = path.join(root, 'out');
+  const script = path.join(root, 'final.mjs');
+  const study = pathToFileURL(path.join(packageRoot, 'eval/memory/study.mjs')).href;
+  // The signal arrives while the synchronous write of the complete results is under way; the write must finish, onAbort must
+  // not replace it with partial results, and the signal must not be dropped when the handlers go.
+  fs.writeFileSync(script, `import fs from 'node:fs';
+import { CATALOG, runStudy } from ${JSON.stringify(study)};
+const results = ${JSON.stringify(path.join(out, 'results.json'))};
+const write = fs.writeFileSync;
+fs.writeFileSync = function (file, ...rest) {
+  if (String(file) === results) { process.kill(process.pid, 'SIGTERM'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
+  return write.call(this, file, ...rest);
+};
+await runStudy({ root: ${JSON.stringify(out)}, catalog: { ...CATALOG, series: [CATALOG.series[1]] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: ${JSON.stringify(root)} });
+process.stdout.write('RETURNED\\n');
+`);
+  const child = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(child.status, 143, child.stderr);
+  assert.doesNotMatch(child.stdout, /RETURNED/);
+  const results = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8'));
+  assert.equal(results.partial, undefined, 'the complete results stay');
+  assert.ok(results.summary);
+  assert.equal(results.attempts.length, CATALOG.series[1].tasks.length);
+});
+
+test('a checkout Git cannot build makes that attempt invalid and the study continues', async t => {
   const root = path.join(directory(t), 'out');
-  const before = process.listenerCount('SIGTERM');
-  const seen = [];
-  const write = fs.writeFileSync;
-  t.mock.method(fs, 'writeFileSync', function (file, ...rest) {
-    if (String(file) === path.join(root, 'results.json')) seen.push(process.listenerCount('SIGTERM'));
-    return write.call(this, file, ...rest);
-  });
-  await runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t) });
-  t.mock.restoreAll();
-  assert.equal(seen.length, 1);
-  assert.ok(seen[0] > before, 'a signal during the write waits for it instead of killing the runner mid-write');
-  assert.equal(process.listenerCount('SIGTERM'), before, 'the handlers go once the results are written');
+  // Git refuses this origin as an option, so the second task's checkout fails part way through.
+  const result = await runStudy({ root, catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, dryRun: true, studyBase: directory(t),
+    originFor: (series, index) => index === 1 ? '--not-an-origin' : seriesOrigin(series.id) });
+  assert.equal(result.attempts.length, orders.tasks.length);
+  const failed = result.attempts[1];
+  assert.equal(failed.kind, 'setup-error');
+  assert.equal(failed.valid, false);
+  assert.deepEqual(failed.invalidReasons, ['fixture-setup-failed']);
+  assert.equal(failed.setupErrors[0].step, 'fixture');
+  assert.match(failed.error, /^setup failed: fixture: /);
+  assert.ok(result.attempts.filter((row, index) => index !== 1).every(row => row.valid && row.kind === 'dry-run'), 'the other tasks still run');
+  assert.equal(result.summary.arms.stateless.invalidAttempts, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'results.json'), 'utf8')).partial, undefined);
 });
 
 test('one runtime error makes a live batch ineligible, and the summary names that attempt', async t => {

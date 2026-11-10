@@ -177,17 +177,17 @@ test('collectCarryForward counts the notes it drops for size and for the file li
   const workspace = directory(t);
   const notes = path.join(workspace, 'docs', 'solutions', 'eval');
   fs.mkdirSync(notes, { recursive: true });
-  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 };
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
   fs.writeFileSync(path.join(notes, 'a-large.md'), Buffer.alloc(256 * 1024 + 1, 'x'));
   fs.writeFileSync(path.join(notes, 'a-small.md'), 'note\n');
   assert.deepEqual(Object.keys(collectCarryForward(workspace, dropped)), ['docs/solutions/eval/a-small.md']);
-  assert.deepEqual(dropped, { oversized: 1, overFileLimit: 0, unsafe: 0 });
+  assert.deepEqual(dropped, { oversized: 1, overFileLimit: 0, unsafe: 0, nonRegular: 0 });
   for (let i = 0; i < 205; i++) fs.writeFileSync(path.join(notes, `n${String(i).padStart(3, '0')}.md`), 'n\n');
-  const more = { oversized: 0, overFileLimit: 0, unsafe: 0 };
+  const more = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
   const carried = collectCarryForward(workspace, more);
   // 207 files: the first 200 by path are considered (the large one among them), the last 7 are past the limit.
   assert.equal(Object.keys(carried).length, 199);
-  assert.deepEqual(more, { oversized: 1, overFileLimit: 7, unsafe: 0 });
+  assert.deepEqual(more, { oversized: 1, overFileLimit: 7, unsafe: 0, nonRegular: 0 });
   assert.equal(carried['docs/solutions/eval/n204.md'], undefined);
 });
 
@@ -202,13 +202,83 @@ test('collectCarryForward cuts at the first 200 paths by code point, and counts 
   fs.writeFileSync(path.join(notes, '0\\a.md'), 'x\n');
   fs.mkdirSync(path.join(notes, '.git'));
   fs.writeFileSync(path.join(notes, '.git', 'HEAD'), 'x\n');
-  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0 };
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
   const carried = collectCarryForward(workspace, dropped);
-  assert.deepEqual(dropped, { oversized: 0, overFileLimit: 1, unsafe: 2 });
+  assert.deepEqual(dropped, { oversized: 0, overFileLimit: 1, unsafe: 2, nonRegular: 0 });
   assert.equal(Object.keys(carried).length, 200);
   assert.ok(carried['docs/solutions/eval/Z.md'], 'Z.md is within the first 200 by code point');
   assert.ok(carried['docs/solutions/eval/n198.md'], 'unsafe paths take no slot');
   assert.equal(carried['docs/solutions/eval/n199.md'], undefined, 'the last path by code point is past the limit');
+});
+
+test('collectCarryForward refuses names Git would refuse or control, counting each as unsafe, and the rest still commit', { skip: !posix && 'trailing dots, spaces and colons in file names' }, t => {
+  const workspace = directory(t);
+  const notes = path.join(workspace, 'docs', 'solutions', 'eval');
+  fs.mkdirSync(notes, { recursive: true });
+  // Each passes safePath, but core.protectNTFS (on by default everywhere) makes `git add` refuse the first group, and the
+  // second are Git control files: an agent-written `.gitignore` of `*` would silently keep the other notes out of the commit.
+  const directories = ['.GIT', '.Git', '.git.', '.git ', '.git. .', '.git:stream', 'git~1', 'GIT~2', 'gitmod~1', '.g\u200cit', '.HARNESS'];
+  const controlFiles = ['.gitignore', '.gitmodules', '.gitattributes', '.GITIGNORE', '.gitignore.'];
+  for (const name of directories) {
+    fs.mkdirSync(path.join(notes, name));
+    fs.writeFileSync(path.join(notes, name, 'n.md'), 'n\n');
+  }
+  for (const name of controlFiles) fs.writeFileSync(path.join(notes, name), '*\n');
+  fs.writeFileSync(path.join(notes, 'ok.md'), 'ok\n');
+  fs.writeFileSync(path.join(notes, '.gitkeep'), '');
+  fs.mkdirSync(path.join(notes, 'git~x'));
+  fs.writeFileSync(path.join(notes, 'git~x', 'n.md'), 'n\n');
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
+  const carried = collectCarryForward(workspace, dropped);
+  assert.deepEqual(Object.keys(carried).sort(), ['docs/solutions/eval/.gitkeep', 'docs/solutions/eval/git~x/n.md', 'docs/solutions/eval/ok.md']);
+  assert.deepEqual(dropped, { oversized: 0, overFileLimit: 0, unsafe: directories.length + controlFiles.length, nonRegular: 0 });
+  // What is carried commits in the next checkout.
+  const next = path.join(directory(t), 'next');
+  for (const [file, content] of Object.entries(carried)) {
+    fs.mkdirSync(path.dirname(path.join(next, file)), { recursive: true });
+    fs.writeFileSync(path.join(next, file), content);
+  }
+  const git = args => spawnSync('git', args, { cwd: next, encoding: 'utf8' });
+  assert.equal(git(['init', '-q']).status, 0);
+  assert.equal(git(['add', '.']).status, 0);
+  assert.deepEqual(git(['ls-files']).stdout.trim().split('\n').sort(), Object.keys(carried).sort());
+});
+
+test('collectCarryForward counts entries that are not regular files before the file-limit cut, and gives them no slot', { skip: !posix && 'symlinks and FIFOs' }, t => {
+  const workspace = directory(t);
+  const notes = path.join(workspace, 'docs', 'solutions', 'eval');
+  fs.mkdirSync(notes, { recursive: true });
+  for (let i = 0; i < 200; i++) fs.writeFileSync(path.join(notes, `n${String(i).padStart(3, '0')}.md`), 'n\n');
+  // Both sort before every note, so they would take slots if they were cut first.
+  fs.symlinkSync(path.join(notes, 'n000.md'), path.join(notes, 'a-link.md'));
+  assert.equal(spawnSync('mkfifo', [path.join(notes, 'a-fifo.md')]).status, 0);
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
+  const carried = collectCarryForward(workspace, dropped);
+  assert.deepEqual(dropped, { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 2 });
+  assert.equal(Object.keys(carried).length, 200);
+  assert.ok(carried['docs/solutions/eval/n199.md']);
+});
+
+test('collectCarryForward does not follow a note swapped for a symlink after it was listed', { skip: !posix && 'symlinks' }, t => {
+  const workspace = directory(t);
+  const notes = path.join(workspace, 'docs', 'solutions', 'eval');
+  fs.mkdirSync(notes, { recursive: true });
+  const secret = path.join(directory(t), 'secret');
+  fs.writeFileSync(secret, 'secret\n');
+  const note = path.join(notes, 'note.md');
+  fs.writeFileSync(note, 'note\n');
+  // The note becomes a link to a file outside just before it is opened for reading, whichever call opens it.
+  let swapped = false;
+  const swap = file => { if (!swapped && file === note) { swapped = true; fs.rmSync(note); fs.symlinkSync(secret, note); } };
+  const { openSync, readFileSync } = fs;
+  t.mock.method(fs, 'openSync', function (file, ...rest) { swap(file); return openSync.call(this, file, ...rest); });
+  t.mock.method(fs, 'readFileSync', function (file, ...rest) { swap(file); return readFileSync.call(this, file, ...rest); });
+  const dropped = { oversized: 0, overFileLimit: 0, unsafe: 0, nonRegular: 0 };
+  const carried = collectCarryForward(workspace, dropped);
+  t.mock.restoreAll();
+  assert.equal(swapped, true);
+  assert.deepEqual(carried, {});
+  assert.equal(dropped.nonRegular, 1);
 });
 
 test('memory limits apply to each target on its own, and structural caches keyed by an earlier checkout are not carried', t => {

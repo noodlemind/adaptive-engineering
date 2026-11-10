@@ -428,20 +428,28 @@ test('study counts failures and scope violations across fresh arm workspaces', a
   assert.ok(result.provenance.protocolHash);
 });
 
-test('the context study writes its results while its signal handlers are still installed', async t => {
+test('a SIGTERM during the context study\'s final write leaves complete results and still ends the runner with 143', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
   const root = directory(t);
-  const before = process.listenerCount('SIGTERM');
-  const seen = [];
-  const write = fs.writeFileSync;
-  t.mock.method(fs, 'writeFileSync', function (file, ...rest) {
-    if (String(file) === path.join(root, 'results.json')) seen.push(process.listenerCount('SIGTERM'));
-    return write.call(this, file, ...rest);
-  });
-  await runStudy({ root, cases: [simple], policies: ['legacy'], repeats: 1, dryRun: true });
-  t.mock.restoreAll();
-  assert.equal(seen.length, 1);
-  assert.ok(seen[0] > before, 'a signal during the write waits for it instead of killing the runner mid-write');
-  assert.equal(process.listenerCount('SIGTERM'), before);
+  const out = path.join(root, 'out');
+  const script = path.join(root, 'final.mjs');
+  const study = pathToFileURL(path.resolve(import.meta.dirname, '../eval/context/study.mjs')).href;
+  fs.writeFileSync(script, `import fs from 'node:fs';
+import { runStudy } from ${JSON.stringify(study)};
+const results = ${JSON.stringify(path.join(out, 'results.json'))};
+const write = fs.writeFileSync;
+fs.writeFileSync = function (file, ...rest) {
+  if (String(file) === results) { process.kill(process.pid, 'SIGTERM'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
+  return write.call(this, file, ...rest);
+};
+await runStudy({ root: ${JSON.stringify(out)}, cases: [${JSON.stringify(simple)}], policies: ['legacy'], repeats: 1, dryRun: true });
+process.stdout.write('RETURNED\\n');
+`);
+  const child = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(child.status, 143, child.stderr);
+  assert.doesNotMatch(child.stdout, /RETURNED/);
+  const results = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8'));
+  assert.ok(results.summary, 'the complete results were written');
+  assert.equal(results.attempts.length, 1);
 });
 
 test('dry run and unavailable model remain inconclusive and never count as accepted tasks', async (t) => {
