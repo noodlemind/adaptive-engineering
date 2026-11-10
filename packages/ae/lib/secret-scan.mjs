@@ -15,9 +15,15 @@ const PATTERNS = [
   { id: 'slack-token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
   {
     id: 'generic-api-key',
-    re: /\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|access[_-]?token)["']?\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
+    // `(?<![A-Za-z0-9])` stands in for the old `\b(?:[A-Za-z0-9]+[_-])*` prefix, which backtracked
+    // superlinearly on `a-a-a-...`. It matches everything the prefix did (the keyword is preceded by a
+    // separator or a non-word character either way) but starts the match at the keyword, not the prefix.
+    re: /(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|access[_-]?token)["']?\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
   },
 ];
+
+/** Longest input `secretSpans` and `maskSecrets` scan; the rest is withheld. */
+export const SECRET_SCAN_CAP = 8192;
 
 export function scanSecrets(text) {
   const hits = [];
@@ -53,11 +59,21 @@ export function redactSecrets(text) {
  * on text an earlier pattern already masked: masking one pattern after another
  * breaks the later, wider match (`client_secret=AKIA...-rest` loses its
  * `client_secret` match once the AWS key is masked) and leaves the rest of the
- * credential visible.
+ * credential visible. Input past `SECRET_SCAN_CAP` is withheld as one
+ * `over-length` span.
  */
 export function secretSpans(text) {
-  const s = String(text ?? '');
-  const spans = [];
+  const full = String(text ?? '');
+  // Bound the scan (some patterns still cost more than linear on adversarial input). Everything past the
+  // cap is withheld as one span. The cut moves back to the start of the non-space run that holds it, so a
+  // token the cap would split is withheld whole rather than shown as a prefix too short to match.
+  let cut = full.length;
+  if (full.length > SECRET_SCAN_CAP) {
+    cut = SECRET_SCAN_CAP;
+    while (cut > 0 && !/\s/.test(full[cut - 1])) cut -= 1;
+  }
+  const s = full.slice(0, cut);
+  const spans = cut < full.length ? [{ id: 'over-length', start: cut, end: full.length, order: PATTERNS.length }] : [];
   PATTERNS.forEach(({ id, re }, order) => {
     for (const match of s.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
       if (match[0]) spans.push({ id, start: match.index, end: match.index + match[0].length, order });

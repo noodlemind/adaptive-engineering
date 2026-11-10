@@ -145,11 +145,13 @@ function resolveEpisodeFile(workspace, copilotHome, p, home) {
  * actually exists on disk — as a `{ full, root }` pair so the caller can
  * containment-verify the read against the matched root — or null if the path
  * escapes every root or exists in none of them. */
+/** `{ text }` when the file matches `sha256` (the verified bytes, so a caller parses what was hashed, not a
+ * second read), `{ text: null }` when no hash is recorded (nothing read), or null on a failed read or mismatch. */
 function episodeHashMatches(full, root, sha256) {
-  if (!sha256) return true;
+  if (!sha256) return { text: null };
   const text = readFileNoFollow(full, { root });
-  if (text === null) return false;
-  return crypto.createHash('sha256').update(text).digest('hex') === sha256;
+  if (text === null) return null;
+  return crypto.createHash('sha256').update(text).digest('hex') === sha256 ? { text } : null;
 }
 
 /**
@@ -162,7 +164,7 @@ function episodeHashMatches(full, root, sha256) {
 function episodeAnswer(workspace, copilotHome, e, home) {
   const hit = firstExistingEpisodeFile(workspace, copilotHome, e.path, home, e.sha256);
   if (!hit) return null;
-  const text = readFileNoFollow(hit.full, { root: hit.root });
+  const text = hit.text ?? readFileNoFollow(hit.full, { root: hit.root });
   const fm = text?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
   return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
 }
@@ -170,8 +172,9 @@ function episodeAnswer(workspace, copilotHome, e, home) {
 function firstExistingEpisodeFile(workspace, copilotHome, p, home, sha256) {
   for (const { full, root } of resolveEpisodeFile(workspace, copilotHome, p, home)) {
     if (!fs.existsSync(full)) continue;
-    if (!episodeHashMatches(full, root, sha256)) continue;
-    return { full, root };
+    const verified = episodeHashMatches(full, root, sha256);
+    if (!verified) continue;
+    return { full, root, text: verified.text };
   }
   return null;
 }

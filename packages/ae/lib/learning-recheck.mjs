@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { readFileNoFollow, readFileTailNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
 import { redactSecrets, secretSpans, maskSpans } from './secret-scan.mjs';
+import { createRedactor } from './redact.mjs';
 import { foldRuns, RUNS_FILE } from './run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
 import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
@@ -21,17 +22,38 @@ export const RECHECK_DUE_CLUSTER_PLANS = 3;
 export const RECHECK_EXCERPT_CAP = 400;
 const RECHECK_MASK_WINDOW = 8 * RECHECK_EXCERPT_CAP;
 const RECHECK_LONG_TOKEN = 1024;
-// CSI (7- and 8-bit, any parameter bytes), OSC to BEL or ST (7- and 8-bit, unterminated too),
-// and the remaining two- and three-byte escapes such as the `\x1b(B` charset reset.
-const ANSI_ESCAPE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -\/]*[0-~]?/g;
-// C0 and C1 controls and DEL break words, as whitespace does.
-const EXCERPT_CONTROLS = /[\x00-\x1f\x7f-\x9f]/g;
+// Complete escape sequences only: CSI (7- and 8-bit, any parameter bytes), and OSC, DCS, SOS, PM and APC
+// strings closed by BEL or ST (7- and 8-bit). A string body stops at the next introducer, so stripping stays
+// linear. Any other ESC, 8-bit introducer or ST (a bare ESC, `\x1b(B`, an unterminated string) is not
+// stripped with the bytes after it: `BARE_ESCAPE` turns it into a `SEP`, so `\x1bBearer` keeps its `B`.
+const ANSI_ESCAPE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b[P\]X^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x90\x98\x9b-\x9f]*(?:\x07|\x1b\\|\x9c)/g;
+const BARE_ESCAPE = /[\x1b\x90\x98\x9b-\x9f]/g;
+// C0 and C1 controls and DEL, other than \t \n \v \f \r, render as nothing: like invisible characters
+// they are read both removed and as a word break (`api\x00_key` is `api_key`), never only as a space.
+const EXCERPT_CONTROLS = /[\x00-\x08\x0e-\x1f\x7f-\x9f]/g;
 // Characters that render as nothing: format characters (zero-width, soft hyphen, bidi controls and the rest)
 // and default-ignorable code points (variation selectors, Hangul fillers). The excerpt's private-use
 // sentinel is listed too, so input cannot forge one.
-const EXCERPT_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]/gu;
-// Stands in for a run of invisible characters until both readings (removed, and split) are taken.
+const EXCERPT_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]+/gu;
+// Stands in for a run of invisible characters (or controls, or a bare escape) until both readings (removed, and split) are taken.
 const SEP = '\ue000';
+const WITHHELD_LINE = '[withheld: credential-like]';
+// Fail-closed line rule. Pattern masking alone kept leaking through new input shapes (a bare ESC eating a
+// keyword's first letter, a control or a homoglyph inside it, a keyword wrapped onto the previous line), so a
+// line is withheld whole when its skeleton (escapes stripped, NFKC, lowercased, every character outside
+// [a-z0-9] deleted) holds any of these. Short ones (`npm`, `ghp`, `basic`, `eyj`) and the skeleton's joined
+// words over-withhold ordinary lines such as "npm test failed": accepted, since an excerpt or a title is
+// only a hint for judgment and the record it came from stays readable.
+const CREDENTIAL_WORDS = ['bearer', 'authorization', 'basic', 'token', 'secret', 'password', 'passwd', 'apikey', 'accesskey', 'privatekey', 'credential', 'ghp', 'gho', 'ghs', 'ghu', 'ghr', 'githubpat', 'npm', 'akia', 'asia', 'aiza', 'xox', 'glpat', 'eyj'];
+const CREDENTIAL_WORD = new RegExp(CREDENTIAL_WORDS.join('|'));
+// How much of the previous line's skeleton is carried into the next, so a keyword split across lines is seen.
+const CARRY = Math.max(...CREDENTIAL_WORDS.map(word => word.length)) - 1;
+const LINE_BREAK = /\r\n|[\n\r\u2028\u2029]/;
+const TOKEN_RUN = /[A-Za-z0-9+\/_=-]{20,}/g;
+// A letter outside ASCII touching an ASCII letter (`Веаrer` with Cyrillic В, е and а).
+const MIXED_SCRIPT = /[A-Za-z][^\P{L}A-Za-z]|[^\P{L}A-Za-z][A-Za-z]/u;
+const UNSEEN = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]+/gu;
+const redactText = createRedactor({ env: {} }).redactText;
 const PRIVATE_KEY = /PRIVATE\s*KEY/;
 // Fields dropped from the front of a cut masking window. The widest keyword context ahead of a value
 // in secret-scan's patterns is three fields (basic-auth: `Authorization"`, `:`, `"Basic`), and the cut
@@ -111,22 +133,74 @@ function readJson(root, rel) {
  * forms, in 7- and 8-bit encodings) are stripped, so a colour code or
  * hyperlink cannot sit between a keyword and its value. NFKC folds fullwidth
  * and compatibility forms (`＝`, `ｋｅｙ`) to the ASCII the patterns match.
- * C0 and C1 controls become spaces. Every run of invisible characters
+ * A bare ESC and C0 and C1 controls other than whitespace become `SEP`, as
+ * invisible characters do. Every run of invisible characters
  * becomes one `SEP`, and whitespace runs
  * (with any `SEP` touching them) collapse to one space, so padding cannot push
  * a keyword such as `client_secret=` or `Authorization: Bearer` out of the
  * masking window while its value stays in the tail. Every step is linear.
  */
 function normalizeExcerpt(raw) {
-  return raw.replace(ANSI_ESCAPE, '').normalize('NFKC').replace(EXCERPT_CONTROLS, ' ').replace(EXCERPT_INVISIBLE, SEP)
-    .replace(/\ue000+/g, SEP).replace(/\ue000?\s[\s\ue000]*/g, ' ').replace(/^[ \ue000]+|[ \ue000]+$/g, '');
+  return raw.replace(ANSI_ESCAPE, '').replace(BARE_ESCAPE, SEP).normalize('NFKC').replace(EXCERPT_CONTROLS, SEP).replace(EXCERPT_INVISIBLE, SEP)
+    .replace(/\ue000?\s[\s\ue000]*/g, ' ').replace(/^[ \ue000]+|[ \ue000]+$/g, '');
 }
+
+// `://` with an `@` after it (URL credentials), by index so a line of many `://` stays linear.
+const hasUserinfo = text => { const at = text.indexOf('://'); return at !== -1 && text.indexOf('@', at + 3) !== -1; };
+const hasMixedRun = text => {
+  for (const [run] of text.matchAll(TOKEN_RUN)) if (/[A-Za-z]/.test(run) && /[0-9]/.test(run)) return true;
+  return false;
+};
+
+/**
+ * The fail-closed line rule. Lines split on \n, \r, U+2028 and U+2029, after
+ * complete escape sequences are stripped. A line is withheld when its
+ * skeleton, with the tail of the previous non-empty line's skeleton in front
+ * (so `Authorization: Bearer` wrapped before its value still counts), holds a
+ * credential word; when it holds `://` and later `@`; when it holds a run of
+ * 20 or more token characters mixing letters and digits; or when a non-ASCII
+ * letter touches an ASCII one. The last three are read on the line as given
+ * and with controls and invisible characters removed. Every check is linear.
+ * Returns each line with `withheld` set; withheld lines must never be shown.
+ */
+function screenLines(raw) {
+  let carry = '';
+  return raw.replace(ANSI_ESCAPE, '').replace(BARE_ESCAPE, SEP).split(LINE_BREAK).map(line => {
+    const folded = line.normalize('NFKC');
+    const flat = folded.replace(UNSEEN, '');
+    const skeleton = folded.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const withheld = CREDENTIAL_WORD.test(carry + skeleton) || hasUserinfo(line) || hasUserinfo(flat)
+      || hasMixedRun(line) || hasMixedRun(flat) || MIXED_SCRIPT.test(flat);
+    if (skeleton) carry = skeleton.slice(-CARRY);
+    return { line, withheld };
+  });
+}
+
+/** `raw` with every withheld line replaced by the marker (a run of them by one), lines rejoined with \n. */
+function withholdLines(raw) {
+  const out = [];
+  for (const { line, withheld } of screenLines(raw)) {
+    if (!withheld) out.push(line);
+    else if (out.at(-1) !== WITHHELD_LINE) out.push(WITHHELD_LINE);
+  }
+  return out.join('\n');
+}
+
+// A private-key header, read with controls and invisible characters removed, before and after escapes are stripped.
+const hasPrivateKey = raw => [raw, raw.replace(ANSI_ESCAPE, '')].some(text => PRIVATE_KEY.test(text.replace(UNSEEN, '').normalize('NFKC')));
+// Anything visible once escapes, controls and invisible characters are set aside.
+const VISIBLE = /[^\s\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]/u;
 
 /**
  * Bounded, secret-screened tail of a failing check's retained output.
  *
- * Any private-key header withholds it, checked on the raw text without
- * controls or invisible characters and on the fully normalized text, before
+ * Fail closed first: any line the line rule (`screenLines`) flags is withheld
+ * whole as `[withheld: credential-like]` before anything else reads it. The
+ * pattern masking below is a second layer over what is left, and redact.mjs's
+ * patterns a third over the kept tail.
+ *
+ * Any private-key header withholds it, checked with controls and invisible
+ * characters removed, before and after escapes are stripped, and before
  * any token is withheld or window taken, so neither a colour code nor a
  * zero-width character inside `PRIVATE KEY` hides the key body.
  *
@@ -145,10 +219,11 @@ function normalizeExcerpt(raw) {
  * are then kept and screened once more.
  */
 export function failureExcerpt(check) {
-  const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && value.trim());
+  // Normalize each candidate before choosing, so stderr holding only escapes or controls does not hide stdout.
+  const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && VISIBLE.test(value.replace(ANSI_ESCAPE, '')));
   if (!raw) return null;
-  const text = normalizeExcerpt(raw);
-  if (PRIVATE_KEY.test(raw.replace(/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, '').normalize('NFKC')) || PRIVATE_KEY.test(text.replaceAll(SEP, ''))) return '[withheld: private-key]';
+  if (hasPrivateKey(raw)) return '[withheld: private-key]';
+  const text = normalizeExcerpt(withholdLines(raw));
   // Split rather than match `\S{1024,}`: that regex rescans every run just under the threshold.
   const flat = text.split(' ').map(run => (run.length >= RECHECK_LONG_TOKEN ? '[withheld: long-token]' : run)).join(' ');
   const cut = flat.length > RECHECK_MASK_WINDOW;
@@ -168,7 +243,24 @@ export function failureExcerpt(check) {
     const space = joined.indexOf(' ', from);
     from = space === -1 ? joined.length : space + 1;
   }
-  return redactSecrets(maskSpans(joined, spans, from).slice(-RECHECK_EXCERPT_CAP)) || null;
+  return redactText(redactSecrets(maskSpans(joined, spans, from).slice(-RECHECK_EXCERPT_CAP))).slice(-RECHECK_EXCERPT_CAP) || null;
+}
+
+/**
+ * A finding title as shown: capped at `FINDING_TITLE_SCAN_CAP` before it is
+ * screened, withheld whole as `[withheld: credential-like]` when any line
+ * trips the line rule or it holds a private-key header, otherwise normalized
+ * like an excerpt (invisible characters removed), pattern-screened in both
+ * readings, made inert and cut to `FINDING_TITLE_CAP`.
+ */
+function findingTitle(value) {
+  const capped = value.trim().slice(0, FINDING_TITLE_SCAN_CAP);
+  if (!capped) return '';
+  if (hasPrivateKey(capped) || screenLines(capped).some(line => line.withheld)) return WITHHELD_LINE;
+  const normalized = normalizeExcerpt(capped);
+  const joined = normalized.replaceAll(SEP, ''), split = normalized.replaceAll(SEP, ' ');
+  const screened = redactSecrets(joined) !== joined ? redactSecrets(joined) : redactSecrets(split) !== split ? redactSecrets(split) : joined;
+  return inertLine(redactText(screened)).slice(0, FINDING_TITLE_CAP);
 }
 
 /**
@@ -287,7 +379,7 @@ function findingClusters(workspace) {
         const row = clusters.get(key) || { id: findingClusterId(key), category, file: inertLine(file).slice(0, 512), plans: new Set(), findings: 0, titles: [] };
         row.plans.add(plan);
         row.findings += 1;
-        const title = typeof finding.title === 'string' ? inertLine(redactSecrets(finding.title.trim().slice(0, FINDING_TITLE_SCAN_CAP))).slice(0, FINDING_TITLE_CAP) : '';
+        const title = typeof finding.title === 'string' ? findingTitle(finding.title) : '';
         if (title && row.titles.length < 3 && !row.titles.includes(title)) row.titles.push(title);
         clusters.set(key, row);
       }

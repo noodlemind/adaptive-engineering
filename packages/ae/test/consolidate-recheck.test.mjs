@@ -188,12 +188,18 @@ test('failing-output excerpts are bounded and secret-scanned', t => {
   f.learn('runtime', 'baseline');
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
   f.evidence(PLAN_A, [{ id: 'leaky', status: 'failed', stderr: `token=${GITHUB_TOKEN}` }, { id: 'noisy', status: 'failed', stdout: 'x'.repeat(5000) }]);
-  f.evidence(PLAN_B, [{ id: 'leaky', status: 'failed', stderr: `Authorization: Bearer ${'z'.repeat(30)}\nline two ${GITHUB_TOKEN}` }, { id: 'noisy', status: 'failed', stdout: `${'y'.repeat(5000)}\u0000tail` }]);
+  f.evidence(PLAN_B, [{ id: 'leaky', status: 'failed', stderr: `Authorization: Bearer ${'z'.repeat(30)}\nline two ${GITHUB_TOKEN}` }, { id: 'noisy', status: 'failed', stdout: `${'y '.repeat(2500)}\u0000tail` }]);
   const { recheck } = f.packet({ recheck: true });
   const text = JSON.stringify(recheck);
   assert.equal(text.includes(GITHUB_TOKEN), false);
   assert.equal(text.includes('z'.repeat(30)), false);
-  assert.match(recheck.failure_clusters.find(c => c.check === 'leaky').excerpt, /\[redacted: (github-token|bearer-token)\]/, 'secrets are masked in place');
+  assert.equal(recheck.failure_clusters.find(c => c.check === 'leaky').excerpt, '[withheld: credential-like]', 'the latest (PLAN_B) output is withheld');
+  // The cluster shows only the latest output, so screen PLAN_A's output directly too.
+  for (const stderr of [`token=${GITHUB_TOKEN}`, `Authorization: Bearer ${'z'.repeat(30)}\nline two ${GITHUB_TOKEN}`]) {
+    const excerpt = failureExcerpt({ stderr });
+    assert.equal(excerpt.includes(GITHUB_TOKEN.slice(4, 12)) || excerpt.includes('z'.repeat(8)), false, excerpt);
+    assert.equal(excerpt, '[withheld: credential-like]');
+  }
   const noisy = recheck.failure_clusters.find(c => c.check === 'noisy').excerpt;
   assert.ok(noisy.length <= RECHECK_EXCERPT_CAP);
   assert.match(noisy, /tail$/, 'the tail of the output is kept');
@@ -308,7 +314,7 @@ test('R4: excerpts are masked over the whole output before the tail is taken', (
   assert.equal(cut.includes(password.slice(-6)), false, 'no fragment survives the cut');
   assert.ok(cut.length <= RECHECK_EXCERPT_CAP);
   const whole = failureExcerpt({ stderr: `failed: postgres://admin:${password}@db.internal:5432/app` });
-  assert.match(whole, /^failed: \[redacted: connection-string\]/, 'the surrounding text is kept');
+  assert.equal(whole, '[withheld: credential-like]', 'a line with URL credentials is withheld whole');
   assert.equal(whole.includes(password), false);
   const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIEowIBAAKCAQEA'.repeat(60)}\n-----END RSA PRIVATE KEY-----`;
   assert.equal(failureExcerpt({ stderr: key }), '[withheld: private-key]');
@@ -431,10 +437,10 @@ test('whitespace padding cannot push a secret keyword out of the masking window 
   for (const pad of [' ', '\n', '\t \r\n']) {
     const clientSecret = failureExcerpt({ stderr: `client_secret=${pad.repeat(5000)}${secret} done` });
     assert.equal(clientSecret.includes(secret), false, `client_secret value leaked with ${JSON.stringify(pad)} padding`);
-    assert.match(clientSecret, /\[redacted: [a-z-]+\] done$/);
+    assert.match(clientSecret, /\[withheld: credential-like\]$/);
     const bearer = failureExcerpt({ stderr: `Authorization: Bearer${pad.repeat(5000)}${token} done` });
     assert.equal(bearer.includes(token), false, `bearer token leaked with ${JSON.stringify(pad)} padding`);
-    assert.match(bearer, /\[redacted: [a-z-]+\] done$/);
+    assert.match(bearer, /\[withheld: credential-like\]$/);
   }
 });
 
@@ -508,10 +514,12 @@ test('ANSI colour codes between a keyword and its value do not defeat masking', 
 test('a secret longer than the masking window is withheld whole, not leaked by its tail', () => {
   const clientSecret = failureExcerpt({ stderr: `client_secret=${'Zx9'.repeat(1100)} done` });
   assert.equal(clientSecret.includes('Zx9Zx9'), false, clientSecret);
-  assert.match(clientSecret, /\[withheld: long-token\] done$/);
+  assert.equal(clientSecret, '[withheld: credential-like]');
   const bearer = failureExcerpt({ stderr: `Authorization: Bearer ${'q'.repeat(3300)} done` });
   assert.equal(bearer.includes('qqqq'), false, bearer);
-  assert.match(bearer, /\[withheld: long-token\] done$/);
+  assert.equal(bearer, '[withheld: credential-like]');
+  assert.equal(failureExcerpt({ stderr: `ran ${'Zx9'.repeat(1100)} done` }), '[withheld: credential-like]', 'a long mixed run alone is withheld');
+  assert.equal(failureExcerpt({ stderr: `ran ${'Zx'.repeat(1100)} done` }), 'ran [withheld: long-token] done', 'a long run without digits is withheld as a long token');
   assert.equal(failureExcerpt({ stderr: `short ${'w'.repeat(1023)} ok` }).includes('w'.repeat(300)), true, 'runs under the threshold are kept');
 });
 
@@ -574,7 +582,7 @@ test('C2: a credential whose prefix matches another pattern is masked whole in t
   for (const stderr of [`failed: client_secret=AKIAABCDEFGHIJKLMNOP${rest} done`, `failed: Authorization: Bearer AKIAABCDEFGHIJKLMNOP${rest} done`]) {
     const excerpt = failureExcerpt({ stderr });
     assert.equal(excerpt.includes('Sensitive'), false, excerpt);
-    assert.match(excerpt, /^failed: .*\[redacted: [a-z-]+\] done$/);
+    assert.equal(excerpt, '[withheld: credential-like]');
   }
 });
 
@@ -592,8 +600,8 @@ test('R1: masking shrinkage cannot pull a value whose keyword was cut off the wi
       assert.equal(out?.includes('SuperSecret') || out?.includes('7890abcdef'), false, `shift ${shift}: ${out}`);
     }
   }
-  // An uncut window keeps its head.
-  assert.equal(failureExcerpt({ stderr: `head Bearer ${secret} ${jwt}` }), 'head [redacted: bearer-token] [redacted: jwt]');
+  // A line naming a credential is withheld whole; lines around it are kept.
+  assert.equal(failureExcerpt({ stderr: `head\nBearer ${secret} ${jwt}\nfoot` }), 'head [withheld: credential-like] foot');
 });
 
 test('R3: invisible characters and fullwidth forms inside a keyword do not split it from its value', () => {
@@ -608,7 +616,7 @@ test('R3: invisible characters and fullwidth forms inside a keyword do not split
     }
   }
   const fullwidth = failureExcerpt({ stderr: `failed: api_key＝${key} done` });
-  assert.equal(fullwidth, 'failed: [redacted: generic-api-key] done');
+  assert.equal(fullwidth, '[withheld: credential-like]');
   assert.equal(failureExcerpt({ stderr: 'tab\tand\nnew\r\nline kept apart' }), 'tab and new line kept apart', 'real whitespace still separates words');
 });
 
@@ -627,5 +635,90 @@ test('R2: a very long finding title is capped before it is screened, and a secre
   assert.ok(cluster.titles.every(title => title.length <= 120));
   assert.ok(cluster.titles.some(title => title.startsWith('Slow title a-a-')));
   assert.equal(JSON.stringify(cluster).includes('A1b2C3d4E5'), false, 'the secret the cap cuts is still redacted');
-  assert.ok(cluster.titles.includes('[redacted: github-token]'));
+  assert.ok(cluster.titles.includes('[withheld: credential-like]'));
+});
+
+// Third review pass: fail-closed line rule (F1-F7, F9).
+
+const T = 'Q7wE9rT2yU4iO6pA8sD1fG3hJ5kL0zX2cV4b';
+const leaksT = text => { for (let i = 0; i + 8 <= T.length; i += 1) if (String(text).includes(T.slice(i, i + 8))) return true; return false; };
+
+test('F1-F3: every reviewed input shape withholds the line, and no 8-character piece of the token survives', () => {
+  assert.equal(T.length, 36);
+  const shapes = {
+    'bare ESC before Bearer': `curl failed \x1bBearer ${T}`,
+    'bare ESC before npm_': `\x1bnpm_${T}`,
+    'NUL inside api_key': `api\x00_key=${T}`,
+    'backspace inside Bearer': `Bea\x08rer ${T}`,
+    'Cyrillic homoglyphs': `Веаrer ${T}`,
+    'Unicode hyphen after ghp': `ghp‐${T}`,
+    'percent-encoded separator': `api_key%3D${T}`,
+    'client_secret with a dot': `client_secret=${T.slice(0, 22)}.${T.slice(22)}`,
+    'Bearer wrapped onto the next line': `Authorization: Bearer\n${T}`,
+    'Bearer wrapped with CRLF and a blank line': `curl -H "Authorization: Bear\r\n\r\ner ${T}"`,
+    'keyword before a line separator': `password: ${T}`,
+  };
+  for (const [name, stderr] of Object.entries(shapes)) {
+    const excerpt = failureExcerpt({ stderr });
+    assert.equal(leaksT(excerpt), false, `${name}: ${JSON.stringify(excerpt)}`);
+    assert.match(excerpt, /\[withheld: credential-like\]/, name);
+    assert.equal(leaksT(failureExcerpt({ stderr: `ok before\n${stderr}\nok after` })), false, `${name} between clean lines`);
+  }
+  // The rule over-withholds by design; clean lines around a withheld one are kept.
+  assert.equal(failureExcerpt({ stderr: 'build ok\nnpm test failed\nAssertionError: expected 2 to equal 3' }), 'build ok [withheld: credential-like] AssertionError: expected 2 to equal 3');
+  assert.equal(failureExcerpt({ stderr: 'see https://user@example.test/x' }), '[withheld: credential-like]', '`://` then `@`');
+});
+
+test('F2: a bare ESC becomes a separator, not a stripped pair, while complete sequences are still stripped', () => {
+  assert.equal(failureExcerpt({ stderr: 'red \x1b[31mtext\x1b[0m and \x1b]8;;https://example.test\x07link\x1b]8;;\x07 and \x1bPq#0\x1b\\done' }), 'red text and link and done');
+  assert.equal(failureExcerpt({ stderr: 'one\x1btwo' }), 'onetwo', 'a bare ESC keeps the next character');
+});
+
+test('F7: stderr holding only escapes or controls does not hide stdout', () => {
+  assert.equal(failureExcerpt({ stderr: '\x1b[31m\x1b[0m\x00​', stdout: 'real failure on stdout' }), 'real failure on stdout');
+  assert.equal(failureExcerpt({ stderr: '\x1b[2K\r', stdout: '  ', message: 'Timed out after 60s' }), 'Timed out after 60s');
+  assert.equal(failureExcerpt({ stderr: '\x1b[0m' }), null);
+});
+
+test('F1: finding titles go through the same normalization and fail-closed rule', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const finding = (file, title) => ({ file, line: 1, title, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
+  const titles = {
+    'src/a.mjs': `Leaked Authorization: Bearer\n${T}`,
+    'src/b.mjs': `client_secret=\n${T}`,
+    'src/c.mjs': `Leaks api​_key ${T}`,
+    'src/d.mjs': `Leaks ａｐｉ＿ｋｅｙ＝${T}`,
+    'src/e.mjs': `password=${T}`,
+  };
+  for (const [file, title] of Object.entries(titles)) {
+    f.observation(PLAN_A, 'security', [finding(file, title)]);
+    f.observation(PLAN_B, 'security', [finding(file, 'Same file, clean title')]);
+  }
+  f.observation(PLAN_A, 'style', [finding('src/f.mjs', `Ｆｕｌｌｗｉｄｔｈ​ name ${'x'.repeat(200)}`)]);
+  f.observation(PLAN_B, 'style', [finding('src/f.mjs', 'Other')]);
+  const { recheck } = f.packet({ recheck: true });
+  assert.equal(leaksT(JSON.stringify(recheck)), false);
+  for (const file of Object.keys(titles)) {
+    const cluster = recheck.finding_clusters.find(c => c.file === file);
+    assert.ok(cluster.titles.includes('[withheld: credential-like]'), `${file}: ${JSON.stringify(cluster.titles)}`);
+  }
+  const shown = recheck.finding_clusters.find(c => c.file === 'src/f.mjs').titles.find(title => title.startsWith('Full'));
+  assert.ok(shown.startsWith('Fullwidth name xxx'), 'the normalized title is shown');
+  assert.equal(shown.length, 120);
+});
+
+test('F6: callers that skip re-check pay nothing for it and keep the rest of the status', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  const full = consolidateStatus({ workspace: f.ws, home: f.home });
+  assert.equal(full.due, true);
+  assert.equal(full.recheck.counts.failure_clusters, 1);
+  const light = consolidateStatus({ workspace: f.ws, home: f.home, withRecheck: false });
+  assert.deepEqual(light.recheck, { state: 'on' });
+  assert.equal(light.due, false, 'without the scan, re-check adds nothing to due');
+  assert.deepEqual({ ...light, recheck: undefined, due: undefined, nextTools: undefined }, { ...full, recheck: undefined, due: undefined, nextTools: undefined });
 });

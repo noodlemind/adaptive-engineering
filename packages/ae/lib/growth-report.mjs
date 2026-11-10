@@ -54,7 +54,7 @@ export function buildGrowthReport({
   const store = readStoreConfig(workspace, { home: home || copilotHome });
   let promotion = [];
   try {
-    const status = consolidateStatus({ workspace, copilotHome, home: home || copilotHome });
+    const status = consolidateStatus({ workspace, copilotHome, home: home || copilotHome, withRecheck: false });
     promotion = (status.promotionCandidates || []).map((l) => ({
       id: l.id || l.fm?.id || l.path,
       ...(l.domain ? { domain: l.domain } : {}),

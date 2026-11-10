@@ -214,7 +214,12 @@ export function consolidateStatus(options) {
   return statusWithRecheck(options).status;
 }
 
-function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, recheckRequested = false }) {
+/**
+ * `withRecheck: false` skips the re-check scan for callers that read neither `due` nor `recheck` (doctor,
+ * the growth report): the status then names the re-check state without counts, as `suggest` does, and
+ * re-check never adds to `due`. Orient and `ae consolidate` keep the default.
+ */
+function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, recheckRequested = false, withRecheck = true }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -238,7 +243,7 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   let recheckMode = 'off';
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
   // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks.
-  const recheck = recheckMode === 'on' || (recheckMode === 'suggest' && recheckRequested)
+  const recheck = (recheckMode === 'on' && withRecheck) || (recheckMode === 'suggest' && recheckRequested)
     ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir) })
     : null;
   const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
