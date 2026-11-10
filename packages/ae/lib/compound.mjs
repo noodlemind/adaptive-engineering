@@ -184,7 +184,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   // insight is written.
   if (flags.derivedFrom != null && (kind !== 'insight' || !FAILURE_CLUSTER_REF.test(flags.derivedFrom))) {
     return { pass: false, exitCode: 2, kind, path: null, indexed: null,
-      blockedReason: kind !== 'insight' ? '--derived-from is accepted only on an insight' : '--derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck',
+      blockedReason: kind !== 'insight' ? '--derived-from is accepted only on an insight'
+        : /^finding-cluster:/.test(flags.derivedFrom) ? 'finding clusters are informational and cannot be answered: --derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck'
+          : '--derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck',
       nextTools: ['ae consolidate --candidates --recheck --json'] };
   }
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);

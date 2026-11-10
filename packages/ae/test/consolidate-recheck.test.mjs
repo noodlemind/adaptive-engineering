@@ -8,7 +8,7 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { appendLedger, ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { failureClusterId, failureMetadata, recheckState, RECHECK_DIR_ENTRY_CAP, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
+import { FAILURE_CLUSTER_REF, FINDING_CLUSTER_REF, failureClusterId, failureMetadata, recheckState, RECHECK_DIR_ENTRY_CAP, RECHECK_SECTION_CAP, RECHECK_STATUS_PRESELECT } from '../lib/learning-recheck.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
@@ -16,6 +16,8 @@ import { writeEvidence } from '../lib/evidence.mjs';
 import { runNamedCheck } from '../lib/checks.mjs';
 import { deriveGitContext } from '../lib/git-context.mjs';
 import { ensureBucket } from '../lib/knowledge/layer.mjs';
+import { runInsightCompound } from '../lib/compound.mjs';
+import { externalPlansDir, normalizePlanRel } from '../lib/project-layout.mjs';
 
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const PLAN_A = 'docs/plans/2026-11-01-a-plan.md', PLAN_B = 'docs/plans/2026-11-02-b-plan.md', PLAN_C = 'docs/plans/2026-11-03-c-plan.md';
@@ -295,8 +297,15 @@ test('R3: prose, refs and package names are not broken paths; anchors resolve pa
   assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, [{ id, references: [{ kind: 'path', ref: 'test/gone.test.mjs' }] }]);
 });
 
-test('R5: --derived-from without a value parses as empty and is refused, not dropped', () => {
-  assert.equal(parseFlags(['--insight', '--title', 't', '--derived-from']).derivedFrom, '');
+test('R5: --derived-from without a value parses as empty and is refused, not dropped', t => {
+  const flags = parseFlags(['--insight', '--title', 't', '--body', 'b', '--derived-from']);
+  assert.equal(flags.derivedFrom, '');
+  const f = fixture(t);
+  const refused = runInsightCompound({ workspace: f.ws, copilotHome: path.join(f.root, 'copilot'), home: f.home, log: () => {}, flags });
+  assert.equal(refused.pass, false);
+  assert.equal(refused.exitCode, 2);
+  assert.match(refused.blockedReason, /failure-cluster:<id>/);
+  assert.equal(refused.path, null, 'nothing is written');
 });
 
 test('R6: a symlinked run journal is not followed', t => {
@@ -698,22 +707,141 @@ test('a record directory is read only up to its entry cap, and the omission is r
   assert.equal('directories' in f.packet({ recheck: true }).recheck.omitted, false, 'at the cap, nothing is left unread');
 });
 
-test('status stays fast over 1,100 large evidence records: it opens only the newest 128', t => {
+test('status opens only the newest 128 evidence records by mtime; the packet still finds an older failure', t => {
   const f = fixture(t);
   f.learn('runtime', 'baseline');
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
-  const big = 'x'.repeat(100 * 1024), old = new Date('2026-01-01T00:00:00Z');
-  for (let i = 0; i < 1100; i++) {
-    const rel = f.evidence(`docs/plans/big-${i}.md`, [{ id: 'lint', status: 'passed', stdout: big }], `2026-10-01T00:00:${String(Math.floor(i / 1000)).padStart(2, '0')}.${String(i % 1000).padStart(3, '0')}Z`);
-    fs.utimesSync(path.join(f.ws, rel), old, old);
+  const old = new Date('2026-01-01T00:00:00Z'), recent = new Date('2026-06-01T00:00:00Z');
+  // Three failures across three plans (enough for due), all with an mtime older than every filler.
+  const failing = [PLAN_A, PLAN_B, PLAN_C].map((plan, n) => f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`));
+  for (const rel of failing) fs.utimesSync(path.join(f.ws, rel), old, old);
+  for (let i = 0; i < RECHECK_STATUS_PRESELECT + 2; i++) {
+    const rel = f.evidence(`docs/plans/filler-${i}.md`, [{ id: 'lint', status: 'passed' }], `2026-10-01T00:00:00.${String(i).padStart(3, '0')}Z`);
+    fs.utimesSync(path.join(f.ws, rel), recent, recent);
   }
-  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`);
-  assert.equal(f.status().due, true, 'warm-up, and recent failures are still found');
-  let best = Infinity;
-  for (let run = 0; run < 3; run++) {
-    const started = performance.now();
-    f.status();
-    best = Math.min(best, performance.now() - started);
+  const opens = t.mock.method(fs, 'openSync');
+  const status = f.status();
+  const historyOpens = opens.mock.calls.filter(call => String(call.arguments[0]).replace(/\\/g, '/').includes('.harness/evidence/history/')).length;
+  opens.mock.restore();
+  assert.equal(status.recheck.counts.failure_clusters, 0, 'the old-mtime failures are outside the newest 128 and are not counted');
+  assert.equal(status.due, false);
+  assert.ok(historyOpens > 0 && historyOpens <= RECHECK_STATUS_PRESELECT, `status opened ${historyOpens} evidence records`);
+  const { recheck } = f.packet({ recheck: true });
+  assert.equal(recheck.counts.failure_clusters, 1, '--candidates --recheck reads past the status preselect');
+  assert.equal(recheck.failure_clusters[0].plan_count, 3);
+});
+
+test('a plan in the external plan store is shown by its file name, which --plan resolves back to it', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const store = externalPlansDir(f.ws, { home: f.home });
+  const names = ['2026-11-01-feat-a-plan.md', '2026-11-02-feat-b-plan.hplan', '2026-11-03-feat-c-plan.md'];
+  const recorded = names.map(name => path.join(store, name));
+  for (const full of recorded) { fs.mkdirSync(path.dirname(full), { recursive: true }); fs.writeFileSync(full, '---\nstatus: planned\n---\n'); }
+  for (const plan of recorded) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  // A plan outside the store, recorded with an absolute path, is still only a digest.
+  const stray = path.join(f.root, 'elsewhere', 'plans', '2026-11-04-feat-d-plan.md');
+  f.evidence(stray, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  const { recheck } = f.packet({ recheck: true });
+  const [unit] = recheck.failure_clusters;
+  assert.deepEqual(unit.plans.filter(plan => !plan.startsWith('[unnamed:')), names.toSorted());
+  assert.equal(unit.plans.filter(plan => plan.startsWith('[unnamed:')).length, 1);
+  assert.equal(unit.plan_count, 4);
+  const shown = JSON.stringify(recheck);
+  for (const secret of [f.home, f.root, os.homedir()]) assert.equal(shown.includes(secret), false, 'no home directory or store path is shown');
+  for (const [i, name] of names.entries()) assert.equal(normalizePlanRel(f.ws, name, { home: f.home }), recorded[i], `--plan ${name} resolves to the recorded plan`);
+  assert.equal(f.status().due, true, 'three external-store plans still make the cluster due');
+});
+
+test('plans are counted after mapping to what is shown, so plan_count matches the list', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const store = externalPlansDir(f.ws, { home: f.home });
+  const name = '2026-11-01-feat-a-plan.md';
+  const run = (id, plan, day) => [
+    { schema: 1, type: 'run.start', run: id, ts: `2026-11-0${day}T00:00:00.000Z`, command: 'verify', plan },
+    { schema: 1, type: 'run.result', run: id, ts: `2026-11-0${day}T00:01:00.000Z`, status: 'failed', exitCode: 1, plan },
+  ];
+  // The same plan typed as a name and as its absolute store path is one plan, so there is no cluster.
+  f.journal([...run('r1', name, 1), ...run('r2', path.join(store, name), 2)]);
+  assert.deepEqual(f.packet({ recheck: true }).recheck.failure_clusters, []);
+  f.journal([...run('r1', name, 1), ...run('r2', path.join(store, name), 2), ...run('r3', PLAN_B, 3)]);
+  const [verify] = f.packet({ recheck: true }).recheck.failure_clusters;
+  assert.deepEqual(verify.plans, [name, PLAN_B].toSorted());
+  assert.equal(verify.plan_count, verify.plans.length);
+});
+
+test('names and paths the shared redactor would mask are not shown, even when the secret scan misses them', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const openai = `sk-proj-${'A1b2C3d4E5f6'.repeat(3)}`;
+  const kv = 'password:SuperSecret123';
+  for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: openai, status: 'failed', stderr: 'a' }, { id: kv, status: 'failed', stderr: 'b' }]);
+  const finding = file => ({ file, line: 1, title: 't', severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
+  for (const plan of [PLAN_A, PLAN_B]) {
+    f.observation(plan, openai, [finding('src/a.mjs')]);
+    f.observation(plan, kv, [finding('src/b.mjs')]);
+    f.observation(plan, 'correctness', [finding(`src/${openai}.mjs`)]);
   }
-  assert.ok(best < 400, `status took ${Math.round(best)} ms`);
+  const { recheck } = f.packet({ recheck: true });
+  assert.equal(recheck.failure_clusters.length, 2);
+  assert.ok(recheck.failure_clusters.every(c => c.check === '[unnamed]' && c.failure_records.every(r => r.check === '[unnamed]')));
+  assert.deepEqual(recheck.finding_clusters.map(c => c.category).toSorted(), ['[unnamed]', '[unnamed]', 'correctness']);
+  assert.equal(recheck.finding_clusters.find(c => c.category === 'correctness').file, '[unnamed]');
+  const shown = JSON.stringify(recheck);
+  assert.equal(shown.includes(openai) || shown.includes('SuperSecret123'), false);
+  // Residual: a bare high-entropy string with no key name or known prefix (for example the AWS documentation
+  // example secret key) matches neither scanner, so a name or path made only of it is shown when it fits the safe set.
+});
+
+test('finding clusters have their own ID shape that no failure-cluster reference accepts', t => {
+  const f = fixture(t);
+  seedSignals(f);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const { recheck } = f.packet({ recheck: true });
+  const [finding] = recheck.finding_clusters;
+  assert.match(finding.id, FINDING_CLUSTER_REF);
+  const digest = finding.id.slice('finding-cluster:'.length);
+  for (const ref of [finding.id, `failure-cluster:${digest}`]) assert.equal(FAILURE_CLUSTER_REF.test(ref), false, ref);
+  assert.ok(recheck.failure_clusters.every(c => /^[a-f0-9]{16}$/.test(c.id) && FAILURE_CLUSTER_REF.test(`failure-cluster:${c.id}`)));
+  const refused = runInsightCompound({ workspace: f.ws, copilotHome: path.join(f.root, 'copilot'), home: f.home, log: () => {}, flags: { title: 'From a finding', body: 'b', derivedFrom: finding.id } });
+  assert.equal(refused.pass, false);
+  assert.equal(refused.exitCode, 2);
+  assert.match(refused.blockedReason, /finding clusters are informational/);
+});
+
+test('an answer timestamped more than five minutes ahead answers nothing', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'x' }], '2026-11-01T00:00:00.000Z');
+  for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: 'near', status: 'failed', stderr: 'x' }], '2026-11-01T00:00:00.000Z');
+  const answer = (check, answeredAt, n) => ({ path: `docs/solutions/answer-${n}.md`, sha256: String(n).repeat(64), learning: 'runtime/baseline', at: '2026-11-01', answers: failureClusterId(`check:${check}`), answeredAt });
+  appendLedger(f.dir, [answer('unit', '2099-01-01T00:00:00.000Z', 1), answer('near', new Date(Date.now() + 60_000).toISOString(), 2)]);
+  const { recheck } = f.packet({ recheck: true });
+  assert.ok(recheck.failure_clusters.some(c => c.check === 'unit'), 'a far-future answer does not hide the cluster');
+  assert.equal(recheck.failure_clusters.some(c => c.check === 'near'), false, 'an answer within the skew limit still counts');
+});
+
+test('impossible dates are dropped, and only positive exposure counts are summed', t => {
+  for (const at of ['2026-02-30T00:00:00.000Z', '2026-04-31T12:00:00+05:00', '2026-01-01T24:00:00Z', '2025-02-29T00:00:00Z']) {
+    assert.equal(failureMetadata({ id: 'unit' }, at).at, null, at);
+  }
+  assert.equal(failureMetadata({ id: 'unit' }, '2024-02-29T23:59:59.999-01:00').at, '2024-03-01T00:59:59.999Z', 'a real leap day with an offset is kept');
+
+  const f = fixture(t);
+  const stale = f.bound('runtime', 'retry-worker', 'src/worker.mjs');
+  f.put('src/worker.mjs', 'export const retry_worker = 2;\n');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const counts = [3, -100, 0, 2.5, 2];
+  for (const [i, count] of counts.entries()) {
+    const plan = `docs/plans/x${i}.md`;
+    f.put(`.harness/learning/exposures/plan-${sha(plan)}.json`, { version: 1, plan, entries: [{ id: stale, count, lastExposedAt: '2026-11-01T00:00:00.000Z' }] });
+  }
+  const [row] = f.packet({ recheck: true }).recheck.stale_exposed;
+  assert.equal(row.exposures, 5);
+  assert.equal(row.plan_count, counts.length);
 });

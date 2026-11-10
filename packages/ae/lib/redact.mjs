@@ -74,8 +74,12 @@ const DEFAULT_PATTERNS = [
     // `key=value`, `key: value` and JSON `"key": "value"` for secret-named keys,
     // including prefixed names such as DB_PASSWORD or aws_secret_access_key.
     // Literal undefined/null/true/false values carry no secret and stay readable.
+    // `(?<![A-Za-z0-9])` stands in for the old `\b(?:[A-Za-z0-9]+[_-])*` prefix, which backtracked
+    // superlinearly on `a-a-a-...`. A prefix such as `DB_` is no longer part of the match but stays in
+    // the text in front of it, so the output is the same; a key led by `_` with no letter or digit
+    // before it (`__password=`) is now also masked.
     kind: 'kv-secret',
-    re: /\b((?:[A-Za-z0-9]+[_-])*(?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\s&"',;}]))[^\s&"',;}]{1,500}/i,
+    re: /(?<![A-Za-z0-9])((?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\s&"',;}]))[^\s&"',;}]{1,500}/i,
     mask: (_match, key, sep) => `${key}${sep}${mask('kv-secret')}`,
   },
 ];

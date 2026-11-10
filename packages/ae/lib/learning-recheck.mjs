@@ -6,6 +6,8 @@ import { foldRuns, RUNS_FILE } from './run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
 import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
 import { scanSecrets } from './secret-scan.mjs';
+import { createRedactor } from './redact.mjs';
+import { externalPlansDir } from './project-layout.mjs';
 
 // Consolidation re-check (agent memory plan, Phase 2). Every signal here is
 // evidence for judgment built only from Harness-owned records in the
@@ -20,10 +22,20 @@ export const RECHECK_DUE_STALE_EXPOSED = 3;
 export const RECHECK_DUE_CLUSTER_PLANS = 3;
 /** `derived_from` reference to a failure cluster. The ID is a stable digest of the cluster key. */
 export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
+/**
+ * A finding cluster's ID as listed: its own prefix and a 20-hex digest, so neither the listed ID nor its
+ * digest with a `failure-cluster:` prefix fits `FAILURE_CLUSTER_REF`. Finding clusters are informational:
+ * no `derived_from` answers one.
+ */
+export const FINDING_CLUSTER_REF = /^finding-cluster:[a-f0-9]{20}$/;
 const SCAN_CAP = 512;
 /** Evidence-history preselect for status and orient, which need only counts and `due`; packets read twice `SCAN_CAP`. */
 export const RECHECK_STATUS_PRESELECT = 128;
-/** At most this many directory entries are read from one record directory; the rest are reported, not opened. */
+/**
+ * At most this many directory entries are read from one record directory; the rest are reported in
+ * `omitted.directories`, not opened. Past the cap the scan is a sample in readdir order, not the newest
+ * records; history is not pruned here.
+ */
 export const RECHECK_DIR_ENTRY_CAP = 4096;
 const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
@@ -48,7 +60,7 @@ const JOURNAL_BYTE_CAP = 8 * 1024 * 1024;
 
 /** Cluster IDs are digests of the cluster key, so they can be recomputed from the same evidence at any time. */
 export const failureClusterId = key => crypto.createHash('sha256').update(`failure-cluster\0${key}`).digest('hex').slice(0, 16);
-const findingClusterId = key => crypto.createHash('sha256').update(`finding-cluster\0${key}`).digest('hex').slice(0, 16);
+const findingClusterId = key => `finding-cluster:${crypto.createHash('sha256').update(`finding-cluster\0${key}`).digest('hex').slice(0, 20)}`;
 
 /**
  * Effective read state. Knowledge modes keep priority: `off`, `freeze` and
@@ -113,7 +125,10 @@ function readJson(root, rel) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-const noSecret = value => scanSecrets(value).length === 0;
+// The safe-set pattern (at most about 200 characters) is checked before this, so both scans stay cheap.
+const REDACTOR = createRedactor({ env: {} });
+/** No secret pattern from either scanner: `scanSecrets` finds nothing and the shared redactor leaves the value unchanged. */
+const noSecret = value => scanSecrets(value).length === 0 && REDACTOR.redactText(value) === value;
 
 /** A check, reviewer or rule name as shown: unchanged when it fits `SAFE_NAME`, otherwise `[unnamed]`. */
 const safeName = value => (typeof value === 'string' && SAFE_NAME.test(value) && noSecret(value) ? value : UNNAMED);
@@ -136,12 +151,22 @@ const safeLearningId = value => (typeof value === 'string' && SAFE_LEARNING_ID.t
  * (`YYYY-MM-DDTHH:MM:SS.sssZ`) so string order is time order. Anything else is null.
  */
 const safeTime = value => {
-  if (typeof value !== 'string' || !ISO_TIME.test(value)) return null;
+  if (typeof value !== 'string' || !ISO_TIME.test(value) || !realDate(value)) return null;
   const ms = Date.parse(value);
   if (!Number.isFinite(ms) || ms > Date.now() + FUTURE_SKEW_MS) return null;
   const iso = new Date(ms).toISOString();
   return CANONICAL_TIME.test(iso) ? iso : null;
 };
+/**
+ * The written date and time components name a real instant: `Date.parse` rolls `2026-02-30` over to
+ * March 2 and accepts hour 24, so the components are rebuilt in UTC and must read back unchanged.
+ */
+function realDate(value) {
+  const [year, month, day, hour, minute, second] = value.slice(0, 19).split(/[-T:]/).map(Number);
+  const back = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return back.getUTCFullYear() === year && back.getUTCMonth() === month - 1 && back.getUTCDate() === day
+    && back.getUTCHours() === hour && back.getUTCMinutes() === minute && back.getUTCSeconds() === second;
+}
 /** Milliseconds for a timestamp that `safeTime` accepts, otherwise -Infinity (sorts last, never newer). */
 const timeMs = value => { const at = safeTime(value); return at ? Date.parse(at) : Number.NEGATIVE_INFINITY; };
 const lineCount = value => (typeof value === 'string' && value ? value.split(/\r\n|\n|\r/).length - (/(?:\r\n|\n|\r)$/.test(value) ? 1 : 0) : 0);
@@ -204,10 +229,34 @@ const processFailed = check => (check.status === 'failed' && Number.isInteger(ch
 
 const byStrength = (a, b) => b.plan_count - a.plan_count || newestFirst(timeMs(a.last_seen), timeMs(b.last_seen)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-/** Plans are counted by their raw value but shown only through `displayPath`. */
-function finishCluster(row) {
-  const plans = [...new Set([...row.plans].map(displayPath))].sort();
-  return { ...row, plans: plans.slice(0, PLAN_LIST_CAP), plan_count: row.plans.size };
+/**
+ * A plan as shown. A plan in the project's external plan store (managed plans and domain child plans)
+ * is recorded as an absolute path under the Harness home; it is shown by its file name, which
+ * `ae verify --plan <name>` resolves to the same store, so the home directory never appears. Any other
+ * absolute path is shown only as a digest.
+ */
+function planReference(value, planDirs) {
+  if (typeof value !== 'string' || !value || !(path.isAbsolute(value) || path.win32.isAbsolute(value))) return displayPath(value);
+  const base = path.basename(value);
+  if (/\.(?:md|hplan)$/.test(base) && planDirs.has(path.dirname(path.resolve(value)))) return displayPath(base);
+  return displayPath(value);
+}
+
+/** The external plan store, as written and canonical, so a recorded plan path matches either form. */
+function externalPlanDirs(workspace, home) {
+  const dirs = new Set();
+  try {
+    const dir = path.resolve(externalPlansDir(workspace, { home }));
+    dirs.add(dir);
+    try { dirs.add(fs.realpathSync.native(dir)); } catch { /* not created yet */ }
+  } catch { /* no store */ }
+  return dirs;
+}
+
+/** Plans are counted after they are mapped to what is shown, so `plan_count` matches the distinct plans listed. */
+function finishCluster(row, planDirs) {
+  const plans = [...new Set([...row.plans].map(plan => planReference(plan, planDirs)))].sort();
+  return { ...row, plans: plans.slice(0, PLAN_LIST_CAP), plan_count: plans.length };
 }
 
 /**
@@ -348,7 +397,7 @@ function exposureIndex(workspace) {
       const row = index.get(entry.id) || { last: null, count: 0, plans: new Set() };
       const at = safeTime(entry.lastExposedAt);
       if (at && (!row.last || timeMs(at) > timeMs(row.last))) row.last = at;
-      row.count += Number.isInteger(entry.count) ? entry.count : 0;
+      row.count += Number.isInteger(entry.count) && entry.count >= 1 ? entry.count : 0;
       row.plans.add(record.plan);
       index.set(entry.id, row);
     }
@@ -456,7 +505,7 @@ function brokenReferences(workspace, learnings, allLearnings) {
   return out;
 }
 
-const plansAtLeast = n => row => row.plans.size >= n;
+const plansAtLeast = n => row => row.plan_count >= n;
 
 /**
  * The `recheck` packet section. `reviewRequired` is the Phase 1 feedback list
@@ -465,13 +514,15 @@ const plansAtLeast = n => row => row.plans.size >= n;
  * bounds how many evidence-history names (newest by mtime) are opened:
  * status and orient pass `RECHECK_STATUS_PRESELECT`.
  */
-export function recheckSummary({ workspace, learnings, allLearnings = learnings, reviewRequired: reviewIds = [], resolved = new Map(), preselect = SCAN_CAP * 2 }) {
+export function recheckSummary({ workspace, home, learnings, allLearnings = learnings, reviewRequired: reviewIds = [], resolved = new Map(), preselect = SCAN_CAP * 2 }) {
   const reviewRequired = reviewIds.map(safeLearningId);
+  const planDirs = externalPlanDirs(workspace, home);
+  const finish = row => finishCluster(row, planDirs);
   const evidence = evidenceClusters(workspace, resolved, preselect);
   const journal = journalClusters(workspace, resolved);
-  const failures = [...evidence.clusters, ...journal.clusters].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
+  const failures = [...evidence.clusters, ...journal.clusters].map(finish).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
   const findings = findingClusters(workspace);
-  const findingRows = findings.clusters.filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).map(finishCluster).sort(byStrength);
+  const findingRows = findings.clusters.map(finish).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
   const { rows: stale, omitted: exposureOmitted, truncated: exposureTruncated } = staleExposed(workspace, learnings);
   const broken = brokenReferences(workspace, learnings, allLearnings);
   const cap = list => list.slice(0, RECHECK_SECTION_CAP);

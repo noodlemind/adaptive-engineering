@@ -151,8 +151,10 @@ function episodeHashMatches(full, root, sha256) {
 }
 
 /**
- * The failure cluster a verified episode answers (`derived_from:
- * failure-cluster:<id>`), or null. Recorded on the ledger entry of a
+ * The failure cluster a verified insight episode answers (`derived_from:
+ * failure-cluster:<id>`), or null. Only `kind: insight` answers: `compound
+ * --insight` is the only writer of the field, so the same line on a fix or
+ * a teaching was not written by Harness and answers nothing. Recorded on the ledger entry of a
  * learning-writing op so the answer outlives the episode file and is visible
  * from every layer. Absent for every other episode, so ledger bytes are
  * unchanged.
@@ -162,6 +164,9 @@ function episodeAnswer(workspace, copilotHome, e, home) {
   if (!hit) return null;
   const text = hit.text ?? readFileNoFollow(hit.full, { root: hit.root });
   const fm = text?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
+  // The last `kind:` line wins and quotes are stripped, as collectEpisodes reads it.
+  const kind = [...fm.matchAll(/^kind:\s*(.*)$/gm)].at(-1)?.[1].replace(/^["']|["']$/g, '').trim();
+  if (kind !== 'insight') return null;
   return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
 }
 

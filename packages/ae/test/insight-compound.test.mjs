@@ -500,6 +500,9 @@ test('compound --insight records a well-formed derived_from failure-cluster refe
     assert.equal(refused.status, 2, ref);
     assert.match(JSON.parse(refused.stdout).blockedReason, /failure-cluster:<id>/);
   }
+  const finding = capture('finding-cluster:0123456789abcdef0123', 'From a finding cluster');
+  assert.equal(finding.status, 2);
+  assert.match(JSON.parse(finding.stdout).blockedReason, /finding clusters are informational and cannot be answered/);
   const teaching = runInsightCompound({ workspace: ws, copilotHome: home, home: path.join(home, 'hh'), kind: 'human-teaching', log: () => {}, flags: { title: 'Taught', body: 'A taught claim.', derivedFrom: 'failure-cluster:0123456789abcdef' } });
   assert.equal(teaching.pass, false);
   assert.match(teaching.blockedReason, /only on an insight/);

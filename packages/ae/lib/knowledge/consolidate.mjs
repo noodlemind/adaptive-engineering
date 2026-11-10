@@ -279,14 +279,18 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
  * answer recorded on any branch clears the cluster everywhere, because the
  * cluster is keyed by check name rather than by branch.
  */
-function answeredClusters(dir) {
+const ANSWER_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function answeredClusters(dir, now = Date.now()) {
   const answered = new Map();
   const ledgers = [readLedger(dir), ...listBuckets(dir).filter(bucket => isSafeBucketKey(bucket.key)).map(bucket => readLedger(bucket.dir))];
   for (const entry of ledgers.flat()) {
     if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
-    // Compared as times, not strings: offsets and precision vary. An unparseable time answers nothing.
+    // Compared as times, not strings: offsets and precision vary. An unparseable time answers nothing, and
+    // neither does one more than five minutes ahead (the same skew limit failure timestamps get), so a
+    // future-dated entry cannot hide failures that have not happened yet.
     const at = Date.parse(entry.answeredAt);
-    if (!Number.isFinite(at)) continue;
+    if (!Number.isFinite(at) || at > now + ANSWER_FUTURE_SKEW_MS) continue;
     if (!answered.has(entry.answers) || at > Date.parse(answered.get(entry.answers))) answered.set(entry.answers, entry.answeredAt);
   }
   return answered;
@@ -330,7 +334,7 @@ function recheckView({ workspace, home, state, resolved, preselect }) {
   let reviewRequired = [];
   try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
   try {
-    return { state, ...recheckSummary({ workspace, learnings, allLearnings, reviewRequired, resolved, preselect }) };
+    return { state, ...recheckSummary({ workspace, home, learnings, allLearnings, reviewRequired, resolved, preselect }) };
   } catch (error) {
     // The error text can name paths or record content, so only a fixed sentence and a Node error code are shown.
     const counts = { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };

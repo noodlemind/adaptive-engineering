@@ -659,3 +659,46 @@ test('dropping the boundary did not start masking ordinary prose', () => {
   // …while a genuine sk- key still masks.
   assert.match(redactText('sk-abcdefghijklmnopqrstuvwxyz'), /redacted:api-key/);
 });
+
+test('kv-secret: the lookbehind form masks exactly what the old prefix form did, and stays linear', () => {
+  const keys = 'password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token';
+  const tail = `(["']?\\s*[:=]\\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\\s&"',;}]))[^\\s&"',;}]{1,500}`;
+  const oldRe = new RegExp(`\\b((?:[A-Za-z0-9]+[_-])*(?:${keys}))${tail}`, 'gi');
+  const oldRedact = text => text.replace(oldRe, (_m, key, sep) => `${key}${sep}«redacted:kv-secret»`);
+  const r = redactor();
+  // Only kv-secret can fire on these inputs, so the whole redactor output is compared with the old pattern alone.
+  const fixed = ['DB_PASSWORD=hunter2hunter2', 'aws_secret_access_key: abc123', 'my-api-key="zzz"', 'x_password_token=val', 'secret_token=abc',
+    'token=abc-password=xyz', '{"client_secret": "s3"}', 'a-b-c-token:v', 'password=null', 'PASSWD=undefinedX', 'mytoken=x', 'Token = q; secret=r&k=v',
+    'pre a-password=1 b_secret=2', 'apikey:"k"', 'private-key=p', 'tokenize=x', 'xpassword=y', 'a--password=x', '9_token=t'];
+  const alphabet = ['a', 'B', '1', '-', '_', ' ', '=', ':', '"', "'", ';', '&', 'x', 'password', 'token', 'secret', 'api-key', 'access_key', 'null', '«'];
+  let seed = 7;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  const random = [];
+  for (let i = 0; i < 3000; i++) {
+    let text = '';
+    for (let n = next() % 12; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    random.push(text);
+  }
+  assert.ok(random.filter(text => r.redactText(text) !== text).length > 50, 'the random inputs exercise the pattern');
+  let differing = 0;
+  for (const text of [...fixed, ...random]) {
+    const before = oldRedact(text), after = r.redactText(text);
+    if (after === before) continue;
+    // The one deliberate widening: a key led by `_` with no letter or digit before it, which the old prefix missed.
+    assert.match(text, /(?:^|[^A-Za-z0-9])_+[A-Za-z0-9_-]*(?:password|passwd|passphrase|secret|token|key)/i, `unexpected difference for ${JSON.stringify(text)}`);
+    assert.equal(oldRedact(after), after, `the new output leaves nothing the old pattern would mask: ${JSON.stringify(text)}`);
+    differing += 1;
+  }
+  for (const text of fixed) assert.equal(r.redactText(text), oldRedact(text), text);
+  assert.ok(differing < random.length / 10, `${differing} inputs differ`);
+  assert.equal(r.redactText('__password=hunter2'), '__password=«redacted:kv-secret»', 'now masked; the old prefix form left it');
+  assert.equal(oldRedact('__password=hunter2'), '__password=hunter2');
+
+  // `a-a_` repeated defeats the old prefix (about a second at this size) without touching the other patterns.
+  for (const long of [`${'a-a_'.repeat(10000)}:`, 'a_'.repeat(20000), `${'a-a_'.repeat(10000)}password=x`]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 200, `${long.length} characters took ${Math.round(ms)} ms`);
+  }
+});

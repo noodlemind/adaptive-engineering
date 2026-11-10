@@ -9,7 +9,7 @@ import { initGit } from './helpers/cli-fixtures.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { prepareConsolidationPacket, applyConsolidationProposal } from '../lib/knowledge/packet-ops.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
-import { ensureStore, readRecheckConfig, repoId, serializeLearning, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { ensureStore, readLedger, readRecheckConfig, repoId, serializeLearning, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { solutionsScanRoots } from '../lib/project-layout.mjs';
 import { purgeEpisode } from '../lib/knowledge/admin.mjs';
@@ -237,3 +237,28 @@ for (const [name, op] of [
     assert.equal(clusterIds(f).includes(cluster.id), false, `${name} writes a learning, so it answers the cluster`);
   });
 }
+
+test('derived_from answers a cluster only on an insight episode: the same line on a fix answers nothing', t => {
+  const f = fixture(t);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const [cluster] = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
+  const insight = runInsightCompound({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home, log: () => {},
+    flags: { title: 'Retry count answer as a fix', body: 'The retry constant is read before config loads.', category: 'debugging', derivedFrom: `failure-cluster:${cluster.id}` } });
+  assert.equal(insight.pass, true, insight.blockedReason);
+  const file = solutionsScanRoots(f.ws, { home: f.home }).map(root => path.join(root.base, insight.path)).find(candidate => fs.existsSync(candidate));
+  const text = fs.readFileSync(file, 'utf8');
+  assert.match(text, /^kind: insight$/m);
+  // A hand-edited episode keeps the derived_from line but is a fix, which Harness never writes with the field.
+  fs.writeFileSync(file, text.replace(/^kind: insight$/m, 'kind: fix'));
+  const packet = prepareConsolidationPacket({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home });
+  const episode = packet.clusters.flatMap(c => c.episodes).find(e => e.path === insight.path);
+  assert.equal(episode?.kind, 'fix');
+  const opsPath = path.join(f.root, 'fix-answer.json');
+  fs.writeFileSync(opsPath, JSON.stringify({ schema: 2, packet: packet.id, operation: 'fix-answer', attempt: 1, ops: [{ ...ADD, episodes: [{ id: episode.id }] }] }));
+  const applied = applyConsolidationProposal({ workspace: f.ws, copilotHome: f.copilotHome, home: f.home, opsPath });
+  assert.equal(applied.exitCode, 0, JSON.stringify(applied.rejected));
+  const entry = readLedger(packet.binding.layerDir).find(row => row.path === insight.path && row.learning);
+  assert.ok(entry, 'the fix episode was consumed');
+  assert.equal('answers' in entry, false, 'a fix episode records no answer');
+  assert.ok(clusterIds(f).includes(cluster.id), 'the cluster stays open');
+});
