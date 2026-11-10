@@ -7,7 +7,7 @@ import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor, isSafeBucketKey, listBuckets, loadLayeredLearnings } from './overlay.mjs';
 import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
-import { recheckState, recheckSummary, recheckDue } from '../learning-recheck.mjs';
+import { recheckState, recheckSummary, recheckDue, RECHECK_STATUS_PRESELECT } from '../learning-recheck.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
 export const MAX_OPS_PER_RUN = 5;
@@ -243,9 +243,10 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   const feedback = feedbackView({ workspace, home, learnings: active, withFeedback });
   let recheckMode = 'off';
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
-  // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks.
+  // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks. A status that
+  // shows no packet opens only the newest RECHECK_STATUS_PRESELECT evidence records.
   const recheck = (recheckMode === 'on' && withRecheck) || (recheckMode === 'suggest' && recheckRequested)
-    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir) })
+    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir), preselect: recheckRequested ? undefined : RECHECK_STATUS_PRESELECT })
     : null;
   const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
   const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0) || recheckIsDue);
@@ -283,7 +284,10 @@ function answeredClusters(dir) {
   const ledgers = [readLedger(dir), ...listBuckets(dir).filter(bucket => isSafeBucketKey(bucket.key)).map(bucket => readLedger(bucket.dir))];
   for (const entry of ledgers.flat()) {
     if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
-    if (!answered.has(entry.answers) || entry.answeredAt > answered.get(entry.answers)) answered.set(entry.answers, entry.answeredAt);
+    // Compared as times, not strings: offsets and precision vary. An unparseable time answers nothing.
+    const at = Date.parse(entry.answeredAt);
+    if (!Number.isFinite(at)) continue;
+    if (!answered.has(entry.answers) || at > Date.parse(answered.get(entry.answers))) answered.set(entry.answers, entry.answeredAt);
   }
   return answered;
 }
@@ -309,7 +313,7 @@ function feedbackView({ workspace, home, learnings, withFeedback }) {
  * so output stays byte-identical. `review_required` is shared with feedback
  * and read here whatever the feedback key says: enabling re-check opts in.
  */
-function recheckView({ workspace, home, state, resolved }) {
+function recheckView({ workspace, home, state, resolved, preselect }) {
   // Golden plus the current branch bucket, whichever layer the caller routes to,
   // so status and packets see the same learnings. A subordinate branch twin of
   // a protected golden learning is not a separate learning.
@@ -326,10 +330,12 @@ function recheckView({ workspace, home, state, resolved }) {
   let reviewRequired = [];
   try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
   try {
-    return { state, ...recheckSummary({ workspace, learnings, allLearnings, reviewRequired, resolved }) };
+    return { state, ...recheckSummary({ workspace, learnings, allLearnings, reviewRequired, resolved, preselect }) };
   } catch (error) {
+    // The error text can name paths or record content, so only a fixed sentence and a Node error code are shown.
     const counts = { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
-    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: inertLine(error.message).slice(0, 200) };
+    const code = typeof error?.code === 'string' && /^E[A-Z0-9_]{1,30}$/.test(error.code) ? ` (${error.code})` : '';
+    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: `re-check scan failed${code}` };
   }
 }
 

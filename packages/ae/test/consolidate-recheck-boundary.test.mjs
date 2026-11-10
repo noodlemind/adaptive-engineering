@@ -147,7 +147,7 @@ test('a derived_from insight is traceable from the applied learning back to the 
   const cleared = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
   assert.equal(cleared.some(c => c.id === cluster.id), false, 'an answered cluster no longer appears');
   const recurred = PLANS.map((plan, n) => {
-    const record = { plan, outcome: 'failed', verifiedAt: `2099-01-0${n + 1}T00:00:00.000Z`, checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'retry count wrong again' }] };
+    const record = { plan, outcome: 'failed', verifiedAt: new Date(Date.now() + 60_000 + n).toISOString(), checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'retry count wrong again' }] };
     return f.put(`.harness/evidence/history/${sha(JSON.stringify(record))}.json`, record);
   });
   const reopened = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.find(c => c.id === cluster.id);

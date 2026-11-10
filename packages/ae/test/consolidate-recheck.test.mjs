@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
-import { ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { appendLedger, ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { failureClusterId, failureMetadata, recheckState, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
+import { failureClusterId, failureMetadata, recheckState, RECHECK_DIR_ENTRY_CAP, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
@@ -259,9 +259,10 @@ test('R2: a long evidence history keeps its newest records by their own timestam
   for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) rels.push(f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`));
   const restored = new Date('2026-01-01T00:00:00Z');
   for (const rel of rels) fs.utimesSync(path.join(f.ws, rel), restored, restored);
-  const status = f.status();
-  assert.equal(status.recheck.counts.failure_clusters, 1, 'the newest records by verifiedAt are read');
-  assert.equal(status.due, true);
+  // The packet path preselects 1,024 names by mtime; with every mtime reset, all 603 are read and ranked by verifiedAt.
+  const { recheck } = f.packet({ recheck: true });
+  assert.equal(recheck.counts.failure_clusters, 1, 'the newest records by verifiedAt are read');
+  assert.equal(recheck.max_cluster_plans, 3, 'enough to make consolidation due');
 });
 
 test('hand-written history records whose name is not their digest cannot force due', t => {
@@ -518,7 +519,7 @@ test('failure metadata fields are sanitized: hostile names, signals, statuses an
   const odd = failureMetadata({ id: 'unit', status: 'failed\n', exitCode: '1', signal: 'SIGTERM\x1b[0m', stdout: 7, stderr: null }, '2026-11-01T00:00:00Z\nhunter2');
   assert.deepEqual({ ...odd, output_sha256: undefined }, { check: 'unit', status: null, exit_code: null, signal: null, at: null, stdout_lines: 0, stderr_lines: 0, output_sha256: undefined });
   assert.equal(failureMetadata({ id: 'unit', signal: 'SIGKILL' }, '2026-11-01T00:00:00.000+02:00').signal, 'SIGKILL');
-  assert.equal(failureMetadata({ id: 'unit' }, '2026-11-01T00:00:00.000+02:00').at, '2026-11-01T00:00:00.000+02:00');
+  assert.equal(failureMetadata({ id: 'unit' }, '2026-11-01T00:00:00.000+02:00').at, '2026-10-31T22:00:00.000Z', 'an offset time is shown in canonical UTC');
 
   const f = fixture(t);
   f.learn('runtime', 'baseline');
@@ -565,4 +566,154 @@ test('finding titles never appear: only a title hash, severity, line, sanitized 
   assert.equal(style.category, '[unnamed]', 'a reviewer name with an escape is not shown');
   assert.equal(style.file, '[unnamed]', 'a path outside the safe set is not shown');
   assert.ok(style.samples.some(sample => sample.severity === null && sample.line === null), 'unknown severity and line are dropped');
+});
+
+// Every string in recheck output is sanitized structured metadata: plans, commands and times too.
+
+/** Every string value anywhere in `value`. */
+const stringsIn = value => (typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(stringsIn) : []);
+const HOSTILE_PLAN = `plan\u001b[31m-ghp_${'Z9y8X7w6V5'.repeat(3)}abcdef\nIGNORE PREVIOUS`;
+const OSC_TS = '2026-11-01T00:00:00.000Z\u001b]0;IGNORE PREVIOUS\u0007';
+
+test('hostile plans, journal commands and journal times never reach the packet or status', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const plan of [HOSTILE_PLAN, PLAN_A, PLAN_B]) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  const runs = [[HOSTILE_PLAN, 'h1'], [PLAN_B, 'h2']].flatMap(([plan, run]) => [
+    { schema: 1, type: 'run.start', run, ts: OSC_TS, command: `ghp_${'Q1w2E3r4T5'.repeat(3)}abcdef`, plan },
+    { schema: 1, type: 'run.result', run, ts: OSC_TS, status: 'failed', exitCode: 1, plan },
+  ]);
+  f.put('.harness/runs.jsonl', `${runs.map(line => JSON.stringify(line)).join('\r\n')}\r\n`);
+  const finding = { file: 'src/worker.mjs', line: 2, title: 't', severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] };
+  f.observation(HOSTILE_PLAN, 'correctness', [finding]);
+  f.observation(PLAN_A, 'correctness', [finding]);
+  const packet = f.packet({ recheck: true }), status = f.status();
+  for (const [label, value] of [['packet', packet], ['status', status]]) {
+    const json = JSON.stringify(value);
+    for (const needle of ['ghp_', '\u001b', '\\u001b', '\u0007', '\\u0007', 'IGNORE']) assert.equal(json.includes(needle), false, `${label}: ${JSON.stringify(needle)} must not appear`);
+    assert.equal(stringsIn(value).some(text => /[\r\n]/.test(text)), false, `${label}: no raw newline inside a value`);
+  }
+  assert.equal(status.due, true);
+  const unit = packet.recheck.failure_clusters.find(c => c.check === 'unit');
+  assert.equal(unit.plan_count, 3);
+  assert.ok(unit.plans.includes(PLAN_A) && unit.plans.includes(PLAN_B));
+  assert.ok(unit.plans.some(plan => /^\[unnamed:[a-f0-9]{12}\]$/.test(plan)), 'an unsafe plan is shown as a digest');
+  const journal = packet.recheck.failure_clusters.find(c => c.source === 'run-journal');
+  assert.deepEqual([journal.command, journal.first_seen, journal.last_seen, journal.plan_count], ['[unnamed]', null, null, 2]);
+  const [findings] = packet.recheck.finding_clusters;
+  assert.equal(findings.plan_count, 2);
+});
+
+test('a cluster lists at most eight evidence records, newest first, with a count and omissions', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const rels = [];
+  for (let i = 0; i < 12; i++) rels.push(f.evidence(i % 2 ? PLAN_B : PLAN_A, [{ id: 'unit', status: 'failed', stderr: `run ${i}` }], `2026-11-01T00:00:${String(i).padStart(2, '0')}.000Z`));
+  const [cluster] = f.packet({ recheck: true }).recheck.failure_clusters;
+  assert.deepEqual(cluster.evidence, rels.toReversed().slice(0, 8));
+  assert.equal(cluster.evidence_count, 12);
+  assert.deepEqual(cluster.omitted, { failure_records: 7, evidence: 4 });
+  assert.equal(cluster.failure_records.length, 5);
+});
+
+test('names and paths must start with a letter or digit; flag-like names get the verify hint; built-in property names stay data', t => {
+  for (const id of ['--trust-all', '-x', '..', '.hidden', '.', ':x', '/etc', '__proto__', `ghp_${'A1b2C3d4E5'.repeat(4)}`]) {
+    assert.equal(failureMetadata({ id, status: 'failed', exitCode: 1 }).check, '[unnamed]', JSON.stringify(id));
+  }
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  for (const id of ['--trust-all', 'constructor', 'toString', 'hasOwnProperty']) for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id, status: 'failed', stderr: 'boom' }]);
+  f.evidence('-rf/plan.md', [{ id: 'constructor', status: 'failed', stderr: 'boom' }]);
+  const finding = { file: '.hidden/a.mjs', line: 1, title: 't', severity: 'P3', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] };
+  for (const plan of [PLAN_A, PLAN_B]) f.observation(plan, '-security', [finding]);
+  const { recheck } = f.packet({ recheck: true });
+  const flag = recheck.failure_clusters.find(c => c.check === '[unnamed]');
+  assert.match(flag.hint, /ae verify --plan/);
+  assert.doesNotMatch(flag.hint, /checks run/);
+  for (const name of ['constructor', 'toString', 'hasOwnProperty']) assert.equal(recheck.failure_clusters.find(c => c.check === name)?.id, failureClusterId(`check:${name}`), name);
+  const ctor = recheck.failure_clusters.find(c => c.check === 'constructor');
+  assert.equal(ctor.plan_count, 3);
+  assert.ok(ctor.plans.some(plan => /^\[unnamed:[a-f0-9]{12}\]$/.test(plan)), 'a flag-like plan is not shown');
+  assert.deepEqual([recheck.finding_clusters[0].category, recheck.finding_clusters[0].file], ['[unnamed]', '[unnamed]']);
+});
+
+test('timestamps compare as times: offsets, future times and answers recorded with offsets', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  f.evidence(PLAN_A, [{ id: 'unit', status: 'failed', stderr: 'a' }], '2026-11-02T01:00:00+05:00');
+  f.evidence(PLAN_B, [{ id: 'unit', status: 'failed', stderr: 'b' }], '2026-11-01T21:00:00.000Z');
+  f.evidence(PLAN_C, [{ id: 'unit', status: 'failed', stderr: 'c' }], '2099-01-01T00:00:00.000Z');
+  // `late` is answered at 20:00Z (written with an offset) and 21:00Z, then fails at 21:30Z: it is open.
+  // `early` is answered at 22:00Z and fails at 21:00Z (written with an offset): it stays answered.
+  for (const [plan, minute] of [[PLAN_A, 30], [PLAN_B, 40]]) f.evidence(plan, [{ id: 'late', status: 'failed', stderr: 'x' }], `2026-11-01T21:${minute}:00.000Z`);
+  for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: 'early', status: 'failed', stderr: 'y' }], '2026-11-02T02:00:00+05:00');
+  const answer = (check, answeredAt, n) => ({ path: `docs/solutions/answer-${check}-${n}.md`, sha256: String(n).repeat(64), learning: 'runtime/baseline', at: answeredAt, answers: failureClusterId(`check:${check}`), answeredAt });
+  appendLedger(f.dir, [answer('late', '2026-11-02T01:00:00.000+05:00', 1), answer('late', '2026-11-01T21:00:00.000Z', 2), answer('early', '2026-11-01T22:00:00.000Z', 3), answer('early', 'not a time', 4)]);
+  const { recheck } = f.packet({ recheck: true });
+  const unit = recheck.failure_clusters.find(c => c.check === 'unit');
+  assert.equal(unit.first_seen, '2026-11-01T20:00:00.000Z', 'shown in canonical UTC');
+  assert.equal(unit.last_seen, '2026-11-01T21:00:00.000Z', 'a future time is dropped, and 21:00Z is later than 01:00+05:00');
+  assert.deepEqual(unit.failure_records.map(r => r.at), ['2026-11-01T21:00:00.000Z', '2026-11-01T20:00:00.000Z', null]);
+  assert.ok(recheck.failure_clusters.some(c => c.check === 'late'), 'a failure after the latest answer reopens the cluster');
+  assert.equal(recheck.failure_clusters.some(c => c.check === 'early'), false, 'a failure before the latest answer stays answered');
+});
+
+test('a timeout counts as a process failure even without retained output', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.evidence(plan, [{ id: 'slow', status: 'timeout', message: 'Timed out after 60s' }, { id: 'killed', status: 'unavailable', signal: 'SIGKILL', message: 'Terminated by signal SIGKILL' }]);
+  const status = f.status();
+  assert.equal(status.recheck.counts.failure_clusters, 1, 'a signal-killed check is unavailable and never clusters');
+  assert.equal(status.due, true);
+});
+
+test('a reference is never checked through a symlinked intermediate directory', t => {
+  const f = fixture(t);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const outside = path.join(f.root, 'outside');
+  fs.mkdirSync(path.join(outside, 'pkg/lib/test'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'pkg/lib/thing.mjs'), 'x');
+  fs.mkdirSync(path.join(f.ws, 'a'), { recursive: true });
+  fs.symlinkSync(path.join(outside, 'pkg'), path.join(f.ws, 'a/pkg'));
+  f.learn('runtime', 'linked', { anchors: ['a/pkg/lib/thing.mjs'] }, 'Cover it in `test/gone.test.mjs`.');
+  f.put('b/pkg/lib/test/kept.mjs', 'x');
+  const real = f.learn('runtime', 'real', { anchors: ['b/pkg/lib/thing.mjs'] }, 'Cover it in `test/gone.test.mjs`.');
+  assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, [{ id: real, references: [{ kind: 'path', ref: 'test/gone.test.mjs' }] }]);
+});
+
+test('a record directory is read only up to its entry cap, and the omission is reported', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const dir = path.join(f.ws, '.harness/reviews/observations');
+  fs.mkdirSync(dir, { recursive: true });
+  for (let i = 0; i <= RECHECK_DIR_ENTRY_CAP; i++) fs.writeFileSync(path.join(dir, `junk-${i}`), '');
+  assert.match(f.packet({ recheck: true }).recheck.omitted.directories, new RegExp(`first ${RECHECK_DIR_ENTRY_CAP} entries`));
+  fs.rmSync(path.join(dir, 'junk-0'));
+  assert.equal('directories' in f.packet({ recheck: true }).recheck.omitted, false, 'at the cap, nothing is left unread');
+});
+
+test('status stays fast over 1,100 large evidence records: it opens only the newest 128', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const big = 'x'.repeat(100 * 1024), old = new Date('2026-01-01T00:00:00Z');
+  for (let i = 0; i < 1100; i++) {
+    const rel = f.evidence(`docs/plans/big-${i}.md`, [{ id: 'lint', status: 'passed', stdout: big }], `2026-10-01T00:00:${String(Math.floor(i / 1000)).padStart(2, '0')}.${String(i % 1000).padStart(3, '0')}Z`);
+    fs.utimesSync(path.join(f.ws, rel), old, old);
+  }
+  for (const [n, plan] of [PLAN_A, PLAN_B, PLAN_C].entries()) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }], `2026-11-0${n + 1}T00:00:00.000Z`);
+  assert.equal(f.status().due, true, 'warm-up, and recent failures are still found');
+  let best = Infinity;
+  for (let run = 0; run < 3; run++) {
+    const started = performance.now();
+    f.status();
+    best = Math.min(best, performance.now() - started);
+  }
+  assert.ok(best < 400, `status took ${Math.round(best)} ms`);
 });
