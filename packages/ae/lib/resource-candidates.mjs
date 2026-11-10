@@ -75,7 +75,7 @@ export function resourceCandidates({ workspace, copilotHome, home, dryRun = fals
   const { checks, error } = loadNamedChecks(workspace);
   const existingChecks = checks ? Object.keys(checks).sort() : [];
   const candidates = [...rows, ...related, ...verified.claimRecurrence].map(e => ({ ...e, id: reviewHash(e), existingChecks, checkRelevance: 'unassessed; agent decides' })).sort((a, b) => a.id.localeCompare(b.id));
-  const promotion = consolidateStatus({ workspace, copilotHome, home }).promotionCandidates || [];
+  const promotion = consolidateStatus({ workspace, copilotHome, home, withRecheck: false }).promotionCandidates || [];
   const packet = { schema: 1, verb: 'candidates', status: 'ok', candidates, resourceUseRecurrence: verified.resourceUseRecurrence, recurrenceCoverage: { omitted: verified.omitted, scanned: verified.scanned, assurance: verified.assurance }, globalTagClustering, verifiedUsePromotion: { source: 'consolidate --status', assurance: 'legacy fix/plan declarations; audit passed proof before promotion', candidates: promotion }, existingChecks, diagnostics: [...diagnostics, ...(error ? [{ path: '.github/harness/checks.yaml', reason: error }] : [])], activated: false };
   const id = reviewHash(packet), packetPath = `.harness/proposals/candidates/${id}.json`;
   if (!dryRun) publishReviewRecord(workspace, packetPath, packet);

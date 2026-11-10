@@ -1084,7 +1084,7 @@ export function rebuildStore({ workspace, home, yes, copilotHome, log = () => {}
 
   const inner = tx.result;
 
-    const { debt } = consolidateStatus({ workspace, home, copilotHome });
+    const { debt } = consolidateStatus({ workspace, home, copilotHome, withRecheck: false });
   return {
     pass: true,
     exitCode: 0,

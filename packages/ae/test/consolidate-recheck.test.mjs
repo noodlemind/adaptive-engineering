@@ -8,7 +8,7 @@ import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/conso
 import { ensureStore, readRecheckConfig, repoId, serializeLearning, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 import { learningVersion, publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
-import { failureClusterId, failureExcerpt, recheckState, RECHECK_EXCERPT_CAP, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
+import { failureClusterId, failureMetadata, recheckState, RECHECK_SECTION_CAP } from '../lib/learning-recheck.mjs';
 import { parseFlags } from '../lib/flags.mjs';
 import { spawnSync } from 'node:child_process';
 import { initGit } from './helpers/cli-fixtures.mjs';
@@ -137,7 +137,13 @@ test('suggest: --recheck adds every signal from Harness-owned records and leaves
   assert.equal(unit.plan_count, 2);
   assert.equal(unit.failures, 2);
   assert.ok(unit.first_seen < unit.last_seen);
-  assert.equal(unit.excerpt, 'AssertionError: expected 2 to equal 3 again', 'the latest failing output is the excerpt');
+  assert.equal('excerpt' in unit, false, 'no failing output is shown');
+  assert.deepEqual(unit.failure_records.map(r => r.stderr_lines), [1, 1]);
+  assert.equal(unit.failure_records[0].at, unit.last_seen, 'newest record first');
+  assert.notEqual(unit.failure_records[0].output_sha256, unit.failure_records[1].output_sha256, 'different output, different hash');
+  assert.deepEqual(unit.failure_records[0], { check: 'unit', status: 'failed', exit_code: 1, signal: null, at: unit.last_seen, stdout_lines: 0, stderr_lines: 1, output_sha256: unit.failure_records[0].output_sha256 });
+  assert.match(unit.failure_records[0].output_sha256, /^[a-f0-9]{12}$/);
+  assert.match(unit.hint, /ae checks run unit/);
   assert.deepEqual(unit.evidence.toSorted(), [ids.evidenceA, ids.evidenceB].toSorted());
   const verify = recheck.failure_clusters.find(c => c.command === 'verify');
   assert.equal(verify.source, 'run-journal');
@@ -152,7 +158,10 @@ test('suggest: --recheck adds every signal from Harness-owned records and leaves
   assert.equal(cluster.file, 'src/worker.mjs');
   assert.deepEqual(cluster.plans, [PLAN_A, PLAN_B]);
   assert.equal(cluster.findings, 2);
-  assert.equal(JSON.stringify(recheck).includes(GITHUB_TOKEN), false, 'finding titles are secret-screened');
+  assert.equal(JSON.stringify(recheck).includes(GITHUB_TOKEN), false, 'finding titles are never shown');
+  assert.equal(JSON.stringify(recheck).includes('Retry count'), false, 'not even a clean title is shown');
+  assert.deepEqual(cluster.samples.map(sample => sample.title_sha256).toSorted(), [sha('Retry count is off by one'), sha(`Retry count leaks ${GITHUB_TOKEN}`)].map(hash => hash.slice(0, 12)).toSorted());
+  assert.ok(cluster.samples.every(sample => sample.severity === 'P2' && sample.line === 1));
 
   assert.deepEqual(recheck.broken_references, [{ id: ids.broken, references: [{ kind: 'learning', ref: 'runtime/never-existed' }, { kind: 'path', ref: 'src/removed/thing.mjs' }] }]);
   assert.deepEqual(recheck.counts, { stale_exposed: 1, review_required: 1, failure_clusters: 2, finding_clusters: 1, broken_references: 1 });
@@ -181,29 +190,6 @@ test('failure clusters need two distinct plans, are capped per packet and report
   assert.equal(recheck.counts.failure_clusters, total);
   assert.equal(recheck.omitted.failure_clusters, 3);
   assert.equal(recheck.contract.planThreshold, 2);
-});
-
-test('failing-output excerpts are bounded and secret-scanned', t => {
-  const f = fixture(t);
-  f.learn('runtime', 'baseline');
-  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
-  f.evidence(PLAN_A, [{ id: 'leaky', status: 'failed', stderr: `token=${GITHUB_TOKEN}` }, { id: 'noisy', status: 'failed', stdout: 'x'.repeat(5000) }]);
-  f.evidence(PLAN_B, [{ id: 'leaky', status: 'failed', stderr: `Authorization: Bearer ${'z'.repeat(30)}\nline two ${GITHUB_TOKEN}` }, { id: 'noisy', status: 'failed', stdout: `${'y '.repeat(2500)}\u0000tail` }]);
-  const { recheck } = f.packet({ recheck: true });
-  const text = JSON.stringify(recheck);
-  assert.equal(text.includes(GITHUB_TOKEN), false);
-  assert.equal(text.includes('z'.repeat(30)), false);
-  assert.equal(recheck.failure_clusters.find(c => c.check === 'leaky').excerpt, '[withheld: credential-like]', 'the latest (PLAN_B) output is withheld');
-  // The cluster shows only the latest output, so screen PLAN_A's output directly too.
-  for (const stderr of [`token=${GITHUB_TOKEN}`, `Authorization: Bearer ${'z'.repeat(30)}\nline two ${GITHUB_TOKEN}`]) {
-    const excerpt = failureExcerpt({ stderr });
-    assert.equal(excerpt.includes(GITHUB_TOKEN.slice(4, 12)) || excerpt.includes('z'.repeat(8)), false, excerpt);
-    assert.equal(excerpt, '[withheld: credential-like]');
-  }
-  const noisy = recheck.failure_clusters.find(c => c.check === 'noisy').excerpt;
-  assert.ok(noisy.length <= RECHECK_EXCERPT_CAP);
-  assert.match(noisy, /tail$/, 'the tail of the output is kept');
-  assert.equal(/[\x00-\x1f]/.test(noisy), false, 'control characters are inert');
 });
 
 test('on: three stale exposed learnings or a failure cluster across three plans makes consolidation due', t => {
@@ -308,18 +294,6 @@ test('R3: prose, refs and package names are not broken paths; anchors resolve pa
   assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, [{ id, references: [{ kind: 'path', ref: 'test/gone.test.mjs' }] }]);
 });
 
-test('R4: excerpts are masked over the whole output before the tail is taken', () => {
-  const password = 'S3cr3tPassw0rdValue';
-  const cut = failureExcerpt({ stderr: `${'x'.repeat(1000)} connecting postgres://admin:${password}@db.internal:5432/app ${'y'.repeat(355)}` });
-  assert.equal(cut.includes(password.slice(-6)), false, 'no fragment survives the cut');
-  assert.ok(cut.length <= RECHECK_EXCERPT_CAP);
-  const whole = failureExcerpt({ stderr: `failed: postgres://admin:${password}@db.internal:5432/app` });
-  assert.equal(whole, '[withheld: credential-like]', 'a line with URL credentials is withheld whole');
-  assert.equal(whole.includes(password), false);
-  const key = `-----BEGIN RSA PRIVATE KEY-----\n${'MIIEowIBAAKCAQEA'.repeat(60)}\n-----END RSA PRIVATE KEY-----`;
-  assert.equal(failureExcerpt({ stderr: key }), '[withheld: private-key]');
-});
-
 test('R5: --derived-from without a value parses as empty and is refused, not dropped', () => {
   assert.equal(parseFlags(['--insight', '--title', 't', '--derived-from']).derivedFrom, '');
 });
@@ -421,29 +395,6 @@ test('an oversized run journal contributes its newest records and says it was tr
   assert.match(recheck.omitted.journal, /newest 8 MiB/);
 });
 
-test('excerpt masking stays fast on very long output', () => {
-  // `a-a-a-...api` backtracks superlinearly in the generic-api-key pattern; 8k chars already take tens of milliseconds unbounded.
-  // Spaces split it into 1,000-char runs so the long-token rule does not withhold it before masking.
-  const long = `${`${'a-'.repeat(500)} `.repeat(1000)}api`;
-  const started = performance.now();
-  const excerpt = failureExcerpt({ stderr: long });
-  assert.ok(performance.now() - started < 1000, 'masking is bounded');
-  assert.ok(excerpt.length <= RECHECK_EXCERPT_CAP);
-});
-
-test('whitespace padding cannot push a secret keyword out of the masking window while its value stays in the tail', () => {
-  const secret = 'Zq8xY7wV6uT5sR4qP3oN2m';
-  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
-  for (const pad of [' ', '\n', '\t \r\n']) {
-    const clientSecret = failureExcerpt({ stderr: `client_secret=${pad.repeat(5000)}${secret} done` });
-    assert.equal(clientSecret.includes(secret), false, `client_secret value leaked with ${JSON.stringify(pad)} padding`);
-    assert.match(clientSecret, /\[withheld: credential-like\]$/);
-    const bearer = failureExcerpt({ stderr: `Authorization: Bearer${pad.repeat(5000)}${token} done` });
-    assert.equal(bearer.includes(token), false, `bearer token leaked with ${JSON.stringify(pad)} padding`);
-    assert.match(bearer, /\[withheld: credential-like\]$/);
-  }
-});
-
 test('the history preselect reads the newest 1,024 names by mtime and counts the rest as omitted', t => {
   const f = fixture(t);
   f.learn('runtime', 'baseline');
@@ -498,215 +449,9 @@ test('evidence written by a real named check and writeEvidence clusters across p
   assert.deepEqual(rest, []);
   assert.equal(cluster.id, failureClusterId('check:unit'));
   assert.equal(cluster.plan_count, 2);
-  assert.match(cluster.excerpt, /retry count wrong/);
-});
-
-test('ANSI colour codes between a keyword and its value do not defeat masking', () => {
-  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
-  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
-  const apiKey = failureExcerpt({ stderr: `failed: api_key=\x1b[1m${key}\x1b[0m done` });
-  assert.equal(apiKey.includes(key), false, apiKey);
-  const bearer = failureExcerpt({ stderr: `failed: Bearer \x1b[33m${token}\x1b[0m done` });
-  assert.equal(bearer.includes(token), false, bearer);
-  assert.equal(/\x1b/.test(apiKey + bearer), false, 'no escape bytes reach the excerpt');
-});
-
-test('a secret longer than the masking window is withheld whole, not leaked by its tail', () => {
-  const clientSecret = failureExcerpt({ stderr: `client_secret=${'Zx9'.repeat(1100)} done` });
-  assert.equal(clientSecret.includes('Zx9Zx9'), false, clientSecret);
-  assert.equal(clientSecret, '[withheld: credential-like]');
-  const bearer = failureExcerpt({ stderr: `Authorization: Bearer ${'q'.repeat(3300)} done` });
-  assert.equal(bearer.includes('qqqq'), false, bearer);
-  assert.equal(bearer, '[withheld: credential-like]');
-  assert.equal(failureExcerpt({ stderr: `ran ${'Zx9'.repeat(1100)} done` }), '[withheld: credential-like]', 'a long mixed run alone is withheld');
-  assert.equal(failureExcerpt({ stderr: `ran ${'Zx'.repeat(1100)} done` }), 'ran [withheld: long-token] done', 'a long run without digits is withheld as a long token');
-  assert.equal(failureExcerpt({ stderr: `short ${'w'.repeat(1023)} ok` }).includes('w'.repeat(300)), true, 'runs under the threshold are kept');
-});
-
-test('masking catches a connection string whose user part looks like another secret', () => {
-  const password = 'S3cr3tPassw0rdValue';
-  const excerpt = failureExcerpt({ stderr: `failed: postgres://AKIAABCDEFGHIJKLMNOP:${password}@db.internal/app` });
-  assert.equal(excerpt.includes(password), false, excerpt);
-});
-
-test('every ANSI escape form and zero-width character between a keyword and its value is stripped before masking', () => {
-  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
-  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
-  const forms = {
-    'colon-separated SGR': '\x1b[38:5:196m',
-    'private-parameter CSI': '\x1b[>4;2m',
-    'tput sgr0 reset': '\x1b(B\x1b[m',
-    '8-bit CSI': '\x9b1m',
-    'OSC 8 hyperlink': '\x1b]8;;https://example.test/x\x07',
-    'OSC terminated by ST': '\x1b]0;title\x1b\\',
-    'zero-width space': '\u200b',
-    'zero-width joiner': '\u200d',
-    'word joiner': '\u2060',
-    'byte-order mark': '\ufeff',
-  };
-  for (const [name, seq] of Object.entries(forms)) {
-    const apiKey = failureExcerpt({ stderr: `failed: api_key=${seq}${key} done` });
-    assert.equal(apiKey.includes(key), false, `${name}: ${JSON.stringify(apiKey)}`);
-    const bearer = failureExcerpt({ stderr: `failed: Bearer ${seq}${token} done` });
-    assert.equal(bearer.includes(token), false, `${name}: ${JSON.stringify(bearer)}`);
-    assert.equal(/[\x1b\x9b\x9d\x07]/.test(apiKey + bearer), false, `${name}: no escape bytes reach the excerpt`);
-  }
-});
-
-test('escape stripping stays fast on 1 MiB of unterminated escape introducers', () => {
-  for (const long of ['\x1b['.repeat(512 * 1024), '\x1b]'.repeat(512 * 1024), `\x1b[${'1;'.repeat(512 * 1024)}`, `\x1b]${'x'.repeat(1024 * 1024)}`]) {
-    const started = performance.now();
-    const excerpt = failureExcerpt({ stderr: `${long} tail` });
-    assert.ok(performance.now() - started < 1000, 'stripping is bounded');
-    assert.ok(excerpt === null || excerpt.length <= RECHECK_EXCERPT_CAP);
-  }
-});
-
-test('C1: an escape or invisible character inside a private-key header still withholds the key body', () => {
-  const body = 'MIIEowIBAAKCAQEAsecretkeybody';
-  for (const header of [
-    '-----BEGIN PRIVATE \x1b[31mKEY-----',
-    '-----BEGIN RSA PRIVATE\x1b[0m KEY-----',
-    '-----BEGIN PRIVATE​KEY-----',
-    '-----BEGIN PRIVATE ­KEY-----',
-    '-----BEGIN PRIVATE\x1bKEY-----',
-    '-----BEGIN ＰＲＩＶＡＴＥ ＫＥＹ-----',
-  ]) {
-    // No END line: the header alone must withhold the body.
-    assert.equal(failureExcerpt({ stderr: `${header}\n${body}` }), '[withheld: private-key]', JSON.stringify(header));
-  }
-});
-
-test('C2: a credential whose prefix matches another pattern is masked whole in the excerpt', () => {
-  const rest = '-SensitiveRemainingCredentialValue';
-  for (const stderr of [`failed: client_secret=AKIAABCDEFGHIJKLMNOP${rest} done`, `failed: Authorization: Bearer AKIAABCDEFGHIJKLMNOP${rest} done`]) {
-    const excerpt = failureExcerpt({ stderr });
-    assert.equal(excerpt.includes('Sensitive'), false, excerpt);
-    assert.equal(excerpt, '[withheld: credential-like]');
-  }
-});
-
-test('R1: masking shrinkage cannot pull a value whose keyword was cut off the window into the tail', () => {
-  const jwt = `eyJ${'a'.repeat(250)}.${'b'.repeat(250)}.${'c'.repeat(270)}`;
-  const secret = 'SuperSecretValue1234567890abcdef';
-  const excerpt = failureExcerpt({ stderr: `${'x '.repeat(3000)}Authorization: Bearer ${secret} ${'y'.repeat(57)}${` ${jwt}`.repeat(4)}` });
-  assert.equal(excerpt.includes(secret.slice(0, 12)), false, excerpt);
-  assert.equal(excerpt.includes('earer'), false, excerpt);
-  assert.ok(excerpt.length <= RECHECK_EXCERPT_CAP);
-  // Slide the cut across the keyword context and the value: no offset leaks any part of the value.
-  for (let shift = 0; shift < 80; shift += 1) {
-    for (const lead of [`Authorization: Bearer ${secret}`, `Authorization: Basic ${secret}`, `client_secret = "${secret}`, `Authorization" : "Basic ${secret}`]) {
-      const out = failureExcerpt({ stderr: `${'x '.repeat(3000)}${'z'.repeat(shift)} ${lead} ${'y'.repeat(57)}${` ${jwt}`.repeat(4)}` });
-      assert.equal(out?.includes('SuperSecret') || out?.includes('7890abcdef'), false, `shift ${shift}: ${out}`);
-    }
-  }
-  // A line naming a credential is withheld whole; lines around it are kept.
-  assert.equal(failureExcerpt({ stderr: `head\nBearer ${secret} ${jwt}\nfoot` }), 'head [withheld: credential-like] foot');
-});
-
-test('R3: invisible characters and fullwidth forms inside a keyword do not split it from its value', () => {
-  const key = 'Zq8xY7wV6uT5sR4qP3oN2m';
-  const token = 'eyJhbGciOiJIUzI1NiJ9abcdefghijklmnop';
-  const invisibles = { 'zero-width space': '​', 'soft hyphen': '­', 'LRE': '‪', 'RLO': '‮', 'LRI': '⁦', 'PDI': '⁩', 'variation selector': '️', 'Hangul filler': 'ㅤ' };
-  for (const [name, ch] of Object.entries(invisibles)) {
-    for (const stderr of [`failed: api${ch}_key=${key} done`, `failed: client${ch}_secret${ch}=${ch}${key} done`, `failed: Bea${ch}rer ${token} done`, `failed: x${ch}Bearer ${token} done`]) {
-      const excerpt = failureExcerpt({ stderr });
-      assert.equal(excerpt.includes(key) || excerpt.includes(token), false, `${name}: ${JSON.stringify(excerpt)}`);
-      assert.equal(excerpt.includes(ch), false, `${name}: removed from the excerpt`);
-    }
-  }
-  const fullwidth = failureExcerpt({ stderr: `failed: api_key＝${key} done` });
-  assert.equal(fullwidth, '[withheld: credential-like]');
-  assert.equal(failureExcerpt({ stderr: 'tab\tand\nnew\r\nline kept apart' }), 'tab and new line kept apart', 'real whitespace still separates words');
-});
-
-test('R2: a very long finding title is capped before it is screened, and a secret cut by the cap stays hidden', t => {
-  const f = fixture(t);
-  f.learn('runtime', 'baseline');
-  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
-  const finding = title => ({ file: 'src/slow.mjs', line: 1, title, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
-  f.observation(PLAN_A, 'correctness', [finding(`Slow title ${'a-'.repeat(100000)}`)]);
-  f.observation(PLAN_B, 'correctness', [finding(`Cut secret ghp_${'A1b2C3d4E5'.repeat(60)}`)]);
-  const started = performance.now();
-  f.status();
-  assert.ok(performance.now() - started < 1000, 'a 200k title is screened in bounded time');
-  const [cluster] = f.packet({ recheck: true }).recheck.finding_clusters;
-  assert.equal(cluster.file, 'src/slow.mjs');
-  assert.ok(cluster.titles.every(title => title.length <= 120));
-  assert.ok(cluster.titles.some(title => title.startsWith('Slow title a-a-')));
-  assert.equal(JSON.stringify(cluster).includes('A1b2C3d4E5'), false, 'the secret the cap cuts is still redacted');
-  assert.ok(cluster.titles.includes('[withheld: credential-like]'));
-});
-
-// Third review pass: fail-closed line rule (F1-F7, F9).
-
-const T = 'Q7wE9rT2yU4iO6pA8sD1fG3hJ5kL0zX2cV4b';
-const leaksT = text => { for (let i = 0; i + 8 <= T.length; i += 1) if (String(text).includes(T.slice(i, i + 8))) return true; return false; };
-
-test('F1-F3: every reviewed input shape withholds the line, and no 8-character piece of the token survives', () => {
-  assert.equal(T.length, 36);
-  const shapes = {
-    'bare ESC before Bearer': `curl failed \x1bBearer ${T}`,
-    'bare ESC before npm_': `\x1bnpm_${T}`,
-    'NUL inside api_key': `api\x00_key=${T}`,
-    'backspace inside Bearer': `Bea\x08rer ${T}`,
-    'Cyrillic homoglyphs': `Веаrer ${T}`,
-    'Unicode hyphen after ghp': `ghp‐${T}`,
-    'percent-encoded separator': `api_key%3D${T}`,
-    'client_secret with a dot': `client_secret=${T.slice(0, 22)}.${T.slice(22)}`,
-    'Bearer wrapped onto the next line': `Authorization: Bearer\n${T}`,
-    'Bearer wrapped with CRLF and a blank line': `curl -H "Authorization: Bear\r\n\r\ner ${T}"`,
-    'keyword before a line separator': `password: ${T}`,
-  };
-  for (const [name, stderr] of Object.entries(shapes)) {
-    const excerpt = failureExcerpt({ stderr });
-    assert.equal(leaksT(excerpt), false, `${name}: ${JSON.stringify(excerpt)}`);
-    assert.match(excerpt, /\[withheld: credential-like\]/, name);
-    assert.equal(leaksT(failureExcerpt({ stderr: `ok before\n${stderr}\nok after` })), false, `${name} between clean lines`);
-  }
-  // The rule over-withholds by design; clean lines around a withheld one are kept.
-  assert.equal(failureExcerpt({ stderr: 'build ok\nnpm test failed\nAssertionError: expected 2 to equal 3' }), 'build ok [withheld: credential-like] AssertionError: expected 2 to equal 3');
-  assert.equal(failureExcerpt({ stderr: 'see https://user@example.test/x' }), '[withheld: credential-like]', '`://` then `@`');
-});
-
-test('F2: a bare ESC becomes a separator, not a stripped pair, while complete sequences are still stripped', () => {
-  assert.equal(failureExcerpt({ stderr: 'red \x1b[31mtext\x1b[0m and \x1b]8;;https://example.test\x07link\x1b]8;;\x07 and \x1bPq#0\x1b\\done' }), 'red text and link and done');
-  assert.equal(failureExcerpt({ stderr: 'one\x1btwo' }), 'onetwo', 'a bare ESC keeps the next character');
-});
-
-test('F7: stderr holding only escapes or controls does not hide stdout', () => {
-  assert.equal(failureExcerpt({ stderr: '\x1b[31m\x1b[0m\x00​', stdout: 'real failure on stdout' }), 'real failure on stdout');
-  assert.equal(failureExcerpt({ stderr: '\x1b[2K\r', stdout: '  ', message: 'Timed out after 60s' }), 'Timed out after 60s');
-  assert.equal(failureExcerpt({ stderr: '\x1b[0m' }), null);
-});
-
-test('F1: finding titles go through the same normalization and fail-closed rule', t => {
-  const f = fixture(t);
-  f.learn('runtime', 'baseline');
-  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
-  const finding = (file, title) => ({ file, line: 1, title, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
-  const titles = {
-    'src/a.mjs': `Leaked Authorization: Bearer\n${T}`,
-    'src/b.mjs': `client_secret=\n${T}`,
-    'src/c.mjs': `Leaks api​_key ${T}`,
-    'src/d.mjs': `Leaks ａｐｉ＿ｋｅｙ＝${T}`,
-    'src/e.mjs': `password=${T}`,
-  };
-  for (const [file, title] of Object.entries(titles)) {
-    f.observation(PLAN_A, 'security', [finding(file, title)]);
-    f.observation(PLAN_B, 'security', [finding(file, 'Same file, clean title')]);
-  }
-  f.observation(PLAN_A, 'style', [finding('src/f.mjs', `Ｆｕｌｌｗｉｄｔｈ​ name ${'x'.repeat(200)}`)]);
-  f.observation(PLAN_B, 'style', [finding('src/f.mjs', 'Other')]);
-  const { recheck } = f.packet({ recheck: true });
-  assert.equal(leaksT(JSON.stringify(recheck)), false);
-  for (const file of Object.keys(titles)) {
-    const cluster = recheck.finding_clusters.find(c => c.file === file);
-    assert.ok(cluster.titles.includes('[withheld: credential-like]'), `${file}: ${JSON.stringify(cluster.titles)}`);
-  }
-  const shown = recheck.finding_clusters.find(c => c.file === 'src/f.mjs').titles.find(title => title.startsWith('Full'));
-  assert.ok(shown.startsWith('Fullwidth name xxx'), 'the normalized title is shown');
-  assert.equal(shown.length, 120);
+  assert.equal(JSON.stringify(cluster).includes('retry count wrong'), false, 'output is never shown');
+  assert.deepEqual(cluster.failure_records.map(r => [r.exit_code, r.stderr_lines, r.stdout_lines]), [[3, 1, 0], [3, 1, 0]]);
+  assert.equal(cluster.failure_records[0].output_sha256, cluster.failure_records[1].output_sha256, 'identical output, identical hash');
 });
 
 test('F6: callers that skip re-check pay nothing for it and keep the rest of the status', t => {
@@ -721,4 +466,103 @@ test('F6: callers that skip re-check pay nothing for it and keep the rest of the
   assert.deepEqual(light.recheck, { state: 'on' });
   assert.equal(light.due, false, 'without the scan, re-check adds nothing to due');
   assert.deepEqual({ ...light, recheck: undefined, due: undefined, nextTools: undefined }, { ...full, recheck: undefined, due: undefined, nextTools: undefined });
+});
+
+// Recheck shows structured metadata only: no raw check output and no finding title text.
+
+const RAW_SECRETS = {
+  csi: '\x1b[Password: hunter2',
+  curl: 'curl -u admin:hunter2pass https://example.test/api',
+  cookie: 'Cookie: sid=31d4d96e407aad42; theme=dark',
+  github: `token ${GITHUB_TOKEN}`,
+  pem: `-----BEGIN RSA PRIVATE KEY-----\n${'MIIEowIBAAKCAQEA'.repeat(4)}\n-----END RSA PRIVATE KEY-----`,
+};
+const assertNoRaw = (json, label) => {
+  for (const needle of ['hunter2', GITHUB_TOKEN, GITHUB_TOKEN.slice(4, 16), 'sid=', 'Password', 'Cookie', 'PRIVATE KEY', 'MIIEowIBAAKCAQEA', 'admin:']) {
+    assert.equal(json.includes(needle), false, `${label}: ${needle} must not appear`);
+  }
+};
+
+test('failing check output never appears in the packet or status: only metadata', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const stdout = Object.values(RAW_SECRETS).join('\n');
+  const stderr = `${RAW_SECRETS.csi}\n${RAW_SECRETS.curl}\r\n${RAW_SECRETS.cookie}\n`;
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) f.evidence(plan, [{ id: 'leaky', status: 'failed', stdout, stderr, message: RAW_SECRETS.cookie }]);
+  f.evidence(PLAN_A, [{ id: 'slow', status: 'timeout', stdout: RAW_SECRETS.github, message: 'Timed out after 60s' }]);
+  f.evidence(PLAN_B, [{ id: 'slow', status: 'timeout', stderr: RAW_SECRETS.curl }]);
+  const packet = f.packet({ recheck: true }), status = f.status();
+  assertNoRaw(JSON.stringify(packet), 'packet');
+  assertNoRaw(JSON.stringify(status), 'status');
+  assert.equal(status.due, true);
+  const leaky = packet.recheck.failure_clusters.find(c => c.check === 'leaky');
+  assert.equal(leaky.failure_records.length, 3);
+  for (const record of leaky.failure_records) {
+    assert.deepEqual(Object.keys(record), ['check', 'status', 'exit_code', 'signal', 'at', 'stdout_lines', 'stderr_lines', 'output_sha256']);
+    assert.equal(record.stdout_lines, stdout.split('\n').length);
+    assert.equal(record.stderr_lines, 3, 'a trailing newline does not count as a line');
+    assert.match(record.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  }
+  assert.equal(new Set(leaky.failure_records.map(r => r.output_sha256)).size, 1, 'identical output hashes alike');
+  const slow = packet.recheck.failure_clusters.find(c => c.check === 'slow');
+  assert.deepEqual(slow.failure_records.map(r => [r.status, r.exit_code]), [['timeout', null], ['timeout', null]]);
+  assert.equal(JSON.stringify(packet.recheck).includes('Timed out'), false, 'the message is not shown either');
+});
+
+test('failure metadata fields are sanitized: hostile names, signals, statuses and timestamps are replaced', t => {
+  for (const id of ['unit\x1b[31m', 'unit\nnext', 'unit test', 'x'.repeat(65), '', 'ünit', 'a;rm -rf', 42]) {
+    assert.equal(failureMetadata({ id, status: 'failed', exitCode: 1 }).check, '[unnamed]', JSON.stringify(id));
+  }
+  assert.equal(failureMetadata({ id: 'pkg/unit:fast-1.2_x' }).check, 'pkg/unit:fast-1.2_x');
+  const odd = failureMetadata({ id: 'unit', status: 'failed\n', exitCode: '1', signal: 'SIGTERM\x1b[0m', stdout: 7, stderr: null }, '2026-11-01T00:00:00Z\nhunter2');
+  assert.deepEqual({ ...odd, output_sha256: undefined }, { check: 'unit', status: null, exit_code: null, signal: null, at: null, stdout_lines: 0, stderr_lines: 0, output_sha256: undefined });
+  assert.equal(failureMetadata({ id: 'unit', signal: 'SIGKILL' }, '2026-11-01T00:00:00.000+02:00').signal, 'SIGKILL');
+  assert.equal(failureMetadata({ id: 'unit' }, '2026-11-01T00:00:00.000+02:00').at, '2026-11-01T00:00:00.000+02:00');
+
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const hostile = 'unit\x1b[2K\nPassword: hunter2';
+  for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: hostile, status: 'failed', stderr: 'boom' }]);
+  const { recheck } = f.packet({ recheck: true });
+  const [cluster] = recheck.failure_clusters;
+  assert.equal(cluster.check, '[unnamed]');
+  assert.ok(cluster.failure_records.every(record => record.check === '[unnamed]'));
+  assert.doesNotMatch(cluster.hint, /checks run/, 'an unnamed check is not offered as a command');
+  assert.match(cluster.hint, /ae verify/);
+  assert.equal(JSON.stringify(recheck).includes('hunter2'), false);
+  assert.equal(/[\x00-\x1f]/.test(JSON.parse(JSON.stringify(recheck.failure_clusters)).map(c => c.check + c.hint).join('')), false);
+});
+
+test('finding titles never appear: only a title hash, severity, line, sanitized category and path', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const finding = (file, title, extra = {}) => ({ file, line: 4, title, severity: 'P1', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'], ...extra });
+  for (const [plan, title] of [[PLAN_A, RAW_SECRETS.csi], [PLAN_B, RAW_SECRETS.curl], [PLAN_C, RAW_SECRETS.cookie]]) {
+    f.observation(plan, 'security', [finding('src/a.mjs', title), finding('src/a.mjs', RAW_SECRETS.github), finding('src/a.mjs', RAW_SECRETS.pem)]);
+  }
+  f.observation(PLAN_A, 'style\x1b[31m', [finding('src/we ird.mjs', `Slow ${'a-'.repeat(100000)}`, { severity: 'P9\nhunter2', line: 'x' })]);
+  f.observation(PLAN_B, 'style\x1b[31m', [finding('src/we ird.mjs', 'Other')]);
+  const started = performance.now();
+  const status = f.status();
+  assert.ok(performance.now() - started < 1000, 'a 200k title costs only a hash');
+  const { recheck } = f.packet({ recheck: true });
+  assertNoRaw(JSON.stringify(recheck), 'packet');
+  assertNoRaw(JSON.stringify(status), 'status');
+  assert.equal(JSON.stringify(recheck).includes('Slow'), false);
+  const security = recheck.finding_clusters.find(c => c.category === 'security');
+  assert.equal(security.file, 'src/a.mjs');
+  assert.equal(security.samples.length, 3, 'capped');
+  for (const sample of security.samples) {
+    assert.deepEqual(Object.keys(sample), ['title_sha256', 'severity', 'line']);
+    assert.match(sample.title_sha256, /^[a-f0-9]{12}$/);
+    assert.equal(sample.severity, 'P1');
+    assert.equal(sample.line, 4);
+  }
+  const style = recheck.finding_clusters.find(c => c.category !== 'security');
+  assert.equal(style.category, '[unnamed]', 'a reviewer name with an escape is not shown');
+  assert.equal(style.file, '[unnamed]', 'a path outside the safe set is not shown');
+  assert.ok(style.samples.some(sample => sample.severity === null && sample.line === null), 'unknown severity and line are dropped');
 });

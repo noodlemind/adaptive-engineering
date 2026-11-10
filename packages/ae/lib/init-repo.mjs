@@ -172,7 +172,7 @@ export function runInitRepo({ workspace, flags, log, copilotHome }) {
         }
       } else {
         const store = ensureStore(workspace, { home: flags?.home });
-        const { debt } = consolidateStatus({ workspace, copilotHome, home: flags?.home });
+        const { debt } = consolidateStatus({ workspace, copilotHome, home: flags?.home, withRecheck: false });
         if (debt > 0) {
           if (store.created) stats.created.push('knowledge store');
           log(`armed ${debt} existing solution doc(s) as consolidation debt — drains at first session start`);

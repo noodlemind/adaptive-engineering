@@ -216,7 +216,8 @@ export function consolidateStatus(options) {
 
 /**
  * `withRecheck: false` skips the re-check scan for callers that read neither `due` nor `recheck` (doctor,
- * the growth report): the status then names the re-check state without counts, as `suggest` does, and
+ * the growth report, the retrieval tree, resource candidates, the learning listing, archive and init, which
+ * read only `quarantined`, `promotionCandidates` or `debt`): the status then names the re-check state without counts, as `suggest` does, and
  * re-check never adds to `due`. Orient and `ae consolidate` keep the default.
  */
 function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, recheckRequested = false, withRecheck = true }) {

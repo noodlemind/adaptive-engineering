@@ -141,10 +141,6 @@ function resolveEpisodeFile(workspace, copilotHome, p, home) {
   return candidates;
 }
 
-/** The first candidate (workspace, then the global root, then overlay) that
- * actually exists on disk — as a `{ full, root }` pair so the caller can
- * containment-verify the read against the matched root — or null if the path
- * escapes every root or exists in none of them. */
 /** `{ text }` when the file matches `sha256` (the verified bytes, so a caller parses what was hashed, not a
  * second read), `{ text: null }` when no hash is recorded (nothing read), or null on a failed read or mismatch. */
 function episodeHashMatches(full, root, sha256) {
@@ -169,6 +165,11 @@ function episodeAnswer(workspace, copilotHome, e, home) {
   return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
 }
 
+/** The first candidate (workspace, then the global root, then overlay) that
+ * actually exists on disk and matches `sha256` — as `{ full, root, text }`, so
+ * the caller can containment-verify the read against the matched root and
+ * reuse the verified bytes (`text` is null when no hash is recorded) — or null
+ * if the path escapes every root or exists in none of them. */
 function firstExistingEpisodeFile(workspace, copilotHome, p, home, sha256) {
   for (const { full, root } of resolveEpisodeFile(workspace, copilotHome, p, home)) {
     if (!fs.existsSync(full)) continue;

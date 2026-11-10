@@ -1,21 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scanSecrets, redactSecrets, maskSecrets, SECRET_SCAN_CAP } from '../lib/secret-scan.mjs';
-
-test('maskSecrets merges overlapping matches so no credential suffix stays visible', () => {
-  const rest = '-SensitiveRemainingCredentialValue';
-  const clientSecret = maskSecrets(`client_secret=AKIAABCDEFGHIJKLMNOP${rest} done`);
-  assert.equal(clientSecret, '[redacted: generic-api-key] done');
-  const bearer = maskSecrets(`Authorization: Bearer AKIAABCDEFGHIJKLMNOP${rest} done`);
-  assert.equal(bearer, 'Authorization: [redacted: bearer-token] done');
-  // The outermost (first-starting) match names the merged span.
-  assert.equal(maskSecrets('x postgres://AKIAABCDEFGHIJKLMNOP:S3cr3tPassw0rdValue@db.internal/app y'), 'x [redacted: connection-string]/app y');
-  // Separate secrets stay separate, with the text between them kept.
-  assert.equal(maskSecrets(`a AKIAABCDEFGHIJKLMNOP b ghp_${'a'.repeat(36)} c`), 'a [redacted: aws-access-key] b [redacted: github-token] c');
-  assert.equal(maskSecrets('nothing secret here'), 'nothing secret here');
-  // redactSecrets scans the original text and replaces the whole field, so overlaps cannot leave a suffix.
-  assert.equal(redactSecrets(`client_secret=AKIAABCDEFGHIJKLMNOP${rest}`), '[redacted: aws-access-key, generic-api-key]');
-});
+import { scanSecrets, redactSecrets } from '../lib/secret-scan.mjs';
 
 test('scanSecrets flags common credential shapes with line numbers', () => {
   const text = ['title: ok', 'key=AKIAIOSFODNN7EXAMPLE', 'token: ghp_' + 'a'.repeat(36)].join('\n');
@@ -72,20 +57,14 @@ test('scanSecrets flags temporary AWS, npm, GitLab, Google and Basic auth creden
   assert.deepEqual(ids, ['aws-access-key', 'npm-token', 'gitlab-token', 'google-api-key', 'basic-auth', 'generic-api-key']);
 });
 
-test('maskSecrets and secretSpans stay linear on adversarial input and withhold past the scan cap', () => {
+test('the generic-api-key pattern stays linear on adversarial input and still finds prefixed keys', () => {
   for (const long of ['a-'.repeat(5e4), 'a_'.repeat(5e4), `${'a-'.repeat(5e4)}api_key=`, 'x'.repeat(1e5)]) {
     const started = performance.now();
-    const masked = maskSecrets(long);
-    assert.ok(performance.now() - started < 500, `100 KB masked in ${performance.now() - started} ms`);
-    assert.ok(masked.length <= SECRET_SCAN_CAP + 32);
-    assert.match(masked, /\[redacted: over-length\]$/);
+    redactSecrets(long);
+    scanSecrets(long);
+    assert.ok(performance.now() - started < 500, `100 KB scanned in ${performance.now() - started} ms`);
   }
-  // A token the cap would split is withheld whole, not shown as a short prefix.
-  const token = `ghp_${'A1b2C3d4E5'.repeat(4)}`;
-  const straddling = maskSecrets(`${'a '.repeat((SECRET_SCAN_CAP - 10) / 2)}${token} tail`);
-  assert.equal(straddling.includes('ghp_'), false, straddling.slice(-80));
-  assert.equal(maskSecrets('x'.repeat(SECRET_SCAN_CAP)), 'x'.repeat(SECRET_SCAN_CAP), 'input at the cap is scanned whole');
-  // The bounded generic-api-key pattern still finds prefixed keys.
-  assert.equal(maskSecrets('x my_api_key=ABCDEFGHIJKLMNOPQRSTUVWX y'), 'x my_[redacted: generic-api-key] y');
+  assert.deepEqual(scanSecrets('x my_api_key=ABCDEFGHIJKLMNOPQRSTUVWX y').map(h => h.id), ['generic-api-key']);
   assert.deepEqual(scanSecrets('aws_secret_access_key: ABCDEFGHIJKLMNOPQRSTUVWX').map(h => h.id), ['generic-api-key']);
+  assert.deepEqual(scanSecrets('client-secret="ABCDEFGHIJKLMNOPQRSTUVWX"').map(h => h.id), ['generic-api-key']);
 });

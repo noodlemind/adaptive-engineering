@@ -2,8 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { readFileNoFollow, readFileTailNoFollow, assertNoSymlinkAncestors } from './fs-safe.mjs';
-import { redactSecrets, secretSpans, maskSpans } from './secret-scan.mjs';
-import { createRedactor } from './redact.mjs';
 import { foldRuns, RUNS_FILE } from './run-journal.mjs';
 import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowledge/store.mjs';
 import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
@@ -19,57 +17,21 @@ export const RECHECK_PLAN_THRESHOLD = 2;
 export const RECHECK_SECTION_CAP = 10;
 export const RECHECK_DUE_STALE_EXPOSED = 3;
 export const RECHECK_DUE_CLUSTER_PLANS = 3;
-export const RECHECK_EXCERPT_CAP = 400;
-const RECHECK_MASK_WINDOW = 8 * RECHECK_EXCERPT_CAP;
-const RECHECK_LONG_TOKEN = 1024;
-// Complete escape sequences only: CSI (7- and 8-bit, any parameter bytes), and OSC, DCS, SOS, PM and APC
-// strings closed by BEL or ST (7- and 8-bit). A string body stops at the next introducer, so stripping stays
-// linear. Any other ESC, 8-bit introducer or ST (a bare ESC, `\x1b(B`, an unterminated string) is not
-// stripped with the bytes after it: `BARE_ESCAPE` turns it into a `SEP`, so `\x1bBearer` keeps its `B`.
-const ANSI_ESCAPE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b[P\]X^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x90\x98\x9b-\x9f]*(?:\x07|\x1b\\|\x9c)/g;
-const BARE_ESCAPE = /[\x1b\x90\x98\x9b-\x9f]/g;
-// C0 and C1 controls and DEL, other than \t \n \v \f \r, render as nothing: like invisible characters
-// they are read both removed and as a word break (`api\x00_key` is `api_key`), never only as a space.
-const EXCERPT_CONTROLS = /[\x00-\x08\x0e-\x1f\x7f-\x9f]/g;
-// Characters that render as nothing: format characters (zero-width, soft hyphen, bidi controls and the rest)
-// and default-ignorable code points (variation selectors, Hangul fillers). The excerpt's private-use
-// sentinel is listed too, so input cannot forge one.
-const EXCERPT_INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]+/gu;
-// Stands in for a run of invisible characters (or controls, or a bare escape) until both readings (removed, and split) are taken.
-const SEP = '\ue000';
-const WITHHELD_LINE = '[withheld: credential-like]';
-// Fail-closed line rule. Pattern masking alone kept leaking through new input shapes (a bare ESC eating a
-// keyword's first letter, a control or a homoglyph inside it, a keyword wrapped onto the previous line), so a
-// line is withheld whole when its skeleton (escapes stripped, NFKC, lowercased, every character outside
-// [a-z0-9] deleted) holds any of these. Short ones (`npm`, `ghp`, `basic`, `eyj`) and the skeleton's joined
-// words over-withhold ordinary lines such as "npm test failed": accepted, since an excerpt or a title is
-// only a hint for judgment and the record it came from stays readable.
-const CREDENTIAL_WORDS = ['bearer', 'authorization', 'basic', 'token', 'secret', 'password', 'passwd', 'apikey', 'accesskey', 'privatekey', 'credential', 'ghp', 'gho', 'ghs', 'ghu', 'ghr', 'githubpat', 'npm', 'akia', 'asia', 'aiza', 'xox', 'glpat', 'eyj'];
-const CREDENTIAL_WORD = new RegExp(CREDENTIAL_WORDS.join('|'));
-// How much of the previous line's skeleton is carried into the next, so a keyword split across lines is seen.
-const CARRY = Math.max(...CREDENTIAL_WORDS.map(word => word.length)) - 1;
-const LINE_BREAK = /\r\n|[\n\r\u2028\u2029]/;
-const TOKEN_RUN = /[A-Za-z0-9+\/_=-]{20,}/g;
-// A letter outside ASCII touching an ASCII letter (`Веаrer` with Cyrillic В, е and а).
-const MIXED_SCRIPT = /[A-Za-z][^\P{L}A-Za-z]|[^\P{L}A-Za-z][A-Za-z]/u;
-const UNSEEN = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]+/gu;
-const redactText = createRedactor({ env: {} }).redactText;
-const PRIVATE_KEY = /PRIVATE\s*KEY/;
-// Fields dropped from the front of a cut masking window. The widest keyword context ahead of a value
-// in secret-scan's patterns is three fields (basic-auth: `Authorization"`, `:`, `"Basic`), and the cut
-// can split one more, so a value whose keyword fell outside the window sits in the first four fields.
-const RECHECK_CUT_FIELDS = 4;
 /** `derived_from` reference to a failure cluster. The ID is a stable digest of the cluster key. */
 export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
 const SCAN_CAP = 512;
 const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
-const FINDING_TITLE_CAP = 120;
-// A title is cut to this before it is screened (the generic-api-key pattern is superlinear on long input).
-// Only the first 120 characters are shown. A secret that reaches into them needs well under 512 characters
-// for its pattern to match, so it is still redacted; text past the cap is never shown, so a secret the cap
-// cuts cannot expose its tail.
-const FINDING_TITLE_SCAN_CAP = 512;
+// Structured metadata only: no raw check output or finding title text is ever shown. Names and paths are
+// shown only when they fit a narrow character set; anything else is replaced, never escaped or trimmed.
+const SAFE_NAME = /^[A-Za-z0-9._:/-]{1,64}$/;
+const SAFE_PATH = /^[A-Za-z0-9._/-]{1,120}$/;
+const UNNAMED = '[unnamed]';
+const SIGNALS = new Set(['SIGABRT', 'SIGBUS', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGTERM', 'SIGTRAP', 'SIGXCPU', 'SIGXFSZ']);
+const FAILURE_STATUSES = new Set(['failed', 'timeout']);
+const SEVERITIES = new Set(['P1', 'P2', 'P3']);
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const FINDING_SAMPLE_CAP = 3;
 const HASH_FILE = /^[a-f0-9]{64}\.json$/;
 const JOURNAL_BYTE_CAP = 8 * 1024 * 1024;
 
@@ -128,139 +90,55 @@ function readJson(root, rel) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/**
- * Normalize retained output for masking. ANSI escapes (CSI, OSC and the short
- * forms, in 7- and 8-bit encodings) are stripped, so a colour code or
- * hyperlink cannot sit between a keyword and its value. NFKC folds fullwidth
- * and compatibility forms (`＝`, `ｋｅｙ`) to the ASCII the patterns match.
- * A bare ESC and C0 and C1 controls other than whitespace become `SEP`, as
- * invisible characters do. Every run of invisible characters
- * becomes one `SEP`, and whitespace runs
- * (with any `SEP` touching them) collapse to one space, so padding cannot push
- * a keyword such as `client_secret=` or `Authorization: Bearer` out of the
- * masking window while its value stays in the tail. Every step is linear.
- */
-function normalizeExcerpt(raw) {
-  return raw.replace(ANSI_ESCAPE, '').replace(BARE_ESCAPE, SEP).normalize('NFKC').replace(EXCERPT_CONTROLS, SEP).replace(EXCERPT_INVISIBLE, SEP)
-    .replace(/\ue000?\s[\s\ue000]*/g, ' ').replace(/^[ \ue000]+|[ \ue000]+$/g, '');
-}
+/** A check, reviewer or rule name as shown: unchanged when it fits `SAFE_NAME`, otherwise `[unnamed]`. */
+const safeName = value => (typeof value === 'string' && SAFE_NAME.test(value) ? value : UNNAMED);
 
-// `://` with an `@` after it (URL credentials), by index so a line of many `://` stays linear.
-const hasUserinfo = text => { const at = text.indexOf('://'); return at !== -1 && text.indexOf('@', at + 3) !== -1; };
-const hasMixedRun = text => {
-  for (const [run] of text.matchAll(TOKEN_RUN)) if (/[A-Za-z]/.test(run) && /[0-9]/.test(run)) return true;
-  return false;
-};
+/** A relative path as shown: unchanged when it fits `SAFE_PATH` and has no `..` segment, otherwise null (shown as `[unnamed]`). */
+const safePath = value => (typeof value === 'string' && SAFE_PATH.test(value) && !value.startsWith('/') && !value.split('/').includes('..') ? value : null);
+const safeTime = value => (typeof value === 'string' && ISO_TIME.test(value) && Number.isFinite(Date.parse(value)) ? value : null);
+const lineCount = value => (typeof value === 'string' && value ? value.split(/\r\n|\n|\r/).length - (/(?:\r\n|\n|\r)$/.test(value) ? 1 : 0) : 0);
+const shortHash = value => crypto.createHash('sha256').update(value).digest('hex').slice(0, 12);
 
 /**
- * The fail-closed line rule. Lines split on \n, \r, U+2028 and U+2029, after
- * complete escape sequences are stripped. A line is withheld when its
- * skeleton, with the tail of the previous non-empty line's skeleton in front
- * (so `Authorization: Bearer` wrapped before its value still counts), holds a
- * credential word; when it holds `://` and later `@`; when it holds a run of
- * 20 or more token characters mixing letters and digits; or when a non-ASCII
- * letter touches an ASCII one. The last three are read on the line as given
- * and with controls and invisible characters removed. Every check is linear.
- * Returns each line with `withheld` set; withheld lines must never be shown.
+ * Structured metadata for one failing check in an evidence record. No raw
+ * output is ever shown: retained output can hold credentials in shapes no
+ * screen recognizes. The agent gets the sanitized check name, the status, the
+ * exit code and signal, the record's timestamp, line counts per stream and a
+ * 12-hex sha256 prefix of the combined output, so two failures with identical
+ * output can be told apart from two with different output. To read the output
+ * the agent re-runs the check.
  */
-function screenLines(raw) {
-  let carry = '';
-  return raw.replace(ANSI_ESCAPE, '').replace(BARE_ESCAPE, SEP).split(LINE_BREAK).map(line => {
-    const folded = line.normalize('NFKC');
-    const flat = folded.replace(UNSEEN, '');
-    const skeleton = folded.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const withheld = CREDENTIAL_WORD.test(carry + skeleton) || hasUserinfo(line) || hasUserinfo(flat)
-      || hasMixedRun(line) || hasMixedRun(flat) || MIXED_SCRIPT.test(flat);
-    if (skeleton) carry = skeleton.slice(-CARRY);
-    return { line, withheld };
-  });
+export function failureMetadata(check, at = null) {
+  const stdout = typeof check?.stdout === 'string' ? check.stdout : '';
+  const stderr = typeof check?.stderr === 'string' ? check.stderr : '';
+  return {
+    check: safeName(check?.id),
+    status: FAILURE_STATUSES.has(check?.status) ? check.status : null,
+    exit_code: Number.isInteger(check?.exitCode) ? check.exitCode : null,
+    signal: SIGNALS.has(check?.signal) ? check.signal : null,
+    at: safeTime(at),
+    stdout_lines: lineCount(stdout),
+    stderr_lines: lineCount(stderr),
+    output_sha256: shortHash(JSON.stringify([stdout, stderr])),
+  };
 }
 
-/** `raw` with every withheld line replaced by the marker (a run of them by one), lines rejoined with \n. */
-function withholdLines(raw) {
-  const out = [];
-  for (const { line, withheld } of screenLines(raw)) {
-    if (!withheld) out.push(line);
-    else if (out.at(-1) !== WITHHELD_LINE) out.push(WITHHELD_LINE);
-  }
-  return out.join('\n');
-}
-
-// A private-key header, read with controls and invisible characters removed, before and after escapes are stripped.
-const hasPrivateKey = raw => [raw, raw.replace(ANSI_ESCAPE, '')].some(text => PRIVATE_KEY.test(text.replace(UNSEEN, '').normalize('NFKC')));
-// Anything visible once escapes, controls and invisible characters are set aside.
-const VISIBLE = /[^\s\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\ue000]/u;
+/** How to see a failing check's output, naming the check only when its sanitized name survived. */
+const rerunHint = name => (name === UNNAMED
+  ? 'Output is not shown. Re-run `ae verify --plan <plan>` for a listed plan to see it.'
+  : `Output is not shown. Run \`ae checks run ${name}\` to see it.`);
 
 /**
- * Bounded, secret-screened tail of a failing check's retained output.
- *
- * Fail closed first: any line the line rule (`screenLines`) flags is withheld
- * whole as `[withheld: credential-like]` before anything else reads it. The
- * pattern masking below is a second layer over what is left, and redact.mjs's
- * patterns a third over the kept tail.
- *
- * Any private-key header withholds it, checked with controls and invisible
- * characters removed, before and after escapes are stripped, and before
- * any token is withheld or window taken, so neither a colour code nor a
- * zero-width character inside `PRIVATE KEY` hides the key body.
- *
- * An invisible character inside a word is read two ways, and a secret either
- * reading finds is masked: removed (so `api<ZWSP>_key` reads `api_key`, and
- * that joined text is what the excerpt shows) and as a space (so
- * `x<ZWSP>Bearer` still has a word boundary before `Bearer`).
- *
- * Any unbroken run of `RECHECK_LONG_TOKEN` or more non-space characters is
- * withheld whole, so the tail of a secret longer than the window cannot
- * survive without its keyword. Masking runs over a bounded window of the
- * output's end (some patterns are superlinear on long output). Masking can
- * shrink that window enough for the kept tail to reach its start, where the
- * cut may have separated a value from its keyword, so when the window is cut
- * its first `RECHECK_CUT_FIELDS` fields are never shown. The last characters
- * are then kept and screened once more.
+ * A finding as shown: never its free-text title (observations are stored
+ * unredacted), only structured fields: a 12-hex sha256 prefix of the title,
+ * the severity when it is on the allowlist, and the line when it is an integer.
  */
-export function failureExcerpt(check) {
-  // Normalize each candidate before choosing, so stderr holding only escapes or controls does not hide stdout.
-  const raw = [check?.stderr, check?.stdout, check?.message].find(value => typeof value === 'string' && VISIBLE.test(value.replace(ANSI_ESCAPE, '')));
-  if (!raw) return null;
-  if (hasPrivateKey(raw)) return '[withheld: private-key]';
-  const text = normalizeExcerpt(withholdLines(raw));
-  // Split rather than match `\S{1024,}`: that regex rescans every run just under the threshold.
-  const flat = text.split(' ').map(run => (run.length >= RECHECK_LONG_TOKEN ? '[withheld: long-token]' : run)).join(' ');
-  const cut = flat.length > RECHECK_MASK_WINDOW;
-  const window = cut ? flat.slice(-RECHECK_MASK_WINDOW) : flat;
-  // `joined` drops each SEP; `split` turns it into a space. `toJoined` maps a `split` offset to `joined`.
-  const toJoined = new Array(window.length + 1);
-  let joined = '', split = '';
-  for (let i = 0; i < window.length; i += 1) {
-    toJoined[i] = joined.length;
-    if (window[i] === SEP) split += ' ';
-    else { joined += window[i]; split += window[i]; }
-  }
-  toJoined[window.length] = joined.length;
-  const spans = [...secretSpans(joined), ...secretSpans(split).map(span => ({ ...span, start: toJoined[span.start], end: toJoined[span.end] }))];
-  let from = 0;
-  for (let field = 0; cut && field < RECHECK_CUT_FIELDS; field += 1) {
-    const space = joined.indexOf(' ', from);
-    from = space === -1 ? joined.length : space + 1;
-  }
-  return redactText(redactSecrets(maskSpans(joined, spans, from).slice(-RECHECK_EXCERPT_CAP))).slice(-RECHECK_EXCERPT_CAP) || null;
-}
-
-/**
- * A finding title as shown: capped at `FINDING_TITLE_SCAN_CAP` before it is
- * screened, withheld whole as `[withheld: credential-like]` when any line
- * trips the line rule or it holds a private-key header, otherwise normalized
- * like an excerpt (invisible characters removed), pattern-screened in both
- * readings, made inert and cut to `FINDING_TITLE_CAP`.
- */
-function findingTitle(value) {
-  const capped = value.trim().slice(0, FINDING_TITLE_SCAN_CAP);
-  if (!capped) return '';
-  if (hasPrivateKey(capped) || screenLines(capped).some(line => line.withheld)) return WITHHELD_LINE;
-  const normalized = normalizeExcerpt(capped);
-  const joined = normalized.replaceAll(SEP, ''), split = normalized.replaceAll(SEP, ' ');
-  const screened = redactSecrets(joined) !== joined ? redactSecrets(joined) : redactSecrets(split) !== split ? redactSecrets(split) : joined;
-  return inertLine(redactText(screened)).slice(0, FINDING_TITLE_CAP);
+function findingMetadata(finding) {
+  return {
+    title_sha256: typeof finding.title === 'string' && finding.title.trim() ? shortHash(finding.title.trim()) : null,
+    severity: SEVERITIES.has(finding.severity) ? finding.severity : null,
+    line: Number.isInteger(finding.line) && finding.line > 0 ? finding.line : null,
+  };
 }
 
 /**
@@ -300,21 +178,25 @@ function evidenceClusters(workspace, resolved) {
   const clusters = new Map();
   for (const { rel, value } of records) {
     if (typeof value.plan !== 'string' || !value.plan || !Array.isArray(value.checks)) continue;
-    const at = typeof value.verifiedAt === 'string' ? value.verifiedAt : null;
+    const at = safeTime(value.verifiedAt);
     for (const check of value.checks) {
       if (!check || typeof check.id !== 'string' || !check.id || !processFailed(check)) continue;
       const checkId = inertLine(check.id).slice(0, 200);
       const key = `check:${checkId}`;
       if (!unresolved(resolved, failureClusterId(key), at)) continue;
-      const row = clusters.get(key) || { id: failureClusterId(key), source: 'evidence', check: checkId, plans: new Set(), failures: 0, first_seen: null, last_seen: null, excerpt: null, evidence: [] };
+      const name = safeName(check.id);
+      const row = clusters.get(key) || { id: failureClusterId(key), source: 'evidence', check: name, plans: new Set(), failures: 0, first_seen: null, last_seen: null, failure_records: [], hint: rerunHint(name), evidence: [] };
       row.plans.add(value.plan);
       row.failures += 1;
       if (at && (!row.first_seen || at < row.first_seen)) row.first_seen = at;
-      if (at && (!row.last_seen || at >= row.last_seen)) { row.last_seen = at; row.excerpt = failureExcerpt(check); }
+      if (at && (!row.last_seen || at >= row.last_seen)) row.last_seen = at;
+      row.failure_records.push(failureMetadata(check, at));
       if (!row.evidence.includes(rel)) row.evidence.push(rel);
       clusters.set(key, row);
     }
   }
+  // Newest failing records first, capped: metadata only, never output.
+  for (const row of clusters.values()) row.failure_records = row.failure_records.toSorted((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, PLAN_LIST_CAP);
   return { clusters: [...clusters.values()], omitted };
 }
 
@@ -374,13 +256,12 @@ function findingClusters(workspace) {
       for (const finding of result.findings) {
         const file = typeof finding?.file === 'string' ? path.posix.normalize(finding.file.replace(/\\/g, '/')) : '';
         if (!file || file.startsWith('../') || /[\0\r\n]/.test(file)) continue;
-        const category = inertLine(result.reviewer).slice(0, 80);
-        const key = `${category}\0${file}`;
-        const row = clusters.get(key) || { id: findingClusterId(key), category, file: inertLine(file).slice(0, 512), plans: new Set(), findings: 0, titles: [] };
+        const key = `${inertLine(result.reviewer).slice(0, 80)}\0${file}`;
+        const row = clusters.get(key) || { id: findingClusterId(key), category: safeName(result.reviewer), file: safePath(file) ?? UNNAMED, plans: new Set(), findings: 0, samples: [] };
         row.plans.add(plan);
         row.findings += 1;
-        const title = typeof finding.title === 'string' ? findingTitle(finding.title) : '';
-        if (title && row.titles.length < 3 && !row.titles.includes(title)) row.titles.push(title);
+        const sample = findingMetadata(finding);
+        if (row.samples.length < FINDING_SAMPLE_CAP && !row.samples.some(seen => JSON.stringify(seen) === JSON.stringify(sample))) row.samples.push(sample);
         clusters.set(key, row);
       }
     }
