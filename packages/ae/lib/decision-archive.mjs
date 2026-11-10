@@ -26,20 +26,52 @@ function readRecord(loc, relative) {
   return value;
 }
 
+// An immutable request record that cannot be archived this pass (unreadable now, a non-regular entry at its
+// name, a redirected or refused write): the request stays live and a later pass retries it.
+const deferred = (message, extra = {}) => Object.assign(fail(message), { deferred: true }, extra);
+
+/**
+ * Publish one retained record. Returns 'written', 'kept' when an identical immutable record is already
+ * retained, or 'replaced' when the immutable record's name held a regular file whose content proved nothing
+ * (empty or truncated after a crash, malformed, a broken hash or binding): the verified record replaces it.
+ * An immutable record that cannot be archived this pass throws with `deferred` (and `notRegular` when a
+ * non-regular entry holds its name, which is never replaced), so the caller keeps the request live and
+ * retries it; only a valid retained record that conflicts with the value throws otherwise. A non-immutable
+ * write throws when it is refused.
+ */
 function writeRecord(loc, relative, value, immutable = false, durable = false) {
-  if (!assertNoSymlinkAncestors(loc.home, relative)) throw fail('retained record path is redirected');
+  if (!assertNoSymlinkAncestors(loc.home, relative)) {
+    if (immutable) throw deferred('retained record path is redirected');
+    throw fail('retained record path is redirected');
+  }
   const bytes = `${stable({ ...value, id: hash(value) })}\n`;
   if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) throw fail('one retained record exceeds its bound');
+  let replace = false;
   if (immutable) {
-    const previous = readRecord(loc, relative);
+    let previous;
+    try { previous = readRecord(loc, relative); }
+    catch (error) {
+      if (!error.invalid) throw deferred(`retained request record cannot be read now, so it is archived on a later pass: ${error.message}`);
+      let stat;
+      try { stat = fs.lstatSync(path.join(loc.home, relative)); }
+      catch (statError) { throw deferred(`retained request record cannot be read now, so it is archived on a later pass: ${statError.message}`); }
+      if (!stat.isFile()) throw deferred('retained request record name holds a symlink or another non-regular entry, which is never replaced', { notRegular: true });
+      replace = true;
+    }
     if (previous) {
       if (stable(previous) !== stable(value)) throw fail('immutable request evidence conflicts with its retained identity');
-      return;
+      return 'kept';
     }
   }
-  // Immutable request evidence is always flushed before it is linked into place: a readiness index (written
-  // durably) may name it, so a crash must never leave the name holding an empty or partial record.
-  if (!writeFileContained(loc.home, relative, bytes, { exclusive: immutable, mode: 0o600, durable: durable || immutable })) throw fail('retained record publication refused');
+  // Immutable request evidence is flushed before it is linked (or renamed over invalid content) where the
+  // filesystem allows: a durable readiness index may name it. A failed flush never refuses it, since
+  // archiving must never block a decision operation, and a reader already treats invalid content as such.
+  const written = writeFileContained(loc.home, relative, bytes, { exclusive: immutable && !replace, mode: 0o600, durable: immutable ? 'best-effort' : durable });
+  if (!written) {
+    if (immutable) throw deferred('retained record publication refused');
+    throw fail('retained record publication refused');
+  }
+  return replace ? 'replaced' : 'written';
 }
 
 /** One archived request record by exact ID, integrity-checked, or null when none is retained. */
@@ -95,7 +127,7 @@ const MAX_UNTRACKED = 1 << 30;
 // 'unreadable-record' (a request record that cannot be read or proves nothing: restore it or move it out),
 // 'not-regular' (an index file that is a symlink or not a regular file: remove it) and 'refused-write'
 // (an index file that could not be read or written: fix its permissions or directory, or remove it).
-// `offendersTruncated` says more offenders were found than are named.
+// `offendersTruncated` says whether more offenders were found than are named.
 const MAX_OFFENDERS = 8;
 const OFFENDER = /^(requests|readiness)\/[a-f0-9]{64}\.json$/;
 const REASONS = new Set(['unreadable-record', 'not-regular', 'refused-write']);
@@ -110,7 +142,11 @@ const offendersOf = value => {
   }
   return list;
 };
-const withOffenders = (list, truncated = false) => ({ ...(list.length ? { offenders: list } : {}), ...(list.length && truncated === true ? { offendersTruncated: true } : {}) });
+// A full list says whether more were found (`false` explicitly), so a full list from an earlier version,
+// which never said, reads as truncated: it was cut at the cap.
+const withOffenders = (list, truncated = false) => ({ ...(list.length ? { offenders: list } : {}),
+  ...(list.length && truncated === true ? { offendersTruncated: true } : list.length >= MAX_OFFENDERS ? { offendersTruncated: false } : {}) });
+const truncatedOf = (list, flag) => flag === true || (flag === undefined && list.length >= MAX_OFFENDERS);
 
 const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${readinessPlanKey(planPath)}.json`);
 
@@ -218,12 +254,13 @@ function indexHolds(loc, entry) {
  * count last listed, and `last` what the previous full sweep found (with its offenders) when it could not
  * clear the marker. A malformed sweep restarts from the beginning.
  */
+const offendersIn = value => { const list = offendersOf(value.offenders); return withOffenders(list, truncatedOf(list, value.offendersTruncated)); };
 const nonNegative = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 function sweepOf(pending) {
   const sweep = object(pending) && object(pending.sweep) ? pending.sweep : {};
-  const last = object(sweep.last) ? { unreadable: nonNegative(sweep.last.unreadable), failed: nonNegative(sweep.last.failed), ...(sweep.last.overCap === true ? { overCap: true } : {}), ...withOffenders(offendersOf(sweep.last.offenders), sweep.last.offendersTruncated) } : null;
+  const last = object(sweep.last) ? { unreadable: nonNegative(sweep.last.unreadable), failed: nonNegative(sweep.last.failed), ...(sweep.last.overCap === true ? { overCap: true } : {}), ...offendersIn(sweep.last) } : null;
   return { ...(typeof sweep.after === 'string' && RECORD_NAME.test(sweep.after) ? { after: sweep.after } : {}),
-    swept: nonNegative(sweep.swept), unreadable: nonNegative(sweep.unreadable), failed: nonNegative(sweep.failed), ...withOffenders(offendersOf(sweep.offenders), sweep.offendersTruncated), total: nonNegative(sweep.total), ...(last ? { last } : {}),
+    swept: nonNegative(sweep.swept), unreadable: nonNegative(sweep.unreadable), failed: nonNegative(sweep.failed), ...offendersIn(sweep), total: nonNegative(sweep.total), ...(last ? { last } : {}),
     ...(Number.isFinite(sweep.lastSweepAt) ? { lastSweepAt: sweep.lastSweepAt } : {}) };
 }
 /** The sweep restarted from the beginning, keeping what the previous full sweep found and when a slice last ran. */
@@ -403,8 +440,15 @@ export function decisionTask(loc, state, key) {
  * that record. A read that fails (EMFILE, EIO) is retried instead. A sweep keeps up to MAX_OFFENDERS
  * archive-relative names of the files it could not use, each with its reason, so status can name them
  * and give the matching remedy. A plan path that is not well-formed Unicode is never indexed or noted.
- * Returns this pass's index faults, `{ requestId, plan, message }`; callers may ignore them, because
- * status derives readiness-index health from the index and the notes, not from these faults.
+ * Archiving a request record never refuses the pass: a failed flush publishes it unflushed; a record name
+ * holding content that proves nothing (left by a crash after link, before the state was published) is
+ * replaced with the verified record, and its plan is counted as untracked so a restarted sweep reconciles
+ * it; and a record that cannot be archived this pass (a read that fails, a refused write, a non-regular
+ * entry at its name) keeps its request live for a later pass. A non-regular entry never clears by itself,
+ * so it also marks the archive for a sweep, which counts it unreadable and names it in status.
+ * Returns this pass's faults, `{ requestId, plan, message }` (`plan` null for a request without a
+ * readiness receipt); callers may ignore them, because status derives readiness-index health from the
+ * index, the notes and the sweep, not from these faults.
  */
 export function compactDecisions(loc, state, options = {}) {
   const faults = [];
@@ -459,7 +503,23 @@ export function compactDecisions(loc, state, options = {}) {
     if (!expired && (!terminal || state.nativeProbes[requestId])) continue;
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
-    writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
+    const readinessPlan = receipt?.type === 'readiness' && keyablePlan(request.planPath) ? readinessPlanKey(request.planPath) : null;
+    let archived;
+    try { archived = writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true); }
+    catch (error) {
+      if (!error.deferred) throw error;
+      // The request stays live and is archived on a later pass. A non-regular entry at its name never
+      // clears by itself: a sweep lists that name, counts it unreadable and names it in status.
+      faults.push({ requestId, plan: readinessPlan, message: `request ${requestId} not archived this pass, kept live: ${error.message}` });
+      if (error.notRegular && !untracked) untracked = 1;
+      continue;
+    }
+    if (archived === 'replaced') {
+      // The name held content that proved nothing (a crash after link, before the state was published).
+      // An index may have been rebuilt from an older receipt meanwhile, so the plan is reconciled again.
+      faults.push({ requestId, plan: readinessPlan, message: `request record ${requestId} held content that proved nothing and was replaced with the verified record` });
+      if (readinessPlan) untrack(readinessPlan);
+    }
     // A request hydrated from the archive was archived before; a newer receipt may already be,
     // so it never becomes the plan's pending newest.
     if (receipt?.type === 'readiness' && keyablePlan(request.planPath) && ID.test(receipt.id || '') && Number.isFinite(receipt.recordedAt) && !state.archivedHydrated?.has(requestId)) {

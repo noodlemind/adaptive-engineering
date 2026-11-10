@@ -10,6 +10,7 @@ import { applyOps } from '../lib/knowledge/apply.mjs';
 import { consolidateCandidates, consolidateStatus } from '../lib/knowledge/consolidate.mjs';
 import { ensureStore, writeFeedbackConfig } from '../lib/knowledge/store.mjs';
 import { loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
+import { readFileNoFollow } from '../lib/fs-safe.mjs';
 import { compactDecisions, hydrateArchivedDecision, latestArchivedReadiness, readinessIndexHealth } from '../lib/decision-archive.mjs';
 import { decisionResultOf } from '../lib/decision-agent.mjs';
 import { decisionStatus, inspectDecisionAction, latestReadinessReceipt, prepareDecision } from '../lib/decision-agent.mjs';
@@ -1611,9 +1612,13 @@ test('M3: an immutable request record is flushed before it is linked, and a file
   fs.fsyncSync = () => { throw Object.assign(new Error('EINVAL: invalid argument, fsync'), { code: 'EINVAL' }); };
   try { assert.deepEqual(compactDecisions(loc, d.state([d.readiness('blocked', 2)])), []); } finally { fs.fsyncSync = fsyncSync; }
   assert.equal(latestArchivedReadiness(loc, PLAN).recordedAt, 2, 'the record and the index were both written');
-  // Any other flush failure still refuses the write.
+  // Any other flush failure never refuses the request record; it refuses only the index write, which is noted.
   fs.fsyncSync = () => { throw Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }); };
-  try { assert.throws(() => compactDecisions(loc, d.state([d.readiness('ready', 3)])), /publication refused/); } finally { fs.fsyncSync = fsyncSync; }
+  const state = d.state([d.readiness('ready', 3)]);
+  let faults;
+  try { faults = compactDecisions(loc, state); } finally { fs.fsyncSync = fsyncSync; }
+  assert.equal(faults.length, 1, 'only the index write is refused');
+  assert.deepEqual(Object.keys(state.readinessPending.plans), [sha(PLAN)], 'the refused index write is noted and retried');
 });
 
 test('M4: "(first N)" appears only when more offending files were found than are named', t => {
@@ -1645,4 +1650,102 @@ test('M5: a plan path that is not well-formed Unicode is never keyed, so it cann
   for (let pass = 0; pass < 4 && state.readinessPending; pass++) compactDecisions(loc, state);
   assert.equal(state.readinessPending, undefined);
   assert.equal(latestArchivedReadiness(loc, replaced).requestId, real.requestId);
+});
+
+// Review findings on PR #127: decision operations are never blocked by derived-data or durability problems.
+
+test('N1: a flush that fails with EPERM, EISDIR or EIO never refuses a decision operation', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const loc = { home: c.home, workspace: d.workspace };
+  const { fsyncSync } = fs;
+  let at = 1;
+  for (const code of ['EPERM', 'EISDIR', 'EIO']) {
+    const item = d.readiness('escalate', at++);
+    run.seed([item]);
+    fs.fsyncSync = () => { throw Object.assign(new Error(`${code}: fsync`), { code }); };
+    try { assert.ok(run.prepare(1000 + at).requestId, `${code}: prepare succeeds`); } finally { fs.fsyncSync = fsyncSync; }
+    assert.ok(fs.statSync(path.join(d.archive, 'requests', `${item.requestId}.json`)).size > 0, `${code}: the request record is archived`);
+    assert.equal(run.stored().requests[item.requestId], undefined, `${code}: the request retired`);
+    if (code === 'EIO') {
+      // A flush that failed for another reason refuses only the derived index write, which is noted and retried.
+      assert.deepEqual(Object.keys(run.stored().readinessPending.plans), [sha(PLAN)], 'the index write is noted');
+      run.prepare(1100);
+      assert.equal(run.stored().readinessPending, undefined, 'the retry heals it');
+    }
+    assert.equal(latestArchivedReadiness(loc, PLAN).requestId, item.requestId, `${code}: the index names the receipt`);
+  }
+});
+
+test('N2: a request record left empty or truncated by a crash is replaced, and one that cannot be archived now waits', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  let at = 1;
+  for (const [label, content] of [['empty', ''], ['truncated', '{"id":"']]) {
+    const item = d.readiness('escalate', at++);
+    const record = path.join(d.archive, 'requests', `${item.requestId}.json`);
+    fs.mkdirSync(path.dirname(record), { recursive: true });
+    fs.writeFileSync(record, content);
+    const state = d.state([item]);
+    const faults = compactDecisions(loc, state);
+    assert.equal(state.requests[item.requestId], undefined, `${label}: the request retired`);
+    assert.ok(faults.some(fault => fault.requestId === item.requestId && /proved nothing and was replaced/.test(fault.message)), `${label}: the replacement is reported`);
+    assert.equal(hydrateArchivedDecision(loc, d.state([]), item.requestId).requestId, item.requestId, `${label}: the record is valid afterwards`);
+    assert.equal(latestArchivedReadiness(loc, PLAN).requestId, item.requestId, label);
+  }
+  // A read that fails now (EMFILE) keeps the request live; the next pass archives it.
+  const busy = d.readiness('escalate', at++);
+  const busyRecord = path.join(d.archive, 'requests', `${busy.requestId}.json`);
+  fs.writeFileSync(busyRecord, '');
+  const state = d.state([busy]);
+  const { openSync } = fs;
+  fs.openSync = (file, ...rest) => { if (String(file) === busyRecord) throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' }); return openSync(file, ...rest); };
+  let faults;
+  try { faults = compactDecisions(loc, state); } finally { fs.openSync = openSync; }
+  assert.ok(state.requests[busy.requestId], 'the request stays live');
+  assert.ok(faults.some(fault => fault.requestId === busy.requestId && /not archived this pass/.test(fault.message)));
+  compactDecisions(loc, state);
+  assert.equal(state.requests[busy.requestId], undefined, 'a later pass archives it');
+  assert.equal(hydrateArchivedDecision(loc, d.state([]), busy.requestId).requestId, busy.requestId);
+  // A non-regular entry at the record's name is never replaced: the request stays live and a sweep names the file.
+  const blocked = d.readiness('escalate', at++);
+  fs.mkdirSync(path.join(d.archive, 'requests', `${blocked.requestId}.json`));
+  const held = d.state([blocked]);
+  compactDecisions(loc, held);
+  assert.ok(held.requests[blocked.requestId], 'the request stays live');
+  assert.deepEqual(held.readinessPending.sweep.last.offenders, [{ file: `requests/${blocked.requestId}.json`, reason: 'unreadable-record' }], 'the sweep names the entry');
+});
+
+test('N3: a short read loops until every byte is read, and a file that ends early reads as unreadable, not as content', t => {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-short-read-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'record.json'), text = JSON.stringify({ schema: 1, value: 'x'.repeat(64) });
+  fs.writeFileSync(file, text);
+  const { readSync } = fs;
+  fs.readSync = (fd, buffer, offset, length, position) => readSync(fd, buffer, offset, Math.min(length, 5), position);
+  try { assert.equal(readFileNoFollow(file, { root: dir }), text, 'short reads are completed'); } finally { fs.readSync = readSync; }
+  let calls = 0;
+  fs.readSync = (fd, buffer, offset, length, position) => calls++ ? 0 : readSync(fd, buffer, offset, Math.min(length, 5), position);
+  try { assert.equal(readFileNoFollow(file, { root: dir }), null, 'a file that ends early is unreadable'); } finally { fs.readSync = readSync; }
+});
+
+test('N4: a full offender list from an earlier version, which never said whether it was cut, reads as cut', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const run = decisionRun(c, d);
+  const { state } = untrackedArchive(c, d, 3, 1);
+  const offenders = Array.from({ length: 8 }, (_, i) => ({ file: `requests/${sha(`legacy-${i}`)}.json`, reason: 'unreadable-record' }));
+  state.readinessPending.sweep = { swept: 0, unreadable: 0, failed: 0, total: 3, last: { unreadable: 8, failed: 0, offenders } };
+  persistState(d, state);
+  assert.match(staleWarning(run, undefined, 11).message, /could not use \(first 8\)/);
+  state.readinessPending.sweep.last.offendersTruncated = false;
+  persistState(d, state);
+  assert.doesNotMatch(staleWarning(run, undefined, 12).message, /\(first/, 'a list that says it is complete is not marked as cut');
+  // A sweep that finds exactly as many offenders as it names says so.
+  const full = untrackedArchive(c, d, 8, 1);
+  for (const item of full.items) fs.writeFileSync(path.join(d.archive, 'requests', `${item.requestId}.json`), '');
+  compactDecisions(full.loc, full.state);
+  assert.deepEqual([full.state.readinessPending.sweep.last.offenders.length, full.state.readinessPending.sweep.last.offendersTruncated], [8, false]);
 });
