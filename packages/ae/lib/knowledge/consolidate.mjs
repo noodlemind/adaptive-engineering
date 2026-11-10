@@ -6,7 +6,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor } from './overlay.mjs';
-import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
+import { feedbackState, feedbackSummary, feedbackColumns, feedbackOrder } from '../learning-feedback.mjs';
 import { readEvidenceQuote, inertEvidenceQuote } from './evidence-quote.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
@@ -212,7 +212,7 @@ function layerView({ workspace, home, dir, writeLayer = false, layerOverride = n
   };
 }
 
-export function consolidateStatus({ workspace, copilotHome, home, writeLayer = false, layerOverride = null }) {
+export function consolidateStatus({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, feedbackVerdicts = null }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -232,7 +232,7 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     const learnings = listLearnings(view.layerRoot);
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
-  const feedback = feedbackView({ workspace, home, learnings: active });
+  const feedback = feedbackView({ workspace, home, learnings: active, withFeedback, verdicts: feedbackVerdicts });
   const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0));
   return {
     mode,
@@ -244,7 +244,7 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     learnings: { active: active.length, total: learnings.length },
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
-    ...(feedback ? { feedback: { state: feedback.state, records: feedback.records, review_required: feedback.review_required } } : {}),
+    ...(feedback ? { feedback } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),
@@ -252,20 +252,25 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
   };
 }
 
-/** Feedback evidence for packets and status; absent when the effective state is `off`, so output stays byte-identical. */
-function feedbackView({ workspace, home, learnings }) {
+/**
+ * Feedback evidence for packets and status; absent when the effective state is
+ * `off`, so output stays byte-identical. The history is read under `on`, where
+ * `due` depends on it, or under `suggest` only for a caller that shows it.
+ */
+function feedbackView({ workspace, home, learnings, withFeedback, verdicts }) {
   let state = 'off';
   try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
-  if (state === 'off') return null;
+  if (state === 'off' || (state === 'suggest' && !withFeedback)) return null;
   try {
-    return { state, ...feedbackSummary({ workspace, home, learnings }) };
+    return { state, ...feedbackSummary({ workspace, home, learnings, verdicts }) };
   } catch (error) {
     return { state, records: 0, learnings: [], review_required: [], reviewers: [], unavailable: inertLine(error.message).slice(0, 200) };
   }
 }
 
 export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null }) {
-  const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride });
+  const feedbackVerdicts = new Map();
+  const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, feedbackVerdicts });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
 
@@ -313,9 +318,10 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const active = activeLearnings(listLearnings(view.layerRoot));
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
-  const feedback = feedbackView({ workspace, home, learnings: active });
-  const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
-  const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
+  const feedback = status.feedback || null;
+  // Under `on` only: review_required first, then feedback-disputed, then most exposed.
+  // The history was read once for status; its verdict tallies feed the columns.
+  const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home, verdicts: feedbackVerdicts }), reviewRequired: feedback.review_required, layer: view.layer }) : active;
   const learnings = ordered.map((l) => ({
     id: l.id,
         trigger: inertLine(l.fm.trigger || ''),

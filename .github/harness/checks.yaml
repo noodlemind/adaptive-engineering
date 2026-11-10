@@ -73,7 +73,7 @@ checks:
     timeout_seconds: 600
     proof: behavior
   adaptive-formal-tests:
-    command: ["node", "--test", "packages/ae/test/flow-model.test.mjs", "packages/ae/test/flow-model-context.test.mjs", "packages/ae/test/formal-verification.test.mjs", "packages/ae/test/workflow-invariants.test.mjs", "packages/ae/test/package-standalone.test.mjs", "packages/ae/test/release-version.test.mjs", "packages/ae/test/registry.test.mjs", "packages/ae/test/command-index-contract.test.mjs", "packages/ae/test/command-index-enumerability.test.mjs", "packages/ae/test/command-index-envelope.test.mjs"]
+    command: ["node", "--test", "packages/ae/test/flow-model.test.mjs", "packages/ae/test/flow-model-context.test.mjs", "packages/ae/test/state-model.test.mjs", "packages/ae/test/delivery-evidence-model.test.mjs", "packages/ae/test/workflow-invariants.test.mjs", "packages/ae/test/package-standalone.test.mjs", "packages/ae/test/release-version.test.mjs", "packages/ae/test/registry.test.mjs", "packages/ae/test/command-index-contract.test.mjs", "packages/ae/test/command-index-enumerability.test.mjs", "packages/ae/test/command-index-envelope.test.mjs"]
     timeout_seconds: 300
     proof: behavior
   verify-formal-flows:
@@ -93,6 +93,6 @@ checks:
     proof: behavior
   verify-formal-delivery:
     command: ["node", ".cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs"]
-    artifacts: ["delivery-evidence-model.json"]
+    artifacts: ["state-model.json"]
     timeout_seconds: 60
     proof: behavior

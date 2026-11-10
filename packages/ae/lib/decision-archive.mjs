@@ -14,6 +14,7 @@ function readRecord(loc, relative) {
   const file = path.join(loc.home, relative), stat = fs.lstatSync(file, { throwIfNoEntry: false });
   if (!stat) return null;
   const bytes = readFileNoFollow(file, { root: loc.home, maxBytes: 2 * 1024 * 1024 });
+  if (bytes === null) throw fail('retained record is unreadable, oversized or redirected');
   let record;
   try { record = JSON.parse(bytes); } catch { throw fail('retained record is malformed or unsafe'); }
   const { id, ...value } = record || {};
@@ -21,7 +22,7 @@ function readRecord(loc, relative) {
   return value;
 }
 
-function writeRecord(loc, relative, value, immutable = false) {
+function writeRecord(loc, relative, value, immutable = false, durable = false) {
   if (!assertNoSymlinkAncestors(loc.home, relative)) throw fail('retained record path is redirected');
   const bytes = `${stable({ ...value, id: hash(value) })}\n`;
   if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) throw fail('one retained record exceeds its bound');
@@ -32,12 +33,11 @@ function writeRecord(loc, relative, value, immutable = false) {
       return;
     }
   }
-  if (!writeFileContained(loc.home, relative, bytes, { exclusive: immutable, mode: 0o600 })) throw fail('retained record publication refused');
+  if (!writeFileContained(loc.home, relative, bytes, { exclusive: immutable, mode: 0o600, durable })) throw fail('retained record publication refused');
 }
 
-/** Exact lookup only; no unbounded archive-directory scan is used for authority. */
-export function hydrateArchivedDecision(loc, state, requestId) {
-  if (Object.hasOwn(state.requests, requestId)) return state.requests[requestId];
+/** One archived request record by exact ID, integrity-checked, or null when none is retained. */
+function archivedRequest(loc, requestId) {
   if (!ID.test(requestId || '')) return null;
   const record = readRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`));
   if (!record) return null;
@@ -48,8 +48,17 @@ export function hydrateArchivedDecision(loc, state, requestId) {
   if (record.receipt) {
     const { id, ...receipt } = record.receipt;
     if (receipt.requestId !== requestId || hash({ ...receipt, consumedAt: null }) !== id) throw fail('receipt archive integrity changed');
-    state.receipts[requestId] = record.receipt;
   }
+  return record;
+}
+
+/** Exact lookup only; no unbounded archive-directory scan is used for authority. */
+export function hydrateArchivedDecision(loc, state, requestId) {
+  if (Object.hasOwn(state.requests, requestId)) return state.requests[requestId];
+  const record = archivedRequest(loc, requestId);
+  if (!record) return null;
+  const request = record.request;
+  if (record.receipt) state.receipts[requestId] = record.receipt;
   state.requests[requestId] = request;
   if (!state.archivedHydrated) Object.defineProperty(state, 'archivedHydrated', { value: new Set(), enumerable: false });
   state.archivedHydrated.add(requestId);
@@ -57,6 +66,254 @@ export function hydrateArchivedDecision(loc, state, requestId) {
   if (record.nativeProbe) state.nativeProbes[requestId] = record.nativeProbe;
   Object.assign(state.invocations, record.invocations || {});
   return request;
+}
+
+/** The plan identity the readiness-index warning reports: the hash that also names the plan's index record. */
+export const readinessPlanKey = planPath => hash(planPath);
+// At most this many plans are tracked as possibly holding a stale readiness index.
+const MAX_PENDING_READINESS = 256;
+// At most this many noted index writes are retried per compaction pass, least recently tried first.
+const MAX_READINESS_RETRIES = 8;
+// A reconciliation sweep lists at most this many archived request records; past it the sweep is incomplete.
+export const MAX_SWEEP_RECORDS = 65536;
+// Each compaction pass reconciles at most this many archived request records.
+const SWEEP_SLICE = 64;
+const RECORD_NAME = /^[a-f0-9]{64}\.json$/;
+// The untracked-plan count saturates here; it only ever reads as "up to N".
+const MAX_UNTRACKED = 1 << 30;
+// A sweep names at most this many offending archive files (unreadable request records, refused index
+// files) so status can say which file to remove or restore; names are archive-relative hex ids only.
+const MAX_OFFENDERS = 8;
+const OFFENDER = /^(requests|readiness)\/[a-f0-9]{64}\.json$/;
+const offendersOf = value => Array.isArray(value) ? [...new Set(value.filter(item => typeof item === 'string' && OFFENDER.test(item)))].slice(0, MAX_OFFENDERS) : [];
+const withOffenders = list => list.length ? { offenders: list } : {};
+
+const readinessRelative = (loc, planPath) => path.join(root(loc), 'readiness', `${readinessPlanKey(planPath)}.json`);
+
+/**
+ * The plan's readiness index, or null when it is absent or when its file was read but holds no valid
+ * index (empty after a crash, truncated, malformed, oversized, a wrong self-hash or workspace): the index
+ * is derived from the request archive, so invalid content is rebuilt, never kept. `invalid` reports
+ * which. Throws, so the caller keeps the file and retries later, when the file cannot be read (EMFILE,
+ * EIO, EACCES, a redirected ancestor) and when its leaf is a symlink or another non-regular entry, which
+ * is never followed or replaced: the message names the file and the manual remedy.
+ */
+function readReadinessIndex(loc, relative, invalid = { value: false }) {
+  const file = path.join(loc.home, relative), stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (!stat.isFile()) throw fail(`the readiness index ${file} is a symlink or not a regular file, so it is never followed or replaced; remove it and the next decision prepare or record rebuilds it`);
+  if (stat.size > 2 * 1024 * 1024) { invalid.value = true; return null; }
+  const bytes = readFileNoFollow(file, { root: loc.home, maxBytes: 2 * 1024 * 1024 });
+  if (bytes === null) throw fail('retained record is unreadable, oversized or redirected');
+  let record;
+  try { record = JSON.parse(bytes); } catch { invalid.value = true; return null; }
+  const { id, ...value } = object(record) ? record : {};
+  if (!object(record) || !ID.test(id || '') || hash(value) !== id || value.schema !== 1 || value.workspace !== loc.workspace) { invalid.value = true; return null; }
+  return value;
+}
+/** The readiness index file name a status warning shows, relative to the archive: a hex plan key only. */
+const readinessName = planPath => `readiness/${readinessPlanKey(planPath)}.json`;
+const readinessCitation = receipt => ({ id: receipt.id, requestId: receipt.requestId, verdict: receipt.verdict, recordedAt: receipt.recordedAt });
+
+/**
+ * The readiness citation that the retained request record `requestId` proves for `planPath`, built from
+ * that record (never from the caller's copy), or null when the record is absent, is for another plan, or
+ * holds another receipt. Throws when the record exists but its integrity changed.
+ */
+function archivedReadiness(loc, planPath, requestId, receiptId) {
+  const record = archivedRequest(loc, requestId), receipt = record?.receipt;
+  if (!record || record.request.planPath !== planPath || receipt?.type !== 'readiness' || receipt.id !== receiptId || !Number.isFinite(receipt.recordedAt)) return null;
+  return readinessCitation(receipt);
+}
+
+/**
+ * Keep the newest archived readiness receipt per plan so read-only citations survive compaction.
+ * Returns 'written' after an index write, 'rebuilt' after it replaced an index file whose content was
+ * invalid (nothing there was proven, so the caller's integrity-checked receipt wins and a sweep must
+ * reconcile it against the plan's other records), 'current' when the index already holds a newer or equal
+ * receipt (nothing was written), and null when the citation lacks a plan, an id or a time. The index's
+ * receipt is judged by what its retained request record proves, never by the index's own time: it is
+ * overwritten only when that record proves nothing (absent, another plan or another receipt) or proves an
+ * older time. When the index itself or that record cannot be read, this throws and writes nothing, so a
+ * transient read failure never downgrades the index; the caller notes the citation (or counts the failure)
+ * and a later pass retries. A missing index file reads as "no index"; one read but invalid is rebuilt.
+ */
+function retainLatestReadiness(loc, planPath, receipt) {
+  if (typeof planPath !== 'string' || !ID.test(receipt?.id || '') || !Number.isFinite(receipt.recordedAt)) return null;
+  const relative = readinessRelative(loc, planPath);
+  // Null when no file or invalid content; EMFILE, EIO, a redirected ancestor or a non-regular leaf throw.
+  let previous;
+  const invalid = { value: false };
+  try { previous = readReadinessIndex(loc, relative, invalid); }
+  catch (error) { throw fail(`the readiness index cannot be read, so it is kept: ${error.message}`); }
+  const write = citation => { writeRecord(loc, relative, { schema: 1, workspace: loc.workspace, planPath, receipt: readinessCitation(citation) }, false, true); return 'written'; };
+  // A readable index of another shape proves nothing either.
+  if (invalid.value || (previous && (previous.planPath !== planPath || !object(previous.receipt)))) { write(receipt); return 'rebuilt'; }
+  if (!previous) return write(receipt);
+  // The same receipt: the caller's copy is integrity-checked (its id hashes its time), the index's is not.
+  if (previous.receipt.id === receipt.id) return previous.receipt.recordedAt === receipt.recordedAt && previous.receipt.requestId === receipt.requestId ? 'current' : write(receipt);
+  let proven;
+  try { proven = archivedReadiness(loc, planPath, previous.receipt.requestId, previous.receipt.id); }
+  catch (error) { throw fail(`the indexed receipt's request record cannot be read, so the index is kept: ${error.message}`); }
+  if (proven === null || proven.recordedAt < receipt.recordedAt) return write(receipt);
+  // The index names a newer or equal proven receipt; correct a forged time on it to the proven one.
+  return stable(proven) === stable(readinessCitation(previous.receipt)) ? 'current' : write(proven);
+}
+
+/**
+ * True when the plan's readiness index exists, its retained request record proves the receipt it names,
+ * and that proven receipt is at least as new as `entry`. The index's own time is never trusted: an index
+ * with a valid self-hash can still claim a time its request record does not prove.
+ */
+function indexHolds(loc, entry) {
+  if (!Number.isFinite(entry.recordedAt)) return false;
+  let index = null, proven = null;
+  try { index = readReadinessIndex(loc, readinessRelative(loc, entry.planPath)); } catch { return false; }
+  if (index?.planPath !== entry.planPath || !object(index.receipt)) return false;
+  try { proven = archivedReadiness(loc, index.planPath, index.receipt.requestId, index.receipt.id); } catch { return false; }
+  return proven !== null && proven.recordedAt >= entry.recordedAt;
+}
+
+/**
+ * The persisted reconciliation sweep: `after` is the last processed record name in sorted order,
+ * `swept` the records processed so far, `unreadable`/`failed` this sweep's unreadable records and refused
+ * index writes, `offenders` up to MAX_OFFENDERS of their archive-relative file names, `total` the record
+ * count last listed, and `last` what the previous full sweep found (with its offenders) when it could not
+ * clear the marker. A malformed sweep restarts from the beginning.
+ */
+const nonNegative = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+function sweepOf(pending) {
+  const sweep = object(pending) && object(pending.sweep) ? pending.sweep : {};
+  const last = object(sweep.last) ? { unreadable: nonNegative(sweep.last.unreadable), failed: nonNegative(sweep.last.failed), ...(sweep.last.overCap === true ? { overCap: true } : {}), ...withOffenders(offendersOf(sweep.last.offenders)) } : null;
+  return { ...(typeof sweep.after === 'string' && RECORD_NAME.test(sweep.after) ? { after: sweep.after } : {}),
+    swept: nonNegative(sweep.swept), unreadable: nonNegative(sweep.unreadable), failed: nonNegative(sweep.failed), ...withOffenders(offendersOf(sweep.offenders)), total: nonNegative(sweep.total), ...(last ? { last } : {}),
+    ...(Number.isFinite(sweep.lastSweepAt) ? { lastSweepAt: sweep.lastSweepAt } : {}) };
+}
+/** The sweep restarted from the beginning, keeping what the previous full sweep found and when a slice last ran. */
+const restartedSweep = sweep => ({ swept: 0, unreadable: 0, failed: 0, total: sweep.total, ...(sweep.last ? { last: sweep.last } : {}), ...(sweep.lastSweepAt !== undefined ? { lastSweepAt: sweep.lastSweepAt } : {}) });
+
+/** The minimum time between reconciliation sweep slices that decision prepare and record run. */
+export const READINESS_SWEEP_INTERVAL_MS = 30 * 1000;
+
+/**
+ * One bounded slice of the reconciliation sweep over `requests/*.json`: the next SWEEP_SLICE record names
+ * after the cursor, in sorted order, each integrity-checked and its readiness receipt written to the plan's
+ * index forward-only (an index already proving a newer or equal receipt is kept), adding each plan whose
+ * index it wrote to `wrote`. Returns the advanced sweep and whether this slice reached the end of the
+ * archive. Runs under the caller's per-pass lock.
+ */
+function sweepSlice(loc, sweep, faults, wrote = new Set(), rebuilt = new Set()) {
+  const relative = path.join(root(loc), 'requests');
+  if (!assertNoSymlinkAncestors(loc.home, relative)) return { sweep, done: false };
+  const names = [];
+  let overCap = false, directory = null;
+  try {
+    try { directory = fs.opendirSync(path.join(loc.home, relative)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    for (let item = directory?.readSync(); item; item = directory.readSync()) {
+      // A record name that is not a regular file (a symlink, a directory) is listed too: reading it fails,
+      // so it counts as unreadable and the sweep can never finish clean past it.
+      if (!RECORD_NAME.test(item.name)) continue;
+      if (names.length >= MAX_SWEEP_RECORDS) { overCap = true; break; }
+      names.push(item.name);
+    }
+  } catch { return { sweep, done: false }; } finally { try { directory?.closeSync(); } catch { /* already closed */ } }
+  names.sort();
+  let start = sweep.after === undefined ? 0 : names.findIndex(name => name > sweep.after);
+  // A cursor past every record (records removed, or a hostile state) proves nothing was covered: restart,
+  // so the marker clears only after a pass over every record from the beginning.
+  if (start < 0) { sweep = restartedSweep(sweep); start = 0; }
+  const slice = names.slice(start, start + SWEEP_SLICE);
+  let { unreadable, failed } = sweep;
+  const offenders = offendersOf(sweep.offenders);
+  const offend = name => { if (offenders.length < MAX_OFFENDERS && !offenders.includes(name)) offenders.push(name); };
+  for (const name of slice) {
+    const requestId = name.slice(0, 64);
+    let record;
+    try { record = archivedRequest(loc, requestId); } catch { unreadable += 1; offend(`requests/${name}`); continue; }
+    const receipt = record?.receipt, planPath = record?.request?.planPath;
+    if (receipt?.type !== 'readiness' || typeof planPath !== 'string' || !ID.test(receipt.id || '') || !Number.isFinite(receipt.recordedAt)) continue;
+    try {
+      const result = retainLatestReadiness(loc, planPath, readinessCitation(receipt));
+      if (result === 'written' || result === 'rebuilt') wrote.add(readinessPlanKey(planPath));
+      if (result === 'rebuilt') rebuilt.add(readinessPlanKey(planPath));
+    } catch (error) {
+      failed += 1;
+      offend(readinessName(planPath));
+      faults.push({ requestId, plan: readinessPlanKey(planPath), message: `readiness index not reconciled for request ${requestId}: ${error.message}` });
+    }
+  }
+  const done = start + SWEEP_SLICE >= names.length;
+  const next = { ...(slice.length ? { after: slice.at(-1) } : sweep.after === undefined ? {} : { after: sweep.after }), swept: sweep.swept + slice.length, unreadable, failed, ...withOffenders(offenders), total: names.length,
+    ...(sweep.last ? { last: sweep.last } : {}), ...(sweep.lastSweepAt !== undefined ? { lastSweepAt: sweep.lastSweepAt } : {}) };
+  return { sweep: next, done, overCap };
+}
+
+const untrackedOf = pending => {
+  if (!object(pending)) return 0;
+  const count = Number.isSafeInteger(pending.untracked) && pending.untracked > 0 ? Math.min(pending.untracked, MAX_UNTRACKED) : 0;
+  // A note from an earlier version said only that some plan was dropped.
+  return count || (pending.capped === true ? 1 : 0);
+};
+
+/**
+ * Archived readiness receipts whose index write did not succeed, one per plan (its newest), newest first:
+ * facts about the archive, not warnings. A malformed entry, or one from an older shape, is ignored.
+ * `untracked` counts plans dropped from tracking past the bound; it lasts until a reconciliation sweep
+ * over the request archive completes cleanly.
+ */
+export function pendingReadiness(state) {
+  const plans = object(state.readinessPending?.plans) ? state.readinessPending.plans : {};
+  const entries = [];
+  for (const [plan, entry] of Object.entries(plans)) {
+    if (!object(entry) || typeof entry.planPath !== 'string' || readinessPlanKey(entry.planPath) !== plan || !ID.test(entry.id || '') || !ID.test(entry.requestId || '')
+      || typeof entry.verdict !== 'string' || entry.verdict.length > 32 || !Number.isFinite(entry.recordedAt)) continue;
+    entries.push({ plan, planPath: entry.planPath, id: entry.id, requestId: entry.requestId, verdict: entry.verdict, recordedAt: entry.recordedAt,
+      ...(Number.isSafeInteger(entry.tried) && entry.tried > 0 ? { tried: entry.tried } : {}) });
+  }
+  entries.sort((a, b) => b.recordedAt - a.recordedAt || a.plan.localeCompare(b.plan));
+  const overflow = Math.max(0, entries.length - MAX_PENDING_READINESS);
+  const untracked = Math.min(MAX_UNTRACKED, untrackedOf(state.readinessPending) + overflow);
+  return { entries: entries.slice(0, MAX_PENDING_READINESS), capped: untracked > 0, untracked, overflow: overflow > 0 };
+}
+
+/**
+ * Read-only readiness-index health, derived from what exists: a tracked plan is stale while its index is
+ * missing or names a receipt older than the plan's newest archived one. Nothing here is stored or cleared.
+ * `untracked` counts plans dropped from tracking whose index may still be stale; while it is nonzero,
+ * `sweep` reports the reconciliation progress that compaction passes make toward clearing it.
+ */
+export function readinessIndexHealth(loc, state) {
+  const { entries, capped, untracked, overflow } = pendingReadiness(state);
+  const staleEntries = entries.filter(entry => !indexHolds(loc, entry)), stale = staleEntries.map(entry => entry.plan);
+  // A stale plan whose index leaf is a symlink or another non-regular entry stays stale until someone
+  // removes that entry, since it is never followed or replaced; name it (lstat only, never followed).
+  const blocked = [];
+  for (const entry of staleEntries) {
+    if (blocked.length >= MAX_OFFENDERS) break;
+    try { const stat = fs.lstatSync(path.join(loc.home, readinessRelative(loc, entry.planPath)), { throwIfNoEntry: false }); if (stat && !stat.isFile()) blocked.push(readinessName(entry.planPath)); }
+    catch { /* unreadable now: reported as stale */ }
+  }
+  const archive = path.join(loc.home, root(loc));
+  const base = { stale, capped, untracked, archive, ...(blocked.length ? { blocked } : {}) };
+  if (!untracked) return base;
+  // Plans dropped from an over-bound stored state may lie behind the cursor, so the sweep restarts.
+  const sweep = overflow ? restartedSweep(sweepOf(state.readinessPending)) : sweepOf(state.readinessPending);
+  // A forged progress count never reads as more records than were listed.
+  return { ...base, sweep: { swept: Math.min(sweep.swept, sweep.total), total: sweep.total, unreadable: sweep.unreadable, failed: sweep.failed, ...withOffenders(sweep.offenders || []), ...(sweep.last ? { last: sweep.last } : {}) } };
+}
+
+/** Read-only: a plan's newest archived readiness receipt whose index write failed, cross-checked against its retained request record. */
+export function pendingArchivedReadiness(loc, state, planPath) {
+  const entry = pendingReadiness(state).entries.find(item => item.planPath === planPath);
+  return entry ? archivedReadiness(loc, planPath, entry.requestId, entry.id) : null;
+}
+
+/** Read-only: the newest archived readiness citation for a plan, cross-checked against its retained request record. */
+export function latestArchivedReadiness(loc, planPath) {
+  const index = readReadinessIndex(loc, readinessRelative(loc, planPath));
+  if (!index || index.planPath !== planPath) return null;
+  return archivedReadiness(loc, planPath, index.receipt?.requestId, index.receipt?.id);
 }
 
 function validTask(value) {
@@ -76,11 +333,71 @@ export function decisionTask(loc, state, key) {
   return task;
 }
 
-/** Retire terminal/expired context while retaining immutable evidence and durable budgets. */
-export function compactDecisions(loc, state) {
-  if (Buffer.byteLength(stable(state)) <= 512 * 1024 && !state.archivedHydrated?.size) return;
+/**
+ * Retire terminal/expired context while retaining immutable evidence and durable budgets.
+ * A refused readiness-index write never blocks compaction: the request still archives, and the plan's
+ * newest archived receipt is noted in `state.readinessPending` so readers can cite it. A note leaves
+ * once the plan's index holds a receipt at least as new, read from the index itself. Each pass retries
+ * at most MAX_READINESS_RETRIES notes, least recently tried first, and a retry writes only the citation
+ * its retained request record proves; a note that record does not prove is dropped. Past the tracking
+ * bound the oldest notes are dropped and counted as untracked. While any plan is untracked, a pass may
+ * also reconcile a bounded slice of the request archive (SWEEP_SLICE records after a persisted cursor),
+ * writing each readiness index forward-only; a full sweep with no unreadable record and no refused
+ * write clears the count, and any other full sweep restarts. A slice runs only when `options.sweep` is
+ * not false and at least `options.sweepInterval` ms (default 0) have passed since the last slice, whose
+ * time is kept in the sweep state; the pre-tool consume path passes `sweep: false`, so it never lists the
+ * archive. A note whose request record is absent or proves something else is dropped; a note whose record
+ * cannot be read this pass is kept. Only the notes retried this pass, and those of plans written this
+ * pass, read the index, so one pass reads at most MAX_READINESS_RETRIES indexes beyond its own writes.
+ * `options.retries: false` (the pre-tool consume path) retries no note and leaves the pass counter as it is,
+ * so a guarded tool call does no readiness bookkeeping beyond the receipts it archives itself.
+ * A hydrated request's re-archived receipt is never noted (a newer one may already be archived); when its
+ * index write fails, the plan is counted as untracked and the sweep restarts, so status reports it and a
+ * full sweep reconciles it. An index file read but invalid (empty, truncated, malformed) is rebuilt from
+ * the receipt at hand, and its plan is likewise counted as untracked until a restarted sweep reconciles
+ * it against every record. A sweep keeps up to MAX_OFFENDERS archive-relative names of the request
+ * records it could not read and the index files it could not write, so status can name them.
+ * Returns this pass's index faults, `{ requestId, plan, message }`; callers may ignore them, because
+ * status derives readiness-index health from the index and the notes, not from these faults.
+ */
+export function compactDecisions(loc, state, options = {}) {
+  const faults = [];
+  // Small state with nothing hydrated retires nothing; it still retries noted index writes.
+  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || state.archivedHydrated?.size > 0;
+  // The consume path (retries off) with nothing to retire leaves readiness bookkeeping untouched.
+  if (!retireNow && (state.readinessPending === undefined || options.retries === false)) return faults;
   const now = loc.now ?? Date.now(), touched = new Set();
-  for (const [requestId, request] of Object.entries(state.requests)) {
+  const noted = pendingReadiness(state), pending = new Map(noted.entries.map(entry => [entry.plan, entry]));
+  let untracked = noted.untracked;
+  const priorPass = state.readinessPending?.pass;
+  const validPass = Number.isSafeInteger(priorPass) && priorPass > 0 && priorPass < Number.MAX_SAFE_INTEGER;
+  const retrying = options.retries !== false;
+  const pass = validPass ? priorPass + (retrying ? 1 : 0) : 1;
+  // A note never claims to have been tried after this pass, so a hostile time cannot starve its retry.
+  for (const entry of pending.values()) if (entry.tried > pass) entry.tried = pass;
+  const tried = new Set(), wrote = new Set(), untrackedNow = new Set(), rebuilt = new Set();
+  // A pass that leaves a plan untracked whose record may lie behind the sweep cursor restarts the sweep.
+  let restart = false;
+  // Absent or mismatched evidence (null) is not unreadable evidence (threw): only the first drops a note.
+  const prove = entry => { try { return { citation: archivedReadiness(loc, entry.planPath, entry.requestId, entry.id) }; } catch { return { threw: true }; } };
+  const retain = (planPath, citation) => {
+    const plan = readinessPlanKey(planPath);
+    try { if (retainLatestReadiness(loc, planPath, citation) === 'rebuilt') rebuilt.add(plan); wrote.add(plan); return true; }
+    catch (error) {
+      tried.add(plan);
+      faults.push({ requestId: citation.requestId, plan, message: `readiness index not retained for request ${citation.requestId}: ${error.message}` });
+      const prior = pending.get(plan);
+      // The prior note's time is judged by what its retained record proves, never by the note's own time:
+      // a note no record proves never outranks a real receipt, and a forged time never hides a newer one.
+      // Only a record that cannot be read this pass falls back to the note's time, so the note is kept.
+      const proof = prior && prior.id !== citation.id ? prove(prior) : null;
+      const priorAt = proof?.citation ? proof.citation.recordedAt : prior?.recordedAt;
+      if (!prior || prior.id === citation.id || (proof && !proof.threw && proof.citation === null) || citation.recordedAt > priorAt) pending.set(plan, { plan, planPath, ...citation, tried: pass });
+      else prior.tried = pass;
+      return false;
+    }
+  };
+  for (const [requestId, request] of retireNow ? Object.entries(state.requests) : []) {
     const task = decisionTask(loc, state, request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
     const expired = task && Number.isSafeInteger(seconds) && now >= task.startedAt && now - task.startedAt > seconds * 1000;
@@ -91,10 +408,76 @@ export function compactDecisions(loc, state) {
     const invocations = Object.fromEntries(Object.entries(state.invocations).filter(([, value]) => value.requestId === requestId));
     const record = { schema: 1, workspace: loc.workspace, requestId, request, receipt: receipt || null, observation: state.observations[requestId] || null, nativeProbe: state.nativeProbes[requestId] || null, invocations };
     writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true);
+    // A request hydrated from the archive was archived before; a newer receipt may already be,
+    // so it never becomes the plan's pending newest.
+    if (receipt?.type === 'readiness' && typeof request.planPath === 'string' && ID.test(receipt.id || '') && Number.isFinite(receipt.recordedAt) && !state.archivedHydrated?.has(requestId)) {
+      retain(request.planPath, readinessCitation(receipt));
+    } else if (receipt?.type === 'readiness' && typeof request.planPath === 'string') {
+      const plan = readinessPlanKey(request.planPath);
+      try { if (retainLatestReadiness(loc, request.planPath, readinessCitation(receipt)) === 'rebuilt') rebuilt.add(plan); }
+      catch (error) {
+        faults.push({ requestId, plan, message: `readiness index not retained for re-archived request ${requestId}: ${error.message}` });
+        // Its record may lie behind the sweep cursor, so a sweep already past it must not clear the count.
+        if (!untrackedNow.has(plan)) { untrackedNow.add(plan); untracked = Math.min(MAX_UNTRACKED, untracked + 1); }
+        restart = true;
+      }
+    }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
     for (const key of Object.keys(invocations)) delete state.invocations[key];
   }
+  // Each noted plan leaves once its index holds a receipt at least as new. Plans whose index was just
+  // written are checked first; then a bounded number of notes per pass, least recently tried first, are
+  // verified against their retained request record and, unless the index holds that proven receipt,
+  // retried from it. No other note reads the index this pass; status checks every note.
+  const order = [...pending.values()].sort((a, b) => wrote.has(b.plan) - wrote.has(a.plan) || (a.tried || 0) - (b.tried || 0) || b.recordedAt - a.recordedAt || a.plan.localeCompare(b.plan));
+  let retries = 0;
+  for (const entry of order) {
+    if (wrote.has(entry.plan) && indexHolds(loc, entry)) { pending.delete(entry.plan); continue; }
+    if (tried.has(entry.plan) || retries >= (retrying ? MAX_READINESS_RETRIES : 0)) continue;
+    retries += 1;
+    const { citation, threw } = prove(entry);
+    if (threw) { entry.tried = pass; continue; }
+    if (!citation) { pending.delete(entry.plan); continue; }
+    // The proven time, not the note's own, decides whether the index holds it.
+    if (indexHolds(loc, { planPath: entry.planPath, recordedAt: citation.recordedAt })) { pending.delete(entry.plan); continue; }
+    pending.set(entry.plan, { plan: entry.plan, planPath: entry.planPath, ...citation, tried: pass });
+    if (retain(entry.planPath, citation)) pending.delete(entry.plan);
+  }
+  // An index rebuilt from invalid content proved nothing about the plan's other receipts: the plan is
+  // counted as untracked until a full sweep, restarted since those records may lie behind the cursor,
+  // reconciles it against every record.
+  for (const plan of rebuilt) {
+    if (!untrackedNow.has(plan)) { untrackedNow.add(plan); untracked = Math.min(MAX_UNTRACKED, untracked + 1); }
+    restart = true;
+  }
+  // Bounded: the newest plans stay tracked; each dropped plan is counted until a reconciliation sweep
+  // completes cleanly. A drop restarts the sweep, since its record may lie behind the cursor.
+  let kept = [...pending.values()].sort((a, b) => b.recordedAt - a.recordedAt || a.plan.localeCompare(b.plan));
+  let sweep = null;
+  if (kept.length > MAX_PENDING_READINESS) untracked = Math.min(MAX_UNTRACKED, untracked + kept.length - MAX_PENDING_READINESS);
+  else if (untracked) {
+    // Plans dropped from an over-bound stored state may lie behind the cursor, so the sweep restarts.
+    const prior = noted.overflow || restart ? restartedSweep(sweepOf(state.readinessPending)) : sweepOf(state.readinessPending);
+    const interval = Number.isFinite(options.sweepInterval) && options.sweepInterval > 0 ? options.sweepInterval : 0;
+    const due = options.sweep !== false && (prior.lastSweepAt === undefined || now < prior.lastSweepAt || now - prior.lastSweepAt >= interval);
+    sweep = prior;
+    if (due) {
+      const sweptPlans = new Set(), sweptRebuilt = new Set();
+      const slice = sweepSlice(loc, { ...prior, lastSweepAt: now }, faults, sweptPlans, sweptRebuilt);
+      // A note whose plan index the sweep just wrote leaves once that index holds it.
+      kept = kept.filter(entry => !(sweptPlans.has(entry.plan) && indexHolds(loc, entry)));
+      sweep = slice.sweep;
+      const clean = !slice.overCap && sweep.unreadable === 0 && sweep.failed === 0;
+      // An index rebuilt from invalid content mid-sweep may hold an older receipt than one behind the cursor.
+      if (slice.done && clean && !sweptRebuilt.size) { untracked = 0; sweep = null; }
+      else if (slice.done && clean) sweep = restartedSweep(sweep);
+      else if (slice.done) sweep = { ...restartedSweep(sweep), last: { unreadable: sweep.unreadable, failed: sweep.failed, ...(slice.overCap ? { overCap: true } : {}), ...withOffenders(offendersOf(sweep.offenders)) } };
+    }
+  }
+  if (!kept.length && !untracked) delete state.readinessPending;
+  else state.readinessPending = { pass, ...(untracked ? { untracked } : {}), ...(untracked && sweep ? { sweep } : {}), plans: Object.fromEntries(kept.slice(0, MAX_PENDING_READINESS).map(({ plan, ...entry }) => [plan, entry])) };
+  if (!retireNow) return faults;
   const liveTasks = new Set(Object.values(state.requests).map(request => request.budgetKey));
   for (const key of new Set([...touched, ...Object.keys(state.tasks)])) {
     if (liveTasks.has(key)) continue;
@@ -103,4 +486,5 @@ export function compactDecisions(loc, state) {
     writeRecord(loc, path.join(root(loc), 'tasks', `${key}.json`), { schema: 1, workspace: loc.workspace, budgetKey: key, task });
     delete state.tasks[key];
   }
+  return faults;
 }

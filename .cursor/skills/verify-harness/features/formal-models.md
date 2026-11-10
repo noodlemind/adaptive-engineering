@@ -28,7 +28,7 @@ The drive observes absent status, captures a `src` preparation, publishes and re
 
 The receipt records actual argv, working directory, exit status, stdout, stderr, observed generations, doctor, and owned cleanup in `formal-flows/drive.json` under `HARNESS_CHECK_ARTIFACT_DIR`. Without an artifact root it uses a unique private temporary evidence directory. The receipt survives success, failure and cancellation. A failed drive reruns doctor before another attempt.
 
-The delivery-evidence model check is `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`; read its [skill](../formal/delivery-evidence/SKILL.md) first. Its receipt is `delivery-evidence-model.json`. The [workflow-invariant feature](./workflow-invariants.md) documents the implementation and negative-control drives that confirm the code follows that workflow.
+The delivery-evidence model check is `node .cursor/skills/verify-harness/formal/delivery-evidence/scripts/check.mjs`; read its [skill](../formal/delivery-evidence/SKILL.md) first. Its receipt is `state-model.json`, with `report.md` and a marked `chart.mmd` beside it. The [workflow-invariant feature](./workflow-invariants.md) documents the implementation and negative-control drives that confirm the code follows that workflow.
 
 ## Gotchas
 

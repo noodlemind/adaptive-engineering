@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'node:path';
 import { planStateFacts } from './report-facts.mjs';
 import { rankRecall } from './recall-rank.mjs';
-import { buildContextPack, learningsSectionBytes } from './context-pack.mjs';
+import { buildContextPack, learningsSectionBytes, learningRendered } from './context-pack.mjs';
 import { buildPlanView } from './plan-view.mjs';
 import { buildRepoMap } from './repo-map/index.mjs';
 import { ensureHarnessDir, writeSession } from './session.mjs';
@@ -268,13 +268,15 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
 
     const learningsBytes = learningsSectionBytes(packBody);
 
-    const deliveredLearnings = learnings.filter((l) => packBody.includes(`- [${l.id}]`)).map((l) => l.id);
+    // A learning is delivered when its own line, layer mark included, starts a line of the learnings section.
+  const renderedLearnings = learnings.filter((l) => learningRendered(packBody, l));
+  const deliveredLearnings = renderedLearnings.map((l) => l.id);
 
   const packRel = '.harness/context-pack.md';
   if (!flags.dryRun && !writeContextFile(workspace, packRel, packBody)) throw Object.assign(new Error('context pack target is unsafe or unavailable; no context pack was written'), { code: 'E_ORIENT_WRITE', exit: 1 });
   if (!flags.dryRun && active?.path && deliveredLearnings.length) {
     try {
-      recordExposure({ recordRoot: planRecordRoot(workspace, active), workspace, home, planPath: active.path, delivered: learnings.filter((l) => deliveredLearnings.includes(l.id)) });
+      recordExposure({ recordRoot: planRecordRoot(workspace, active), workspace, home, planPath: active.path, delivered: renderedLearnings });
     } catch {
       // Exposure is bookkeeping for the feedback loop; never fail orientation on it.
     }

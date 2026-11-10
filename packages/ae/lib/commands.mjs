@@ -81,7 +81,7 @@ import { runCorrect, runRemember } from './knowledge/remember.mjs';
 import { setLearningStatus } from './knowledge/lifecycle.mjs';
 import { resolveLearningsView } from './knowledge/listing.mjs';
 import { DEFAULT_NEGATIVE_QUERIES, evalKnowledge } from './knowledge/eval.mjs';
-import { knowledgeStatus } from './knowledge/status.mjs';
+import { knowledgeStatus, knowledgeFeedbackStatus } from './knowledge/status.mjs';
 import { buildPromotionOps } from './knowledge/promote.mjs';
 import { pruneBuckets } from './knowledge/prune.mjs';
 import { runGet } from './get-cmd.mjs';
@@ -144,7 +144,20 @@ function learningNote(l) {
   }
   if (l.promotionEligible) note += ' · promotable → /create-primitive';
   if (l.applicability) note += ` · source applicability ${['current', 'needs-review', 'unknown'].includes(l.applicability.state) ? l.applicability.state : 'unknown'} (source bytes only)`;
+  if (Number.isInteger(l.exposed)) note += ` · ${feedbackColumnsText(l)}`;
   return note;
+}
+
+// Recall feedback columns (shown only under knowledge.feedback suggest|on).
+function feedbackColumnsText(row) {
+  return `exposed ${row.exposed} · helped ${row.helped} · wrong ${row.wrong} · last_exposed ${row.last_exposed ? inertLine(row.last_exposed).slice(0, 10) : 'never'}`;
+}
+
+function printFeedbackStatus(feedback, keyWidth) {
+  if (!feedback) return;
+  console.log(ui.line({ key: 'feedback', value: feedback.state, note: feedback.learnings.length ? undefined : 'no exposures or verdicts yet', keyWidth }));
+  for (const row of feedback.learnings) console.log(ui.paint('muted', `  ${inertLine(row.id)} · ${feedbackColumnsText(row)}`));
+  if (feedback.omittedLearnings) console.log(ui.paint('muted', `  ${feedback.omittedLearnings} more learning(s) omitted`));
 }
 
 export async function cmdInstallOrUpgrade(command, argv) {
@@ -1465,7 +1478,7 @@ export async function cmdConsolidate(argv) {
   }
 
   // Default: --status (deterministic debt gauge, zero model cost).
-  const status = consolidateStatus({ workspace, copilotHome, home: flags.home || process.env.HARNESS_HOME });
+  const status = consolidateStatus({ workspace, copilotHome, home: flags.home || process.env.HARNESS_HOME, withFeedback: true });
   writeEvent(workspace, flags, { type: 'consolidate', command: 'consolidate', result: 'pass', exitCode: 0 });
   if (flags.json) {
     emitJson(flags, status);
@@ -1865,6 +1878,7 @@ export async function cmdKnowledge(argv) {
         })
       );
     }
+    printFeedbackStatus(report.feedback, keyWidth);
     return 0;
   }
 
@@ -2050,6 +2064,7 @@ export async function cmdKnowledge(argv) {
 
   if (!subcommand) {
     const { mode, commit } = readStoreConfig(workspace);
+    const feedback = knowledgeFeedbackStatus({ workspace });
     writeEvent(workspace, flags, {
       type: 'knowledge',
       command: 'knowledge',
@@ -2058,11 +2073,12 @@ export async function cmdKnowledge(argv) {
       exitCode: 0,
     });
     if (flags.json) {
-      emitJson(flags, { mode, commit });
+      emitJson(flags, { mode, commit, ...(feedback ? { feedback } : {}) });
     } else {
       console.log(
         ui.line({ state: mode === 'on' ? 'ok' : 'warn', key: 'knowledge', value: `mode ${mode} · commit ${commit}` })
       );
+      printFeedbackStatus(feedback);
     }
     return 0;
   }
