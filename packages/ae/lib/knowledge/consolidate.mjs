@@ -342,7 +342,7 @@ function recheckView({ workspace, home, state, resolved, preselect, scope = 'ful
     // The error text can name paths or record content, so only a fixed sentence and a Node error code are shown.
     const counts = scope === 'due' ? { stale_exposed: 0, review_required: 0, failure_clusters: 0 } : { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
     const code = typeof error?.code === 'string' && /^E[A-Z0-9_]{1,30}$/.test(error.code) ? ` (${error.code})` : '';
-    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: `re-check scan failed${code}` };
+    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], due_clusters: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: `re-check scan failed${code}` };
   }
 }
 

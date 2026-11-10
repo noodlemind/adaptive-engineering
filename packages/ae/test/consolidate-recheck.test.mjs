@@ -273,7 +273,11 @@ test('R2: a long evidence history keeps its newest records by their own timestam
   // The packet path preselects 1,024 names by mtime; with every mtime reset, all 603 are read and ranked by verifiedAt.
   const { recheck } = f.packet({ recheck: true });
   assert.equal(recheck.counts.failure_clusters, 1, 'the newest records by verifiedAt are read');
-  assert.equal(recheck.max_cluster_plans, 3, 'enough to make consolidation due');
+  assert.equal(recheck.failure_clusters[0].plan_count, 3);
+  // Due reads only the status window (the newest 128 names by mtime), so the packet and status agree on it.
+  const status = f.status();
+  assert.equal(recheck.max_cluster_plans >= 3, status.due, 'the packet and status agree about due');
+  assert.equal(recheck.due_clusters.length > 0, status.due);
 });
 
 test('hand-written history records whose name is not their digest cannot force due', t => {
@@ -783,9 +787,22 @@ test('status opens only the newest 128 evidence records by mtime; the packet sti
   assert.equal(status.recheck.counts.failure_clusters, 0, 'the old-mtime failures are outside the newest 128 and are not counted');
   assert.equal(status.due, false);
   assert.ok(historyOpens > 0 && historyOpens <= RECHECK_STATUS_PRESELECT, `status opened ${historyOpens} evidence records`);
-  const { recheck } = f.packet({ recheck: true });
+  const packet = f.packet({ recheck: true });
+  const { recheck } = packet;
   assert.equal(recheck.counts.failure_clusters, 1, '--candidates --recheck reads past the status preselect');
   assert.equal(recheck.failure_clusters[0].plan_count, 3);
+  // Only the status window decides due, so the packet agrees with status about it.
+  assert.equal(recheck.max_cluster_plans, 0, 'a cluster outside the status window does not count toward due');
+  assert.deepEqual(recheck.due_clusters, []);
+  assert.equal(consolidateStatus({ workspace: f.ws, home: f.home }).due, false);
+
+  // Once the failures are inside the window, status and the packet both call it due and name the same cluster.
+  const now = new Date('2026-12-01T00:00:00Z');
+  for (const rel of failing) fs.utimesSync(path.join(f.ws, rel), now, now);
+  assert.equal(f.status().due, true);
+  const after = f.packet({ recheck: true }).recheck;
+  assert.equal(after.max_cluster_plans, 3);
+  assert.deepEqual(after.due_clusters, [failureClusterId('check:unit')]);
 });
 
 test('a plan in the external plan store is shown by its file name, which --plan resolves back to it', t => {

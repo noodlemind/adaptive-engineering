@@ -32,7 +32,11 @@ export const FAILURE_CLUSTER_REF = /^failure-cluster:[a-f0-9]{16}$/;
  */
 export const FINDING_CLUSTER_REF = /^finding-cluster:[a-f0-9]{20}$/;
 const SCAN_CAP = 512;
-/** Evidence-history preselect for status and orient, which need only counts and `due`; packets read twice `SCAN_CAP`. */
+/**
+ * Evidence-history preselect for status and orient, which need only counts and `due`; packets read twice
+ * `SCAN_CAP`. It is also the due window: whichever caller asks, only failure clusters among the newest this
+ * many evidence records by mtime decide `due`, so status, orient and the packet agree.
+ */
 export const RECHECK_STATUS_PRESELECT = 128;
 /**
  * At most this many directory entries are read from one record directory; the rest are reported in
@@ -362,8 +366,16 @@ function widen(row, at) {
  */
 function evidenceClusters(workspace, resolved, preselect = SCAN_CAP * 2) {
   const history = listRecordNames(workspace, '.harness/evidence/history', HASH_FILE, preselect);
-  const read = history.names.map(name => readDigestRecord(workspace, `.harness/evidence/history/${name}`, name)).filter(Boolean);
-  const { records, omitted } = newestRecords(read, record => record.verifiedAt, history.omitted);
+  const read = history.names.map(name => ({ name, value: readDigestRecord(workspace, `.harness/evidence/history/${name}`, name) })).filter(row => row.value);
+  const { records, omitted } = newestRecords(read.map(row => row.value), record => record.verifiedAt, history.omitted);
+  const clusters = groupEvidence(records, resolved);
+  // The due window is a prefix of the same mtime order, so it is the set status reads with its own preselect.
+  const windowNames = new Set(history.names.slice(0, RECHECK_STATUS_PRESELECT));
+  const dueClusters = preselect <= RECHECK_STATUS_PRESELECT ? clusters : groupEvidence(read.filter(row => windowNames.has(row.name)).map(row => row.value), resolved);
+  return { clusters, dueClusters, omitted, truncated: history.truncated };
+}
+
+function groupEvidence(records, resolved) {
   const clusters = new Map();
   for (const value of records) {
     if (typeof value.plan !== 'string' || !value.plan || !Array.isArray(value.checks)) continue;
@@ -382,7 +394,7 @@ function evidenceClusters(workspace, resolved, preselect = SCAN_CAP * 2) {
       clusters.set(key, row);
     }
   }
-  return { clusters: [...clusters.values()], omitted, truncated: history.truncated };
+  return [...clusters.values()];
 }
 
 /**
@@ -604,7 +616,11 @@ const plansAtLeast = n => row => row.plan_count >= n;
  * of learnings judged `wrong` in their current version, shared with the
  * feedback section. Each list is capped with an omission count. `preselect`
  * bounds how many evidence-history names (newest by mtime) are opened:
- * status and orient pass `RECHECK_STATUS_PRESELECT`.
+ * status and orient pass `RECHECK_STATUS_PRESELECT`. Whatever the preselect,
+ * `max_cluster_plans` (what `recheckDue` reads) and the packet's
+ * `due_clusters` come only from the newest `RECHECK_STATUS_PRESELECT` of
+ * those names, so `due` is the same in status, orient and the packet; the
+ * packet lists clusters from its wider read too, as context.
  *
  * `scope: 'due'` (status and orient) computes only what `recheckDue` reads:
  * stale exposed learnings and named-check evidence clusters. The run journal,
@@ -617,12 +633,12 @@ export function recheckSummary({ workspace, home, learnings, allLearnings = lear
   const ctx = { workspace, home, planDirs: externalPlanDirs(workspace, home), declared: declaredChecks(workspace, home), journalPlans: new Map() };
   const evidence = evidenceClusters(workspace, resolved, preselect);
   const { rows: stale, omitted: exposureOmitted, truncated: exposureTruncated } = staleExposed(workspace, learnings);
-  const evidenceCounted = evidence.clusters.map(row => ({ ...shownPlans(row, ctx) })).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD));
-  const max_cluster_plans = evidenceCounted.reduce((n, row) => Math.max(n, row.plan_count), 0);
+  const dueCounted = evidence.dueClusters.map(row => ({ id: row.id, ...shownPlans(row, ctx) })).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD));
+  const max_cluster_plans = dueCounted.reduce((n, row) => Math.max(n, row.plan_count), 0);
   if (scope === 'due') {
     return {
       scope: 'due',
-      counts: { stale_exposed: stale.length, review_required: reviewRequired.length, failure_clusters: evidenceCounted.length },
+      counts: { stale_exposed: stale.length, review_required: reviewRequired.length, failure_clusters: dueCounted.length },
       max_cluster_plans,
     };
   }
@@ -640,6 +656,8 @@ export function recheckSummary({ workspace, home, learnings, allLearnings = lear
     failure_clusters: cap(failures),
     finding_clusters: cap(findingRows),
     broken_references: cap(broken),
+    // Named-check clusters in the due window wide enough to make consolidation due under `on`.
+    due_clusters: cap(dueCounted.filter(row => row.plan_count >= RECHECK_DUE_CLUSTER_PLANS).map(row => row.id)),
     counts: { stale_exposed: stale.length, review_required: reviewRequired.length, failure_clusters: failures.length, finding_clusters: findingRows.length, broken_references: broken.length },
     omitted: {
       stale_exposed: over(stale), review_required: over(reviewRequired), failure_clusters: over(failures), finding_clusters: over(findingRows), broken_references: over(broken),
