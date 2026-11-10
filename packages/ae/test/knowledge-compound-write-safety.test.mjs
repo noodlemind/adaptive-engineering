@@ -119,7 +119,7 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 // And the other default-ignorable code points: the combining grapheme joiner,
 // the variation selectors but VS16 (allowed for emoji), the Hangul fillers, U+17B4 and the musical format
 // characters.
-const INVISIBLE = [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0e, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
+const INVISIBLE = [0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0e, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -140,7 +140,7 @@ function captureInsight(extraFlags = {}) {
 }
 
 test('an insight keeps a verbatim evidence quote as one escaped frontmatter line that reads back exactly', () => {
-  const quote = 'AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n1 !== 2\n\n    at "retry.test.mjs":14:10\ttab';
+  const quote = 'AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 1 !== 2 at "retry.test.mjs":14:10\ttab \\n literal';
   const { result, text } = captureInsight({ evidenceQuote: quote });
   assert.equal(result.pass, true, JSON.stringify(result));
   const line = text.split('\n').find(l => l.startsWith('evidence_quote: '));
@@ -167,10 +167,9 @@ test('an insight evidence quote with a secret or terminal control codes is refus
   for (const quote of ['\x1b[31mFAIL\x1b[0m retry.test.mjs', '\u009b31mFAIL\u009b0m retry.test.mjs', 'ok \u202eevil', 'ok \u2066isolate\u2069', ...INVISIBLE.map(point => `ok ${String.fromCodePoint(point)} x`)]) {
     const refused = captureInsight({ evidenceQuote: quote });
     assert.equal(refused.result.pass, false, JSON.stringify(quote));
-    assert.match(refused.result.blockedReason, /control, bidirectional formatting, line separator, zero-width or tag/);
+    assert.match(refused.result.blockedReason, /control, bidirectional formatting, zero-width or tag/);
     assert.deepEqual(refused.written, []);
   }
-  assert.equal(captureInsight({ evidenceQuote: 'line one\r\nline two' }).result.pass, true, 'CRLF output is accepted, as documented');
 });
 
 test('an insight evidence quote keeps emoji with a variation selector or joiner, but a joiner between letters is still refused', () => {
@@ -191,20 +190,26 @@ test('an insight evidence quote keeps emoji with a variation selector or joiner,
   assert.match(hidden.result.blockedReason, /github-token/);
 });
 
-test('an insight evidence quote with a secret split across lines is refused', () => {
-  const split = captureInsight({ evidenceQuote: `request failed\nAuthorization: Bearer\n${'abcdefghijklmnopqrstuvwxyz012345'}` });
-  assert.equal(split.result.pass, false);
-  assert.match(split.result.blockedReason, /secret/);
-  assert.deepEqual(split.written, []);
-  // A credential wrapped mid-token reassembles only with the break removed.
-  for (const quote of ['postgres://reader:pw\r\n@db.invalid', `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`, `ghp_${'A'.repeat(18)}  \r\n  ${'A'.repeat(18)} rejected`]) {
-    const wrapped = captureInsight({ evidenceQuote: quote });
-    assert.equal(wrapped.result.pass, false, JSON.stringify(quote));
-    assert.match(wrapped.result.blockedReason, /secret split across lines/);
-    assert.ok(!wrapped.result.blockedReason.includes('pw') && !wrapped.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
-    assert.deepEqual(wrapped.written, []);
+test('a multi-line insight evidence quote is refused with the single-line message and nothing is written', () => {
+  for (const quote of [
+    'line one\r\nline two',
+    'expected 1\nreceived 2',
+    'FAIL retry\u2028expected 3',
+    'FAIL retry\u0085expected 3',
+    `request failed\nAuthorization: Bearer\n${'abcdefghijklmnopqrstuvwxyz012345'}`,
+    'postgres://reader:pw\r\n@db.invalid',
+    `ghp_${'A'.repeat(18)}\n${'A'.repeat(18)}`,
+    `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}`,
+    'Server listening on http://localhost:3000\nadmin@example.com logged in',
+    'postgres://svc.user:2024\nWinterPass@prod.example.com',
+  ]) {
+    const refused = captureInsight({ evidenceQuote: quote });
+    assert.equal(refused.result.pass, false, JSON.stringify(quote));
+    assert.equal(refused.result.exitCode, 2);
+    assert.match(refused.result.blockedReason, /must be a single line; pick the single most specific failing line/);
+    assert.ok(!refused.result.blockedReason.includes('ghp_') && !refused.result.blockedReason.includes('WinterPass'), 'the refusal does not echo the quote');
+    assert.deepEqual(refused.written, []);
   }
-  assert.equal(captureInsight({ evidenceQuote: 'expected 1\nreceived 2' }).result.pass, true, 'ordinary multi-line output still passes');
 });
 
 test('an insight evidence quote with a bare colour-code remnant against a secret is refused', () => {
@@ -214,34 +219,13 @@ test('an insight evidence quote with a bare colour-code remnant against a secret
   assert.deepEqual(remnant.written, []);
 });
 
-test('an evidence quote that puts a URL and an @ on adjacent lines is refused, since a dotted user name reads the same', () => {
-  for (const quote of ['Server listening on http://localhost:3000\nadmin@example.com logged in', 'GET https://registry.npmjs.org:443\n@types/node 404 Not Found', 'postgres://reader:hunter2pass\n@db.example', 'postgres://svc.user:2024\nWinterPass@prod.example.com']) {
-    const wrapped = captureInsight({ evidenceQuote: quote });
-    assert.equal(wrapped.result.pass, false, JSON.stringify(quote));
-    assert.match(wrapped.result.blockedReason, /secret split across lines \(connection-string\)/);
-    assert.ok(!wrapped.result.blockedReason.includes('WinterPass'), 'the refusal does not echo the secret');
-    assert.deepEqual(wrapped.written, []);
-  }
-});
-
-test('an insight evidence quote whose wrapped token follows another line is refused', () => {
-  const wrapped = captureInsight({ evidenceQuote: `Authentication failed\nghp_${'A'.repeat(18)}\n${'B'.repeat(18)}` });
-  assert.equal(wrapped.result.pass, false);
-  assert.match(wrapped.result.blockedReason, /secret split across lines \(split-token\)/);
-  assert.ok(!wrapped.result.blockedReason.includes('ghp_'), 'the refusal does not echo the secret');
-  assert.deepEqual(wrapped.written, []);
-});
-
-test('ae compound --insight captures an accepted multi-line quote that the escaped line alone would look like a secret in', () => {
+test('ae compound --insight captures a single-line quote with tabs, stored as one escaped line', () => {
   const ws = tempDir('quote-ml-ws-');
   const home = tempDir('quote-ml-hh-');
   const copilotHome = tempDir('quote-ml-ch-');
-  // Screened line by line and in the compact form, this holds no secret. Escaped
-  // as JSON on one line, the break and tabs become `\n` and `\t`, which glue
-  // the URL to the address into a false connection-string match.
-  const quote = 'GET http://localhost:3000\nstatus\t401\tuser\tadmin@example.com';
+  const quote = 'FAIL\ttest/retry.test.mjs\t(12 ms)\t"expected 3"';
   assert.equal(evidenceQuoteError(quote), null);
-  const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'multi-line quote', '--body', 'the login retry masks a 401', '--evidence-quote', quote, '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
+  const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'tabbed quote', '--body', 'the login retry masks a 401', '--evidence-quote', quote, '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
     { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
   assert.equal(run.status, 0, run.stderr || run.stdout);
   const out = JSON.parse(run.stdout);
@@ -265,7 +249,7 @@ test('ae compound --insight takes an --evidence-quote that starts with a diff he
   const ws = tempDir('quote-cli-ws-');
   const home = tempDir('quote-cli-hh-');
   const copilotHome = tempDir('quote-cli-ch-');
-  const quote = '--- a/src/retry.mjs\n+++ b/src/retry.mjs\n@@ -1 +1 @@\n-retries = 0\n+retries = 3';
+  const quote = '--- a/src/retry.mjs\t2026-11-01 12:00:00';
   const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', '--insight', '--title', 'diff quote', '--body', 'retries matter', '--evidence-quote', quote, '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
     { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
   assert.equal(run.status, 0, run.stderr || run.stdout);

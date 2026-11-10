@@ -6,7 +6,7 @@ import { readFileNoFollow } from './fs-safe.mjs';
 import { getCorpusRoot } from './assets.mjs';
 import { assertSourceCurrent, parseSourceReference, sourceContext, sourceHash } from './retrieval/source-evidence.mjs';
 import { redactSecrets } from './secret-scan.mjs';
-import { withholdEvidenceQuoteLines } from './knowledge/store.mjs';
+import { withholdFrontmatterEvidenceQuote } from './knowledge/store.mjs';
 import { externalPlansDir } from './project-layout.mjs';
 import { domainContextOf, planRecordRoot } from './domain-context.mjs';
 import { installedCorpusHomes, resolveInstalledReference } from './corpus-reference.mjs';
@@ -119,10 +119,11 @@ export function runGet({ workspace, copilotHome, flags, home, authorizedPlan = n
 
   const rawBytes = readFileNoFollow(fullPath, { root: readRoot, encoding: null });
   if (rawBytes === null) throw new Error(`file not found for ${docid || relPath}`);
-  // The hash covers the file as stored; what is shown has every evidence_quote
-  // line withheld (see withholdEvidenceQuoteLines), with line numbers kept.
+  // The hash covers the file as stored; what is shown has a leading
+  // frontmatter evidence_quote withheld (see withholdFrontmatterEvidenceQuote),
+  // with line numbers kept.
   const stored = rawBytes.toString('utf8');
-  const raw = withholdEvidenceQuoteLines(stored);
+  const raw = withholdFrontmatterEvidenceQuote(stored);
   const sha256 = sourceHash(rawBytes);
   assertSourceCurrent(reference.sha256, sha256);
   const allLines = raw.split(/\r?\n/);

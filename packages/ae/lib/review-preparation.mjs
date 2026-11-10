@@ -262,6 +262,7 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
   const budget = Math.max(1024, Math.min(maxBytes, 131072));
   const included = [], omitted = [];
   let bytes = 0;
+  // evidence_quote withholding is out of scope here: these excerpts and the diff show the user's own working-tree changes.
   for (const ref of refs) {
     if (!selected.includes(ref.path)) { omitted.push({ ...ref, reason: 'not selected for excerpts; remains in the review scope' }); continue; }
     const text = readReviewFile(workspace, ref, { maxBytes: 1024 * 1024, plan });

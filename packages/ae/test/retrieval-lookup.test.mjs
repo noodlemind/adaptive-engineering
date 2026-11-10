@@ -228,3 +228,27 @@ test('an episode evidence_quote line is withheld from every raw-file preview, ex
   assert.ok(found.results.some((r) => r.id === 'split-quote' && r.snippet === 'evidence_quote: [withheld]'), JSON.stringify(found.results));
   assertWithheld(found, 'search snippets');
 });
+
+test('a doc or source file that only mentions evidence_quote comes back unchanged from get and lookup', async () => {
+  const { runGet } = await import('../lib/get-cmd.mjs');
+  const ws = fixtureWorkspace();
+  const copilotHome = tempDir('lookup-mention-home-');
+  const home = tempDir('lookup-mention-hh-');
+  const files = {
+    'docs/evidence.md': '# Evidence quotes\n\nAn episode may carry one line:\n\nevidence_quote: "expected 3, received 4"\n\n    const quote = readEvidenceQuote(text);\n    show(quote);\n\nThe field is optional.\n',
+    'src/record.ts': 'export const record = {\n  evidence_quote: "x",\n    nested: 1,\n};\n',
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(ws, rel)), { recursive: true });
+    fs.writeFileSync(path.join(ws, rel), text);
+  }
+  const { spawnSync } = await import('node:child_process');
+  for (const args of [['init', '-q'], ['config', 'user.email', 'harness@local'], ['config', 'user.name', 'harness'], ['add', '-A'], ['commit', '-q', '-m', 'fixture']]) spawnSync('git', ['-C', ws, ...args]);
+  for (const [rel, text] of Object.entries(files)) {
+    const got = runGet({ workspace: ws, copilotHome, home, flags: { path: rel, contextVersion: 2 } });
+    assert.equal(got.excerpt, text, rel);
+    assert.equal(got.evidence.redacted, false, rel);
+    const looked = lookupEntity({ kind: 'file', identifier: rel, workspace: ws, copilotHome, home });
+    assert.ok(!JSON.stringify(looked).includes('[withheld]'), JSON.stringify(looked));
+  }
+});

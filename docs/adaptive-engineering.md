@@ -148,7 +148,7 @@ The registry of shipped capabilities and their states is [capability-registry.ya
 
 Knowledge has three tiers. Each tier has a single writer.
 
-1. **Episodes.** After `ae verify` passes, the Engineer records what the task taught as a private solution episode in `~/.ae/projects/<repo-id>/docs/solutions/`. An episode can keep up to 600 bytes of verbatim error, test or diff text as `evidence_quote`, which `/consolidate` reads as inert evidence. `ae remember` records something a person teaches directly. Episodes never leave your machine on their own.
+1. **Episodes.** After `ae verify` passes, the Engineer records what the task taught as a private solution episode in `~/.ae/projects/<repo-id>/docs/solutions/`. An episode can keep a single line of up to 600 bytes of verbatim error, test or diff text as `evidence_quote`, which `/consolidate` reads as inert evidence. `ae remember` records something a person teaches directly. Episodes never leave your machine on their own.
 2. **Learnings.** `/consolidate` clusters episodes into learnings, stored in a local Git repository at `~/.ae/knowledge/<repo-id>/`, outside your working tree. Only `ae` commands write that store: `ae consolidate --apply` and `ae remember` add learnings, and `ae learning` changes their status. `ae orient` injects the best-matching learnings into the next task's context.
 3. **Behavior.** A pattern that should change how every task runs becomes a skill, agent or instruction, through a reviewed change to the corpus.
 

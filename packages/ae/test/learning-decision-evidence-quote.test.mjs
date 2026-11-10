@@ -15,7 +15,7 @@ import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
-const QUOTE = 'not ok 1 - example exports two\n  ---\n  expected: 2\n  actual: 1\n  ...';
+const QUOTE = 'not ok 1 - example exports two # expected: 2, actual: 1';
 
 function verifiedFixture(t) {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-quote-')));
@@ -47,7 +47,7 @@ function decide(f, value) {
 
 const publish = (operation, extra = {}) => ({ operation, decision: 'publish', rationale: 'The export regression is reusable.', title: 'example export value', body: 'The example module must export the value two.', category: 'logic', ...extra });
 
-test('a publish decision stores a verbatim evidence quote in the episode and refuses oversize, secret or no-learning quotes', t => {
+test('a publish decision stores a verbatim evidence quote in the episode and refuses oversize, multi-line, secret or no-learning quotes', t => {
   const f = verifiedFixture(t);
   const oversize = decide(f, publish('quote-oversize', { evidence_quote: 'x'.repeat(601) }));
   assert.notEqual(oversize.status, 0);
@@ -55,6 +55,9 @@ test('a publish decision stores a verbatim evidence quote in the episode and ref
   const secret = decide(f, publish('quote-secret', { evidence_quote: 'token ghp_' + 'x'.repeat(36) }));
   assert.notEqual(secret.status, 0);
   assert.match(secret.stdout + secret.stderr, /secret/);
+  const multiLine = decide(f, publish('quote-multi-line', { evidence_quote: 'not ok 1 - example exports two\n  expected: 2\n  actual: 1' }));
+  assert.notEqual(multiLine.status, 0);
+  assert.match(multiLine.stdout + multiLine.stderr, /must be a single line; pick the single most specific failing line/);
   const noLearning = decide(f, { operation: 'quote-no-learning', decision: 'no-learning', rationale: 'Nothing new.', evidence_quote: QUOTE });
   assert.notEqual(noLearning.status, 0);
   assert.match(noLearning.stdout + noLearning.stderr, /only to a publish decision/);

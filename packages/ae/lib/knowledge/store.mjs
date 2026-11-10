@@ -603,11 +603,12 @@ const LEADING_BLANKS = /^[ \t]*/;
  * Text with every `evidence_quote` key line replaced by
  * `evidence_quote: [withheld]`, keeping its indent. Every nonblank line after
  * one that is indented deeper than the key is emptied too, since YAML reads
- * such lines as the rest of the value (a block scalar or a wrapped plain or
- * quoted string in a hand-edited file). Line breaks are kept, so line numbers
- * and counts do not move. Any preview, excerpt or snippet of a raw file that
- * may be an episode goes through this before it is shown, because the quote
- * is screened only as its own field (see inertEvidenceQuote).
+ * such lines as the rest of the value. Line breaks are kept, so line counts
+ * do not move. This is for text that may be a fragment of an episode with no
+ * fence to anchor it: a hand-editable manifest summary, snippet or excerpt
+ * field, and the body of a text that is not a fenced episode (see
+ * episodeBody). A whole file shown raw goes through
+ * withholdFrontmatterEvidenceQuote instead, which leaves its body alone.
  */
 export function withholdEvidenceQuoteLines(text) {
   const s = String(text ?? '');
@@ -627,6 +628,45 @@ export function withholdEvidenceQuoteLines(text) {
     else keyIndent = -1;
   }
   return parts.join('');
+}
+
+// A block scalar indicator (`|` or `>`, with optional chomping and indent
+// indicators and a trailing comment), whose value is the indented lines below.
+const BLOCK_SCALAR = /^[|>][-+0-9]*[ \t]*(?:#.*)?$/;
+
+/**
+ * Text with the `evidence_quote` line of its LEADING frontmatter block (see
+ * splitFrontmatter) replaced by `evidence_quote: [withheld]`, for a raw file
+ * preview or excerpt that may be an episode, whose quote is screened only as
+ * its own field (see inertEvidenceQuote). The lines below the key are emptied
+ * only when its value continues there: a block scalar (`|` or `>`) or an
+ * empty value, whose nonblank lines indented deeper than the key are the
+ * rest of it. Line breaks are kept, so line numbers do not move. A text with
+ * no leading frontmatter, and everything after the block, is returned as
+ * written, so a doc or source file that mentions the key is not touched.
+ */
+export function withholdFrontmatterEvidenceQuote(text) {
+  const s = String(text ?? '');
+  if (!s.includes('evidence_quote')) return s;
+  const { frontmatter } = splitFrontmatter(s);
+  if (frontmatter === null || !frontmatter.includes('evidence_quote')) return s;
+  const fmStart = s.indexOf('\n') + 1;
+  const parts = frontmatter.split(/(\r\n|\r|\n)/);
+  let keyIndent = -1;
+  for (let i = 0; i < parts.length; i += 2) {
+    const line = parts[i];
+    const key = line.match(EVIDENCE_QUOTE_LINE);
+    if (key) {
+      const value = line.slice(key[0].length).trim();
+      parts[i] = `${key[1]}evidence_quote: [withheld]`;
+      keyIndent = !value || BLOCK_SCALAR.test(value) ? key[1].length : -1;
+      continue;
+    }
+    if (keyIndent < 0 || !line.trim()) continue;
+    if (line.match(LEADING_BLANKS)[0].length > keyIndent) parts[i] = '';
+    else keyIndent = -1;
+  }
+  return s.slice(0, fmStart) + parts.join('') + s.slice(fmStart + frontmatter.length);
 }
 
 /**

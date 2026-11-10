@@ -179,7 +179,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   }
   const evidenceQuote = flags.evidenceQuote ?? null;
   const quoteError = evidenceQuote === null ? null : evidenceQuoteError(evidenceQuote);
-  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['shorten or redact --evidence-quote and re-run'] };
+  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['quote one failing line, shortened or redacted, in --evidence-quote and re-run'] };
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);
   // Category is one safe path segment — never a traversal vector.
   const category = slugify(flags.category || 'insights');
@@ -213,10 +213,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (gitContext.baseSha) fmLines.push(`base: ${gitContext.baseSha}`);
   const renderDoc = lines => `---\n${lines.join('\n')}\n---\n\n${body.trim()}\n`;
   const doc = renderDoc(fmLines);
-  // evidenceQuoteError already screened the quote in every form it can be
-  // read in. Its escaped line is left out here: JSON turns each break into a
-  // literal `\n`, which would glue lines that are screened apart into one
-  // false match. Every other field and the body are still scanned, also with
+  // evidenceQuoteError already screened the one-line quote in every form it
+  // can be read in, so its JSON-escaped line is left out here. Every other
+  // field and the body are still scanned, also with
   // invisible characters removed from their NFKC form (see scanSecretsFolded).
   const secrets = scanSecretsFolded(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
   if (secrets.length) {
