@@ -302,7 +302,8 @@ export function commandHelpRequested(argv, entry = null) {
   return false;
 }
 
-function compoundLineMayBeSplit(argv) {
+/** Whether a compound argv may hold fragments of an unquoted evidence line. */
+export function compoundLineMayBeSplit(argv) {
   const has = name => argv.some(t => typeof t === 'string' && (t === name || t.startsWith(`${name}=`)));
   if (has('--evidence-quote')) return true;
   return has('--learning-decision') && (argv.includes('--') || positionalsOf(argv).length > 0);
@@ -617,9 +618,12 @@ function planNewRequireArgs(rest) {
   }
 }
 
+// A flag whose only value is the literal `-` (stdin) shows `-`, not `<->`.
+const valueLabel = def => (def.valueName === '-' ? '-' : `<${def.valueName || 'value'}>`);
+
 function flagLabel(def) {
   const names = [def.name, ...(def.aliases || [])];
-  return def.type === 'boolean' ? names.join(', ') : `${names.join(', ')} <${def.valueName || 'value'}>`;
+  return def.type === 'boolean' ? names.join(', ') : `${names.join(', ')} ${valueLabel(def)}`;
 }
 
 function buildUsage(entry) {
@@ -628,7 +632,7 @@ function buildUsage(entry) {
     parts.push(p.required ? `<${p.name}>` : `[${p.name}]`);
   }
   for (const f of entry.args.flags) {
-    const label = f.type === 'boolean' ? f.name : `${f.name} <${f.valueName || 'value'}>`;
+    const label = f.type === 'boolean' ? f.name : `${f.name} ${valueLabel(f)}`;
     parts.push(f.required ? label : `[${label}]`);
   }
   return parts.join(' ');
@@ -1140,7 +1144,7 @@ registerCommand({
     flags: [
       { name: '--learning-decision', type: 'string', valueName: 'path', description: 'Structured verified learning decision JSON file, or - for stdin (a decision with evidence_quote must come on stdin)' },
       { name: '--plan', type: 'string', valueName: 'path', description: 'explicit plan file', required: false, default: null, tui: 'prompt', choices: 'plan' },
-            { name: '--insight', type: 'boolean', description: 'evidence-free investigation capture (kind: insight, secret-scanned)', required: false, default: false, tui: 'verb' },
+            { name: '--insight', type: 'boolean', description: 'investigation capture without verified delivery evidence (kind: insight, secret-scanned; may cite one failing line by fingerprint via --evidence-quote -)', required: false, default: false, tui: 'verb' },
             { name: '--title', type: 'string', valueName: 't', description: 'insight title (required with --insight)', required: false, default: null, tui: 'prompt' },
       { name: '--body', type: 'string', valueName: 'text', description: 'insight body text', required: false, default: null, tui: 'prompt' },
       { name: '--body-file', type: 'string', valueName: 'path', description: 'read insight body from a file', required: false, default: null, tui: 'prompt', choices: 'path' },

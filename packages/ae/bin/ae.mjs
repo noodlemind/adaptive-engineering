@@ -4,7 +4,7 @@ import path from 'node:path';
 import { inspect } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { createStyle, keyWidthFor, EXIT } from '../lib/style.mjs';
-import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested, GLOBAL_FLAGS } from '../lib/registry.mjs';
+import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested, compoundLineMayBeSplit, GLOBAL_FLAGS } from '../lib/registry.mjs';
 import { createProcessEventRegistry, detectActor } from '../lib/event-registry.mjs';
 import { parseFlags, hasFlag } from '../lib/flags.mjs';
 import { applyHarnessHomeFlag, resolveCopilotHome } from '../lib/paths.mjs';
@@ -146,9 +146,9 @@ function extractOutputLane(rawArgs, entry = null) {
   const consumed = hasInlineValue ? 1 : 2;
   const lane = OUTPUT_LANES[value];
   if (!lane) {
-    // Beside compound's stdin-only evidence flags the value is never echoed:
-    // it may be a fragment of an unquoted evidence line.
-    const evidence = entry?.name === 'compound' && rawArgs.some(a => typeof a === 'string' && /^--(?:evidence-quote|learning-decision)(?:=|$)/.test(a));
+    // Under the same rule as an unknown flag, the value is not echoed when it
+    // may be a fragment of an unquoted evidence line.
+    const evidence = entry?.name === 'compound' && compoundLineMayBeSplit(rawArgs);
     const shown = value === undefined ? '(missing)' : evidence ? 'not a known lane' : JSON.stringify(value);
     throw Object.assign(new Error(`invalid --output: ${shown} — must be json-envelope, agent, or jsonl`), {
       code: 'E_USAGE',

@@ -225,6 +225,8 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     // Advisory; never block orientation on it.
   }
 
+  // Computed whatever the gate says: the hint is shown only when the gate
+  // passes, but the state is always reported as resumeVerification.
   const resumeCheck = resumeVerification({ workspace, copilotHome, flags, active });
   if (resumeCheck) nextTools.splice(0, nextTools.length, ...withResumeVerification(nextTools, resumeCheck, { planPath: active.path, gatePass: gatePreview.pass, isolationBlocked: isolation.blocked }));
 

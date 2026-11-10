@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import { runInsightCompound } from '../lib/compound.mjs';
 import { runRemember } from '../lib/knowledge/remember.mjs';
 import { solutionsWriteTarget } from '../lib/project-layout.mjs';
@@ -11,7 +11,14 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { packageRoot } from './helpers/cli.mjs';
 
-const tempDir = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+// Every fixture directory is removed when the file's tests finish.
+const madeDirs = [];
+after(() => { for (const dir of madeDirs) fs.rmSync(dir, { recursive: true, force: true }); });
+function tempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
 
 test('runInsightCompound does not write through a leftover symlinked docs/solutions directory', () => {
   const ws = tempDir('probeC-ws-');

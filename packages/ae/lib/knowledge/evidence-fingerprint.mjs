@@ -21,10 +21,12 @@ export const EVIDENCE_OUTPUT_CAP = 8 * 1024 * 1024;
 /** Output lines longer than this are skipped unread: no evidence line comes close. */
 export const EVIDENCE_OUTPUT_LINE_CAP = 64 * 1024;
 
-// CR, LF, NEL (U+0085) and the Unicode line and paragraph separators.
-const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+// LF (alone or after CR), NEL (U+0085) and the Unicode line and paragraph
+// separators. A lone CR is not a line break: it is a progress redraw, and only
+// the text after the last one (see collapseCarriageReturns) is the line.
+const LINE_BREAK = /[\n\u0085\u2028\u2029]/;
 const PLAIN_ASCII = /^[\x20-\x7e\t]*$/;
-const LINE_SPLIT = /\r\n|[\r\n\u0085\u2028\u2029]/;
+const LINE_SPLIT = /\r?\n|[\u0085\u2028\u2029]/;
 // Every C0 and C1 control and DEL, except tab.
 const CONTROL = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/;
 // Terminal escape sequences, removed whole: an OSC (ESC ] or the C1 OSC byte)
@@ -43,7 +45,22 @@ const PREFIX = new RegExp(`^[0-9a-f]{${EVIDENCE_PREFIX_LENGTH},64}$`, 'i');
  * whitespace at both ends trimmed.
  */
 export function normalizeEvidenceLine(line) {
-  return String(line ?? '').replace(/^\ufeff/, '').replace(ANSI_SEQUENCE, '').normalize('NFC').trim();
+  return collapseCarriageReturns(String(line ?? '')).replace(/^\ufeff/, '').replace(ANSI_SEQUENCE, '').normalize('NFC').trim();
+}
+
+/**
+ * A line redrawn with carriage returns (progress output) is what a terminal
+ * shows: the last segment with visible text. Applied identically at capture
+ * and at match, so `sed -n '<N>p'` of progress output captures the line that
+ * a later match finds on line N.
+ */
+export function collapseCarriageReturns(line) {
+  if (!line.includes('\r')) return line;
+  const segments = line.split('\r');
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i].replace(ANSI_SEQUENCE, '').trim()) return segments[i];
+  }
+  return '';
 }
 
 // The one-shot hash (Node 20.12+) is several times faster per short line.

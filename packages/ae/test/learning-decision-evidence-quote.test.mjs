@@ -88,7 +88,7 @@ test('the evidence line is checked, normalised and fingerprinted the same way at
   assert.equal(evidenceLineError('FAIL\ttest/retry.test.mjs\t(12 ms)'), null, 'tabs are allowed');
   assert.equal(evidenceLineError('\x1b[31mFAIL\x1b[0m retry'), null, 'colour codes are removed, not refused');
   assert.equal(evidenceLineError('x'.repeat(EVIDENCE_LINE_CAP)), null, 'exactly the cap is accepted');
-  for (const value of ['a\nb', 'a\r\nb', 'a\rb', 'a\u0085b', 'a\u2028b', 'a\u2029b']) assert.match(evidenceLineError(value), /single line/, JSON.stringify(value));
+  for (const value of ['a\nb', 'a\r\nb', 'a\u0085b', 'a\u2028b', 'a\u2029b']) assert.match(evidenceLineError(value), /single line/, JSON.stringify(value));
   assert.match(evidenceLineError('é'.repeat(301)), /at most 600 bytes/);
   for (const value of ['ok \x00 nul', 'ok \x07 bell', 'ok \x7f del', 'ok \u0090 c1']) assert.match(evidenceLineError(value), /no other control characters/, JSON.stringify(value));
   for (const value of ['', '   ', '\x1b[0m', null, 3]) assert.match(evidenceLineError(value), /nonempty/, JSON.stringify(value));
@@ -98,7 +98,13 @@ test('the evidence line is checked, normalised and fingerprinted the same way at
   assert.deepEqual(fp, { sha256: QUOTE_SHA, bytes: Buffer.byteLength(QUOTE) });
   const output = ['TAP version 13', `\x1b[31m${QUOTE}\x1b[39m`, '# fail 1'].join('\r\n');
   assert.deepEqual(matchEvidence(output, QUOTE_SHA.slice(0, 12)), { matched: true, line: 2 }, 'ANSI and CRLF variants match');
-  assert.deepEqual(matchEvidence(`progress 10%\rprogress 90%\r${QUOTE}\n`, QUOTE_SHA), { matched: true, line: 3 }, 'carriage-return progress output is split into lines');
+  // A progress line keeps only its last visible segment, at capture and at match alike.
+  const progress = `progress 10%\rprogress 90%\r${QUOTE}\x1b[0m\r`;
+  assert.equal(evidenceLineError(progress), null, 'a progress line is accepted at capture');
+  assert.deepEqual(evidenceFingerprint(progress), { sha256: QUOTE_SHA, bytes: Buffer.byteLength(QUOTE) });
+  assert.deepEqual(matchEvidence(`TAP\n${progress}\n# fail 1\n`, QUOTE_SHA), { matched: true, line: 2 }, 'the match finds it on the same line number sed -n would print');
+  assert.deepEqual(matchEvidence(`${QUOTE}\rprogress 90%\n`, QUOTE_SHA), { matched: false, line: null }, 'an overwritten segment is not the line');
+  assert.equal(normalizeEvidenceLine('\r\r'), '');
   assert.deepEqual(matchEvidence(output, QUOTE_SHA.slice(0, 12), { bytes: fp.bytes }), { matched: true, line: 2 });
   assert.deepEqual(matchEvidence(output, QUOTE_SHA.slice(0, 12), { bytes: fp.bytes + 1 }), { matched: false, line: null });
   assert.deepEqual(matchEvidence(output.replace('actual: 1', 'actual: 3'), QUOTE_SHA.slice(0, 12)), { matched: false, line: null }, 'a changed line does not match');
@@ -386,17 +392,52 @@ test('--learning-decision=- takes the stdin path with all its checks', t => {
   assert.deepEqual(filesHolding(f.dir, MARKER), []);
 });
 
-test('a script piping into --evidence-quote - under ae bash or ae exec is journaled and audited only as length and digest', t => {
+test('any script mentioning a stdin-only evidence flag is masked, whatever form the dash or the line takes', async () => {
+  const { execJournalArgv, maskedChildArgs } = await import('../lib/exec-cmd.mjs');
+  const ae = 'ae compound --insight --title t';
+  const forms = [
+    `printf '%s\\n' '${QUOTE}' | ${ae} --evidence-quote "-"`,
+    `printf '%s\\n' '${QUOTE}' | ${ae} --evidence-quote '-'`,
+    `Q=-; printf '%s\\n' '${QUOTE}' | ${ae} --evidence-quote $Q`,
+    `printf '%s\\n' '${QUOTE}' | ${ae} --evidence-quote \\\n-`,
+    `${ae} --evidence-quote -<<<'${QUOTE}'`,
+    `ae compound --plan p.md --learning-decision -<<'EOF'\n{"evidence_quote":"${QUOTE}"}\nEOF`,
+    `ae compound --plan p.md --learning-decision=- <<< '{"evidence_quote":"${QUOTE}"}'`,
+  ];
+  for (const script of forms) {
+    const journal = execJournalArgv(['--workspace', 'w', '--', script]);
+    assert.deepEqual(journal.slice(0, 3), ['--workspace', 'w', '--'], script);
+    assert.match(journal[3], /^<script:\d+b:[0-9a-f]{12}>$/, script);
+    assert.equal(journal.length, 4);
+    assert.match(maskedChildArgs([script])[0], /^<script:/, script);
+  }
+  // A nested sh -c under ae exec is one argv element among several.
+  const nested = ['/bin/sh', '-c', forms[0]];
+  assert.deepEqual(execJournalArgv(['--', ...nested]).length, 2);
+  assert.ok(!JSON.stringify(maskedChildArgs(nested)).includes(MARKER));
+  assert.deepEqual(execJournalArgv(['--', 'echo', 'hello']), ['--', 'echo', 'hello'], 'other scripts stay as typed');
+  // Delivery pipes the decision on stdin and builds the argv itself: only compound's argv is reduced.
+  const delivered = ['/usr/bin/node', '/x/bin/ae.mjs', 'compound', '--plan', 'plans/p.md', '--json', '--learning-decision', '-', '--workspace', '/w'];
+  assert.deepEqual(maskedChildArgs(delivered, { input: '{"evidence_quote":"x"}' }), delivered, 'the plan path and flags stay in the audit');
+});
+
+test('a script piping into --evidence-quote - under ae bash or ae exec is journaled, audited and rendered only as length and digest', t => {
   const f = verifiedFixture(t, { events: true });
   fs.mkdirSync(path.join(f.copilot, 'harness'), { recursive: true });
   fs.writeFileSync(path.join(f.copilot, 'harness', 'config.yaml'), 'version: 1\nexec.bash_enabled: true\n');
-  const inner = (title) => `printf '%s\\n' '${QUOTE}' | '${process.execPath}' '${path.join(root, 'bin/ae.mjs')}' compound --insight --title '${title}' --body 'retries matter' --evidence-quote - --workspace '${f.ws}' --harness-home '${f.home}' --copilot-home '${f.copilot}' --json`;
+  const inner = (title, dash) => `printf '%s\\n' '${QUOTE}' | '${process.execPath}' '${path.join(root, 'bin/ae.mjs')}' compound --insight --title '${title}' --body 'retries matter' --evidence-quote ${dash} --workspace '${f.ws}' --harness-home '${f.home}' --copilot-home '${f.copilot}' --json`;
   const ae = (...args) => spawnSync(process.execPath, [path.join(root, 'bin/ae.mjs'), ...args], { cwd: f.ws, env: { ...process.env, HARNESS_HOME: f.home, COPILOT_HOME: f.copilot, HARNESS_ENFORCEMENT: '' }, encoding: 'utf8', timeout: 30000 });
   const homes = ['--workspace', f.ws, '--harness-home', f.home, '--copilot-home', f.copilot];
-  const bash = ae('bash', ...homes, '--', inner('via bash'));
+  const bash = ae('bash', ...homes, '--', inner('via bash', '"-"'));
   assert.equal(bash.status, 0, bash.stdout + bash.stderr);
-  const exec = ae('exec', ...homes, '--', '/bin/sh', '-c', inner('via exec'));
+  const exec = ae('exec', ...homes, '--', '/bin/sh', '-c', inner('via exec', "'-'"));
   assert.equal(exec.status, 0, exec.stdout + exec.stderr);
+  const json = ae('bash', ...homes, '--json', '--', inner('via bash json', '-'));
+  assert.equal(json.status, 0, json.stdout + json.stderr);
+  for (const run of [bash, exec, json]) {
+    assert.ok(!(run.stdout + run.stderr).includes(MARKER), `the header or result echoes the script: ${run.stdout}`);
+    assert.match(run.stdout, /<script:\d+b:[0-9a-f]{12}>/, 'the header and result show the placeholder');
+  }
   const runs = walk(f.dir).filter(file => path.basename(file) === 'runs.jsonl').map(file => fs.readFileSync(file, 'utf8')).join('');
   assert.match(runs, /<script:\d+b:[0-9a-f]{12}>/, 'the script is journaled as length and digest');
   assert.ok(walk(f.dir).some(file => file.endsWith('.jsonl') && fs.readFileSync(file, 'utf8').includes('"exec"')), 'the exec audit is on');
@@ -498,7 +539,7 @@ test('a capture over stdin and a later match agree across BOM, NFD, OSC and CRLF
   assert.equal(lane.status, 2, `a literal value that looks like --output is not an output lane: ${lane.stdout}${lane.stderr}`);
   assert.match(lane.stdout + lane.stderr, /takes only -/);
   assert.ok(!(lane.stdout + lane.stderr).includes(MARKER));
-  const badLane = f.cli(['compound', '--learning-decision', '-', '--output', `${MARKER}`, '--json']);
+  const badLane = f.cli(['compound', '--insight', '--evidence-quote', '-', '--output', `${MARKER}`, '--json']);
   assert.equal(badLane.status, 2);
   assert.match(badLane.stderr, /not a known lane/);
   assert.deepEqual(filesHolding(f.dir, MARKER).filter(file => !file.endsWith('out.txt')), [], 'nothing but the test-written output holds the line');

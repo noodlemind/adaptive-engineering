@@ -55,7 +55,9 @@ function auditUsage(entry, usage, usedAllowKeys = new Set()) {
     const bare = usage.replace(/<[^<>]*>/g, ' ').split(/[\s|[\]"]+/).filter(Boolean);
   for (const token of bare) {
     if (token.startsWith('-')) {
-      if (!flags.has(token)) violations.push({ token, kind: 'flag' });
+      // A literal value name, such as the `-` of `--evidence-quote -`, is
+      // declared data too.
+      if (!flags.has(token) && !valueNames.has(token)) violations.push({ token, kind: 'flag' });
       continue;
     }
     if (verbs.has(token) || positionals.has(token)) continue;
