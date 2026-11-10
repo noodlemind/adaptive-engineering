@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { killLiveGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
+import { killLiveGroups, trackStudyGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
 import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
@@ -186,12 +186,21 @@ const OPEN_NO_FOLLOW = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | 
 /**
  * The memory carried from one task's homes into the next task's fresh homes, as [root, path under root]: the project
  * store's episodes (docs/solutions), the recall manifest, its postings index and the learnings store (harnessHome/knowledge,
- * every storage id), which holds the learnings and the knowledge mode and feedback config. Nothing else in the homes is
- * carried: storage aliases, plans, todos, feedback records, trust and check configuration all start fresh in every task.
+ * every storage id), which holds the learnings and the knowledge mode and feedback config. With `feedback` (arms that read
+ * captured memory) the project store's feedback records are carried too, since recall+feedback reads them back; without
+ * them recall+feedback would measure the same memory as recall. Nothing else in the homes is carried: storage aliases,
+ * plans, todos, trust and check configuration all start fresh in every task.
  */
-function memoryTargets({ copilotHome, harnessHome, projectDir }) {
-  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge'], [harnessHome, path.relative(harnessHome, path.join(projectDir, 'docs', 'solutions'))]];
+function memoryTargets({ copilotHome, harnessHome, projectDir, feedback = false }) {
+  const project = rel => path.relative(harnessHome, path.join(projectDir, ...rel));
+  return [[copilotHome, 'knowledge'], [harnessHome, 'index'], [harnessHome, 'knowledge'], [harnessHome, project(['docs', 'solutions'])], ...(feedback ? [[harnessHome, project(['feedback'])]] : [])];
 }
+
+/**
+ * Lock state a writer left behind: a store `.lock` (directory or file), any other `*.lock` such as `.git/index.lock`, and
+ * `*.stale-*` tombstones of taken-over locks. Copied with fresh mtimes they would look live and wedge the next task's store.
+ */
+const isLockState = name => name === '.lock' || name.endsWith('.lock') || name.includes('.stale-');
 
 const refusal = message => Object.assign(new Error(message), { refusal: true });
 
@@ -201,7 +210,7 @@ const refusal = message => Object.assign(new Error(message), { refusal: true });
  * still be its place under the home, and every file is opened without following a final symlink and checked again on the
  * open descriptor. A symlink, a special file, an unreadable entry, or a capture over the file count or byte limit refuses
  * its target: the target is left out and `refused` names it, which makes the next attempt invalid. An absent target is
- * recorded as absent.
+ * recorded as absent. Lock state (see isLockState) is skipped, never carried.
  */
 export function captureMemory(homes) {
   const refused = [];
@@ -226,6 +235,7 @@ export function captureMemory(homes) {
         const dir = path.join(root, rel, sub);
         if (fs.realpathSync(dir) !== path.join(rootReal, rel, sub)) throw refusal(`${sub || '.'} resolves outside the home`);
         for (const name of fs.readdirSync(dir).sort()) {
+          if (isLockState(name)) continue;
           const entryRel = sub ? path.join(sub, name) : name;
           const full = path.join(dir, name);
           const stat = fs.lstatSync(full);
@@ -446,6 +456,9 @@ export function configureArm({ workspace, home, arm, series, seed = false }) {
  */
 export const scoredChecks = task => [...task.checks, ...task.publicChecks];
 
+/** The unexpected-change entry for a workspace with more files than the snapshot limit: a scope failure, not a lost measurement. */
+export const SNAPSHOT_LIMIT_EXCEEDED = '(snapshot limit exceeded)';
+
 /** Files under `.harness/` that the runner supplies; any change to them is a scope violation, unlike ordinary Harness state. */
 export const SUPPLIED_FILES = Object.freeze(['.harness/context-verify.mjs']);
 
@@ -503,7 +516,7 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
     corpusHash: hash(JSON.stringify(catalog)), checkerHash: hash(fs.readFileSync(checker)), protocolHash: hash(JSON.stringify(protocol)),
     runtime: process.version, platform: process.platform, arch: process.arch, host, model,
     modelSelection: model?.trim().toLowerCase() === 'auto' ? 'automatic' : 'fixed',
-    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-task-fresh-homes-v3',
+    runtimeIsolation: 'candidate-cli-v1', agentIsolation: 'per-task-fresh-homes-v4',
     revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(),
     sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim()),
     profile: protocol.profile, publicVerifier: protocol.publicVerifier, maxTurns: protocol.maxTurns, maxSeconds: protocol.maxSeconds,
@@ -513,6 +526,67 @@ function provenanceFor({ catalog, protocol, arms, repeats, model, host, series }
   provenance.sourceHash = hash(execFileSync('git', ['ls-files', '-z', 'packages/ae/lib', 'packages/ae/bin', 'packages/ae/corpus', 'packages/ae/eval/context', 'packages/ae/eval/memory'], { cwd: repoRoot }).toString().split('\0').filter(Boolean).map(file => `${file}:${hash(fs.readFileSync(path.resolve(repoRoot, file)))}`).join('\n'));
   provenance.batch = hash(`${provenance.configHash}:${provenance.sourceHash}:${randomBytes(8).toString('hex')}`);
   return provenance;
+}
+
+/**
+ * Mode for the study parent and run roots while a study runs: owner write and search, no read, so a process left running
+ * from an earlier task cannot list the unpredictable names of later run and task roots. It is a mitigation, not a boundary:
+ * a process running as the same user can change the mode back. Removal restores read access first.
+ */
+const UNLISTED_DIR_MODE = 0o311;
+const unlist = dir => { try { fs.chmodSync(dir, UNLISTED_DIR_MODE); } catch { /* best effort */ } };
+
+/**
+ * Gives the owner read, write and search on every directory under `dir`, without following links, so a directory an agent
+ * made read-only (chmod 555) or the runner made unlisted cannot stop the removal. Errors are ignored.
+ */
+function unlockTree(dir) {
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    try {
+      const stat = fs.lstatSync(current);
+      if (!stat.isDirectory()) continue;
+      if ((stat.mode & 0o700) !== 0o700) fs.chmodSync(current, (stat.mode & 0o7777) | 0o700);
+      for (const name of fs.readdirSync(current)) stack.push(path.join(current, name));
+    } catch { /* best effort */ }
+  }
+}
+
+/**
+ * Removes a temporary tree and never throws: directory modes are restored first, and a failure (for example EBUSY on
+ * Windows, or a mode the runner could not change) is appended to `failures` as { path, code } for the results.
+ */
+function removeTree(dir, failures = []) {
+  unlockTree(dir);
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); return true; }
+  catch (error) { failures.push({ path: dir, code: error?.code || String(error?.message ?? error).slice(0, 200) }); return false; }
+}
+
+/**
+ * Before each task, on Linux, SIGKILLs every process of this user whose working directory is under `root` (the study
+ * parent, which then holds only earlier task roots), so a daemon an earlier agent detached from its process group cannot
+ * reach the next task. Best effort: skipped without /proc, and a process that changed its directory elsewhere escapes it.
+ * Returns the killed PIDs.
+ */
+export function killStragglers(root) {
+  const killed = [];
+  if (process.platform !== 'linux' || typeof process.getuid !== 'function') return killed;
+  try {
+    const uid = process.getuid();
+    const real = fs.realpathSync(root);
+    for (const name of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+      try {
+        if (fs.statSync(`/proc/${name}`).uid !== uid) continue;
+        const cwd = fs.readlinkSync(`/proc/${name}/cwd`).replace(/ \(deleted\)$/, '');
+        if (cwd !== real && !cwd.startsWith(real + path.sep)) continue;
+        process.kill(Number(name), 'SIGKILL');
+        killed.push(Number(name));
+      } catch { /* gone, or not ours */ }
+    }
+  } catch { /* no /proc */ }
+  return killed;
 }
 
 const STUDY_PREFIX = 'aem-study-';
@@ -547,6 +621,8 @@ export function sweepStaleStudies(base = os.tmpdir()) {
     }
     if (alive) continue;
     const dir = path.join(base, name);
+    // Restore read access only on the folders a study made unlisted (the parent and its run roots), never deeper.
+    try { fs.chmodSync(dir, 0o700); for (const entry of fs.readdirSync(dir)) if (entry.startsWith('run-')) fs.chmodSync(path.join(dir, entry), 0o700); } catch { /* not ours */ }
     try { fs.rmSync(dir, { recursive: true, force: true }); swept.push(dir); } catch { /* not ours to remove */ }
   }
   return swept;
@@ -558,12 +634,17 @@ const STUDY_SIGNALS = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGH
 /**
  * One temporary parent per study, removed on normal exit and on SIGINT, SIGTERM, SIGHUP or SIGQUIT. Run roots are created
  * inside it. `onAbort` runs on a signal after the parent (and so every checkout) is gone, to save what the study has recorded.
- * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group.
+ * SIGKILL cannot be caught: it leaves the parent for the next study's sweep and orphans any running agent group. `groups`
+ * holds the process groups this study started; removal kills only those. `close()` returns removal failures.
  */
 function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   sweepStaleStudies(base);
   const parent = fs.mkdtempSync(path.join(base, `${STUDY_PREFIX}${process.pid}-`));
-  const remove = () => { killLiveGroups(); try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ } };
+  unlist(parent);
+  const groups = new Set();
+  const failures = [];
+  let removed = false;
+  const remove = () => { killLiveGroups(groups); if (!removed) removed = removeTree(parent, failures); };
   const onSignal = signal => {
     // Agents run detached in their own process groups, so the signal does not reach them; `remove` kills them first.
     remove();
@@ -572,22 +653,22 @@ function openStudyParent({ base = os.tmpdir(), onAbort = () => {} } = {}) {
   };
   process.on('exit', remove);
   for (const signal of STUDY_SIGNALS) process.once(signal, onSignal);
-  return { parent, close() { remove(); process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); } };
+  return { parent, groups, close() { remove(); process.off('exit', remove); for (const signal of STUDY_SIGNALS) process.off(signal, onSignal); return failures; } };
 }
 
 /**
  * Writes attempt records and results. Attempt records carry checker diagnostics with expected values, so this runs only after
  * the study parent (every checkout and agent-facing file) is gone. A partial write follows a crash or signal; it has no summary.
  */
-function writeStudyOutput({ root, provenance, runs, attempts, protocol, partial }) {
+function writeStudyOutput({ root, provenance, runs, attempts, protocol, partial, cleanupErrors = [] }) {
   for (const attempt of attempts) {
     const dir = path.join(root, 'attempts', attempt.run);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `t${attempt.taskIndex}-${attempt.task}.json`), JSON.stringify(attempt, null, 2));
   }
   const output = partial
-    ? { schema: 1, partial: true, provenance, runs, attempts, summary: null }
-    : { schema: 1, provenance, runs, attempts, summary: summarizeStudy({ attempts, runs, provenance, protocol }) };
+    ? { schema: 1, partial: true, provenance, runs, attempts, cleanupErrors, summary: null }
+    : { schema: 1, provenance, runs, attempts, cleanupErrors, summary: summarizeStudy({ attempts, runs, provenance, protocol }) };
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(output, null, 2));
   return output;
 }
@@ -619,13 +700,15 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
   const provenance = provenanceFor({ catalog, protocol, arms, repeats, model, host, series });
   const attempts = [];
   const runs = [];
-  let finished = false, owned = false;
+  let finished = false, owned = false, studyCleanupErrors = [];
   // The study parent opens first, so a failure there leaves no provenance.json behind to block a retry into the same root.
   // Partial output is written only into a root this study claimed with provenance.json, never over another study's results.
   const study = openStudyParent({ base: studyBase, onAbort: () => { if (owned) writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } });
   try {
   fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
   owned = true;
+  // Every process group started inside, the executor's agents included, joins this study's set, which close() kills.
+  await trackStudyGroups(study.groups, async () => {
   for (const [seriesIndex, item] of series.entries()) {
     for (let repeat = 0; repeat < repeats; repeat++) {
       const offset = (seriesIndex + repeat) % arms.length;
@@ -633,6 +716,9 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
         const arm = armById(protocol, armId);
         const runId = `${item.id}-${armSlug(armId)}-r${repeat + 1}`;
         const runRoot = fs.mkdtempSync(path.join(study.parent, 'run-'));
+        unlist(runRoot);
+        // Removal failures of this run's task roots and run root; recorded on the run, never thrown.
+        const cleanupErrors = [];
         let carried = {};
         // The series identity from task 1: its repository id and its store directory relative to the harness home.
         let first = null;
@@ -646,6 +732,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
         try {
           for (let index = 0; index < item.tasks.length; index++) {
             const task = item.tasks[index];
+            // A daemon an earlier task detached cannot reach this one: anything still working under the study parent goes.
+            const stragglersKilled = killStragglers(study.parent).length;
             const taskRoot = fs.mkdtempSync(path.join(runRoot, 'task-'));
             const copilotHome = path.join(taskRoot, 'copilot');
             const harnessHome = path.join(taskRoot, 'state');
@@ -667,7 +755,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             if (!first && index > 0) setupStep('identity', () => { throw new Error('the series identity is unknown: task 1 could not resolve it'); });
             const seriesStore = path.join(harnessHome, first ? first.storeId : path.join('knowledge', '.unresolved'));
             const projectDir = path.join(harnessHome, 'projects', path.basename(seriesStore));
-            const homes = { copilotHome, harnessHome, projectDir };
+            const homes = { copilotHome, harnessHome, projectDir, feedback: readsCapturedMemory(arm) };
             const fixed = fixesRecallableMemory(arm);
             const memoryRefused = [...carryRefused];
             // Carried memory is written before configuration, so the arm's mode and feedback state always win.
@@ -692,15 +780,19 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const baseline = await runChecks(fixture, checkerOptions);
             const publicBaseline = await runPublicChecks(fixture, checkerOptions);
             const trapBaseline = task.trap ? subsetResult(task, baseline, true) : null;
-            if (baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
+            const baselineBroken = !(baseline.pass || !baseline.integrity || baseline.error || baseline.verdicts.some(verdict => verdict === null) || publicBaseline?.pass || publicBaseline?.error || trapBaseline?.pass);
+            // Task 1 starts from the catalog alone, so a passing baseline there is a fixture error. A later task can be
+            // reached by what an earlier task left running; that attempt is invalid and the study continues.
+            if (!baselineBroken && index === 0) throw new Error(`invalid broken baseline: ${runId} task ${index + 1}`);
             const episodesBefore = episodeHashes(fixture.workspace, projectDir);
             const injection = plannedInjection({ workspace: fixture.workspace, copilotHome, home: harnessHome, task });
             const startedAt = Date.now();
             let result = {}, error = null;
-            // A task whose setup failed is invalid whatever the agent does, so no agent runs for it.
-            const ran = !dryRun && !setupFailed;
-            if (setupFailed) {
-              const failures = [...setupErrors.map(row => `${row.step}: ${row.message}`), ...memoryRefused.map(reason => `carry-memory: ${reason}`), ...plans.refused.map(rel => `clear-plans: refused ${rel}`)];
+            // A task whose setup failed, or whose baseline already passes, is invalid whatever the agent does, so no agent runs for it.
+            const skipped = setupFailed || !baselineBroken;
+            const ran = !dryRun && !skipped;
+            if (skipped) {
+              const failures = [...setupErrors.map(row => `${row.step}: ${row.message}`), ...memoryRefused.map(reason => `carry-memory: ${reason}`), ...plans.refused.map(rel => `clear-plans: refused ${rel}`), ...(baselineBroken ? [] : ['baseline: the unchanged task already passes a check it must fail'])];
               error = `setup failed: ${failures.join('; ')}`.slice(0, 2000);
             } else if (!dryRun) {
               try { result = await execute({ ...fixture, arm, repeat: repeat + 1, model, protocol, injection }) || {}; }
@@ -711,13 +803,20 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             // One checker run scores the whole task; trap and non-trap results are subsets of its per-check verdicts.
             const trapChecks = !ran || !task.trap ? null : subsetResult(task, checks, true);
             const otherChecks = !ran || !task.trap ? null : subsetResult(task, checks, false);
-            // What the agent left in the workspace can make a measurement throw (for example a file count over the snapshot
-            // limit). That makes this attempt invalid as scope-unmeasurable; the study continues.
+            // What the agent left in the workspace can make a measurement throw. That makes this attempt invalid as
+            // scope-unmeasurable; the study continues. A file count over the snapshot limit is not one of those: it is a scope
+            // failure the agent caused, so the attempt stays valid and scored.
             const measurementErrors = [];
             const measure = (step, action, fallback) => {
               try { return action(); } catch (caught) { measurementErrors.push({ step, message: String(caught?.message ?? caught).slice(0, 500) }); return fallback; }
             };
-            const scope = measure('scope', () => scopeResult(fixture), { pass: false, changed: [], unexpected: [], metadataExcluded: [] });
+            const scope = measure('scope', () => {
+              try { return scopeResult(fixture); }
+              catch (caught) {
+                if (!/fixture file limit exceeded/.test(String(caught?.message))) throw caught;
+                return { pass: false, changed: [], unexpected: [SNAPSHOT_LIMIT_EXCEEDED], metadataExcluded: [] };
+              }
+            }, { pass: false, changed: [], unexpected: [], metadataExcluded: [] });
             // Ordinary Harness state is an expected write. Notes under docs/solutions are expected for every arm; only capturing arms carry them forward.
             // Runner-supplied files under .harness/, such as the public verifier, stay protected.
             const unexpected = scope.unexpected.filter(file => SUPPLIED_FILES.includes(file) || (!file.startsWith('.harness/') && !file.startsWith(`${protocol.carryForward}/`)));
@@ -728,7 +827,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             const after = storedConfig(seriesStore);
             const episodesAfter = measure('episodes', () => episodeHashes(fixture.workspace, projectDir), episodesBefore);
             const episodesWritten = Object.keys(episodesAfter).filter(key => episodesBefore[key] !== episodesAfter[key]).length;
-            const kind = setupFailed ? 'setup-error' : dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
+            const kind = skipped ? 'setup-error' : dryRun ? 'dry-run' : error ? 'runtime-error' : host === 'scripted-test' ? 'scripted' : 'live';
             const executed = kind === 'live' || kind === 'scripted';
             const invalidReasons = [
               identity && first && identity.repoId !== first.repoId && 'repo-identity-drift',
@@ -744,6 +843,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               setupErrors.some(row => row.step === 'clear-plans') && 'external-plans-clear-failed',
               setupErrors.some(row => row.step === 'read-config') && 'arm-configuration-unreadable',
               !originRestored && 'origin-restore-failed',
+              !baselineBroken && 'invalid-baseline',
             ].filter(Boolean);
             const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
             const usage = usageOf(result);
@@ -778,7 +878,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               turns: Number.isInteger(result.turnCount) ? result.turnCount : Array.isArray(result.turns) ? result.turns.length : null,
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageCoverage: usage.coverage,
               requestedModel: result.model ?? model, observedModels: usage.observedModels, actualModel: usage.actualModel, provider: result.provider ?? null,
-              status: result.status ?? null, stopReason: result.stopReason ?? null, error, durationMs: Date.now() - startedAt,
+              status: result.status ?? null, stopReason: result.stopReason ?? null, error, durationMs: Date.now() - startedAt, stragglersKilled,
             };
             attempts.push(attempt);
             runAttempts.push(attempt);
@@ -790,27 +890,29 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
             } else carried = {};
             if (inspect) await inspect(fixture, attempt);
             } finally {
-              // The task's root goes once its measurements are read; rmSync removes links without following them.
-              try { fs.rmSync(taskRoot, { recursive: true, force: true, maxRetries: 3 }); } catch { /* the run root removal retries */ }
+              // The task's root goes once its measurements are read; rmSync removes links without following them. A
+              // failure is recorded on the run and the run root removal tries again.
+              removeTree(taskRoot, cleanupErrors);
             }
           }
         } finally {
-          fs.rmSync(runRoot, { recursive: true, force: true });
+          removeTree(runRoot, cleanupErrors);
         }
         runs.push({ id: runId, series: item.id, split: item.split, arm: armId, repeat: repeat + 1,
           measured: runAttempts.every(row => row.valid && (row.kind === 'live' || row.kind === 'scripted')),
-          episodesWritten: runAttempts.reduce((sum, row) => sum + row.episodesWritten, 0) });
+          episodesWritten: runAttempts.reduce((sum, row) => sum + row.episodesWritten, 0), cleanupErrors });
       }
     }
   }
+  });
   finished = true;
   } finally {
-    study.close();
+    studyCleanupErrors = study.close();
     // A crash still saves every finished attempt, marked partial; a normal end writes the full results below.
     // A failed partial write must never replace the error that ended the study.
-    if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true }); } catch { /* keep the original error */ } }
+    if (!finished && owned) { try { writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: true, cleanupErrors: studyCleanupErrors }); } catch { /* keep the original error */ } }
   }
-  return writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false });
+  return writeStudyOutput({ root, provenance, runs, attempts, protocol, partial: false, cleanupErrors: studyCleanupErrors });
 }
 
 function rate(numerator, denominator) {

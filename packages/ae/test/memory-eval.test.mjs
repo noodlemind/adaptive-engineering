@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import {
-  CATALOG, PROTOCOL, PUBLIC_CHECK, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, captureMemory, episodeHashes, runAgentProcess, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol, writeMemory,
+  CATALOG, PROTOCOL, PUBLIC_CHECK, SNAPSHOT_LIMIT_EXCEEDED, SUPPLIED_FILES, armById, authorizeFixtureChecks, armStatistics, baselineChain, clearExternalPlans, collectCarryForward, compareArms, captureMemory, episodeHashes, runAgentProcess, fisherOneSided, resolveStudyOutput, runStudy, runnableArms, scorePromotion, seriesOrigin, sweepStaleStudies, validateProtocol, writeMemory,
 } from '../eval/memory/study.mjs';
 import { applyOps } from '../lib/knowledge/apply.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
@@ -102,7 +102,10 @@ function main() {
         const runDir = path.dirname(taskRoot);
         observations[`${fixture.arm.id}:${fixture.index}`] = {
           home: fs.readdirSync(fixture.env.HOME), homePath: fixture.env.HOME, tmp: fixture.env.TMPDIR, trial: fixture.trial,
-          taskRoot: fs.readdirSync(taskRoot).sort(), taskRootPath: taskRoot, runDir: fs.readdirSync(runDir), runDirPath: runDir, studyParent: path.dirname(runDir),
+          taskRoot: fs.readdirSync(taskRoot).sort(), taskRootPath: taskRoot, runDirPath: runDir, studyParent: path.dirname(runDir),
+          // The run root and study parent are unlisted while the study runs; root and Windows ignore that mode.
+          runDir: (() => { try { return fs.readdirSync(runDir); } catch (error) { return error.code; } })(),
+          parentListing: (() => { try { return fs.readdirSync(path.dirname(runDir)).length; } catch (error) { return error.code; } })(),
           checkFile: fixture.checkFile ?? null, hasCheckText: typeof fixture.checkText === 'string', outFiles: fs.readdirSync(root).sort(), outsideOut: path.relative(root, fixture.workspace).startsWith('..'),
           planPresent: fs.existsSync(path.join(fixture.harnessHome, 'projects')) && fs.readdirSync(path.join(fixture.harnessHome, 'projects')).some(id => fs.existsSync(path.join(fixture.harnessHome, 'projects', id, 'plans', 'scripted-plan.md'))),
         };
@@ -157,6 +160,8 @@ function drift() {
 after(async () => {
   for (const run of [mainRun, dryRunResult, driftRun]) if (run) fs.rmSync((await run).root, { recursive: true, force: true });
 });
+/** Directory modes bind this process: not root, not Windows. */
+const unlistedModesApply = process.platform !== 'win32' && process.getuid?.() !== 0;
 const rowsFor = (result, arm) => result.attempts.filter(row => row.arm === arm).sort((a, b) => a.repeat - b.repeat || a.taskIndex - b.taskIndex);
 
 test('protocol: every arm declares an acyclic baseline that reaches stateless in at most two steps', () => {
@@ -223,7 +228,10 @@ test('agents cannot reach private checks, sibling runs or earlier tasks', async 
     assert.deepEqual(seen.home, [], `${key} HOME is empty`);
     const index = Number(key.split(':')[1]);
     assert.deepEqual(seen.taskRoot, ['copilot', 'state', `t${index + 1}`], `${key} sees only its own task`);
-    assert.deepEqual(seen.runDir, [path.basename(seen.taskRootPath)], `${key} earlier task roots are gone`);
+    if (unlistedModesApply) {
+      assert.equal(seen.runDir, 'EACCES', `${key} cannot list its run root`);
+      assert.equal(seen.parentListing, 'EACCES', `${key} cannot list the study parent`);
+    } else assert.deepEqual(seen.runDir, [path.basename(seen.taskRootPath)], `${key} earlier task roots are gone`);
     assert.match(path.basename(seen.taskRootPath), /^task-[A-Za-z0-9]{6}$/, `${key} task root has an unpredictable name`);
     assert.ok(seen.homePath.startsWith(seen.trial + path.sep), `${key} HOME belongs to this task only`);
     assert.ok(seen.tmp.startsWith(seen.trial + path.sep), `${key} TMPDIR belongs to this task only`);
@@ -502,9 +510,10 @@ test('controls: operator-granted checks, public examples in scoring, a protected
   const seen = {};
   const external = ({ copilotHome, harnessHome, workspace }) => {
     const project = path.join(harnessHome, 'projects', path.basename(storeDir(workspace, { home: harnessHome })));
-    return { episode: path.join(project, 'docs', 'solutions', 'eval', 'captured.md'), manifest: path.join(copilotHome, 'knowledge', 'captured.md'), index: path.join(harnessHome, 'index', 'captured.json') };
+    return { episode: path.join(project, 'docs', 'solutions', 'eval', 'captured.md'), manifest: path.join(copilotHome, 'knowledge', 'captured.md'), index: path.join(harnessHome, 'index', 'captured.json'),
+      feedback: path.join(project, 'feedback', `${'a'.repeat(64)}.json`) };
   };
-  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['capture-only', 'recall', 'frozen-seed'], repeats: 1,
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['capture-only', 'recall+feedback', 'frozen-seed'], repeats: 1,
     model: 'scripted-test', host: 'scripted-test', studyBase: directory(t),
     execute: async fixture => {
       const { arm, index, workspace, copilotHome, harnessHome, task } = fixture;
@@ -523,10 +532,10 @@ test('controls: operator-granted checks, public examples in scoring, a protected
       if (index === 1) seen[key].publicCheck = (await runNamedCheck(workspace, PUBLIC_CHECK, named.checks[PUBLIC_CHECK], { copilotHome, home: harnessHome })).status;
       // Finding 3: a no-op verifier is a scope violation; other Harness state is not.
       if (index === 3 && arm.id === 'capture-only') { fs.chmodSync(path.join(workspace, SUPPLIED_FILES[0]), 0o644); fs.writeFileSync(path.join(workspace, SUPPLIED_FILES[0]), 'process.exit(0);\n'); }
-      if (index === 3 && arm.id === 'recall') fs.writeFileSync(path.join(workspace, '.harness', 'scratch.json'), '{}\n');
+      if (index === 3 && arm.id === 'recall+feedback') fs.writeFileSync(path.join(workspace, '.harness', 'scratch.json'), '{}\n');
       return usage;
     } });
-  for (const arm of ['capture-only', 'recall', 'frozen-seed']) {
+  for (const arm of ['capture-only', 'recall+feedback', 'frozen-seed']) {
     for (let index = 0; index < 4; index++) {
       const row = seen[`${arm}:${index}`];
       assert.equal(row.granted && row.trusted, true, `${arm} task ${index + 1} is trusted by the operator`);
@@ -538,17 +547,18 @@ test('controls: operator-granted checks, public examples in scoring, a protected
     assert.equal(recurrence.trapRecurred, null, `${arm} constant answer is not a recurrence`);
     assert.equal(recurrence.recurrenceUnscored, 'rest-of-task-unsolved');
   }
-  // Finding 4: the episode store, recall manifest and index captured in task 1 are gone for capture-only and frozen-seed, kept for recall.
+  // Finding 4: the episode store, recall manifest, index and feedback records captured in task 1 are gone for capture-only
+  // and frozen-seed, and kept for recall+feedback, which reads its feedback records back.
   for (const index of [1, 2, 3]) {
-    assert.deepEqual(seen[`recall:${index}`].captured, { episode: true, manifest: true, index: true });
-    for (const arm of ['capture-only', 'frozen-seed']) assert.deepEqual(seen[`${arm}:${index}`].captured, { episode: false, manifest: false, index: false }, `${arm} task ${index + 1}`);
+    assert.deepEqual(seen[`recall+feedback:${index}`].captured, { episode: true, manifest: true, index: true, feedback: true });
+    for (const arm of ['capture-only', 'frozen-seed']) assert.deepEqual(seen[`${arm}:${index}`].captured, { episode: false, manifest: false, index: false, feedback: false }, `${arm} task ${index + 1}`);
   }
   for (const row of result.attempts) assert.deepEqual(row.carriedMemoryRefused, []);
   assert.ok(rowsFor(result, 'frozen-seed')[2].learningsInjected.includes(seedId(ordering)), 'frozen-seed keeps its seed');
   const tampered = rowsFor(result, 'capture-only')[3];
   assert.deepEqual(tampered.scope.unexpected, [SUPPLIED_FILES[0]]);
   assert.equal(tampered.pass, false);
-  const scratch = rowsFor(result, 'recall')[3];
+  const scratch = rowsFor(result, 'recall+feedback')[3];
   assert.deepEqual(scratch.scope.unexpected, []);
   assert.equal(scratch.checks.pass, true);
 });
@@ -589,6 +599,43 @@ test('carried memory is copied into fresh homes as regular files and directories
   assert.equal(fs.existsSync(path.join(to.harnessHome, 'index')), false, 'an absent target stays absent');
   assert.equal(fs.existsSync(path.join(to.harnessHome, 'storage-aliases')), false);
   assert.deepEqual(fs.readdirSync(to.projectDir), ['docs']);
+});
+
+test('feedback records are carried only for arms that read captured memory, and lock state is never carried', t => {
+  const root = directory(t);
+  const make = (name, feedback) => {
+    const homes = { copilotHome: path.join(root, name, 'copilot'), harnessHome: path.join(root, name, 'state'), feedback };
+    homes.projectDir = path.join(homes.harnessHome, 'projects', 'repo-id');
+    fs.mkdirSync(homes.copilotHome, { recursive: true });
+    fs.mkdirSync(homes.harnessHome, { recursive: true });
+    return homes;
+  };
+  const record = `${'b'.repeat(64)}.json`;
+  const from = make('from', true);
+  fs.mkdirSync(path.join(from.projectDir, 'feedback'), { recursive: true });
+  fs.writeFileSync(path.join(from.projectDir, 'feedback', record), '{"version":1}\n');
+  // Lock state an interrupted writer left an hour ago: copied with a fresh mtime it would look live and wedge the store.
+  const store = path.join(from.harnessHome, 'knowledge', 'repo-id');
+  const hourAgo = new Date(Date.now() - 3600_000);
+  fs.mkdirSync(path.join(store, '.lock'), { recursive: true });
+  fs.writeFileSync(path.join(store, '.lock', 'owner.json'), '{"pid":1}\n');
+  fs.mkdirSync(path.join(store, '.lock.stale-0123456789abcdef'));
+  fs.mkdirSync(path.join(store, '.git'));
+  fs.writeFileSync(path.join(store, '.git', 'index.lock'), '');
+  fs.writeFileSync(path.join(store, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(store, 'config.json'), '{"mode":"on"}\n');
+  for (const file of [path.join(store, '.lock', 'owner.json'), path.join(store, '.lock'), path.join(store, '.git', 'index.lock')]) fs.utimesSync(file, hourAgo, hourAgo);
+  const carried = make('carried', true);
+  writeMemory(carried, captureMemory(from));
+  assert.equal(fs.readFileSync(path.join(carried.projectDir, 'feedback', record), 'utf8'), '{"version":1}\n');
+  const carriedStore = path.join(carried.harnessHome, 'knowledge', 'repo-id');
+  assert.deepEqual(fs.readdirSync(carriedStore).sort(), ['.git', 'config.json'], 'no .lock or stale tombstone is carried');
+  assert.deepEqual(fs.readdirSync(path.join(carriedStore, '.git')), ['HEAD'], 'no .git lock is carried');
+  // A fixed arm captures without feedback records.
+  const fixedSource = { ...from, feedback: false };
+  const fixed = make('fixed', false);
+  writeMemory(fixed, captureMemory(fixedSource));
+  assert.equal(fs.existsSync(path.join(fixed.projectDir, 'feedback')), false);
 });
 
 test('capturing memory refuses symlinks, special files and oversized stores', t => {
@@ -796,7 +843,7 @@ test('an agent that swaps the store directory for a symlink invalidates later at
     const moved = path.join(outside, arm.id);
     fs.cpSync(dir, moved, { recursive: true });
     fs.rmSync(dir, { recursive: true, force: true });
-    fs.symlinkSync(moved, dir, 'dir');
+    fs.symlinkSync(moved, dir, process.platform === 'win32' ? 'junction' : 'dir');
   };
   const executor = scriptedExecutor([], { 'recall:0': swap, 'stateless:0': swap });
   const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [ordering] }, arms: ['recall', 'stateless'], repeats: 1,
@@ -953,7 +1000,7 @@ test('an origin rewrite the runner cannot undo invalidates its attempt, and a pl
   assert.equal(fs.readFileSync(path.join(victim, 'keep.md'), 'utf8'), 'outside\n', 'removing the old root never follows the link');
 });
 
-test('a workspace the agent filled past the snapshot limit makes that attempt invalid; node_modules is one changed entry', async t => {
+test('a workspace the agent filled past the snapshot limit fails scope but stays valid and scored; node_modules is one changed entry', async t => {
   const fill = (workspace, dir) => {
     fs.mkdirSync(path.join(workspace, dir), { recursive: true });
     for (let i = 0; i < 1005; i++) fs.writeFileSync(path.join(workspace, dir, `f${i}.js`), '');
@@ -961,8 +1008,8 @@ test('a workspace the agent filled past the snapshot limit makes that attempt in
   const hooks = {
     // As after `npm install`: the tree is excluded from the snapshot and reported as one unexpected change.
     'stateless:1': ({ workspace }) => fill(workspace, 'node_modules/pkg'),
-    // Anywhere else, the snapshot limit throws; the attempt is invalid and the study continues.
-    'stateless:3': ({ workspace }) => fill(workspace, 'vendor'),
+    // Anywhere else, the snapshot limit is a scope failure: the recurrence attempt stays valid and its trap is still scored.
+    'stateless:2': ({ workspace }) => fill(workspace, 'vendor'),
   };
   const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
   assert.ok(result.summary, 'the study completes with a summary');
@@ -970,12 +1017,65 @@ test('a workspace the agent filled past the snapshot limit makes that attempt in
   assert.equal(second.valid, true, second.invalidReasons.join(','));
   assert.deepEqual(second.scope.unexpected, ['node_modules/']);
   assert.equal(second.pass, false);
-  assert.equal(third.valid, true);
-  assert.equal(fourth.valid, false);
-  assert.deepEqual(fourth.invalidReasons, ['scope-unmeasurable']);
-  assert.equal(fourth.measurementErrors[0].step, 'scope');
-  assert.match(fourth.measurementErrors[0].message, /fixture file limit exceeded/);
-  assert.equal(fourth.pass, false);
+  assert.equal(third.trapRole, 'recurrence');
+  assert.equal(third.valid, true, third.invalidReasons.join(','));
+  assert.deepEqual(third.measurementErrors, []);
+  assert.equal(third.scope.pass, false);
+  assert.deepEqual(third.scope.unexpected, [SNAPSHOT_LIMIT_EXCEEDED]);
+  assert.equal(third.trapRecurred, true, 'the recurrence is still scored');
+  assert.equal(third.pass, false);
+  assert.equal(fourth.valid, true);
+  assert.equal(result.summary.arms.stateless.recurrenceAttempts, 1);
+});
+
+test('removal failures and a read-only workspace directory are recorded on the run and never abort the study', async t => {
+  const realRm = fs.rmSync;
+  // Root ignores directory modes, so a stub stands in for an unremovable run root (EBUSY on Windows, for example).
+  t.mock.method(fs, 'rmSync', function (target, ...rest) {
+    if (/^run-/.test(path.basename(String(target)))) throw Object.assign(new Error(`EBUSY: resource busy or locked, rmdir '${target}'`), { code: 'EBUSY' });
+    return realRm.call(this, target, ...rest);
+  });
+  const hooks = { 'stateless:0': ({ workspace }) => fs.chmodSync(path.join(workspace, 'src'), 0o555) };
+  let result;
+  try {
+    result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [orders] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  } finally { t.mock.restoreAll(); }
+  assert.ok(result.summary, 'the study completes with a summary');
+  assert.equal(result.attempts.length, 4);
+  for (const row of result.attempts) assert.equal(row.valid, true, row.invalidReasons.join(','));
+  const [run] = result.runs;
+  assert.deepEqual(run.cleanupErrors.map(row => [path.basename(row.path).slice(0, 4), row.code]), [['run-', 'EBUSY']], 'only the stubbed run root failed; the read-only task root was removed');
+  assert.deepEqual(result.cleanupErrors, [], 'the study parent removal took the run root with it');
+});
+
+test('a daemon an earlier task left is killed before the next task, and a passing later baseline is an invalid attempt', async t => {
+  // Task 2's checkout already holds its reference solution, as a daemon tampering with it would leave it.
+  const tampered = structuredClone(orders);
+  tampered.tasks[1].files = { ...tampered.tasks[1].files, ...tampered.tasks[1].reference };
+  let daemon = null;
+  t.after(() => { try { if (daemon) process.kill(daemon, 'SIGKILL'); } catch { /* gone */ } });
+  const hooks = {
+    'stateless:0': ({ workspace }) => {
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: workspace, detached: true, stdio: 'ignore' });
+      child.unref();
+      daemon = child.pid;
+    },
+  };
+  const result = await runStudy({ root: path.join(directory(t), 'out'), catalog: { ...CATALOG, series: [tampered] }, arms: ['stateless'], repeats: 1, model: 'scripted-test', host: 'scripted-test', studyBase: directory(t), execute: scriptedExecutor([], hooks) });
+  assert.ok(result.summary, 'the study completes with a summary');
+  const [first, second, third, fourth] = rowsFor(result, 'stateless');
+  assert.equal(first.valid, true);
+  assert.equal(second.valid, false);
+  assert.deepEqual(second.invalidReasons, ['invalid-baseline']);
+  assert.equal(second.kind, 'setup-error');
+  assert.equal(second.status, null, 'no agent runs on a task whose baseline already passes');
+  assert.equal(third.valid, true, third.invalidReasons.join(','));
+  assert.equal(fourth.valid, true, fourth.invalidReasons.join(','));
+  if (process.platform === 'linux') {
+    assert.equal(second.stragglersKilled, 1, 'the daemon working in task 1\'s root was killed before task 2');
+    assert.equal(await waitDead(daemon), true);
+    assert.equal(third.stragglersKilled, 0);
+  }
 });
 
 test('a malformed storage alias an agent plants stays in its own task; later tasks resolve the series identity', async t => {

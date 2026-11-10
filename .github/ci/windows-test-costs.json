@@ -7,6 +7,11 @@
       "head": "94d06a79362d253dbee1b6dd8b76be65adfc661f",
       "scope": "All 298 passing file results from four same-revision Windows shard manifests; refreshed scheduling evidence, not a measured sharding speedup.",
       "files": 298
+    },
+    {
+      "estimate": "memory-eval.test.mjs",
+      "scope": "Not a Windows measurement: about 55 s on Linux at concurrency 1, scaled by the 4.4x Windows-to-Linux ratio observed for context-eval.test.mjs (148.9 s recorded, 34 s on the same Linux machine). Keeps the file out of the 30 s pull-request tier; replace with a recorded Windows duration.",
+      "files": 1
     }
   ],
   "files": {
@@ -174,6 +179,7 @@
     "listing-redaction.test.mjs": 1078,
     "local-primitives.test.mjs": 67428,
     "mcp-server.test.mjs": 6762,
+    "memory-eval.test.mjs": 240000,
     "migrate-layout.test.mjs": 37794,
     "model-catalogue.test.mjs": 10955,
     "orient-debt-drain.test.mjs": 101859,

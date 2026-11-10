@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { buildTaskContext } from '../../lib/context-policy.mjs';
@@ -136,16 +138,30 @@ function integrity(fixture) {
 /** Process groups still running, killed if the runner exits or is signalled mid-task. */
 const liveGroups = new Set();
 let exitHookInstalled = false;
+/** The live-group set of the study whose async context started a process, so a study kills only its own groups. */
+const studyGroups = new AsyncLocalStorage();
 
 /**
- * SIGKILLs every live process group. A group leaves the set when its leader exits, so a pid that has been reaped, and may
- * have been reused, is never signalled from here.
+ * Runs `action` with `groups` as the current study's live-group set: every process group started by runGroupedProcess
+ * inside it, including in an executor the study calls, joins that set while it runs.
  */
-export function killLiveGroups() {
-  for (const pid of liveGroups) {
-    try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
+export function trackStudyGroups(groups, action) {
+  return studyGroups.run(groups, action);
+}
+
+/**
+ * SIGKILLs live process groups: those in `groups` (one study's set) or, by default, every live group of this process. A
+ * group leaves the sets when its leader exits, so a pid that has been reaped, and may have been reused, is never signalled
+ * from here.
+ */
+export function killLiveGroups(groups = liveGroups) {
+  for (const pid of [...groups]) {
+    if (liveGroups.has(pid)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
+    }
+    liveGroups.delete(pid);
   }
-  liveGroups.clear();
+  groups.clear();
 }
 
 /** How long the runner waits for the output pipes to close after the process exits or is killed. */
@@ -166,9 +182,11 @@ export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, m
     let child;
     try { child = spawn(command, args, { cwd, env, detached: group, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (caught) { resolve({ status: null, signal: null, stdout: '', stderr: '', error: caught }); return; }
+    const owner = studyGroups.getStore();
     if (group && child.pid) {
       liveGroups.add(child.pid);
-      if (!exitHookInstalled) { process.on('exit', killLiveGroups); exitHookInstalled = true; }
+      owner?.add(child.pid);
+      if (!exitHookInstalled) { process.on('exit', () => killLiveGroups()); exitHookInstalled = true; }
     }
     const out = { stdout: [], stderr: [] };
     const size = { stdout: 0, stderr: 0 };
@@ -184,7 +202,7 @@ export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, m
       clearTimeout(timer);
       clearTimeout(grace);
       kill();
-      if (reaped) liveGroups.delete(child.pid);
+      if (reaped) { liveGroups.delete(child.pid); owner?.delete(child.pid); }
       for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
       const text = name => Buffer.concat(out[name]).toString('utf8');
       resolve({ status: error ? null : exited?.status ?? null, signal: exited?.signal ?? null, stdout: text('stdout'), stderr: text('stderr'), error });
@@ -209,6 +227,7 @@ export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, m
       kill();
       reaped = true;
       liveGroups.delete(child.pid);
+      owner?.delete(child.pid);
       startGrace();
     });
     child.on('close', (status, signal) => { exited ||= { status, signal }; finish(); });
@@ -313,6 +332,13 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
   provenance.sourceHash = hash(execFileSync('git', ['ls-files', '-z', 'packages/ae/lib', 'packages/ae/bin', 'packages/ae/corpus', 'packages/ae/eval/context'], { cwd: path.resolve(here, '../../../..') }).toString().split('\0').filter(Boolean).map(file => `${file}:${hash(fs.readFileSync(path.resolve(here, '../../../..', file)))}`).join('\n'));
   fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
   const attempts = [];
+  // Checker groups run detached, so a signal to the runner does not reach them; this study's handler kills its own first.
+  const groups = new Set();
+  const signals = ['SIGINT', 'SIGTERM'];
+  const onSignal = signal => { killLiveGroups(groups); process.exit(128 + (os.constants.signals[signal] ?? 15)); };
+  for (const signal of signals) process.once(signal, onSignal);
+  try {
+  await trackStudyGroups(groups, async () => {
   for (const [caseIndex, task] of cases.entries()) {
     for (let repeat = 0; repeat < repeats; repeat++) {
       const offset = (caseIndex + repeat) % policies.length;
@@ -347,6 +373,11 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
         attempts.push(attempt);
       }
     }
+  }
+  });
+  } finally {
+    for (const signal of signals) process.off(signal, onSignal);
+    killLiveGroups(groups);
   }
   const result = { schema: 1, provenance, attempts, summary: summarizeStudy(attempts, provenance) };
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2));

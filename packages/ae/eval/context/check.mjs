@@ -113,12 +113,13 @@ async function probeMain(workspace) {
 
 /**
  * Runs one probe child over `probes` and returns the results it reported, in order, until it finished, exited, went
- * `idleMs` without reporting, or reached `timeoutMs`. The child's stdout is discarded, so it cannot reach this process's output.
+ * `idleMs` without reporting, or reached `timeoutMs`. The child's stdout and stderr are discarded, so it cannot reach this
+ * process's output: checked code that floods stderr cannot overflow the runner's capture of the checker's own diagnostics.
  */
 function runProbe(workspace, probes, { timeoutMs, idleMs }) {
   const nonce = randomBytes(16).toString('hex');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [self, '--probe', workspace], { stdio: ['pipe', 'ignore', 'inherit', 'pipe'] });
+    const child = spawn(process.execPath, [self, '--probe', workspace], { stdio: ['pipe', 'ignore', 'ignore', 'pipe'] });
     const results = [];
     let buffer = '', done = false, idle = null;
     const finish = () => {
