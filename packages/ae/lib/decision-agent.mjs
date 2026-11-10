@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, readinessSweepDue, READINESS_SWEEP_INTERVAL_MS } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -118,7 +118,12 @@ function readState(loc) {
   return state;
 }
 
-function mutate(loc, callback) {
+/**
+ * Run `callback` on the locked state, compact it and publish it. `sweep: true` lets this pass run one
+ * throttled readiness reconciliation slice (decision prepare, record and status); the pre-tool consume
+ * path leaves it off, so a guarded tool call never lists the request archive under the lock.
+ */
+function mutate(loc, callback, { sweep = false } = {}) {
   fs.mkdirSync(loc.home, { recursive: true });
   const directory = path.join(loc.home, 'decisions');
   if (!assertNoSymlinkAncestors(loc.home, 'decisions')) throw fail('decision store directory is unsafe or redirected');
@@ -131,7 +136,7 @@ function mutate(loc, callback) {
     const state = readState(loc), result = callback(state);
     // Readiness-index health is derived on read (decisionStatus), so nothing about it is stored here;
     // warnings persisted by earlier versions are dropped on this write.
-    compactDecisions(loc, state);
+    compactDecisions(loc, state, sweep ? { sweepInterval: READINESS_SWEEP_INTERVAL_MS } : { sweep: false });
     delete state.warnings;
     const bytes = stable(state);
     if (Buffer.byteLength(bytes) > MAX_STATE_BYTES) throw fail('active decision capacity is full; finish or allow existing task budgets to expire without resetting their evidence');
@@ -281,7 +286,7 @@ export function prepareDecision(options) {
       recordCommand: [process.execPath, fileURLToPath(new URL('../bin/ae.mjs', import.meta.url)), 'resources', 'decision', '--file', '-', '--workspace', loc.workspace, '--ae-home', loc.home,
         ...(options.copilotHome ? ['--copilot-home', options.copilotHome] : []), ...(options.skillsHome ? ['--skills-home', options.skillsHome] : []), '--json'],
       next: 'Invoke the native decision-agent with this packet, then use recordCommand with the schema 1 record request on stdin. No decision API is called.' };
-  });
+  }, { sweep: true });
 }
 
 function parseJudgment(value) {
@@ -434,7 +439,7 @@ export function recordDecision(options) {
     const receipt = { ...value, id: hash(value) };
     state.receipts[request.requestId] = receipt;
     return receipt;
-  });
+  }, { sweep: true });
 }
 
 // Status names at most this many stale plans, by short hash, newest first.
@@ -447,18 +452,23 @@ function readinessWarnings(loc, state) {
   const parts = [];
   if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations use the archived receipt and the index write is retried on compaction`);
   if (untracked) {
-    const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision write';
-    const last = sweep.last ? [sweep.last.unreadable ? `${sweep.last.unreadable} unreadable request record(s)` : null, sweep.last.failed ? `${sweep.last.failed} refused index write(s)` : null,
-      sweep.last.overCap ? 'more request records than one sweep can list' : null].filter(Boolean) : [];
-    parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive a bounded slice per decision write (${progress})`
-      + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them` : ''));
+    const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision prepare, record or status';
+    const last = sweep.last ? [sweep.last.unreadable ? `${sweep.last.unreadable} unreadable request record(s)` : null, sweep.last.failed ? `${sweep.last.failed} refused index write(s)` : null].filter(Boolean) : [];
+    const interval = Math.round(READINESS_SWEEP_INTERVAL_MS / 1000);
+    parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive, one bounded slice at most every ${interval} seconds on decision prepare, record or status (${progress})`
+      + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them, and it stays for good while those records remain unreadable or those writes keep being refused` : '')
+      + (sweep.last?.overCap ? '; the request archive holds more records than one sweep can list, so no sweep can complete and the warning stays until the archive is smaller' : ''));
   }
   return [{ fault: 'readiness-index', planCount: stale.length, ...(untracked ? { atLeast: true, untrackedPlans: untracked, reconciling: { swept: sweep.swept, total: sweep.total, ...(sweep.last ? { previous: sweep.last } : {}) } } : {}), plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: stale.length - shown.length,
     message: parts.join('; ') }];
 }
 
 export function decisionStatus(options) {
-  const loc = locations(options), state = readState(loc), policy = authority(options.policy);
+  const loc = locations(options);
+  // Status advances the readiness reconciliation sweep when a slice is due; a busy or failing write is
+  // skipped, and status reports what exists.
+  try { if (readinessSweepDue(readState(loc), loc.now)) mutate(loc, () => null, { sweep: true }); } catch { /* reported from what exists */ }
+  const state = readState(loc), policy = authority(options.policy);
   const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   const taskId = options.taskId || request?.taskId, task = request ? decisionTask(loc, state, request.budgetKey) : null;
   const live = readinessWarnings(loc, state), warnings = live.length ? { warnings: live } : {};
