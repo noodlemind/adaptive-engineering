@@ -4,6 +4,7 @@ import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
+import tty from 'tty';
 import { createHash } from 'node:crypto';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
@@ -387,6 +388,8 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
 
 async function runLearningDecision({ workspace, copilotHome, flags, log, domainContext = null }) {
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
+  // A decision may carry the evidence line, so a terminal is never read.
+  if (flags.learningDecision === '-') refuseTerminalStdin('--learning-decision');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
   let decision;
@@ -497,7 +500,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
 }
 
 /**
- * `ae compound --match-evidence <sha256-prefix> --check-output <path|->`:
+ * `ae compound --match-evidence <sha256-prefix> --evidence-bytes <bytes> --check-output <path|->`:
  * reports whether any line of check output an agent obtained by re-running
  * the check matches an episode's evidence fingerprint (see matchEvidence).
  * Reads only; the output is never stored or echoed.
@@ -513,24 +516,45 @@ const usageError = (message, hint) => Object.assign(new Error(message), { code: 
  * or --learning-decision are refused: an unquoted line would otherwise be
  * split, part fingerprinted and the rest carried in argv.
  */
+// Registered as the compound requireArgs hook, so it runs in dispatch before
+// the run journal opens: a stray fragment of an unquoted line never reaches
+// runs.jsonl, events or the ledger.
 export function compoundStrayArgumentsError(argv, flags) {
+  if (flags.matchEvidence != null || flags.checkOutput != null || flags.evidenceBytes != null) {
+    const hint = 'ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <path|->';
+    if (argv.includes('--')) return usageError('ae compound --match-evidence takes no arguments after --', hint);
+    if (positionalsOf(argv).length) return usageError('ae compound --match-evidence takes no positional arguments', hint);
+  }
   if (flags.evidenceQuote == null && flags.learningDecision == null) return null;
   if (argv.includes('--')) return usageError('ae compound takes no arguments after -- with --evidence-quote or --learning-decision', 'pipe the line or decision on stdin');
   if (positionalsOf(argv).length) return usageError('ae compound takes no positional arguments with --evidence-quote or --learning-decision; quote nothing on the command line', 'pipe the line or decision on stdin');
   return null;
 }
 
+const STDIN_TTY_HINTS = {
+  '--evidence-quote': "pipe the line instead of typing it: printf '%s\\n' \"<line>\" | ae compound --insight --evidence-quote -",
+  '--learning-decision': "pipe the decision instead of typing it: printf '%s' '<decision json>' | ae compound --plan <path> --learning-decision -",
+};
+
+// A terminal on stdin would wait silently for input nobody knows to type.
+export function stdinIsTerminal() {
+  try { return tty.isatty(0); } catch { return false; }
+}
+
+export function refuseTerminalStdin(flagName) {
+  if (stdinIsTerminal()) throw usageError(`${flagName} - reads stdin, and stdin is a terminal`, STDIN_TTY_HINTS[flagName]);
+}
+
 export function runEvidenceMatch({ workspace, flags }) {
-  const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
-  const hint = 'ae compound --match-evidence <sha256_prefix> --check-output <path|->';
+  const hint = 'ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <path|->';
   const other = MATCH_EXCLUSIVE_FLAGS.filter(([key]) => flags[key] != null && flags[key] !== false).map(([, name]) => name);
-  if (other.length) throw usage(`--match-evidence only reads check output; it cannot be combined with ${other.join(', ')}`, hint);
-  if (flags.matchEvidence == null) throw usage('--check-output and --evidence-bytes are used only with --match-evidence', hint);
+  if (other.length) throw usageError(`--match-evidence only reads check output; it cannot be combined with ${other.join(', ')}`, hint);
+  if (flags.matchEvidence == null) throw usageError('--check-output and --evidence-bytes are used only with --match-evidence', hint);
   const prefixError = evidencePrefixError(flags.matchEvidence);
-  if (prefixError) throw usage(prefixError, hint);
+  if (prefixError) throw usageError(prefixError, hint);
   const bytesError = flags.evidenceBytes == null ? null : evidenceBytesError(flags.evidenceBytes);
-  if (bytesError) throw usage(bytesError, hint);
-  if (!flags.checkOutput) throw usage('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
+  if (bytesError) throw usageError(bytesError, hint);
+  if (!flags.checkOutput) throw usageError('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
   // A relative path resolves against --workspace, as --learning-decision does.
   const output = flags.checkOutput === '-'
     ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
@@ -538,7 +562,9 @@ export function runEvidenceMatch({ workspace, flags }) {
     // checked, so a symlinked directory cannot lead outside it.
     : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP, ...(path.isAbsolute(flags.checkOutput) ? {} : { root: workspace }) });
   // An unreadable input is a usage error (exit 2), never a mismatch (exit 1).
-  if (output === null) throw usage(`--check-output is missing, not a regular file, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`, hint);
+  if (output === null) throw usageError(`--check-output is missing, not a regular file, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`, hint);
+  // Empty output means nothing was re-run or captured; it is never a mismatch.
+  if (!output.trim()) throw usageError('--check-output is empty: capture the output of the re-run check', hint);
   const { matched, line } = matchEvidence(output, flags.matchEvidence, { bytes: flags.evidenceBytes == null ? null : Number(flags.evidenceBytes) });
   return {
     pass: matched,
@@ -562,6 +588,7 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     // would otherwise be dropped without a word.
     if (flags.learningDecision) throw usageError('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision piped to --learning-decision -');
     if (!flags.insight) throw usageError('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
+    refuseTerminalStdin('--evidence-quote');
     // One trailing line break (as echo or a pipe adds) is dropped.
     const piped = readBoundedInput(0, { maxBytes: EVIDENCE_RAW_CAP + 2 });
     if (piped === null) throw usageError(`--evidence-quote - could not read stdin, or it holds more than ${EVIDENCE_RAW_CAP} bytes`, hint);

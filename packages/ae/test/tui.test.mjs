@@ -507,7 +507,7 @@ test('a refused command journals no run — while an accepted one does', async (
     'a command refused before dispatch never reaches the journal');
 });
 
-test('a TUI run journals and shows a command through its journalArgv, so an evidence value or agent task is never recorded', async () => {
+test('a TUI run journals a command through its journalArgv, hides only a compound evidence value, and shows an agent task as typed', async () => {
   const workspace = tempDir('tui-journal-argv-');
   const text = await journalingLedger(['compound --insight --title t --body b --evidence-quote "QX7MARKER failing line"', 'agent QX7TASK secret task', 'exit'], {
     workspace,
@@ -521,6 +521,7 @@ test('a TUI run journals and shows a command through its journalArgv, so an evid
   const journal = fs.readFileSync(path.join(workspace, '.harness', 'runs.jsonl'), 'utf8');
   assert.ok(!journal.includes('QX7MARKER') && !journal.includes('QX7TASK'), journal);
   assert.ok(!text.includes('QX7MARKER'), 'the ledger block does not show the evidence value');
+  assert.ok(text.includes('QX7TASK secret task'), 'the live ledger shows the agent task the person typed');
   assert.equal(getCommand('compound').args.flags.find((f) => f.name === '--evidence-quote').tui, 'cli-only', 'the palette never prompts for it');
 });
 

@@ -74,6 +74,7 @@ import { createEnvelope, createErrorEnvelope, STATUS } from './envelope.mjs';
 import { renderAgentLane, recordAgentLaneBytes } from './agent-lane.mjs';
 import { EVENT_TYPE, summarizeArgFlags } from './event-registry.mjs';
 import { compoundJournalArgv } from './knowledge/evidence-fingerprint.mjs';
+import { compoundStrayArgumentsError } from './compound.mjs';
 import { createRedactor, redactedJson } from './redact.mjs';
 import { cmdModel, modelResultOf, MODEL_VERBS } from './model-cmd.mjs';
 import { cmdInspect, inspectResultOf, inspectExitFor, INSPECT_VERBS } from './inspect-cmd.mjs';
@@ -324,6 +325,11 @@ export function validateArgs(entry, argv) {
       const hint = flagName === '--files' && known.has('--file')
         ? fileInputHint(entry.name)
         : `ae help ${entry.name}`;
+      // Beside a stdin-only evidence flag, a flag-shaped token may be a
+      // fragment of an unquoted line, so it is not echoed.
+      if (argv.some(t => typeof t === 'string' && /^--(?:evidence-quote|learning-decision)(?:=|$)/.test(t))) {
+        throw usageError('unknown flag (not shown, because it may be part of an unquoted evidence line)', `ae help ${entry.name}`);
+      }
       throw usageError(`unknown flag: ${flagName}`, hint);
     }
     if (def.type !== 'boolean' || eq === -1) present.add(def.name);
@@ -370,6 +376,8 @@ export async function dispatch(argv, ctx = {}) {
   assertLaneSupported(entry, lane);
     if (typeof entry.requireArgs === 'function') {
     const message = entry.requireArgs(rest, parseFlags(rest));
+    // A hook may return a ready usage error, hint included.
+    if (message instanceof Error) throw message;
     if (message) throw usageError(message);
   }
     ctx.onRunStart?.();
@@ -1141,6 +1149,9 @@ registerCommand({
     ],
   },
   handler: cmdCompound,
+  // Stray arguments beside the stdin-only evidence flags are refused here,
+  // before the run journal opens.
+  requireArgs: compoundStrayArgumentsError,
   // The evidence line is never journaled, accepted or refused.
   journalArgv: compoundJournalArgv,
 });
@@ -1320,7 +1331,7 @@ registerCommand({
       { name: '--offset', type: 'string', valueName: 'line', description: 'first parent-plan line to read', tui: 'prompt' },
       { name: '--lines', type: 'string', valueName: 'count', description: 'bounded parent-plan line count', tui: 'prompt' },
       { name: '--packet', type: 'string', valueName: 'id', description: 'prepared review packet identity', tui: 'prompt' },
-      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'verified learning or no-learning JSON decision', tui: 'prompt' },
+      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'verified learning or no-learning JSON decision file, or - for stdin (a decision with evidence_quote must come on stdin)', tui: 'prompt' },
       { name: '--validate-completion', type: 'boolean', description: 'validate the current bound parent completion receipt', appliesToVerbs: ['status'], tui: 'cli-only' },
     ],
   },

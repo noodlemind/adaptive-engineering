@@ -334,10 +334,8 @@ export function parseFlags(argv) {
       flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
     }
     else if (a === '--evidence-quote') {
-      const value = scan[++i];
-      flags.evidenceQuote = value ?? '';
+      flags.evidenceQuote = scan[++i] ?? '';
       flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
-      if (value === undefined) flags.evidenceQuoteForm = 'missing';
     }
     else if (a.startsWith('--match-evidence=')) flags.matchEvidence = a.split('=').slice(1).join('=');
     else if (a === '--match-evidence') flags.matchEvidence = scan[++i] ?? '';

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { isValueFlag } from '../positionals.mjs';
+import { isValueFlag, positionalsOf } from '../positionals.mjs';
+import { scanSecrets } from '../secret-scan.mjs';
 
 /**
  * Evidence for an episode: the single failing line of check or test output
@@ -22,6 +23,7 @@ export const EVIDENCE_OUTPUT_LINE_CAP = 64 * 1024;
 
 // CR, LF, NEL (U+0085) and the Unicode line and paragraph separators.
 const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+const PLAIN_ASCII = /^[\x20-\x7e\t]*$/;
 const LINE_SPLIT = /\r\n|[\r\n\u0085\u2028\u2029]/;
 // Every C0 and C1 control and DEL, except tab.
 const CONTROL = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/;
@@ -44,7 +46,10 @@ export function normalizeEvidenceLine(line) {
   return String(line ?? '').replace(/^\ufeff/, '').replace(ANSI_SEQUENCE, '').normalize('NFC').trim();
 }
 
-const digest = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+// The one-shot hash (Node 20.12+) is several times faster per short line.
+const digest = typeof crypto.hash === 'function'
+  ? text => crypto.hash('sha256', text, 'hex')
+  : text => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 
 /** Returns null when the line is acceptable, otherwise why it is not. Never echoes the line. */
 export function evidenceLineError(value) {
@@ -55,6 +60,11 @@ export function evidenceLineError(value) {
   if (!normalized) return 'evidence_quote must be nonempty text';
   if (Buffer.byteLength(normalized, 'utf8') > EVIDENCE_LINE_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
   if (CONTROL.test(normalized)) return 'evidence_quote may contain tabs but no other control characters';
+  // The fingerprint is unsalted, so a short secret could be recovered from it
+  // by guessing. A line that looks like a credential is refused, and only the
+  // pattern names are reported, never the matched text.
+  const secrets = [...new Set([...scanSecrets(value), ...scanSecrets(normalized)].map(hit => hit.id))];
+  if (secrets.length) return `evidence_quote looks like it holds a credential (${secrets.join(', ')}); pick a failing line without one`;
   return null;
 }
 
@@ -98,20 +108,33 @@ export function evidenceBytesError(value) {
 }
 
 const placeholder = value => (value === '-' ? '-' : '<evidence>');
+const STDIN_FLAG = /^--(?:evidence-quote|learning-decision)(?:=|$)/;
 
 /**
  * The run-journal argv of `ae compound` (defense in depth: --evidence-quote
- * accepts only `-`): every flag and flag value kept, except that a
+ * accepts only `-`, and stray arguments beside it are refused before the
+ * journal opens): every flag and flag value kept, except that a
  * --evidence-quote value other than `-` (either form) becomes `<evidence>`.
  * Positionals and everything after `--` are recorded only as a count,
- * `<positionals:N>`, never as text.
+ * `<positionals:N>`, never as text. When stray arguments sit beside
+ * --evidence-quote or --learning-decision they may be fragments of an
+ * unquoted line, so only flag names are kept, with no values at all.
  */
 export function compoundJournalArgv(argv) {
+  const stray = argv.includes('--') || positionalsOf(argv).length > 0;
+  const namesOnly = stray && argv.some(a => typeof a === 'string' && STDIN_FLAG.test(a));
   const out = [];
   let positionals = 0;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') { positionals += argv.length - i - 1; break; }
+    if (namesOnly) {
+      if (a.startsWith('-') && a !== '-') {
+        out.push(a.split('=')[0]);
+        if (isValueFlag(a) && i + 1 < argv.length && argv[i + 1] !== '--') i++;
+      } else positionals += 1;
+      continue;
+    }
     if (a.startsWith('--evidence-quote=')) out.push(`--evidence-quote=${placeholder(a.slice('--evidence-quote='.length))}`);
     else if (a === '--evidence-quote') {
       out.push(a);
@@ -133,11 +156,21 @@ export function compoundJournalArgv(argv) {
 export function matchEvidence(output, prefix, { bytes = null } = {}) {
   const want = String(prefix ?? '').toLowerCase();
   const lines = String(output ?? '').split(LINE_SPLIT);
+  // A repeated line is hashed once.
+  const seen = new Set();
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].length > EVIDENCE_OUTPUT_LINE_CAP) continue;
-    const normalized = normalizeEvidenceLine(lines[i]);
+    const raw = lines[i];
+    // Lines outside the length window are skipped before any normalising or
+    // hashing. NFC can grow a UTF-16 unit to at most 3 units of up to 3 UTF-8
+    // bytes each, so a raw line shorter than bytes / 9 cannot match.
+    if (!raw || raw.length > EVIDENCE_OUTPUT_LINE_CAP) continue;
+    if (bytes !== null && raw.length * 9 < bytes) continue;
+    // Printable ASCII normalises to itself, trimmed.
+    const normalized = PLAIN_ASCII.test(raw) ? raw.trim() : normalizeEvidenceLine(raw);
     if (!normalized) continue;
-    if (bytes !== null && Buffer.byteLength(normalized, 'utf8') !== bytes) continue;
+    const size = Buffer.byteLength(normalized, 'utf8');
+    if (size > EVIDENCE_LINE_CAP || (bytes !== null && size !== bytes) || seen.has(normalized)) continue;
+    seen.add(normalized);
     if (digest(normalized).startsWith(want)) return { matched: true, line: i + 1 };
   }
   return { matched: false, line: null };

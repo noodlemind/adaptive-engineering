@@ -53,8 +53,32 @@ test('the compound journal argv replaces every evidence value, accepted or refus
   assert.deepEqual(compoundJournalArgv(['--insight', '--title', 't', '--evidence-quote', `--- ${MARKER}`, '--json']), ['--insight', '--title', 't', '--evidence-quote', '<evidence>', '--json']);
   assert.deepEqual(compoundJournalArgv([`--evidence-quote=${MARKER}\nsecond`, '--evidence-quote', '-', '--evidence-quote']), ['--evidence-quote=<evidence>', '--evidence-quote', '-', '--evidence-quote']);
   // An unquoted line splits into positionals, and `--` carries literal text: both are only counted.
-  assert.deepEqual(compoundJournalArgv(['--insight', '--evidence-quote', 'not', 'ok', MARKER, '--', `${MARKER} line`]), ['--insight', '--evidence-quote', '<evidence>', '<positionals:3>']);
-  assert.deepEqual(compoundJournalArgv(['--learning-decision', '-', MARKER]), ['--learning-decision', '-', '<positionals:1>']);
+  assert.deepEqual(compoundJournalArgv(['--insight', '--evidence-quote', 'not', 'ok', MARKER, '--', `${MARKER} line`]), ['--insight', '--evidence-quote', '<positionals:3>']);
+  assert.deepEqual(compoundJournalArgv(['--learning-decision', '-', MARKER]), ['--learning-decision', '<positionals:1>']);
+  // Beside stray arguments, flag-shaped fragments of the line keep only their names.
+  assert.deepEqual(compoundJournalArgv(['--insight', '--evidence-quote', '-', 'SECRETM:', '--claim', 'SECRETNVALUE', 'was', '--tags=SECRETO,x']), ['--insight', '--evidence-quote', '--claim', '--tags', '<positionals:2>']);
+  assert.deepEqual(compoundJournalArgv(['--learning-decision=-', '--title', 'SECRETT', '--', 'x']), ['--learning-decision', '--title', '<positionals:1>']);
+  assert.deepEqual(compoundJournalArgv(['--insight', '--title', 'kept', '--claim', 'kept too']), ['--insight', '--title', 'kept', '--claim', 'kept too'], 'without stray arguments values are kept');
+});
+
+test('a line that looks like a credential is refused by pattern name only, never echoed', () => {
+  const token = `ghp_${'A1b2C3d4'.repeat(5)}`;
+  for (const line of [`FAIL auth ${token}`, `\x1b[31mFAIL\x1b[0m Authorization: Bearer ${'k'.repeat(24)}`]) {
+    const error = evidenceLineError(line);
+    assert.match(error, /looks like it holds a credential/);
+    assert.ok(!error.includes(token) && !error.includes('kkkk'), error);
+  }
+  assert.equal(evidenceLineError(QUOTE), null);
+});
+
+test('matching skips lines outside the length window, so many short lines stay fast', () => {
+  const lines = Array.from({ length: 400000 }, (_, i) => i.toString(36));
+  const output = `${lines.join('\n')}\n${QUOTE}\n`;
+  const started = Date.now();
+  assert.deepEqual(matchEvidence(output, QUOTE_SHA, { bytes: Buffer.byteLength(QUOTE) }), { matched: true, line: lines.length + 1 });
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+  assert.deepEqual(matchEvidence(`ab\n${'ab\n'.repeat(1000)}${QUOTE}`, QUOTE_SHA), { matched: true, line: 1002 }, 'repeated lines are hashed once and still counted');
+  assert.deepEqual(matchEvidence(`${'y'.repeat(700)}\n`, sha('y'.repeat(700))), { matched: false, line: null }, 'a line over the cap never matches');
 });
 
 test('the evidence line is checked, normalised and fingerprinted the same way at capture and verification', () => {
@@ -213,13 +237,18 @@ test('ae compound --match-evidence matches re-run check output by fingerprint an
   assert.equal(sized.status, 0, sized.stdout + sized.stderr);
   assert.equal(ae(['--match-evidence', prefix, '--evidence-bytes', '7', '--check-output', 'out.txt']).status, 1, 'a different stored length does not match');
   fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'empty.txt'), '');
+  fs.writeFileSync(path.join(dir, 'blank.txt'), '\n \n');
   for (const args of [['--match-evidence', 'abc', '--check-output', 'out.txt'], ['--match-evidence', prefix], ['--match-evidence', prefix, '--check-output', 'out.txt', '--insight'],
     ['--match-evidence', prefix, '--check-output', 'missing.txt'], ['--match-evidence', prefix, '--check-output', 'sub'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--title', 't'],
-    ['--match-evidence', prefix, '--check-output', 'out.txt', '--category=logic'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--evidence-bytes', '0'], ['--check-output', 'out.txt']]) {
+    ['--match-evidence', prefix, '--check-output', 'out.txt', '--category=logic'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--evidence-bytes', '0'], ['--check-output', 'out.txt'],
+    // Stray arguments, and empty output (nothing re-run), are usage errors, never a mismatch.
+    ['--match-evidence', prefix, '--check-output', 'out.txt', 'stray'], ['--match-evidence', prefix, '--check-output', 'out.txt', '--', 'x'], ['--match-evidence', prefix, '--check-output', '-'],
+    ['--match-evidence', prefix, '--check-output', 'empty.txt'], ['--match-evidence', prefix, '--check-output', 'blank.txt']]) {
     const usage = ae(args);
     assert.equal(usage.status, 2, `${args.join(' ')}: ${usage.stdout}${usage.stderr}`);
   }
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['out.txt', 'sub'], 'a match writes nothing');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['blank.txt', 'empty.txt', 'out.txt', 'sub'], 'a match writes nothing');
 });
 
 test('a hand-written evidence_quote key in an episode is never read or shown', () => {
@@ -312,6 +341,61 @@ test('with events and the run journal on, no capture path leaves the evidence li
   assert.deepEqual(filesHolding(f.dir, MARKER), [], 'no file anywhere, journal and events included, holds the line');
 });
 
+test('stray fragments of an unquoted line, flag-shaped or not, never reach the run journal, events or output', t => {
+  const f = verifiedFixture(t, { events: true });
+  const runs = [
+    // Refused in dispatch before the journal opens.
+    f.cli(['compound', '--insight', '--title', 't', '--evidence-quote', '-', 'SECRETM:', '--claim', 'SECRETNVALUE', 'was', '--tags=SECRETO,x'], 'FAIL retry\n'),
+    f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', 'SECRETQ', '--title', 'SECRETR'], '{}'),
+    // An unknown flag beside a stdin-only flag is reported without its name.
+    f.cli(['compound', '--insight', '--title', 't', '--evidence-quote', '-', '--SECRETP'], 'FAIL retry\n'),
+    f.cli(['compound', '--plan', f.plan, '--learning-decision=-', '--SECRETS=x'], '{}'),
+  ];
+  for (const [i, run] of runs.entries()) {
+    assert.equal(run.status, 2, `${i}: ${run.stdout}${run.stderr}`);
+    assert.ok(!(run.stdout + run.stderr).includes('SECRET'), `run ${i} echoes a fragment: ${run.stdout}${run.stderr}`);
+  }
+  assert.match(runs[0].stdout + runs[0].stderr, /no positional arguments/);
+  assert.match(runs[2].stdout + runs[2].stderr, /unknown flag/);
+  assert.deepEqual(filesHolding(f.dir, 'SECRET'), [], 'no fragment reaches runs.jsonl, events or any other file');
+  const unknown = f.cli(['compound', '--insight', '--SECRETU']);
+  assert.match(unknown.stdout + unknown.stderr, /unknown flag: --SECRETU/, 'without a stdin-only flag the name is still shown');
+});
+
+test('a terminal on stdin is refused for --evidence-quote - and --learning-decision -, with the printf hint', async t => {
+  const tty = (await import('node:tty')).default;
+  const { runCompound } = await import('../lib/compound.mjs');
+  const original = tty.isatty;
+  tty.isatty = fd => (fd === 0 ? true : original(fd));
+  t.after(() => { tty.isatty = original; });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ae-tty-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const flags of [{ insight: true, title: 't', evidenceQuote: '-', evidenceQuoteCount: 1 }, { learningDecision: '-' }]) {
+    await assert.rejects(runCompound({ workspace: dir, copilotHome: dir, flags: { workspace: dir, ...flags } }), error => {
+      assert.equal(error.code, 'E_USAGE');
+      assert.match(error.message, /stdin is a terminal/);
+      assert.match(error.hint, /printf '%s/);
+      return true;
+    });
+  }
+});
+
+test('under ae agent, a real child receives the piped decision through dispatchToolCall and stores only the fingerprint', async t => {
+  const { dispatchToolCall, DELIVER_PROFILE } = await import('../lib/agent-loop.mjs');
+  const f = verifiedFixture(t);
+  const outcome = await dispatchToolCall({ id: 'call', name: 'harness', input: { argv: ['compound', '--plan', f.plan], decision: publish('quote-agent-loop', { evidence_quote: QUOTE }) } },
+    { workspace: f.ws, copilotHome: f.copilot, harnessHome: f.home, profile: DELIVER_PROFILE, remainingSeconds: 60 });
+  assert.equal(outcome.dispatched, true, outcome.reason);
+  assert.equal(outcome.result.status, 'ok', JSON.stringify(outcome.result));
+  // The tool result shows a bounded excerpt, so the stored episode is checked on disk.
+  assert.match(JSON.stringify(outcome.result.output), /\\"pass\\":true/);
+  const episodes = filesHolding(f.dir, `evidence_sha256: ${QUOTE_SHA}`);
+  assert.equal(episodes.length, 1, 'the child received the decision on stdin and stored its fingerprint');
+  assert.ok(fs.readFileSync(episodes[0], 'utf8').includes(`evidence_bytes: ${Buffer.byteLength(QUOTE)}`));
+  assert.ok(!JSON.stringify(outcome).includes(MARKER), 'the tool result never carries the line');
+  assert.deepEqual(filesHolding(f.dir, MARKER), [], 'nothing is staged on disk');
+});
+
 test('normalisation and matching stay linear on long runs of C1 OSC bytes, and very long output lines are skipped', () => {
   const started = process.hrtime.bigint();
   assert.equal(normalizeEvidenceLine('\u009d'.repeat(1 << 20)).length, 1 << 20);
@@ -381,8 +465,10 @@ test('under ae agent delivery, --check-output is confined to the workspace', () 
   const workspace = process.cwd();
   const call = value => beforeDeliveryTool({ name: 'harness', input: { argv: ['compound', '--match-evidence', QUOTE_SHA.slice(0, 12), ...value, '--json'] } }, { workspace });
   assert.equal(call(['--check-output', 'out.txt']).pass, true);
-  assert.equal(call(['--check-output', '-']).pass, true);
-  for (const value of [['--check-output', '/etc/passwd'], ['--check-output=../outside.txt'], ['--check-output', '.']]) assert.equal(call(value).pass, false, value.join(' '));
+  assert.equal(call(['--check-output', '..out.txt']).pass, true, 'a name starting with .. inside the workspace is kept');
+  assert.equal(call(['--check-output', 'sub/..x/out.txt']).pass, true);
+  // A delivered command's stdin carries only an inline decision, so - would read nothing.
+  for (const value of [['--check-output', '-'], ['--check-output=-'], ['--check-output', '/etc/passwd'], ['--check-output=../outside.txt'], ['--check-output', '..'], ['--check-output', '.']]) assert.equal(call(value).pass, false, value.join(' '));
 });
 
 test('only stdin carries an evidence decision: spoofed, relative and symlinked staged paths are refused, and delivery pipes it', async t => {

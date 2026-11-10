@@ -13,9 +13,11 @@ import { createTally, interpretLine, stripControl, tokenize } from './tui/sessio
 import { createOverlay, splitPrefix, applyPrefix, treeRows, filterSectioned } from './tui/overlay.mjs';
 import { createLedger, statusForExit, journalArgvOf } from './tui/ledger.mjs';
 
-// What a ledger block shows for a typed command: the command name and its
-// journaled argv, so text a command keeps out of its journal is not shown.
-const journalDisplay = argv => (hasCommand(argv[0]) ? [argv[0], ...journalArgvOf(argv)] : argv).join(' ');
+// What a ledger block shows for a typed command. Compound shows its journaled
+// argv, so an evidence line it keeps out of its journal is not shown; every
+// other command (an agent task among them) shows what the person typed, while
+// its journal keeps its own journalArgv.
+const journalDisplay = argv => (argv[0] === 'compound' ? [argv[0], ...journalArgvOf(argv)] : argv).join(' ');
 import { renderBlock, foldState, createBlock } from './tui/block.mjs';
 import { renderHeader, renderExit } from './tui/chrome.mjs';
 import { completePath } from './tui/complete.mjs';
