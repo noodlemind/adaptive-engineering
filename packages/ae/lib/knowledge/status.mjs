@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import { storeDir, listLearnings, readStoreConfig } from './store.mjs';
 import { isActiveFm, bucketCounts } from './consolidate.mjs';
-import { listBuckets, bucketAncestryOk, safeBranchName, isBucketBaseSha } from './overlay.mjs';
+import { listBuckets, bucketAncestryOk, safeBranchName, isBucketBaseSha, loadLayeredLearnings } from './overlay.mjs';
 import { deriveGitContext, isDetachedKey } from '../git-context.mjs';
 import { indexStatus } from '../index-status.mjs';
+import { feedbackState, feedbackStatusView } from '../learning-feedback.mjs';
 
 export function knowledgeStatus({ workspace, copilotHome, home } = {}) {
   const dir = storeDir(workspace, { home });
@@ -83,6 +84,8 @@ export function knowledgeStatus({ workspace, copilotHome, home } = {}) {
     drift = null;
   }
 
+  const feedback = knowledgeFeedbackStatus({ workspace, home });
+
   return {
     pass: true,
     exitCode: 0,
@@ -94,5 +97,25 @@ export function knowledgeStatus({ workspace, copilotHome, home } = {}) {
     golden: { active: goldenActive, total: goldenTotal, domains },
     buckets,
     drift,
+    ...(feedback ? { feedback } : {}),
   };
+}
+
+/**
+ * Recall feedback columns for the learnings the current layer delivers.
+ * Null under effective `knowledge.feedback=off`, so status stays byte-identical.
+ */
+export function knowledgeFeedbackStatus({ workspace, home } = {}) {
+  try {
+    if (feedbackState({ workspace, home }) === 'off') return null;
+  } catch {
+    return null;
+  }
+  let learnings = [];
+  try {
+    learnings = loadLayeredLearnings({ workspace, home }).learnings.filter((l) => isActiveFm(l.fm));
+  } catch {
+    learnings = [];
+  }
+  return feedbackStatusView({ workspace, home, learnings });
 }

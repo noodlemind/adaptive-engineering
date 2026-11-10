@@ -84,27 +84,53 @@ function mergeExposure({ recordRoot, workspace, home, planPath, delivered, now =
   const versions = learningVersions({ workspace, home });
   const at = now.toISOString();
   const prior = readExposure(recordRoot, planPath);
-  const entries = new Map((prior?.entries || []).map(entry => [entry.id, entry]));
+  // One entry per learning ID and layer, so a golden learning and a branch
+  // learning with the same ID keep separate counts. Older entries carry their
+  // single layer and read the same way.
+  const entryKey = entry => `${entry.id}#${entry.layer === 'branch' ? 'branch' : 'golden'}`;
+  // Prior entries are read back from disk; a malformed one is dropped rather than carried forward.
+  // A time later than the present (say, written before a backward clock correction) is clamped to the
+  // present, never dropped, so its count survives. A caller-supplied clock never makes the real present
+  // look like the future.
+  const nowMs = Math.max(now.getTime(), Date.now());
+  const clamp = value => exposureTime(value) > nowMs ? new Date(nowMs).toISOString() : value;
+  const entries = new Map((prior?.entries || []).filter(wellFormedExposure).map(({ firstExposedAt, ...entry }) => [entryKey(entry), {
+    ...entry,
+    // A first exposure later than the last (an earlier writer, after a backward clock correction) is
+    // read as the last one, never dropped with its count.
+    ...(exposureTime(firstExposedAt) !== null ? { firstExposedAt: clamp(exposureTime(firstExposedAt) > exposureTime(entry.lastExposedAt) ? entry.lastExposedAt : firstExposedAt) } : {}),
+    lastExposedAt: clamp(entry.lastExposedAt),
+  }]));
   // When both a protected golden and its subordinate twin are delivered, the golden is authoritative.
   const goldenDelivered = new Set(delivered.filter(item => item && typeof item === 'object' && !item.subordinate).map(item => item.id));
+  const seen = new Set();
   for (const item of delivered) {
     const id = typeof item === 'string' ? item : item?.id;
     if (typeof id !== 'string' || !LEARNING_ID.test(id)) continue;
     if (item?.subordinate && goldenDelivered.has(id)) continue;
-    const before = entries.get(id);
+    const layer = item?.layer === 'branch' ? 'branch' : 'golden';
+    const key = entryKey({ id, layer });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const before = entries.get(key);
+    // The version of the layer actually credited: a subordinate twin keeps its own.
     const version = versions.get(item?.subordinate ? `${id}#branch` : id) || null;
-    entries.set(id, {
+    entries.set(key, {
       id,
-      layer: item?.layer === 'branch' ? 'branch' : 'golden',
+      layer,
       ...(version ? { version } : {}),
       firstExposedAt: before?.firstExposedAt || at,
       lastExposedAt: at,
-      count: (before?.count || 0) + 1,
+      count: saturatingAdd(before?.count || 0, 1),
     });
   }
-  let kept = [...entries.values()].sort((a, b) => b.lastExposedAt.localeCompare(a.lastExposedAt) || a.id.localeCompare(b.id)).slice(0, EXPOSURE_ENTRY_CAP);
-  const serialize = list => ({ version: 1, plan: planPath, entries: list.toSorted((a, b) => a.id.localeCompare(b.id)) });
-  while (kept.length > 1 && Buffer.byteLength(JSON.stringify(serialize(kept), null, 2)) > EXPOSURE_BYTE_CAP) kept = kept.slice(0, -1);
+  const byIdLayer = (a, b) => a.id.localeCompare(b.id) || String(a.layer).localeCompare(String(b.layer));
+  // This delivery's entries are kept first; carried entries are then kept newest first.
+  const delivering = entry => seen.has(entryKey(entry)) ? 1 : 0;
+  let kept = [...entries.values()].sort((a, b) => delivering(b) - delivering(a) || b.lastExposedAt.localeCompare(a.lastExposedAt) || byIdLayer(a, b)).slice(0, EXPOSURE_ENTRY_CAP);
+  const serialize = list => ({ version: 1, plan: planPath, entries: list.toSorted(byIdLayer) });
+  // +1 for the trailing newline publishReviewRecord appends.
+  while (kept.length > 1 && Buffer.byteLength(JSON.stringify(serialize(kept), null, 2)) + 1 > EXPOSURE_BYTE_CAP) kept = kept.slice(0, -1);
   const record = serialize(kept);
   publishReviewRecord(recordRoot, exposureRel(planPath), record);
   return record;
@@ -192,7 +218,13 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
   if (hasRecalled) {
     checkEntries(decision.recalled, { field: 'recalled', cap: EXPOSURE_ENTRY_CAP, keys: ['id', 'verdict', 'note'], choiceKey: 'verdict', choices: RECALLED_VERDICTS });
     const exposure = readExposure(recordRoot, planPath);
-    const exposed = new Map((exposure?.entries || []).map(entry => [entry.id, entry]));
+    // A learning ID can have one entry per layer; the verdict binds the most recently delivered version.
+    const exposed = new Map(), nowMs = Date.now();
+    for (const entry of exposure?.entries || []) {
+      if (!wellFormedExposure(entry)) continue;
+      const prior = exposed.get(entry.id);
+      if (!prior || clampedExposureTime(entry.lastExposedAt, nowMs) > clampedExposureTime(prior.lastExposedAt, nowMs)) exposed.set(entry.id, entry);
+    }
     const unknown = decision.recalled.filter(entry => !exposed.has(entry.id)).map(entry => entry.id);
     if (unknown.length) throw new Error(`recalled lists learnings this plan's context packs never delivered: ${unknown.join(', ')}`);
     out.recalled = decision.recalled.map(entry => ({ id: entry.id, verdict: entry.verdict, ...(exposed.get(entry.id).version ? { version: exposed.get(entry.id).version } : {}), ...(entry.note ? { note: entry.note } : {}) }));
@@ -242,6 +274,18 @@ function legacyAccepted(base, { operation, plan, digest, feedback }) {
     && feedbackIdentity(record) === feedbackIdentity(feedback) ? path.join(base, rel) : null;
 }
 
+/**
+ * Whether the file already holds a valid feedback record for this key: parseable, version 1, and named by
+ * its own operation, plan and digest. Any other file (garbage, oversized, another key's record) does not
+ * mark the decision as recorded; it is never replaced either, so publishing reports it as unavailable.
+ */
+function feedbackFileExists(base, rel) {
+  if (!assertNoSymlinkAncestors(base, rel)) return false;
+  const record = readFeedbackFile(base, rel);
+  return Boolean(record) && typeof record === 'object' && !Array.isArray(record) && record.version === 1 && typeof record.operation === 'string' && (record.digest === undefined || ID.test(record.digest))
+    && `${feedbackKey(record)}.json` === path.basename(rel);
+}
+
 /** One immutable record per accepted learning decision, in the project store so every worktree's verdicts aggregate. */
 export function publishFeedbackRecord({ workspace, home, operation, digest, planPath, captureDate, feedback }) {
   if (!feedback || !ID.test(operation || '') || (digest !== undefined && !ID.test(digest || ''))) return null;
@@ -253,10 +297,9 @@ export function publishFeedbackRecord({ workspace, home, operation, digest, plan
   const readiness = latestReadinessReceipt({ workspace, home, planPath });
   const record = { version: 1, operation, ...(digest ? { digest } : {}), plan: planPath, captureDate, ...feedback, ...(readiness ? { readiness } : {}) };
   if (Buffer.byteLength(JSON.stringify(record, null, 2)) + 1 > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`feedback record exceeds ${FEEDBACK_RECORD_MAX_BYTES} bytes`);
-  const existing = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
-  if (existing !== null) return { path: path.join(base, rel), written: false };
+  if (feedbackFileExists(base, rel)) return { path: path.join(base, rel), written: false };
   if (!writeFileContained(base, rel, `${JSON.stringify(record, null, 2)}\n`, { exclusive: true })) {
-    if (readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) !== null) return { path: path.join(base, rel), written: false };
+    if (feedbackFileExists(base, rel)) return { path: path.join(base, rel), written: false };
     throw new Error('feedback record target is unsafe or unavailable');
   }
   return { path: path.join(base, rel), written: true };
@@ -268,8 +311,8 @@ export function acceptedFeedbackRecord({ workspace, home, operation, digest, pla
   const base = projectStoreDir(workspace, { home });
   const legacy = legacyAccepted(base, { operation, plan: planPath, digest, feedback });
   if (legacy) return legacy;
-  const full = path.join(base, feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest })));
-  return readFileNoFollow(full, { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES }) === null ? null : full;
+  const rel = feedbackRecordRel(feedbackKey({ operation, plan: planPath, digest }));
+  return feedbackFileExists(base, rel) ? path.join(base, rel) : null;
 }
 
 export function readFeedbackRecords({ workspace, home }) {
@@ -293,9 +336,10 @@ export function readFeedbackRecords({ workspace, home }) {
 /**
  * Evidence for consolidation: per-learning verdict counts, learnings whose
  * current version was judged `wrong`, and per-reviewer finding dispositions.
- * Counts never activate, retire or dispute anything.
+ * Counts never activate, retire or dispute anything. A `verdicts` Map, when
+ * passed, receives the `helped` and `wrong` tallies feedbackColumns uses.
  */
-export function feedbackSummary({ workspace, home, learnings }) {
+export function feedbackSummary({ workspace, home, learnings, verdicts = null }) {
   const { records } = readFeedbackRecords({ workspace, home });
   const current = new Map((learnings || []).map(learning => [learning.id, learningVersion(learning)]));
   const perLearning = new Map(), perReviewer = new Map();
@@ -307,6 +351,8 @@ export function feedbackSummary({ workspace, home, learnings }) {
       if (typeof record.plan === 'string') row.plans.add(record.plan);
       if (entry.verdict === 'wrong' && entry.version && entry.version === current.get(entry.id)) row.wrongCurrent = true;
       perLearning.set(entry.id, row);
+      // Optional caller tally for feedbackColumns, filled in this same pass so the history is read once.
+      if (verdicts) tallyVerdict(verdicts, entry);
     }
     for (const entry of Array.isArray(record.findings) ? record.findings : []) {
       if (!FINDING_DISPOSITIONS.includes(entry?.disposition)) continue;
@@ -329,4 +375,179 @@ export function feedbackSummary({ workspace, home, learnings }) {
     review_required: learningRows.filter(row => row.wrongCurrent).map(row => row.id),
     reviewers: reviewerRows.map(row => ({ ...row, resolutionRate: Number((row.fixed / (row.fixed + row.dismissed)).toFixed(3)) })),
   };
+}
+
+// Visibility (memory plan 1d, rest of 1e). Readers only: nothing below writes
+// learning content, governance or status.
+
+export const PRUNING_EXPOSURE_THRESHOLD = 5;
+const EXPOSURE_DIR_REL = '.harness/learning/exposures';
+const layerOf = value => value === 'branch' ? 'branch' : 'golden';
+// Only a strict ISO-8601 UTC timestamp (as toISOString writes) is a valid exposure time; it compares by parsed time.
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const exposureTime = value => {
+  if (typeof value !== 'string' || !ISO_TIMESTAMP.test(value)) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
+};
+// An exposure time later than the present is read as the present: after a backward clock correction
+// real entries look future, and they must neither be lost nor sort first forever.
+const clampedExposureTime = (value, nowMs = Date.now()) => {
+  const ms = exposureTime(value);
+  return ms === null ? null : Math.min(ms, nowMs);
+};
+// One exposure entry as read back from disk. The writer carries forward, the reader counts and the
+// delivered gate accepts exactly the entries that pass this test: a learning ID, a count of at least
+// one, a version that is absent or a content hash, a strict ISO exposure time, and a first exposure that
+// is absent or a strict ISO time. A future last time is valid (a backward clock correction); every
+// comparison clamps it to the present. A first exposure later than the last is valid for the same reason
+// and is carried forward clamped to the last.
+const wellFormedExposure = entry => Boolean(entry) && typeof entry.id === 'string' && LEARNING_ID.test(entry.id)
+  && Number.isSafeInteger(entry.count) && entry.count >= 1 && (entry.version === undefined || ID.test(entry.version))
+  && exposureTime(entry.lastExposedAt) !== null
+  && (entry.firstExposedAt === undefined || exposureTime(entry.firstExposedAt) !== null);
+const later = (a, b, nowMs = Date.now()) => {
+  const next = clampedExposureTime(b, nowMs);
+  if (next === null) return a;
+  const prior = clampedExposureTime(a, nowMs);
+  return prior === null || next > prior ? new Date(next).toISOString() : a;
+};
+// Counts are safe integers; a sum saturates rather than overflowing to Infinity.
+const saturatingAdd = (a, b) => Math.min(Number.MAX_SAFE_INTEGER, a + b);
+
+/**
+ * Per-learning exposure totals summed over every plan's exposure record under
+ * this record root, with a per-layer split. Every record is read; each is
+ * read with a 32 KiB + 1 byte limit. Counts are lower bounds: a record keeps at most 64
+ * (id, layer) entries per plan and an evicted entry restarts at 1. Exposure records live
+ * in each worktree, so another worktree's exposures are not visible here.
+ * Branch-layer exposure is not scoped to a bucket: after a branch switch, a
+ * same-ID branch learning on the new branch inherits the old branch's count.
+ */
+export function exposureTotals(recordRoot) {
+  const totals = new Map(), nowMs = Date.now();
+  if (!recordRoot || !assertNoSymlinkAncestors(recordRoot, EXPOSURE_DIR_REL)) return totals;
+  let names = [];
+  try { names = fs.readdirSync(path.join(recordRoot, EXPOSURE_DIR_REL)).filter(name => /^plan-[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return totals; }
+  for (const name of names) {
+    const rel = `${EXPOSURE_DIR_REL}/${name}`;
+    // Records are written under EXPOSURE_BYTE_CAP; earlier writers could reach one byte more
+    // (the trailing newline). A larger file is not ours and is skipped.
+    const text = readFileNoFollow(path.join(recordRoot, rel), { root: recordRoot, maxBytes: EXPOSURE_BYTE_CAP + 1 });
+    let record = null;
+    try { record = text === null ? null : JSON.parse(text); } catch { record = null; }
+    if (!record || record.version !== 1 || typeof record.plan !== 'string' || exposureRel(record.plan) !== rel || !Array.isArray(record.entries)) continue;
+    for (const entry of record.entries) {
+      if (!wellFormedExposure(entry)) continue;
+      const row = totals.get(entry.id) || { exposed: 0, last_exposed: null, layers: {} };
+      const key = layerOf(entry.layer);
+      const layer = row.layers[key] || { exposed: 0, last_exposed: null };
+      row.exposed = saturatingAdd(row.exposed, entry.count);
+      layer.exposed = saturatingAdd(layer.exposed, entry.count);
+      row.last_exposed = later(row.last_exposed, entry.lastExposedAt, nowMs);
+      layer.last_exposed = later(layer.last_exposed, entry.lastExposedAt, nowMs);
+      row.layers[key] = layer;
+      totals.set(entry.id, row);
+    }
+  }
+  return totals;
+}
+
+export const emptyFeedbackColumns = () => ({ exposed: 0, helped: 0, wrong: 0, last_exposed: null });
+
+/**
+ * Sources for the `exposed`, `helped`, `wrong` and `last_exposed` columns.
+ * Verdicts are tallied over the full feedback history, never a capped scan,
+ * because the pruning hint and ordering decide on them. Read one learning's
+ * row with `columnsFor`.
+ */
+export function feedbackColumns({ workspace, home, recordRoot = workspace, verdicts = null }) {
+  let exposure = new Map();
+  // Evidence only: an unreadable source degrades to zero counts, never a failure.
+  try { exposure = exposureTotals(recordRoot); } catch { exposure = new Map(); }
+  // A caller that already read the history (feedbackSummary's `verdicts`) passes its tallies.
+  if (verdicts) return { exposure, verdicts };
+  const tallies = new Map();
+  try {
+    for (const record of readFeedbackRecords({ workspace, home }).records) {
+      for (const entry of Array.isArray(record.recalled) ? record.recalled : []) tallyVerdict(tallies, entry);
+    }
+  } catch { /* feedback records unreadable */ }
+  return { exposure, verdicts: tallies };
+}
+
+function tallyVerdict(verdicts, entry) {
+  if (typeof entry?.id !== 'string' || !['helped', 'wrong'].includes(entry.verdict)) return;
+  const row = verdicts.get(entry.id) || { helped: 0, wrong: 0 };
+  row[entry.verdict] += 1;
+  verdicts.set(entry.id, row);
+}
+
+/**
+ * One learning's columns, or null when it has no exposure in its layer and no
+ * `helped` or `wrong` verdict. Exposure is credited to the layer the pack
+ * delivered; verdicts carry no layer and count for the ID.
+ */
+export function columnsFor(columns, id, layer = 'golden') {
+  const exposed = columns.exposure.get(id)?.layers[layerOf(layer)];
+  const verdict = columns.verdicts.get(id);
+  if (!exposed && !verdict) return null;
+  return { exposed: exposed?.exposed || 0, helped: verdict?.helped || 0, wrong: verdict?.wrong || 0, last_exposed: exposed?.last_exposed || null };
+}
+
+// A subordinate branch twin shares its protected golden learning's ID: one row
+// per ID. The twin is dropped only when its golden is in this same set, so a
+// retired golden filtered out by the caller does not hide an active twin.
+const primary = learnings => {
+  const list = learnings || [];
+  const golden = new Set(list.filter(learning => !learning.subordinate).map(learning => learning.id));
+  return list.filter(learning => !learning.subordinate || !golden.has(learning.id));
+};
+
+/**
+ * Status rows for learnings with any exposure, `helped` or `wrong` verdict;
+ * null when the effective feedback state is `off`, so status output stays
+ * byte-identical.
+ */
+export function feedbackStatusView({ workspace, home, learnings, recordRoot = workspace }) {
+  let state = 'off';
+  try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
+  if (state === 'off') return null;
+  const columns = feedbackColumns({ workspace, home, recordRoot });
+  const rows = primary(learnings)
+    .map(learning => ({ id: learning.id, columns: columnsFor(columns, learning.id, learning.layer) }))
+    .filter(row => row.columns)
+    .map(row => ({ id: row.id, ...row.columns }))
+    .sort((a, b) => b.exposed - a.exposed || b.wrong - a.wrong || a.id.localeCompare(b.id));
+  return {
+    state,
+    learnings: rows.slice(0, FEEDBACK_SECTION_CAP),
+    ...(rows.length > FEEDBACK_SECTION_CAP ? { omittedLearnings: rows.length - FEEDBACK_SECTION_CAP } : {}),
+  };
+}
+
+/**
+ * Advisory pruning hint: learnings delivered in at least the threshold of
+ * context packs (orient runs, not distinct plans) with no `helped` verdict.
+ */
+export function pruningCandidates({ columns, learnings, threshold = PRUNING_EXPOSURE_THRESHOLD }) {
+  return primary(learnings)
+    .map(learning => ({ id: learning.id, layer: layerOf(learning.layer), file: typeof learning.file === 'string' ? learning.file : null, ...(columnsFor(columns, learning.id, learning.layer) || emptyFeedbackColumns()) }))
+    .filter(row => row.exposed >= threshold && row.helped === 0)
+    .sort((a, b) => b.exposed - a.exposed || a.id.localeCompare(b.id));
+}
+
+/**
+ * Packet ordering under `knowledge.feedback=on`: learnings whose current
+ * version needs review first, then learnings with any `wrong` verdict, then
+ * the most exposed in this layer. Ties keep the incoming order. Ordering
+ * only: nothing is activated, disputed or retired.
+ */
+export function feedbackOrder(learnings, { columns, reviewRequired = [], layer = 'golden' }) {
+  const review = new Set(reviewRequired);
+  const col = id => columnsFor(columns, id, layer) || emptyFeedbackColumns();
+  return learnings.toSorted((a, b) =>
+    Number(review.has(b.id)) - Number(review.has(a.id))
+    || Number(col(b.id).wrong > 0) - Number(col(a.id).wrong > 0)
+    || col(b.id).exposed - col(a.id).exposed);
 }
