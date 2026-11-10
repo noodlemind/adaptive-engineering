@@ -9,7 +9,7 @@ import { tokenize, FIELD_BOOSTS } from '../tokenize.mjs';
 import { loadPostingsIndex, postingsMatchManifest } from '../postings-index.mjs';
 import { loadManifest, rankRecall, findMatchingPlans } from '../recall-rank.mjs';
 import { loadCollections, entryMatchesCollection, resolveIndexDir } from '../recall-config.mjs';
-import { storeDir, inertLine, readStaleExclusions, repoId, withholdEvidenceQuoteField } from '../knowledge/store.mjs';
+import { storeDir, inertLine, readStaleExclusions, repoId } from '../knowledge/store.mjs';
 import { rankLearnings, retrievalExclusion } from '../knowledge/retrieve.mjs';
 import { learningApplicability } from '../knowledge/applicability.mjs';
 import { loadLayeredLearnings } from '../knowledge/overlay.mjs';
@@ -81,12 +81,6 @@ function snippetOf(text) {
   const flat = inertLine(redactSecrets(text)).trim();
   return flat ? flat.slice(0, SNIPPET_MAX) : null;
 }
-
-// A knowledge snippet comes from a hand-editable manifest field, which may
-// hold a line copied from an episode's frontmatter; everything from an
-// evidence_quote key on is withheld (see withholdEvidenceQuoteField). Code snippets come from tracked
-// source files, never episodes, so they are shown as written.
-const knowledgeSnippetOf = (text) => snippetOf(typeof text === 'string' ? withholdEvidenceQuoteField(text) : text);
 
 function digestOf(parts) {
   return `sha256:${crypto.createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16)}`;
@@ -379,7 +373,7 @@ function knowledgeSource({ mode, query, workspace, copilotHome, home, explain, c
           id,
           location: entry.path ?? null,
           title: entry.title ?? null,
-          snippet: knowledgeSnippetOf(entry.snippet),
+          snippet: snippetOf(entry.snippet),
           kind: entry.kind ?? null,
           score: entry.score,
           generation,
@@ -446,7 +440,7 @@ function knowledgeSource({ mode, query, workspace, copilotHome, home, explain, c
         id,
         location: entry.path ?? null,
         title: entry.title ?? null,
-        snippet: knowledgeSnippetOf(firstText),
+        snippet: snippetOf(firstText),
         kind: entry.kind ?? null,
         score,
         generation,

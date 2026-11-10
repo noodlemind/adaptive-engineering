@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { ensureStore, appendLedger } from '../lib/knowledge/store.mjs';
-import { verifiedAndPlans, consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
+import { verifiedAndPlans, consolidateCandidates, EVIDENCE_MATCH_CONTRACT } from '../lib/knowledge/consolidate.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binPath = path.join(packageRoot, 'bin', 'ae.mjs');
@@ -148,7 +148,7 @@ test('consolidate --candidates emits the deterministic work packet', () => {
   assert.equal(res.status, 0, res.stderr || res.stdout);
   const out = JSON.parse(res.stdout);
   assert.equal(out.schema, 2);
-  assert.deepEqual(out.contract, { maxOps: 5, byteCap: 1200, threshold: 5, domainCap: 25 });
+  assert.deepEqual(out.contract, { maxOps: 5, byteCap: 1200, threshold: 5, domainCap: 25, evidenceMatch: EVIDENCE_MATCH_CONTRACT });
   const allEpisodes = out.clusters.flatMap((c) => c.episodes);
   assert.equal(allEpisodes.length, 6);
   assert.ok(allEpisodes.every((e) => e.sha256 && e.path && e.title));

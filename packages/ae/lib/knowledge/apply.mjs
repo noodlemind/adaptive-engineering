@@ -22,10 +22,10 @@ import {
   provenanceBytes,
   correctionLines,
   statusForAuthority,
-  scanSecretsFolded,
 } from './store.mjs';
 import { deriveGitContext, isDetachedKey } from '../git-context.mjs';
 import { MAX_OPS_PER_RUN, LEARNING_BYTE_CAP, QUARANTINE_THRESHOLD, DOMAIN_ACTIVE_CAP, isActiveFm, collectEpisodes, splitLedger } from './consolidate.mjs';
+import { scanSecrets } from '../secret-scan.mjs';
 import { absorbOrAbort, mirrorLearnings } from './admin.mjs';
 import { parseMergedFrom } from './listing.mjs';
 import { resolveWriteLayer, ensureBucket, migrateRenamedBucket, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
@@ -39,11 +39,6 @@ const FILE_TOUCHING = new Set(['ADD', 'STRENGTHEN', 'SUPERSEDE', 'MERGE']);
 
 const PROMOTION_OP_KINDS = new Set(['ADD', 'STRENGTHEN', 'SUPERSEDE']);
 const DISPUTED_FIX_THRESHOLD = 3;
-// Every field the secret scan reads is rendered into the learning, which is
-// capped at LEARNING_BYTE_CAP bytes, so text far past that can never be
-// admitted. Refusing it before the scan keeps the scan's cost bounded.
-const SCANNED_TEXT_CAP = 16 * LEARNING_BYTE_CAP;
-const oversizeForScan = text => Buffer.byteLength(text, 'utf8') > SCANNED_TEXT_CAP;
 const CONTENT_FAILURE_CODES = new Set(['E_SCHEMA', 'E_SECRET', 'E_LINT', 'E_BYTE_CAP', 'E_EXISTS', 'E_TARGET']);
 
 function opWeight(op) {
@@ -1294,9 +1289,7 @@ export function applyOps({
             exitCode: 1,
           };
         }
-        const scanned = `${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`;
-        if (oversizeForScan(scanned)) return rejectOp('E_BYTE_CAP', `op ${i}: claim text exceeds ${SCANNED_TEXT_CAP} bytes — split into smaller claims`, op.episodes);
-        const secrets = scanSecretsFolded(scanned);
+        const secrets = scanSecrets(`${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
         if (secrets.length) {
           return rejectOp('E_SECRET', `op ${i}: secret-shaped content (${secrets.map((s) => s.id).join(', ')})`, op.episodes);
         }
@@ -1383,9 +1376,7 @@ export function applyOps({
         consumedTargets.add(op.target);
       }
       if (op.op === 'STRENGTHEN') {
-        const scopeText = `${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`;
-        if (oversizeForScan(scopeText)) return rejectOp('E_BYTE_CAP', `op ${i}: scope text exceeds ${SCANNED_TEXT_CAP} bytes`, op.episodes);
-        const scopeSecrets = scanSecretsFolded(scopeText);
+        const scopeSecrets = scanSecrets(`${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
         if (scopeSecrets.length) {
           return rejectOp(
             'E_SECRET',

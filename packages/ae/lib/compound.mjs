@@ -13,13 +13,9 @@ import { selectPlan } from './plan-parse.mjs';
 import { loadPolicy } from './policy.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
-import { readStoreConfig, scanSecretsFolded } from './knowledge/store.mjs';
-import { evidenceQuoteError, evidenceQuoteLine } from './knowledge/evidence-quote.mjs';
-
-// The most text an insight or teaching episode may hold. Real episodes are a
-// few kilobytes; the secret scan must run on all of it before anything is
-// written, so its cost has to stay bounded.
-const EPISODE_SCAN_CAP = 64 * 1024;
+import { scanSecrets } from './secret-scan.mjs';
+import { readStoreConfig } from './knowledge/store.mjs';
+import { evidenceLineError, evidenceFingerprint, evidenceFrontmatterLines, evidencePrefixError, evidenceSummary, matchEvidence, EVIDENCE_OUTPUT_CAP } from './knowledge/evidence-fingerprint.mjs';
 import { EXIT } from './style.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
@@ -182,9 +178,12 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       nextTools: ['ae compound --insight --title "..." --body "..."'],
     };
   }
+  // A learning decision hands over the fingerprint it already took; the CLI
+  // flag hands over the line, which is checked and fingerprinted here.
   const evidenceQuote = flags.evidenceQuote ?? null;
-  const quoteError = evidenceQuote === null ? null : evidenceQuoteError(evidenceQuote);
-  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['quote one failing line, shortened or redacted, in --evidence-quote and re-run'] };
+  const quoteError = evidenceQuote === null ? null : evidenceLineError(evidenceQuote);
+  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['pass the single failing line of check output in --evidence-quote and re-run'] };
+  const evidence = flags.evidenceFingerprint ?? (evidenceQuote === null ? null : evidenceFingerprint(evidenceQuote));
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);
   // Category is one safe path segment — never a traversal vector.
   const category = slugify(flags.category || 'insights');
@@ -202,8 +201,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
-  const quoteLine = evidenceQuote === null ? null : evidenceQuoteLine(evidenceQuote);
-  if (quoteLine !== null) fmLines.push(quoteLine);
+  // Only the fingerprint of the evidence line is stored; the line itself is
+  // never written or shown (see evidence-fingerprint.mjs).
+  if (evidence) fmLines.push(...evidenceFrontmatterLines(evidence));
   // Git provenance (blueprint P1/P9): optional commit/branch/base stamped at
   // capture time from the CURRENT workspace HEAD. This is the sole CLI
   // episode writer — `compound --insight` (kind: insight) and
@@ -216,16 +216,8 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (gitContext.headSha) fmLines.push(`commit: ${gitContext.headSha}`);
   if (gitContext.branch) fmLines.push(`branch: ${yamlQuote(gitContext.branch)}`);
   if (gitContext.baseSha) fmLines.push(`base: ${gitContext.baseSha}`);
-  const renderDoc = lines => `---\n${lines.join('\n')}\n---\n\n${body.trim()}\n`;
-  const doc = renderDoc(fmLines);
-  // evidenceQuoteError already screened the one-line quote in every form it
-  // can be read in, so its JSON-escaped line is left out here. Every other
-  // field and the body are still scanned, also with
-  // invisible characters removed from their NFKC form (see scanSecretsFolded).
-  // The scan's cost grows faster than its input, so an episode past
-  // EPISODE_SCAN_CAP is refused rather than scanned.
-  if (Buffer.byteLength(doc, 'utf8') > EPISODE_SCAN_CAP) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: `episode text exceeds ${EPISODE_SCAN_CAP} bytes; shorten the body`, nextTools: ['shorten the body and re-run'] };
-  const secrets = scanSecretsFolded(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
+  const doc = `---\n${fmLines.join('\n')}\n---\n\n${body.trim()}\n`;
+  const secrets = scanSecrets(doc);
   if (secrets.length) {
     return {
       pass: false,
@@ -385,6 +377,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       ...publication,
       indexed,
       resourceUses,
+      ...(evidence ? { evidence: evidenceSummary(evidence) } : {}),
       blockedReason: null,
       nextTools: ['ae consolidate --status'],
     };
@@ -395,14 +388,19 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
-  const decision = JSON.parse(text);
+  let decision = JSON.parse(text);
   if (!decision || typeof decision !== 'object' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(decision.operation || '') || !['no-learning', 'publish'].includes(decision.decision)
     || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'evidence_quote'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
   if (decision.evidence_quote !== undefined) {
     if (decision.decision !== 'publish') throw new Error('evidence_quote applies only to a publish decision');
-    const quoteError = evidenceQuoteError(decision.evidence_quote);
+    const quoteError = evidenceLineError(decision.evidence_quote);
     if (quoteError) throw new Error(quoteError);
+    // The line is replaced by its fingerprint before anything is recorded, so
+    // the stored decision, its digest and the episode never hold it.
+    const { evidence_quote: line, ...rest } = decision;
+    const fingerprint = evidenceFingerprint(line);
+    decision = { ...rest, evidence_sha256: fingerprint.sha256, evidence_bytes: fingerprint.bytes };
   }
   const selected = selectPlan(workspace, { planPath: flags.plan, session: readSession(workspace), requireUnique: true, home: flags.harnessHome, domainContext });
   if (!selected.plan) throw new Error('Learning decision requires an unambiguous plan');
@@ -441,7 +439,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   const rel = `.harness/learning/${operation}.json`;
   const existing = readReviewRecord(recordRoot, rel);
   compatible(existing);
-  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, evidenceQuote: decision.evidence_quote, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
+  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, evidenceQuote: null, evidenceFingerprint: decision.evidence_sha256 ? { sha256: decision.evidence_sha256, bytes: decision.evidence_bytes } : null, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
   if (flags.dryRun) return decision.decision === 'publish' ? { ...publish(existing?.captureDate), dryRun: true } : { pass: true, exitCode: 0, dryRun: true, decision: decision.decision, path: null, indexed: null };
   publishReviewRecord(recordRoot, '.harness/learning/.ready.json', { version: 1 });
   const pointer = learningPointerRel(selected.plan.path);
@@ -484,6 +482,35 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
     }
     return { ...result, learningRecord: rel, ...(retainedEvidence ? { retainedEvidence } : {}), ...(result.pass ? recordFeedback(completed) : {}) };
   }));
+}
+
+/**
+ * `ae compound --match-evidence <sha256-prefix> --check-output <path|->`:
+ * reports whether any line of check output an agent obtained by re-running
+ * the check matches an episode's evidence fingerprint (see matchEvidence).
+ * Reads only; the output is never stored or echoed.
+ */
+export function runEvidenceMatch({ workspace, flags }) {
+  const usage = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
+  const hint = 'ae compound --match-evidence <sha256_prefix> --check-output <path|->';
+  if (flags.insight || flags.learningDecision || flags.evidenceQuote != null) throw usage('--match-evidence only reads check output; run it on its own', hint);
+  const prefixError = evidencePrefixError(flags.matchEvidence);
+  if (prefixError) throw usage(prefixError, hint);
+  if (!flags.checkOutput) throw usage('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
+  const output = flags.checkOutput === '-'
+    ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
+    : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP });
+  if (output === null) throw new Error(`Check output is missing, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`);
+  const { matched, line } = matchEvidence(output, flags.matchEvidence);
+  return {
+    pass: matched,
+    exitCode: matched ? 0 : 1,
+    matched,
+    line,
+    sha256Prefix: flags.matchEvidence,
+    blockedReason: matched ? null : 'No line of the check output matches the evidence fingerprint',
+    nextTools: matched ? [] : ['confirm the same check was re-run on the code the episode describes, or treat the evidence as unconfirmed'],
+  };
 }
 
 // The flag names `ae compound` accepts, read from its registry definition.

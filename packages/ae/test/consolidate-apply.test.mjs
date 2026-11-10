@@ -1245,13 +1245,3 @@ test('P1#2b: interpreter inline-exec bodies (node -e / python -c / cmd /c / …)
     assert.equal(res.exitCode, 0, `${slug} must be allowed: ${JSON.stringify(res.rejected)}`);
   });
 });
-
-test('an op whose scanned text is far past the learning cap is rejected with E_BYTE_CAP before the secret scan', () => {
-  const c = ctx();
-  const body = `${'a-'.repeat(20000)} AKIA${'IOSFODNN7EXAMPLE'}`;
-  const started = process.hrtime.bigint();
-  const out = applyOps({ workspace: c.ws, opsPath: writeOps(c.ws, [ADD(c.ws, { body })]), home: c.harnessHome });
-  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 5000);
-  assert.equal(out.rejected[0].code, 'E_BYTE_CAP', JSON.stringify(out.rejected));
-  assert.match(out.rejected[0].reason, /claim text exceeds 19200 bytes/);
-});

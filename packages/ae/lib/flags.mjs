@@ -150,6 +150,8 @@ export function parseFlags(argv) {
     trigger: null,
     claim: null,
     evidenceQuote: null,
+    matchEvidence: null,
+    checkOutput: null,
     body: null,
     bodyFile: null,
     ops: null,
@@ -336,6 +338,10 @@ export function parseFlags(argv) {
       flags.evidenceQuote = value ?? '';
       flags.evidenceQuoteForm = value === undefined ? 'missing' : 'space';
     }
+    else if (a.startsWith('--match-evidence=')) flags.matchEvidence = a.split('=').slice(1).join('=');
+    else if (a === '--match-evidence') flags.matchEvidence = scan[++i] ?? '';
+    else if (a.startsWith('--check-output=')) flags.checkOutput = a.split('=').slice(1).join('=');
+    else if (a === '--check-output') flags.checkOutput = scan[++i] ?? '';
     else if (a.startsWith('--body=')) flags.body = a.split('=').slice(1).join('=');
     else if (a === '--body') flags.body = scan[++i];
     else if (a.startsWith('--body-file=')) flags.bodyFile = a.split('=').slice(1).join('=');

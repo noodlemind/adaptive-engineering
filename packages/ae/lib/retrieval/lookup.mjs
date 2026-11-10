@@ -5,7 +5,7 @@ import { redactSecrets } from '../secret-scan.mjs';
 import { readFileNoFollow } from '../fs-safe.mjs';
 import { safeResolveUnderRoot } from '../path-safe.mjs';
 import { findEntryByDocid, resolveDocPath } from '../recall-rank.mjs';
-import { storeDir, listLearnings, withholdFrontmatterEvidenceQuote } from '../knowledge/store.mjs';
+import { storeDir, listLearnings } from '../knowledge/store.mjs';
 import { collectEpisodes } from '../knowledge/consolidate.mjs';
 import { readStructuralIndex } from '../structural/shape.mjs';
 import { planReadDirs } from '../project-layout.mjs';
@@ -65,12 +65,10 @@ function usageError(message, hint) {
   return Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
 }
 
-/** Withhold a frontmatter evidence_quote, truncate on a UTF-8 boundary, then
- * on a line boundary, then redact. Any previewed file may be an episode, whose
- * quote is screened only as its own field, so its line is never shown. */
+/** Truncate on a UTF-8 boundary, then on a line boundary, then redact. */
 function preview(raw) {
   if (typeof raw !== 'string') return null;
-  let text = withholdFrontmatterEvidenceQuote(raw).split(/\r?\n/).slice(0, PREVIEW_MAX_LINES).join('\n');
+  let text = raw.split(/\r?\n/).slice(0, PREVIEW_MAX_LINES).join('\n');
   if (Buffer.byteLength(text, 'utf8') > PREVIEW_MAX_BYTES) {
     const buf = Buffer.from(text, 'utf8').subarray(0, PREVIEW_MAX_BYTES);
     text = buf.toString('utf8').replace(/�+$/, '');

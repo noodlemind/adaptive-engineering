@@ -15,7 +15,6 @@ import { safeResolveUnderRoot } from './path-safe.mjs';
 import { assertNoSymlinkAncestors, readFileNoFollow, DEFAULT_MAX_BYTES } from './fs-safe.mjs';
 import { planReadDirs, projectStoreDir } from './project-layout.mjs';
 import { selectProjectManifest } from './knowledge-manifest.mjs';
-import { withholdEvidenceQuoteField } from './knowledge/store.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -33,13 +32,10 @@ function recencyBoost(entry) {
   return Math.max(0, 1 - (Date.now() - new Date(dateStr).getTime()) / (365 * 86400000));
 }
 
-// Manifest fields are hand-editable and may hold a line copied from an
-// episode's frontmatter, so everything from an evidence_quote key on is withheld, as in search
-// (see withholdEvidenceQuoteField).
 function bestSnippet(entry, queryTokens) {
-  let best = { text: withholdEvidenceQuoteField(entry.summary || ''), score: 0 };
+  let best = { text: entry.summary || '', score: 0 };
   for (const { key } of SNIPPET_FIELDS) {
-    const text = typeof entry[key] === 'string' ? withholdEvidenceQuoteField(entry[key]) : entry[key] || '';
+    const text = entry[key] || '';
     if (!text) continue;
     const tokens = new Set(tokenize(text));
     let hits = 0;
