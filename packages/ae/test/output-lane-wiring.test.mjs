@@ -112,7 +112,8 @@ test('CLI: --output with an unrecognized value is a structured usage error, exit
   const copilotHome = tempDir('lane-bogus-home-');
   const result = runHarness(['status', '--workspace', workspace, '--copilot-home', copilotHome, '--output', 'bogus']);
   assert.equal(result.status, EXIT.usage);
-  assert.match(result.stderr, /invalid --output: "bogus"/);
+  assert.match(result.stderr, /invalid --output: not a known lane/);
+  assert.doesNotMatch(result.stderr, /bogus/, 'the invalid value is never echoed');
 });
 
 // --- CRITICAL repro (fix round 1): the `--` literal-argument boundary -----

@@ -84,6 +84,22 @@ function hook(name, payload, { workspace, copilotHome, harnessHome, remainingSec
   }
 }
 
+// `ae compound --match-evidence` reads --check-output; under delivery that
+// read is confined to the run workspace: an absolute path, or one that
+// resolves outside it, is refused.
+function checkOutputOutsideWorkspace(argv, workspace) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') break;
+    const value = arg === '--check-output' ? argv[i + 1] : arg.startsWith('--check-output=') ? arg.slice('--check-output='.length) : null;
+    if (value === null || value === undefined || value === '-') continue;
+    if (path.isAbsolute(value)) return true;
+    const relative = path.relative(path.resolve(workspace), path.resolve(workspace, value));
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return true;
+  }
+  return false;
+}
+
 export function beforeDeliveryTool(call, options) {
   if (call.name === 'exec' && (!Array.isArray(call.input?.argv) || !call.input.argv.length || !call.input.argv.every(arg => typeof arg === 'string'))) return { pass: false, reason: 'exec requires a non-empty argv array of strings' };
   if (call.name === 'todo') return { pass: true };
@@ -97,6 +113,7 @@ export function beforeDeliveryTool(call, options) {
     if (!(COMMANDS.has(argv[0]) || checkRecoveryInput(call.input) || ['todo', 'inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && harnessControlCommand(['harness', ...effectiveArgv], options.workspace) === argv[0])) return { pass: false, reason: 'ae requires argv for a supported lifecycle command or exact diagnostic/worklist control' };
     if (argv[0] === 'trust' && argv[1] && argv[1] !== 'status') return { pass: false, reason: 'Trust approval or revocation requires a person; the agent may read trust status only.' };
     if (argv.some(arg => /^--(?:workspace|copilot-home|ae-home|harness-home|home)(?:=|$)/.test(arg))) return { pass: false, reason: 'Lifecycle commands are bound to this run workspace and homes.' };
+    if (argv[0] === 'compound' && checkOutputOutsideWorkspace(argv, options.workspace)) return { pass: false, reason: '--check-output must be - or a relative path inside the run workspace.' };
     return { pass: true };
   }
   const payload = toolPayload(call, options.workspace, options.sessionId);

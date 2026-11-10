@@ -124,10 +124,14 @@ function emitError({ code, message, fix, exit }) {
 
 const OUTPUT_LANES = { 'json-envelope': 'json', agent: 'agent', jsonl: 'jsonl' };
 
-function extractOutputLane(rawArgs) {
+function extractOutputLane(rawArgs, entry = null) {
+  // The value of a literal-valued flag (such as --evidence-quote) is never a
+  // flag, whatever it looks like, as validateArgs and commandHelpRequested read it.
+  const literal = new Set((entry?.args?.flags || []).filter(flag => flag.valueIsLiteral === true).flatMap(flag => [flag.name, ...(flag.aliases || [])]));
   let idx = -1;
   for (let i = 0; i < rawArgs.length; i++) {
     if (rawArgs[i] === '--') break; // literal-argument boundary — nothing past this is a flag
+    if (literal.has(rawArgs[i])) { i++; continue; }
     if (rawArgs[i] === '--output' || rawArgs[i].startsWith('--output=')) {
       idx = i;
       break;
@@ -142,9 +146,8 @@ function extractOutputLane(rawArgs) {
   const consumed = hasInlineValue ? 1 : 2;
   const lane = OUTPUT_LANES[value];
   if (!lane) {
-    // Echo only a short single-word value: the token may be the literal value
-    // of another flag, such as an evidence line, that only looks like --output.
-    const shown = value === undefined ? '(missing)' : /^[\w.-]{1,16}$/.test(value) ? JSON.stringify(value) : '(value not shown)';
+    // The value is never echoed: it may be text that only looks like a lane.
+    const shown = value === undefined ? '(missing)' : 'not a known lane';
     throw Object.assign(new Error(`invalid --output: ${shown} — must be json-envelope, agent, or jsonl`), {
       code: 'E_USAGE',
       hint: 'ae help',
@@ -208,7 +211,7 @@ export async function main() {
     } else if (hasCommand(command) && commandHelpRequested(args, getCommand(command))) {
       console.log(renderCommandHelp(command));
     } else if (hasCommand(command)) {
-      const { args: laneArgs, output } = extractOutputLane(args);
+      const { args: laneArgs, output } = extractOutputLane(args, getCommand(command));
       const runFlags = parseFlags(args);
       const executionWorkspace = path.resolve(runFlags.workspace);
       const domainInput = {};

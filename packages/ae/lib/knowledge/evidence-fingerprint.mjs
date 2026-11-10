@@ -16,6 +16,8 @@ export const EVIDENCE_RAW_CAP = 4096;
 export const EVIDENCE_PREFIX_LENGTH = 12;
 /** The most check output a match reads. */
 export const EVIDENCE_OUTPUT_CAP = 8 * 1024 * 1024;
+/** Output lines longer than this are skipped unread: no evidence line comes close. */
+export const EVIDENCE_OUTPUT_LINE_CAP = 64 * 1024;
 
 // CR, LF, NEL (U+0085) and the Unicode line and paragraph separators.
 const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
@@ -28,7 +30,7 @@ const CONTROL = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/;
 // an unterminated OSC. What is left of an unterminated OSC loses only its ESC,
 // so it cannot swallow the rest of the line; a C1 OSC byte stays and is
 // refused as a control character.
-const ANSI_SEQUENCE = /(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?!\])[ -/]*[0-~]?|\x1b/g;
+const ANSI_SEQUENCE = /(?:\x1b\]|\x9d)[^\x07\x1b\x9b\x9c\x9d]*(?:\x07|\x1b\\|\x9c)|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?!\])[ -/]*[0-~]?|\x1b/g;
 const SHA256 = /^[0-9a-f]{64}$/;
 const PREFIX = new RegExp(`^[0-9a-f]{${EVIDENCE_PREFIX_LENGTH},64}$`, 'i');
 
@@ -47,7 +49,7 @@ const digest = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 export function evidenceLineError(value) {
   if (typeof value !== 'string' || !value.trim()) return 'evidence_quote must be nonempty text';
   if (LINE_BREAK.test(value)) return 'evidence_quote must be a single line; pick the single most specific failing line of the check output';
-  if (Buffer.byteLength(value, 'utf8') > EVIDENCE_RAW_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
+  if (Buffer.byteLength(value, 'utf8') > EVIDENCE_RAW_CAP) return `evidence_quote input must be at most ${EVIDENCE_RAW_CAP} bytes before terminal codes are removed`;
   const normalized = normalizeEvidenceLine(value);
   if (!normalized) return 'evidence_quote must be nonempty text';
   if (Buffer.byteLength(normalized, 'utf8') > EVIDENCE_LINE_CAP) return `evidence_quote must be at most ${EVIDENCE_LINE_CAP} bytes`;
@@ -127,6 +129,7 @@ export function matchEvidence(output, prefix, { bytes = null } = {}) {
   const want = String(prefix ?? '').toLowerCase();
   const lines = String(output ?? '').split(LINE_SPLIT);
   for (let i = 0; i < lines.length; i++) {
+    if (lines[i].length > EVIDENCE_OUTPUT_LINE_CAP) continue;
     const normalized = normalizeEvidenceLine(lines[i]);
     if (!normalized) continue;
     if (bytes !== null && Buffer.byteLength(normalized, 'utf8') !== bytes) continue;

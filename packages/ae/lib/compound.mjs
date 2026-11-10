@@ -401,6 +401,9 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
     || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'evidence_quote'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
   if (decision.evidence_quote !== undefined) {
+    // A decision file would leave the evidence line on disk, so a decision
+    // carrying one must arrive on stdin.
+    if (flags.learningDecision !== '-') throw Object.assign(new Error('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file'), { code: 'E_USAGE', exit: EXIT.usage, hint: 'ae compound --plan <path> --learning-decision - --json' });
     if (decision.decision !== 'publish') throw new Error('evidence_quote applies only to a publish decision');
     const quoteError = evidenceLineError(decision.evidence_quote);
     if (quoteError) throw new Error(quoteError);
@@ -507,7 +510,7 @@ export function runEvidenceMatch({ workspace, flags }) {
   const hint = 'ae compound --match-evidence <sha256_prefix> --check-output <path|->';
   const other = MATCH_EXCLUSIVE_FLAGS.filter(([key]) => flags[key] != null && flags[key] !== false).map(([, name]) => name);
   if (other.length) throw usage(`--match-evidence only reads check output; it cannot be combined with ${other.join(', ')}`, hint);
-  if (flags.matchEvidence == null) throw usage('--check-output is used only with --match-evidence', hint);
+  if (flags.matchEvidence == null) throw usage('--check-output and --evidence-bytes are used only with --match-evidence', hint);
   const prefixError = evidencePrefixError(flags.matchEvidence);
   if (prefixError) throw usage(prefixError, hint);
   const bytesError = flags.evidenceBytes == null ? null : evidenceBytesError(flags.evidenceBytes);

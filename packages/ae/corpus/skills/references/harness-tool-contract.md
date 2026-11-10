@@ -237,7 +237,7 @@ Every check in the `verify` payload carries its effective `severity`; non-passin
 
 **compound**
 
-For delivery completion, submit a publish or explicit no-learning decision with `ae compound --plan <path> --learning-decision <file> --json`; see [learning-operations.md](learning-operations.md). A bare legacy compound call does not record the required decision. Then pipe a revision-bound complete decision to `ae plan-update --plan <path> --file - --json`; see [plan-operations.md](plan-operations.md). The legacy result shape below remains readable; use the returned decision/publication record for the current operation.
+For delivery completion, pipe a publish or explicit no-learning decision to `ae compound --plan <path> --learning-decision - --json` (a decision with `evidence_quote` is refused from a file); see [learning-operations.md](learning-operations.md). A bare legacy compound call does not record the required decision. Then pipe a revision-bound complete decision to `ae plan-update --plan <path> --file - --json`; see [plan-operations.md](plan-operations.md). The legacy result shape below remains readable; use the returned decision/publication record for the current operation.
 
 ```json
 {

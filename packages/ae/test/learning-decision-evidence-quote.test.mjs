@@ -12,6 +12,7 @@ import { storeDir, ensureStore } from '../lib/knowledge/store.mjs';
 import { LEARNING_BYTE_CAP, consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
 import { normalizeEvidenceLine, evidenceLineError, evidenceFingerprint, matchEvidence, evidencePrefixError, evidenceBytesError, compoundJournalArgv, readEvidenceFingerprint, EVIDENCE_LINE_CAP } from '../lib/knowledge/evidence-fingerprint.mjs';
 import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
+import { beforeDeliveryTool } from '../lib/agent-delivery.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
@@ -45,7 +46,7 @@ test('normalisation strips a BOM and escapes, trims both ends, applies NFC, and 
   assert.equal(evidenceLineError(coloured), null);
   assert.equal(evidenceFingerprint(coloured).bytes, EVIDENCE_LINE_CAP);
   assert.match(evidenceLineError(`${'x'.repeat(EVIDENCE_LINE_CAP)}y`), /at most 600 bytes/);
-  assert.match(evidenceLineError(`${'\x1b[0m'.repeat(1100)}x`), /at most 600 bytes/, 'raw input over 4 KB is refused');
+  assert.match(evidenceLineError(`${'\x1b[0m'.repeat(1100)}x`), /input must be at most 4096 bytes/, 'raw input over 4 KB is refused');
 });
 
 test('the compound journal argv replaces every evidence value, accepted or refused, in both forms', () => {
@@ -301,4 +302,76 @@ test('with events and the run journal on, no capture path leaves the evidence li
   assert.ok(journals.some(file => fs.readFileSync(file, 'utf8').includes('<evidence>')), 'the journal records the placeholder');
   assert.ok(journals.some(file => fs.readFileSync(file, 'utf8').includes('command.start')), 'events are on');
   assert.deepEqual(filesHolding(f.dir, MARKER), [], 'no file anywhere, journal and events included, holds the line');
+});
+
+test('normalisation and matching stay linear on long runs of C1 OSC bytes, and very long output lines are skipped', () => {
+  const started = process.hrtime.bigint();
+  assert.equal(normalizeEvidenceLine('\u009d'.repeat(1 << 20)).length, 1 << 20);
+  assert.deepEqual(matchEvidence(`${'\u009d'.repeat(1 << 20)}\n${QUOTE}\n`, QUOTE_SHA), { matched: true, line: 2 });
+  assert.deepEqual(matchEvidence(`${'x'.repeat(70 * 1024)} ${QUOTE}`, QUOTE_SHA), { matched: false, line: null }, 'a line over 64 KB is skipped unread');
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 2000, 'a 1 MiB line of U+009D is handled quickly');
+  assert.match(evidenceLineError('x'.repeat(5000)), /input must be at most 4096 bytes/, 'the raw cap has its own message');
+});
+
+test('a decision carrying evidence_quote is refused from a file, and the dry run then publish flow works over stdin', t => {
+  const f = verifiedFixture(t);
+  const file = path.join(f.ws, '.harness', 'decision.json');
+  fs.writeFileSync(file, JSON.stringify(publish('quote-file', { evidence_quote: QUOTE })));
+  const fromFile = f.cli(['compound', '--plan', f.plan, '--learning-decision', file, '--json']);
+  assert.equal(fromFile.status, 2, fromFile.stdout + fromFile.stderr);
+  assert.match(fromFile.stdout + fromFile.stderr, /evidence_quote is accepted only from stdin/);
+  assert.ok(!(fromFile.stdout + fromFile.stderr).includes(MARKER));
+  fs.rmSync(file);
+  const plainFile = path.join(f.ws, '.harness', 'plain.json');
+  fs.writeFileSync(plainFile, JSON.stringify(publish('plain-file')));
+  assert.equal(f.cli(['compound', '--plan', f.plan, '--learning-decision', plainFile, '--json']).status, 0, 'a decision without evidence still works from a file');
+  const value = publish('quote-dry-run', { evidence_quote: QUOTE });
+  const dry = f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', '--dry-run', '--json'], JSON.stringify(value));
+  assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).dryRun, true);
+  const real = decide(f, value);
+  assert.equal(real.status, 0, real.stdout + real.stderr);
+  assert.deepEqual(JSON.parse(real.stdout).evidence, { sha256_prefix: QUOTE_SHA.slice(0, 12), bytes: Buffer.byteLength(QUOTE) });
+  assert.deepEqual(filesHolding(f.dir, MARKER), []);
+});
+
+test('a capture over stdin and a later match agree across BOM, NFD, OSC and CRLF, and a mismatch is not recorded as a failed run', t => {
+  const f = verifiedFixture(t, { events: true });
+  const line = `Café ${MARKER} failed: expected 2`;
+  const captured = f.cli(['compound', '--insight', '--title', 'round trip', '--body', 'retries matter', '--evidence-quote', '-', '--json'],
+    `﻿\x1b]0;title\x07Café ${MARKER} failed: expected 2  \r\n`);
+  assert.equal(captured.status, 0, captured.stdout + captured.stderr);
+  const { sha256_prefix: prefix, bytes } = JSON.parse(captured.stdout).evidence;
+  assert.equal(prefix, sha(line).slice(0, 12));
+  fs.writeFileSync(path.join(f.ws, 'out.txt'), `TAP version 13\r\n\x1b[31m${line}\x1b[0m\r\n`);
+  const match = f.cli(['compound', '--match-evidence', prefix, '--evidence-bytes', String(bytes), '--check-output', 'out.txt', '--json']);
+  assert.equal(match.status, 0, match.stdout + match.stderr);
+  assert.equal(JSON.parse(match.stdout).line, 2);
+  const miss = f.cli(['compound', '--match-evidence', prefix, '--check-output', '-', '--json'], 'other output\n');
+  assert.equal(miss.status, 1, miss.stdout + miss.stderr);
+  const runs = fs.readFileSync(path.join(f.ws, '.harness/runs.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const last = runs.filter(r => r.command === 'compound').at(-1);
+  assert.equal(runs.filter(r => r.run === last.run).at(-1).status, 'succeeded', 'a mismatch is an answer, not a failed run');
+  const events = walk(f.dir).filter(file => path.basename(file) === 'events.jsonl').flatMap(file => fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)));
+  const result = events.filter(e => e.type === 'command.result' && e.run === last.run).at(-1);
+  assert.ok(result, 'events are on');
+  assert.equal(result.status, 'ok');
+  const alone = f.cli(['compound', '--evidence-bytes', '5', '--json']);
+  assert.equal(alone.status, 2, '--evidence-bytes without --match-evidence is a usage error');
+  assert.match(alone.stdout + alone.stderr, /used only with --match-evidence/);
+  const lane = f.cli(['compound', '--insight', '--title', 'lane', '--body', 'retries matter', '--evidence-quote', `--output=${MARKER}`, '--json']);
+  assert.equal(lane.status, 0, `a literal value that looks like --output is the evidence line: ${lane.stdout}${lane.stderr}`);
+  assert.equal(JSON.parse(lane.stdout).evidence.sha256_prefix, sha(`--output=${MARKER}`).slice(0, 12));
+  const badLane = f.cli(['compound', '--output', `${MARKER}`, '--json']);
+  assert.equal(badLane.status, 2);
+  assert.match(badLane.stderr, /not a known lane/);
+  assert.deepEqual(filesHolding(f.dir, MARKER).filter(file => !file.endsWith('out.txt')), [], 'nothing but the test-written output holds the line');
+});
+
+test('under ae agent delivery, --check-output is confined to the workspace', () => {
+  const workspace = process.cwd();
+  const call = value => beforeDeliveryTool({ name: 'harness', input: { argv: ['compound', '--match-evidence', QUOTE_SHA.slice(0, 12), ...value, '--json'] } }, { workspace });
+  assert.equal(call(['--check-output', 'out.txt']).pass, true);
+  assert.equal(call(['--check-output', '-']).pass, true);
+  for (const value of [['--check-output', '/etc/passwd'], ['--check-output=../outside.txt'], ['--check-output', '.']]) assert.equal(call(value).pass, false, value.join(' '));
 });
