@@ -10,7 +10,7 @@ import { loadPlan } from './plan-parse.mjs';
 import { planContractText } from './work-contract.mjs';
 import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TERMINAL_TOOLS } from '../corpus/hooks/lib/tool-payload.mjs';
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
-import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, repairReadinessIndex } from './decision-archive.mjs';
+import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth } from './decision-archive.mjs';
 
 const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
@@ -439,23 +439,22 @@ export function recordDecision(options) {
 
 // Status names at most this many stale plans, by short hash, newest first.
 const STATUS_PLAN_SAMPLE = 8;
-const REPAIR_COMMAND = 'echo \'{"schema":1,"operation":"repair"}\' | ae resources decision --file -';
 /** The one derived readiness-index warning, or none. Recomputed from the index on every call. */
 function readinessWarnings(loc, state) {
-  const { stale, untracked } = readinessIndexHealth(loc, state);
+  const { stale, untracked, sweep } = readinessIndexHealth(loc, state);
   if (!stale.length && !untracked) return [];
   const shown = stale.slice(0, STATUS_PLAN_SAMPLE);
   const parts = [];
   if (stale.length) parts.push(`readiness index is stale for ${untracked ? 'at least ' : ''}${stale.length} plan(s): their newest readiness receipt was archived but the index names an older one or none; citations use the archived receipt and the index write is retried on compaction`);
-  if (untracked) parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; run ${REPAIR_COMMAND} to rebuild the index from the request archive`);
-  return [{ fault: 'readiness-index', planCount: stale.length, ...(untracked ? { atLeast: true, untrackedPlans: untracked, repair: REPAIR_COMMAND } : {}), plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: stale.length - shown.length,
+  if (untracked) {
+    const progress = sweep.total || sweep.swept ? `swept ${sweep.swept} of ${sweep.total} archived request record(s)` : 'the sweep starts on the next decision write';
+    const last = sweep.last ? [sweep.last.unreadable ? `${sweep.last.unreadable} unreadable request record(s)` : null, sweep.last.failed ? `${sweep.last.failed} refused index write(s)` : null,
+      sweep.last.overCap ? 'more request records than one sweep can list' : null].filter(Boolean) : [];
+    parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive a bounded slice per decision write (${progress})`
+      + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them` : ''));
+  }
+  return [{ fault: 'readiness-index', planCount: stale.length, ...(untracked ? { atLeast: true, untrackedPlans: untracked, reconciling: { swept: sweep.swept, total: sweep.total, ...(sweep.last ? { previous: sweep.last } : {}) } } : {}), plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: stale.length - shown.length,
     message: parts.join('; ') }];
-}
-
-/** Rebuild readiness indexes from the request archive under the decision lock; clears the untracked marker only after a complete scan. */
-export function repairDecisionArchive(options) {
-  const loc = locations(options);
-  return mutate(loc, state => ({ schema: 1, operation: 'repair', readiness: repairReadinessIndex(loc, state) }));
 }
 
 export function decisionStatus(options) {
@@ -560,12 +559,7 @@ export function decisionResultOf(options) {
     if (options.input.schema !== 1) throw fail('status requires schema 1');
     return decisionStatus({ ...options, taskId: options.input.taskId, requestId: options.input.requestId });
   }
-  if (options.input.operation === 'repair') {
-    fields(options.input, ['schema', 'operation'], 'repair input');
-    if (options.input.schema !== 1) throw fail('repair requires schema 1');
-    return repairDecisionArchive(options);
-  }
-  throw fail('unsupported decision operation; use prepare, record, status or repair');
+  throw fail('unsupported decision operation; use prepare, record or status');
 }
 
 /** Optional pre-tool layer. It supplements rather than replaces existing plan/host controls. */
