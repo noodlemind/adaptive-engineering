@@ -23,9 +23,10 @@ import { harnessGlobalHome, resolveIntelliJHome, resolveVSCodeSettingsPaths } fr
 import { loadRetired, findStaleOrphans } from './sync.mjs';
 import { storeDir, storeDirForId, repoId, localRepoId, workspaceStorageId, listLearnings, readSavedLearningFiles, matchingLocalStoreIds, carriedBytesDiffer } from './knowledge/store.mjs';
 import { storageIdForRepo } from './storage-aliases.mjs';
-import { consolidateStatus } from './knowledge/consolidate.mjs';
+import { consolidateStatus, isActiveFm } from './knowledge/consolidate.mjs';
 import { loadRoutingPolicy } from './routing-policy.mjs';
-import { listBuckets } from './knowledge/overlay.mjs';
+import { listBuckets, loadLayeredLearnings } from './knowledge/overlay.mjs';
+import { feedbackState, feedbackColumns, pruningCandidates, PRUNING_EXPOSURE_THRESHOLD } from './learning-feedback.mjs';
 import { branchExists } from './knowledge/layer.mjs';
 import { deriveGitContext, resolveDefaultBranch } from './git-context.mjs';
 import { loadReportEvents, knowledgeSlos } from './report.mjs';
@@ -548,7 +549,54 @@ function knowledgeChecks({ workspace, copilotHome }) {
     // Advisory; never fail doctor on a knowledge-check error.
   }
 
+  const pruning = feedbackPruningCheck({ workspace });
+  if (pruning) checks.push(pruning);
+
   return checks;
+}
+
+/**
+ * K8 (memory plan 1d): advisory pruning hint for learnings exposed at least
+ * PRUNING_EXPOSURE_THRESHOLD times with no `helped` verdict. Reported only
+ * under knowledge.feedback suggest|on; it never retires or disputes anything.
+ * `ae learnings --why` and `ae learning retire` look up golden learnings only,
+ * so a branch-layer candidate is pointed at its file in the branch bucket
+ * instead: recommending them would find nothing, or act on a shadowed golden.
+ */
+const PRUNING_CANDIDATE_LIST_CAP = 20;
+
+export function feedbackPruningCheck({ workspace, home } = {}) {
+  try {
+    if (feedbackState({ workspace, home }) === 'off') return null;
+    const learnings = loadLayeredLearnings({ workspace, home }).learnings.filter((l) => isActiveFm(l.fm));
+    const candidates = pruningCandidates({ columns: feedbackColumns({ workspace, home }), learnings });
+    const golden = candidates.filter((c) => c.layer !== 'branch');
+    const branch = candidates.filter((c) => c.layer === 'branch');
+    const label = (c) => `${c.id} (exposed ${c.exposed}, helped 0)`;
+    const listed = (list, render = label) => `${list.slice(0, 5).map(render).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}`;
+    const dir = branch.length ? storeDir(workspace, { home }) : null;
+    const branchFile = (c) => {
+      const rel = c.file ? path.relative(dir, c.file) : '';
+      return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : null;
+    };
+    const hints = [];
+    if (golden.length) hints.push(`pruning hint, advisory only: ${listed(golden)} — review with ae learnings --why <id>; retire only through ae learning retire`);
+    if (branch.length) {
+      hints.push(`branch-layer pruning hint, advisory only: ${listed(branch, (c) => `${label(c)}${branchFile(c) ? ` at ${branchFile(c)} in the knowledge store` : ''}`)} — ae learnings --why and ae learning retire act only on golden learnings, so review the branch learning file itself; ae knowledge status lists its branch bucket`);
+    }
+    return {
+      id: 'K8',
+      name: `Learnings exposed ${PRUNING_EXPOSURE_THRESHOLD}+ times have helped at least once`,
+      pass: candidates.length === 0,
+      hint: hints.length ? hints.join('; ') : `no learning exposed ${PRUNING_EXPOSURE_THRESHOLD}+ times without a helped verdict`,
+      optional: true,
+      ...(candidates.length ? { pruningCandidates: candidates.slice(0, PRUNING_CANDIDATE_LIST_CAP).map((c) => c.id) } : {}),
+      ...(candidates.length > PRUNING_CANDIDATE_LIST_CAP ? { omittedPruningCandidates: candidates.length - PRUNING_CANDIDATE_LIST_CAP } : {}),
+      ...(branch.length ? { branchPruningCandidates: branch.slice(0, PRUNING_CANDIDATE_LIST_CAP).map((c) => c.id) } : {}),
+    };
+  } catch {
+    return null; // Advisory; never fail doctor on a knowledge-check error.
+  }
 }
 
 export function structuralChecks({ workspace, grammarRoots = packageGrammarRoots(), lockPath } = {}) {

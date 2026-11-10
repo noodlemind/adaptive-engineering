@@ -344,7 +344,8 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
   }
 }
 
-export function writeFileContained(root, rel, content, { exclusive = false, mode } = {}) {
+/** `durable: true` flushes the content to disk before the rename, so a crash never leaves an empty or partial file under the name. */
+export function writeFileContained(root, rel, content, { exclusive = false, mode, durable = false } = {}) {
   if (mode !== undefined && (!Number.isInteger(mode) || mode < 0 || mode > 0o777)) return null;
   const rootFull = path.resolve(root);
   const full = assertNoSymlinkAncestors(rootFull, rel);
@@ -378,6 +379,7 @@ export function writeFileContained(root, rel, content, { exclusive = false, mode
   try {
     fs.writeFileSync(fd, content, { encoding: 'utf8' });
     if (mode !== undefined) fs.fchmodSync(fd, mode);
+    if (durable) fs.fsyncSync(fd);
     fs.closeSync(fd);
   } catch {
     try {

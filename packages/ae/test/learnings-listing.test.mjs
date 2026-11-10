@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { storeDir } from '../lib/knowledge/store.mjs';
+import { publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binPath = path.join(packageRoot, 'bin', 'ae.mjs');
@@ -376,4 +377,30 @@ test('failure count survives more than 20 unrelated events written after the ver
   const out = JSON.parse(res.stdout);
   const human = out.learnings.find((l) => l.id === humanId);
   assert.equal(human.failures, 1, 'verify-fail event must still be counted past a 20-event window of unrelated events');
+});
+
+test('learnings listing is byte-identical under feedback off and shows exposed/helped/wrong/last_exposed under suggest and on', () => {
+  const c = ctx();
+  const { autoId, humanId } = seed(c);
+  const outputs = () => [run(c, ['learnings']).stdout, run(c, ['learnings'], { json: false }).stdout];
+  const before = outputs();
+
+  for (let i = 0; i < 2; i++) {
+    recordExposure({ recordRoot: c.ws, workspace: c.ws, home: c.harnessHome, planPath: 'docs/plans/p1.md', delivered: [{ id: autoId }], now: new Date(`2026-11-0${i + 1}T00:00:00Z`) });
+  }
+  publishFeedbackRecord({ workspace: c.ws, home: c.harnessHome, operation: 'c'.repeat(64), planPath: 'docs/plans/p1.md', captureDate: '2026-11-02', feedback: { recalled: [{ id: autoId, verdict: 'wrong' }] } });
+  assert.deepEqual(outputs(), before, 'off: listing output is byte-identical with records present');
+
+  for (const state of ['suggest', 'on']) {
+    assert.equal(run(c, ['knowledge', 'feedback', state]).status, 0);
+    const out = JSON.parse(run(c, ['learnings']).stdout);
+    assert.equal(out.feedback, state);
+    const auto = out.learnings.find((l) => l.id === autoId);
+    const human = out.learnings.find((l) => l.id === humanId);
+    assert.deepEqual([auto.exposed, auto.helped, auto.wrong, auto.last_exposed], [2, 0, 1, '2026-11-02T00:00:00.000Z']);
+    assert.deepEqual([human.exposed, human.helped, human.wrong, human.last_exposed], [0, 0, 0, null]);
+    const plain = run(c, ['learnings'], { json: false }).stdout;
+    assert.match(plain, /exposed 2 · helped 0 · wrong 1 · last_exposed 2026-11-02/);
+    assert.match(plain, /exposed 0 · helped 0 · wrong 0 · last_exposed never/);
+  }
 });

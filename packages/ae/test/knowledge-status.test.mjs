@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { ensureStore, storeDir } from '../lib/knowledge/store.mjs';
 import { knowledgeStatus } from '../lib/knowledge/status.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
+import { publishFeedbackRecord, recordExposure } from '../lib/learning-feedback.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binPath = path.join(packageRoot, 'bin', 'ae.mjs');
@@ -188,5 +189,43 @@ test('CLI: --branch and --ids refuse a missing or flag-shaped value instead of s
     const res = runHarness([...args, '--workspace', ws], { HARNESS_HOME: harnessHome });
     assert.notEqual(res.status, 0, `${args.join(' ')} must be refused`);
     assert.match(res.stderr, /invalid --(branch|ids)/, `${args.join(' ')}: ${res.stderr}`);
+  }
+});
+
+test('CLI: knowledge status and --status are byte-identical under feedback off and show feedback columns under suggest and on', () => {
+  const ws = gitWorkspace('feature/feedback-columns');
+  const harnessHome = tempDir('kstatus-fb-hh-');
+  const copilotHome = tempDir('kstatus-fb-ch-');
+  const { dir } = ensureStore(ws, { home: harnessHome });
+  writeLearning(dir, 'sql/seen');
+  writeLearning(dir, 'sql/unseen');
+  const env = { HARNESS_HOME: harnessHome };
+  const outputs = () => ['status', '--status'].flatMap((sub) => [
+    runHarness(['knowledge', sub, '--workspace', ws, '--copilot-home', copilotHome, '--json'], env).stdout,
+    runHarness(['knowledge', sub, '--workspace', ws, '--copilot-home', copilotHome], env).stdout,
+  ]);
+  const before = outputs();
+
+  for (const plan of ['docs/plans/a.md', 'docs/plans/b.md']) {
+    recordExposure({ recordRoot: ws, workspace: ws, home: harnessHome, planPath: plan, delivered: [{ id: 'sql/seen' }], now: new Date(plan.endsWith('a.md') ? '2026-11-01T00:00:00Z' : '2026-11-05T00:00:00Z') });
+  }
+  recordExposure({ recordRoot: ws, workspace: ws, home: harnessHome, planPath: 'docs/plans/a.md', delivered: [{ id: 'sql/seen' }], now: new Date('2026-11-03T00:00:00Z') });
+  publishFeedbackRecord({ workspace: ws, home: harnessHome, operation: 'a'.repeat(64), planPath: 'docs/plans/a.md', captureDate: '2026-11-03', feedback: { recalled: [{ id: 'sql/seen', verdict: 'helped' }] } });
+  publishFeedbackRecord({ workspace: ws, home: harnessHome, operation: 'b'.repeat(64), planPath: 'docs/plans/b.md', captureDate: '2026-11-05', feedback: { recalled: [{ id: 'sql/seen', verdict: 'wrong' }] } });
+
+  assert.deepEqual(outputs(), before, 'off: knowledge status and --status are byte-identical with records present');
+
+  for (const state of ['suggest', 'on']) {
+    assert.equal(runHarness(['knowledge', 'feedback', state, '--workspace', ws, '--json'], env).status, 0);
+    const expected = { state, learnings: [{ id: 'sql/seen', exposed: 3, helped: 1, wrong: 1, last_exposed: '2026-11-05T00:00:00.000Z' }] };
+    const report = JSON.parse(runHarness(['knowledge', 'status', '--workspace', ws, '--copilot-home', copilotHome, '--json'], env).stdout);
+    assert.deepEqual(report.feedback, expected, `${state}: exposure summed across this workspace's plans, verdicts from the project store`);
+    const bare = JSON.parse(runHarness(['knowledge', '--status', '--workspace', ws, '--copilot-home', copilotHome, '--json'], env).stdout);
+    assert.deepEqual(bare.feedback, expected);
+    for (const sub of ['status', '--status']) {
+      const plain = runHarness(['knowledge', sub, '--workspace', ws, '--copilot-home', copilotHome], env).stdout;
+      assert.match(plain, new RegExp(`feedback\\s+${state}`));
+      assert.match(plain, /sql\/seen · exposed 3 · helped 1 · wrong 1 · last_exposed 2026-11-05/);
+    }
   }
 });

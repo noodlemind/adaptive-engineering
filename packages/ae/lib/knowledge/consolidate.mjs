@@ -6,7 +6,7 @@ import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
 import { bucketDirFor, isSafeBucketKey, listBuckets, loadLayeredLearnings } from './overlay.mjs';
-import { feedbackState, feedbackSummary } from '../learning-feedback.mjs';
+import { feedbackState, feedbackSummary, feedbackColumns, feedbackOrder } from '../learning-feedback.mjs';
 import { recheckState, recheckSummary, recheckDue, RECHECK_STATUS_PRESELECT } from '../learning-recheck.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
@@ -220,7 +220,7 @@ export function consolidateStatus(options) {
  * read only `quarantined`, `promotionCandidates` or `debt`): the status then names the re-check state without counts, as `suggest` does, and
  * re-check never adds to `due`. Orient and `ae consolidate` keep the default.
  */
-function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, recheckRequested = false, withRecheck = true }) {
+function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, feedbackVerdicts = null, recheckRequested = false, withRecheck = true }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -240,7 +240,7 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
     const learnings = listLearnings(view.layerRoot);
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
-  const feedback = feedbackView({ workspace, home, learnings: active, withFeedback });
+  const feedback = feedbackView({ workspace, home, learnings: active, withFeedback, verdicts: feedbackVerdicts });
   let recheckMode = 'off';
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
   // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks. A status that
@@ -303,12 +303,12 @@ function answeredClusters(dir, now = Date.now()) {
  * `off`, so output stays byte-identical. The history is read under `on`, where
  * `due` depends on it, or under `suggest` only for a caller that shows it.
  */
-function feedbackView({ workspace, home, learnings, withFeedback }) {
+function feedbackView({ workspace, home, learnings, withFeedback, verdicts }) {
   let state = 'off';
   try { state = feedbackState({ workspace, home }); } catch { state = 'off'; }
   if (state === 'off' || (state === 'suggest' && !withFeedback)) return null;
   try {
-    return { state, ...feedbackSummary({ workspace, home, learnings }) };
+    return { state, ...feedbackSummary({ workspace, home, learnings, verdicts }) };
   } catch (error) {
     return { state, records: 0, learnings: [], review_required: [], reviewers: [], unavailable: inertLine(error.message).slice(0, 200) };
   }
@@ -347,7 +347,8 @@ function recheckView({ workspace, home, state, resolved, preselect, scope = 'ful
 }
 
 export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null, recheck: recheckRequested = false }) {
-  const { status, recheck: computedRecheck } = statusWithRecheck({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, recheckRequested });
+  const feedbackVerdicts = new Map();
+  const { status, recheck: computedRecheck } = statusWithRecheck({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, feedbackVerdicts, recheckRequested });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
 
@@ -396,8 +397,9 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
   const feedback = status.feedback || null;
   const recheck = recheckRequested ? computedRecheck : null;
-  const reviewFirst = feedback?.state === 'on' ? new Set(feedback.review_required) : null;
-  const ordered = reviewFirst ? active.toSorted((a, b) => Number(reviewFirst.has(b.id)) - Number(reviewFirst.has(a.id))) : active;
+  // Under `on` only: review_required first, then feedback-disputed, then most exposed.
+  // The history was read once for status; its verdict tallies feed the columns.
+  const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home, verdicts: feedbackVerdicts }), reviewRequired: feedback.review_required, layer: view.layer }) : active;
   const learnings = ordered.map((l) => ({
     id: l.id,
         trigger: inertLine(l.fm.trigger || ''),
