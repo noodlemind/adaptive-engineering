@@ -39,6 +39,11 @@ const FILE_TOUCHING = new Set(['ADD', 'STRENGTHEN', 'SUPERSEDE', 'MERGE']);
 
 const PROMOTION_OP_KINDS = new Set(['ADD', 'STRENGTHEN', 'SUPERSEDE']);
 const DISPUTED_FIX_THRESHOLD = 3;
+// Every field the secret scan reads is rendered into the learning, which is
+// capped at LEARNING_BYTE_CAP bytes, so text far past that can never be
+// admitted. Refusing it before the scan keeps the scan's cost bounded.
+const SCANNED_TEXT_CAP = 16 * LEARNING_BYTE_CAP;
+const oversizeForScan = text => Buffer.byteLength(text, 'utf8') > SCANNED_TEXT_CAP;
 const CONTENT_FAILURE_CODES = new Set(['E_SCHEMA', 'E_SECRET', 'E_LINT', 'E_BYTE_CAP', 'E_EXISTS', 'E_TARGET']);
 
 function opWeight(op) {
@@ -1289,7 +1294,9 @@ export function applyOps({
             exitCode: 1,
           };
         }
-        const secrets = scanSecretsFolded(`${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
+        const scanned = `${op.trigger}\n${op.body}\n${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`;
+        if (oversizeForScan(scanned)) return rejectOp('E_BYTE_CAP', `op ${i}: claim text exceeds ${SCANNED_TEXT_CAP} bytes — split into smaller claims`, op.episodes);
+        const secrets = scanSecretsFolded(scanned);
         if (secrets.length) {
           return rejectOp('E_SECRET', `op ${i}: secret-shaped content (${secrets.map((s) => s.id).join(', ')})`, op.episodes);
         }
@@ -1376,7 +1383,9 @@ export function applyOps({
         consumedTargets.add(op.target);
       }
       if (op.op === 'STRENGTHEN') {
-        const scopeSecrets = scanSecretsFolded(`${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`);
+        const scopeText = `${op.why || ''}\n${op.applies || ''}\n${op.does_not_apply || ''}\n${op.shows || ''}`;
+        if (oversizeForScan(scopeText)) return rejectOp('E_BYTE_CAP', `op ${i}: scope text exceeds ${SCANNED_TEXT_CAP} bytes`, op.episodes);
+        const scopeSecrets = scanSecretsFolded(scopeText);
         if (scopeSecrets.length) {
           return rejectOp(
             'E_SECRET',

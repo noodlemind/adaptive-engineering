@@ -1,4 +1,5 @@
-import { scanSecretsInWords } from '../secret-scan.mjs';
+import { scanSecrets } from '../secret-scan.mjs';
+import { createRedactor } from '../redact.mjs';
 import { inertLine, splitFrontmatter, stripInvisible } from './store.mjs';
 
 /**
@@ -29,25 +30,18 @@ export const EVIDENCE_QUOTE_READ_CAP = 4096;
 const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
 
 // Tab is the only control a quote may hold. Every other C0 or C1 control,
-// every bidirectional override, isolate or mark (U+200E, U+200F, U+061C), the
-// zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
-// U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB), the tag characters
-// (U+E0000-U+E007F), and every other default-ignorable code point or format
-// (Cf) character (such as U+034F, the variation selectors U+FE00-U+FE0F, the
-// Hangul fillers U+115F, U+1160, U+3164, U+FFA0, U+17B4 and U+1D173-U+1D17A)
-// and every blank glyph (see BLANK_GLYPH) are refused: they would land raw in frontmatter, reorder what a reader or
-// model sees, or hide text from a reader while a model still reads it.
-// One exception: emoji presentation. VARIATION SELECTOR-16 (U+FE0F) is
-// allowed anywhere, and ZERO WIDTH JOINER (U+200D) between two pictographs
-// (a VS16 or a skin-tone modifier may sit before it), so `Warning \u26a0\ufe0f`
-// and `dev \u{1f468}\u200d\u{1f4bb}` are accepted and displayed as written.
-// A joiner anywhere else, such as between two letters of a token, is still
-// refused. Screening removes both (see stripInvisible), so neither can hide a
-// token from the secret scan.
-const EMOJI_PRESENTATION = /\ufe0f|(?<=\p{Extended_Pictographic}(?:\ufe0f|[\u{1f3fb}-\u{1f3ff}])?)\u200d(?=\p{Extended_Pictographic})/gu;
-// Characters that are not format or default-ignorable but are drawn as
-// nothing: U+2800 BRAILLE PATTERN BLANK. They are treated as invisible:
-// refused on write, removed from screening copies and from display.
+// every bidirectional override, isolate or mark, the zero-width and
+// invisible format characters, the tag characters, every other
+// default-ignorable code point or format (Cf) character, and the blank glyph
+// U+2800 are refused: they would land raw in frontmatter, reorder what a
+// reader or model sees, or hide text from a reader while a model still reads
+// it. One exception: emoji presentation. The variation selectors VS15
+// (U+FE0E) and VS16 (U+FE0F) are allowed anywhere, and ZERO WIDTH JOINER
+// (U+200D) between two pictographs (a variation selector or a skin-tone
+// modifier may sit before it). Keycaps (`1️⃣`) need nothing more:
+// U+20E3 is a combining mark, not a format character. Screening removes all
+// of these (see fold), so none can hide a token from the screen.
+const EMOJI_PRESENTATION = /[\ufe0e\ufe0f]|(?<=\p{Extended_Pictographic}(?:[\ufe0e\ufe0f]|[\u{1f3fb}-\u{1f3ff}])?)\u200d(?=\p{Extended_Pictographic})/gu;
 const BLANK_GLYPH = '\u2800';
 const BLANK_GLYPH_ALL = new RegExp(`[${BLANK_GLYPH}]`, 'gu');
 const DISALLOWED = /[\x00-\x08\x0a-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}\u2800]/u;
@@ -56,25 +50,19 @@ const DISALLOWED = /[\x00-\x08\x0a-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028
 // character at all, and each reader replaces or drops it differently.
 const OPAQUE = /[\p{Co}\p{Cn}\p{Cs}]/u;
 const OPAQUE_ALL = /[\p{Co}\p{Cn}\p{Cs}]/gu;
-// What the display string removes: every invisible character (as in
-// stripInvisible) and every private-use or unassigned one, except the VS16
-// and ZWJ the emoji allowance permits, which the first branch keeps.
+// What the display string removes: every invisible character and every
+// private-use or unassigned one, except what the emoji allowance permits.
 const DISPLAY_HIDDEN = new RegExp(`(${EMOJI_PRESENTATION.source})|[\\p{Default_Ignorable_Code_Point}\\p{Cf}\\p{Co}\\p{Cn}\\p{Cs}${BLANK_GLYPH}]`, 'gu');
 
 // Whole terminal escape sequences: CSI (ESC [ or the C1 CSI byte) with its
 // parameters and final byte, OSC (ESC ] or the C1 OSC byte) up to its
 // terminator, and any other ESC-introduced sequence.
 const ANSI_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -\/]*[0-~]?/g;
-// What is left of a colour code once its ESC is gone, such as `[33m`. Its
-// final `m` is a word character, so a pattern that starts with \b would not
-// see a token that follows it. Used only on screening copies, never output.
+// What is left of a colour code once its ESC is gone, such as `[33m`.
 const SGR_REMNANT = /\[[0-9;]*m/g;
-
 const stripAnsi = text => text.replace(ANSI_SEQUENCE, '');
-// Only the bytes that open an escape sequence (ESC, ESC [, ESC ], and the C1
-// CSI and OSC bytes), with everything after them kept. Removing whole
-// sequences can eat a token's first characters as parameters or a final byte
-// (`ghp_\x1b[A1b2...` loses its `A`), so this screening form keeps them.
+// Only the bytes that open an escape sequence, with everything after them
+// kept: removing whole sequences can eat a token's first characters.
 const ESCAPE_INTRODUCER = /\x1b[\[\]]?|[\x9b\x9d]/g;
 const stripEscapeIntroducers = text => text.replace(ESCAPE_INTRODUCER, '');
 // ESC or any C1 control in a quote read back from an episode. Writes refuse
@@ -82,10 +70,10 @@ const stripEscapeIntroducers = text => text.replace(ESCAPE_INTRODUCER, '');
 // withheld whole (see inertEvidenceQuote).
 const READ_CONTROL = /[\x1b\x80-\x9f]/;
 
-// Common Cyrillic and Greek look-alikes of Latin letters (U+0410 CYRILLIC
-// CAPITAL A for `A`, U+0440 CYRILLIC SMALL ER for `p`, and so on). NFKC keeps
-// them distinct, so `AKIA` or `ghp_` spelled with one would read as a
-// credential to a person but not to the scan.
+// Common Cyrillic and Greek look-alikes of Latin letters, mapped so the
+// pattern layer sees `АKIA...` as `AKIA...`. The token shape rule does
+// not need this table: it refuses long letter-and-digit tokens whatever their
+// script.
 const CONFUSABLES = new Map(Object.entries({
   '\u0410': 'A', '\u0412': 'B', '\u0415': 'E', '\u041a': 'K', '\u041c': 'M', '\u041d': 'H', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C', '\u0422': 'T', '\u0425': 'X', '\u0405': 'S', '\u0406': 'I', '\u0408': 'J',
   '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0456': 'i', '\u0455': 's', '\u0458': 'j',
@@ -96,70 +84,117 @@ const CONFUSABLE = new RegExp(`[${[...CONFUSABLES.keys()].join('')}]`, 'gu');
 const skeleton = text => text.replace(CONFUSABLE, ch => CONFUSABLES.get(ch));
 
 const stripHidden = text => stripInvisible(text).replace(OPAQUE_ALL, '').replace(BLANK_GLYPH_ALL, '');
-// Every combining mark removed after canonical decomposition, so a token with
-// an overlay or accent on one of its characters is seen as its base letters.
-const stripMarks = text => text.normalize('NFD').replace(/\p{M}/gu, '');
+// The screening copy of a form: invisible, private-use and unassigned
+// characters removed, compatibility-folded (NFKC, so fullwidth letters read
+// as ASCII), and every combining mark removed (so an overlay or accent on a
+// token's characters does not hide them). Never shown.
+const fold = text => stripHidden(stripHidden(text).normalize('NFKC').normalize('NFD').replace(/\p{M}/gu, '')).normalize('NFC');
 
-// Look-alikes are refused by structure, not listed: a confusables table can
-// never be complete. Within one whitespace-delimited word, a Latin letter may
-// not sit beside a letter of another script (Cyrillic, Greek, Armenian,
-// Cherokee and so on), whatever that letter looks like. The scripts written
-// with no space between words that customarily run into Latin text (Han,
-// Hiragana, Katakana, Hangul, Bopomofo) are exempt; they hold no Latin
-// look-alikes, and their fullwidth Latin forms are folded by NFKC. In a word
-// that reads as an identifier (it holds an ASCII digit or underscore), an
-// ASCII letter or digit may not sit beside a Latin letter that has no ASCII
-// base (U+1D00 LATIN LETTER SMALL CAPITAL A, but not `é`, which is `e` and
-// an accent). And a combining mark may sit only on a letter of a script other
-// than Latin (a Devanagari vowel sign, say): on a Latin letter, digit or symbol
-// it can overlay or disguise a token's characters, and precomposed Latin
-// letters are written without one (the check runs after NFC).
-const WORD_LATIN = /(?=\p{L})\p{Script_Extensions=Latin}/u;
-const WORD_FOREIGN = /(?=\p{L})(?![\p{Script_Extensions=Latin}\p{Script=Common}\p{Script=Inherited}\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}])./u;
-const MARK_BASE = /(?=\p{L})(?!\p{Script_Extensions=Latin})./u;
-const ASCII_BASE = /^[\x00-\x7f]*$/;
+// One pattern list: the scanSecrets patterns and the shared redactor's
+// patterns (no environment values, so a screen gives the same answer on every
+// machine). A form the redactor would change holds a secret.
+const redactor = createRedactor({ env: {} });
+const MASK_KIND = /\u00abredacted:([^\u00bb]+)\u00bb/g;
 
-function lookAlikeError(value) {
-  const text = value.replace(EMOJI_PRESENTATION, '').normalize('NFC');
-  let base = '';
-  for (const ch of text) {
-    if (/\p{M}/u.test(ch)) {
-      if (!MARK_BASE.test(base)) return 'evidence_quote may put a combining mark only on a letter of a script other than Latin; write accented Latin letters precomposed and drop overlays';
-    } else base = ch;
+function patternIds(form) {
+  const ids = scanSecrets(form).map(hit => hit.id);
+  const redacted = redactor.redactText(form);
+  if (redacted !== form) {
+    const before = new Set([...form.matchAll(MASK_KIND)].map(m => m[1]));
+    const kinds = [...redacted.matchAll(MASK_KIND)].map(m => m[1]).filter(kind => !before.has(kind));
+    ids.push(...(kinds.length ? kinds : ['secret']));
   }
-  for (const word of text.split(/\s+/)) {
-    if (WORD_LATIN.test(word) && WORD_FOREIGN.test(word)) return 'evidence_quote may not mix Latin letters with letters of another script in one word; retype the word in one script';
-    if (/[0-9_]/.test(word) && /[A-Za-z0-9]/.test(word) && [...word].some(ch => WORD_LATIN.test(ch) && !ASCII_BASE.test(stripMarks(ch.normalize('NFKD'))))) {
-      return 'evidence_quote may not mix ASCII with Latin letters that have no ASCII base in an identifier; retype it in ASCII';
-    }
+  return ids;
+}
+
+/**
+ * The token shape rule, which needs no list of secret formats. A quote is
+ * split into chunks on whitespace and on punctuation that no credential
+ * format uses: quotes, backticks, brackets, parentheses, braces, `<` `>`,
+ * `,` `;` `=` `:` `@` `|` `!` `?` `&` `#` `$` `*` `^` `~`. `_`, `-`, `.`, `+`
+ * and `%` stay inside chunks, because credentials use them. Each chunk is
+ * then split on `/` and `\` into tokens. A token of 20 or more characters
+ * that holds both a letter and a digit is refused when one of its segments
+ * (the parts between `.`, `-` and `_`):
+ *  - is 16 or more characters and mixes letters and digits, unless it is
+ *    hexadecimal in one letter case (a commit, digest or content hash);
+ *  - is 8 or more characters and mixes upper case, lower case and digits;
+ *  - holds a letter outside ASCII together with an ASCII digit.
+ * A canonical UUID and a token that is all hexadecimal (7-64 characters) are
+ * never refused. So `test_user_login_flow_v2`, `com.example.app.v1`, a git
+ * SHA, a UUID or `/home/user/отчёт_2024.pdf` pass, while `ghp_…`, `…_prod`
+ * glued to a key, Stripe or OpenAI style keys, and a look-alike token
+ * written partly in another script are refused.
+ *
+ * Base64 secrets may hold `/` and `+`, which would split them into short
+ * tokens. So a chunk is also refused when it holds a run of 32 or more
+ * base64 characters (`A-Z a-z 0-9 + /`) with a `/` or `+`, upper case, lower
+ * case and a digit, in which no piece between `/` and `+` reads as a word
+ * (2+ lower-case letters, optionally capitalized). Real paths have word
+ * pieces (`src`, `home`, `Users`).
+ */
+const CHUNK_DELIMITERS = /[\s"'`\u2018\u2019\u201c\u201d\u00ab\u00bb()[\]{}<>,;=:@|!?&#$*^~]+/u;
+const PATH_SEPARATORS = /[\/\\]+/;
+const SEGMENT_SEPARATORS = /[._-]+/;
+const HEX_TOKEN = /^(?:[0-9a-f]{7,64}|[0-9A-F]{7,64})$/;
+const HEX_SEGMENT = /^(?:[0-9a-f]+|[0-9A-F]+)$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LETTER = /\p{L}/u;
+const DIGIT = /\p{Nd}/u;
+const BASE64_RUN = /[A-Za-z0-9+/]{32,}/g;
+const WORD_PIECE = /^[A-Z]?[a-z]{2,}$/;
+
+function segmentLooksRandom(segment) {
+  const length = [...segment].length;
+  const letters = LETTER.test(segment);
+  const digits = DIGIT.test(segment);
+  if (!letters || !digits) return false;
+  if (length >= 16 && !HEX_SEGMENT.test(segment)) return true;
+  if (length >= 8 && /\p{Lu}/u.test(segment) && /\p{Ll}/u.test(segment)) return true;
+  return /[0-9]/.test(segment) && /(?=\p{L})[^\x00-\x7f]/u.test(segment);
+}
+
+function tokenLooksRandom(token) {
+  if ([...token].length < 20 || !LETTER.test(token) || !DIGIT.test(token)) return false;
+  if (HEX_TOKEN.test(token) || UUID.test(token)) return false;
+  return token.split(SEGMENT_SEPARATORS).some(segmentLooksRandom);
+}
+
+function base64RunLooksRandom(chunk) {
+  for (const [run] of chunk.matchAll(BASE64_RUN)) {
+    if (!/[+/]/.test(run) || !/[A-Z]/.test(run) || !/[a-z]/.test(run) || !/[0-9]/.test(run)) continue;
+    if (!run.split(/[+/]+/).some(piece => WORD_PIECE.test(piece))) return true;
   }
-  return null;
+  return false;
+}
+
+/** True when the screening form holds a token shaped like a credential (see above). */
+export function holdsTokenShape(form) {
+  return form.split(CHUNK_DELIMITERS).some(chunk => chunk && (base64RunLooksRandom(chunk) || chunk.split(PATH_SEPARATORS).some(tokenLooksRandom)));
 }
 
 /**
  * Screens a one-line quote in every form a reader or model might read it as:
  * as written, with terminal escape sequences removed, with bare colour-code
- * remnants spaced apart from what follows (a remnant right before a token)
- * and removed entirely (a remnant inside a token), and with only the escape
- * introducers removed. Each form is also screened with every invisible,
- * private-use and unassigned character removed, so a token broken by one is
- * seen whole; in Unicode compatibility form (NFKC), so a fullwidth look-alike
- * is seen as the ASCII token it reads as; with every combining mark removed;
- * and with Cyrillic and Greek look-alikes mapped to Latin (see CONFUSABLES).
- * Every form is scanned without the word boundary before a pattern's literal
- * prefix (see scanSecretsInWords), so `TOKEN_ghp_...` is seen. Other
- * look-alikes are refused by structure on write (see lookAlikeError). Returns
- * null when no form holds a secret, otherwise the matched pattern ids.
+ * remnants spaced apart or removed, and with only escape introducers removed;
+ * each also in its folded form (see fold). Every form goes through the one
+ * pattern list (see patternIds), also with Cyrillic and Greek look-alikes
+ * mapped to Latin; every folded form goes through the token shape rule (see
+ * holdsTokenShape). Returns null when nothing is found, otherwise
+ * `{ ids, shape }`: the matched pattern ids, and whether the shape rule
+ * fired. Text over EVIDENCE_QUOTE_READ_CAP bytes is not scanned at all and
+ * is reported as `oversize`, so the cost of the pattern scan stays bounded.
  */
 export function screenSecrets(value) {
   const raw = String(value ?? '');
+  if (Buffer.byteLength(raw, 'utf8') > EVIDENCE_QUOTE_READ_CAP) return { ids: ['oversize'], shape: false };
   const stripped = stripAnsi(raw);
-  const written = [raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, ''), stripEscapeIntroducers(raw)];
-  const visible = [...written, ...written.map(stripHidden)];
-  const folded = [...visible, ...visible.map(form => form.normalize('NFKC')), ...visible.map(stripMarks)];
-  const forms = [...new Set([...folded, ...folded.map(skeleton)])];
-  const ids = [...new Set([...forms, ...forms.map(inertLine)].flatMap(form => scanSecretsInWords(form).map(hit => hit.id)))];
-  return ids.length ? { ids } : null;
+  const written = [...new Set([raw, stripped, stripped.replace(SGR_REMNANT, ' '), stripped.replace(SGR_REMNANT, ''), stripEscapeIntroducers(raw)])];
+  const folded = [...new Set(written.map(fold))];
+  const forms = [...new Set([...written, ...folded, ...folded.map(skeleton)])];
+  const ids = [...new Set(forms.flatMap(patternIds))];
+  const shape = folded.some(holdsTokenShape);
+  return ids.length || shape ? { ids, shape } : null;
 }
 
 /** Returns null when the quote is acceptable, otherwise the reason it is not. */
@@ -170,8 +205,9 @@ export function evidenceQuoteError(value) {
   if (DISALLOWED.test(value.replace(EMOJI_PRESENTATION, ''))) return 'evidence_quote may contain tabs but no other control, bidirectional formatting, zero-width or tag characters, nor any other invisible character; strip terminal color codes';
   if (OPAQUE.test(value)) return 'evidence_quote may not contain private-use or unassigned characters or lone surrogates';
   const screen = screenSecrets(value);
-  if (screen) return `evidence_quote looks like it contains a secret (${screen.ids.join(', ')}); redact it`;
-  return lookAlikeError(value);
+  if (screen?.ids.length) return `evidence_quote looks like it contains a secret (${screen.ids.join(', ')}); redact it`;
+  if (screen) return 'evidence_quote holds a token of 20 or more characters that mixes letters and digits like a credential (token-shaped); quote a different line, or one where such a token is not needed';
+  return null;
 }
 
 /** The frontmatter line for an accepted quote, escaped like the other quoted fields. */
@@ -187,36 +223,44 @@ const YAML_INDICATOR = /^[-?:,[\]{}#&*!|>%@`]/;
  * The text of a YAML value that is a complete scalar on its own line: a
  * double-quoted string JSON can read whole (what the writer emits), a
  * single-quoted string closed on the line, or a plain scalar that starts
- * with no indicator. Null for anything else (empty, unclosed, flow, block,
- * anchored, aliased or tagged), which a reader must treat as not one line.
+ * with no indicator. A trailing YAML comment (` # ...` after the scalar) is
+ * dropped, as YAML drops it. Null for anything else (empty, unclosed, flow,
+ * block, anchored, aliased or tagged).
  */
 function oneLineYamlScalar(raw) {
   const value = String(raw ?? '').trim();
   if (value.startsWith('"')) {
+    const quoted = value.match(/^("(?:[^"\\]|\\.)*")(?:[ \t]+#.*)?$/);
+    if (!quoted) return null;
     try {
-      const parsed = JSON.parse(value);
+      const parsed = JSON.parse(quoted[1]);
       return typeof parsed === 'string' ? parsed : null;
     } catch {
       return null;
     }
   }
   if (value.startsWith("'")) {
-    const single = value.match(/^'((?:[^']|'')*)'$/);
+    const single = value.match(/^'((?:[^']|'')*)'(?:[ \t]+#.*)?$/);
     return single ? single[1].replaceAll("''", "'") : null;
   }
-  return value && !YAML_INDICATOR.test(value) ? value : null;
+  const plain = value.replace(/(?:^|[ \t]+)#.*$/, '');
+  return plain && !YAML_INDICATOR.test(plain) ? plain : null;
 }
 
 /** What readEvidenceQuote returns for a quote it will not read as one line. */
 export const EVIDENCE_QUOTE_MULTI_LINE = '[redacted: multi-line]';
 
+/** What readEvidenceQuote returns for a one-line value that is not one complete scalar. */
+export const EVIDENCE_QUOTE_MALFORMED = '[redacted: malformed]';
+
 /**
  * Reads the quote back from episode text, or null when the episode has none.
- * Fails closed: unless the key appears once and its value is a complete
- * one-line scalar (see oneLineYamlScalar) with no line below it indented
- * deeper than the key (which YAML would read as more of the value, as when a
- * long string is folded), the whole quote is withheld as
- * EVIDENCE_QUOTE_MULTI_LINE rather than read in part.
+ * Fails closed: when the key appears more than once, or a line below it is
+ * indented deeper than the key (which YAML would read as more of the value,
+ * as when a long string is folded), the whole quote is withheld as
+ * EVIDENCE_QUOTE_MULTI_LINE; when the value on the key's line is not a
+ * complete one-line scalar (see oneLineYamlScalar), as
+ * EVIDENCE_QUOTE_MALFORMED. Nothing is read in part.
  */
 export function readEvidenceQuote(text) {
   const { frontmatter } = splitFrontmatter(text);
@@ -230,7 +274,8 @@ export function readEvidenceQuote(text) {
   const continues = next !== undefined && /^[ \t]/.test(next);
   if (!raw && !continues && keys.length === 1) return null;
   const value = oneLineYamlScalar(raw);
-  return value === null || continues || keys.length > 1 ? EVIDENCE_QUOTE_MULTI_LINE : value;
+  if (continues || keys.length > 1) return EVIDENCE_QUOTE_MULTI_LINE;
+  return value === null ? EVIDENCE_QUOTE_MALFORMED : value;
 }
 
 // Ends a read-back quote cut to fit EVIDENCE_QUOTE_CAP, so the cut is visible.
@@ -249,19 +294,17 @@ function capBytes(text, max) {
 }
 
 /**
- * Quoted evidence as inert data for an agent-facing packet. Writes accept
- * only one line, so anything else came from a legacy or hand-edited file and
- * is withheld whole before screening: over EVIDENCE_QUOTE_READ_CAP bytes as
- * `[redacted: oversize]`, and any line break as `[redacted: multi-line]`.
- * Otherwise the quote is screened in every form screenSecrets checks, and any
- * hit withholds it behind a marker naming the matched patterns. A quote with
- * no hit that still holds ESC or any C1 control is withheld whole as
- * `[redacted: control-sequence]`, so no escape sequence is ever interpreted or
- * half-removed on display. Otherwise invisible, private-use and unassigned
- * characters are removed (keeping the VS16 and ZWJ the emoji allowance
- * permits), C0 controls become spaces, a quote that fails the write's
- * look-alike rules (see lookAlikeError) is withheld whole as
- * `[redacted: look-alike]`, and a quote still over EVIDENCE_QUOTE_CAP bytes is
+ * Quoted evidence as inert data for an agent-facing packet, under the same
+ * rules as a write. Anything a write refuses came from a legacy or
+ * hand-edited file. Over EVIDENCE_QUOTE_READ_CAP bytes it is withheld whole
+ * as `[redacted: oversize]` before any screening, and with a line break as
+ * `[redacted: multi-line]`. Otherwise it is screened (see screenSecrets): a
+ * pattern hit withholds it behind a marker naming the matched patterns, and a
+ * token-shaped hit as `[redacted: token-shaped]`. A quote with no hit that
+ * still holds ESC or any C1 control is withheld whole as
+ * `[redacted: control-sequence]`. Otherwise invisible, private-use and
+ * unassigned characters are removed (keeping the emoji allowance), C0
+ * controls become spaces, and a quote still over EVIDENCE_QUOTE_CAP bytes is
  * cut at a code-point boundary and ends with ` [truncated]`, within the cap.
  */
 export function inertEvidenceQuote(value) {
@@ -269,10 +312,9 @@ export function inertEvidenceQuote(value) {
   if (Buffer.byteLength(text, 'utf8') > EVIDENCE_QUOTE_READ_CAP) return '[redacted: oversize]';
   if (LINE_BREAK.test(text)) return '[redacted: multi-line]';
   const screen = screenSecrets(text);
-  if (screen) return `[redacted: ${screen.ids.join(', ')}]`;
+  if (screen) return `[redacted: ${screen.ids.length ? screen.ids.join(', ') : 'token-shaped'}]`;
   if (READ_CONTROL.test(text)) return '[redacted: control-sequence]';
   const shown = inertLine(text.replace(DISPLAY_HIDDEN, (_, keep) => keep ?? ''));
-  if (lookAlikeError(shown)) return '[redacted: look-alike]';
   if (Buffer.byteLength(shown, 'utf8') <= EVIDENCE_QUOTE_CAP) return shown;
   return capBytes(shown, EVIDENCE_QUOTE_CAP - Buffer.byteLength(TRUNCATED)) + TRUNCATED;
 }

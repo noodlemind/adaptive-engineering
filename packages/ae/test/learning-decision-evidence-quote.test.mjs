@@ -67,7 +67,7 @@ test('a publish decision stores a verbatim evidence quote in the episode and ref
   fs.writeFileSync(decisionFile, JSON.stringify(publish('quote-flag')));
   const flagged = f.cli('compound', '--plan', f.plan, '--learning-decision', decisionFile, '--evidence-quote', QUOTE, '--json');
   assert.equal(flagged.status, 2, 'the CLI flag is a usage error rather than silently ignored');
-  assert.match(flagged.stdout + flagged.stderr, /accepted only with --insight/);
+  assert.match(flagged.stdout + flagged.stderr, /--evidence-quote cannot be combined with --learning-decision/);
 
   const accepted = decide(f, publish('quote-accepted', { evidence_quote: QUOTE }));
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);

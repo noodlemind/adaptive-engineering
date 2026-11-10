@@ -597,6 +597,20 @@ export function stripFrontmatter(text) {
 // U+2029 stay inside it and text after one cannot escape the redaction.
 const EVIDENCE_QUOTE_LINE = /^([ \t]*)evidence_quote[ \t]*:/;
 const LEADING_BLANKS = /^[ \t]*/;
+// A double-quoted YAML key spelled with a backslash escape, such as
+// `"evidence\x5fquote":`, which YAML reads as `evidence_quote` although the
+// text never holds that token: a closed key with a backslash followed by `:`,
+// a line opening a double-quoted scalar with a backslash that does not close
+// on the line (a key may continue onto the next line), or a complex key line
+// (`? ...`) holding a backslash. Not parsed: any such line is suspicious.
+const ESCAPED_KEY_INLINE = /"(?:[^"\\\r\n]|\\.)*\\(?:[^"\\\r\n]|\\.)*"[ \t]*:(?=[ \t]|$)/;
+const ESCAPED_KEY_LINE = new RegExp(`${ESCAPED_KEY_INLINE.source}|^[ \\t]*(?:[-?:][ \\t]+)*"(?=[^\\r\\n]*\\\\)(?:[^"\\\\]|\\\\.)*\\\\?$|^[ \\t]*\\?[^\\r\\n]*\\\\`);
+// A well-formed plain `key:` line, which ends what a malformed quote may hold.
+const PLAIN_KEY_LINE = /^[ \t]*[A-Za-z_][A-Za-z0-9_.-]*[ \t]*:(?:[ \t]|$)/;
+// A key line's value that opens a quoted scalar without closing it on the
+// line (an optional trailing comment aside): YAML reads the following lines,
+// whatever they look like, as more of the string.
+const UNCLOSED_QUOTED = /^[ \t]*(?:"(?!(?:[^"\\]|\\.)*"[ \t]*(?:#.*)?$)|'(?!(?:[^']|'')*'[ \t]*(?:#.*)?$))/;
 
 /**
  * Text with every `evidence_quote` key line replaced by
@@ -635,10 +649,14 @@ export function withholdEvidenceQuoteLines(text) {
  * anywhere in them (`--- title: t evidence_quote: "..." ---`, `- evidence_quote:`),
  * and a line-anchored rule would miss it. Whatever follows the key is cut,
  * not parsed; a field without the key, and the text before it, are kept.
+ * A double-quoted key spelled with a backslash escape (`"evidence\x5fquote":`)
+ * is cut the same way, since YAML may read it as the key.
  */
 export function withholdEvidenceQuoteField(text) {
   const s = String(text ?? '');
-  const at = s.indexOf('evidence_quote');
+  const escaped = s.search(ESCAPED_KEY_INLINE);
+  const literal = s.indexOf('evidence_quote');
+  const at = escaped < 0 ? literal : literal < 0 ? escaped : Math.min(escaped, literal);
   return at < 0 ? s : `${s.slice(0, at)}evidence_quote: [withheld]`;
 }
 
@@ -665,8 +683,13 @@ function leadingFenceBlock(s) {
 
 const fenceBlockEnd = block => (block.close < 0 ? block.parts.length : block.close);
 
-const fenceBlockHolds = (block, token) => {
-  for (let i = block.open + 2; i < fenceBlockEnd(block); i += 2) if (block.parts[i].includes(token)) return true;
+// Whether the block mentions evidence_quote, or holds a double-quoted key
+// spelled with a backslash escape that YAML may read as it (see
+// ESCAPED_KEY_LINE).
+const fenceBlockHoldsQuote = block => {
+  for (let i = block.open + 2; i < fenceBlockEnd(block); i += 2) {
+    if (block.parts[i].includes('evidence_quote') || ESCAPED_KEY_LINE.test(block.parts[i])) return true;
+  }
   return false;
 };
 
@@ -680,30 +703,45 @@ const fenceBlockHolds = (block, token) => {
  * emptied whatever the value, since YAML reads such lines as the rest of it
  * (a long quoted string folds onto them). Any other appearance of the key in
  * the block (a quoted, flow, complex or list key, or a mention in another
- * value), and an `&` or `*` anywhere in the quote's lines (an anchor another
- * key could repeat, or an alias to text elsewhere), withholds every line of
- * the block instead: the shape is not parsed, it is refused. Line breaks are
- * kept, so line numbers do not move. A text with no leading fence, and
- * everything after the block, is returned as written, so a doc or source file
- * that mentions the key is not touched.
+ * value), a double-quoted key spelled with a backslash escape anywhere in
+ * the block (`"evidence\x5fquote":`, which YAML may read as the key), a
+ * quoted value left open on the key's line, and an `&` or `*` anywhere in the
+ * quote's lines (an anchor another key could repeat, or an alias to text
+ * elsewhere), withholds every line of the block instead: the shape is not
+ * parsed, it is refused. In a malformed file, lines after the key that are
+ * not indented deeper are withheld too, up to the next well-formed plain
+ * `key:` line or the closing fence. Line breaks are kept, so line numbers do
+ * not move. A text with no leading fence, and everything after the block, is
+ * returned as written, so a doc or source file that mentions the key is not
+ * touched.
  */
 export function withholdFrontmatterEvidenceQuote(text) {
   const s = String(text ?? '');
-  if (!s.includes('evidence_quote')) return s;
+  if (!s.includes('evidence_quote') && !s.includes('\\')) return s;
   const block = leadingFenceBlock(s);
-  if (!block || !fenceBlockHolds(block, 'evidence_quote')) return s;
+  if (!block || !fenceBlockHoldsQuote(block)) return s;
   const { parts, open } = block;
   const end = fenceBlockEnd(block);
   const withheld = new Map();
   let whole = false;
   for (let i = open + 2; i < end && !whole; i += 2) {
-    if (!parts[i].includes('evidence_quote')) continue;
+    if (!parts[i].includes('evidence_quote')) {
+      if (ESCAPED_KEY_LINE.test(parts[i])) whole = true;
+      continue;
+    }
     const key = parts[i].match(EVIDENCE_QUOTE_LINE);
     if (!key) { whole = true; break; }
     withheld.set(i, `${key[1]}evidence_quote: [withheld]`);
-    if (/[&*]/.test(parts[i].slice(key[0].length))) whole = true;
+    const value = parts[i].slice(key[0].length);
+    if (/[&*]/.test(value)) whole = true;
+    // A quoted value left open on the key's line: until a continuation line
+    // closes it, YAML reads every line, key-like or not, as more of it.
+    let open = UNCLOSED_QUOTED.test(value) ? value.trim()[0] : null;
     for (let k = i + 2; k < end; k += 2) {
-      if (parts[k].trim() && parts[k].match(LEADING_BLANKS)[0].length <= key[1].length) break;
+      const shallow = parts[k].trim() && parts[k].match(LEADING_BLANKS)[0].length <= key[1].length;
+      if (shallow && open) { whole = true; break; }
+      if (shallow && PLAIN_KEY_LINE.test(parts[k])) break;
+      if (open && (open === '"' ? /(?:^|[^\\])(?:\\\\)*"/ : /'/).test(parts[k])) open = null;
       if (/[&*]/.test(parts[k])) whole = true;
       withheld.set(k, '');
       i = k;
@@ -738,7 +776,7 @@ export function episodeBody(text) {
   // fence, lone CR line endings, or no closing fence) that mentions the key
   // in any form: only what follows its closing fence is body, or nothing.
   const block = leadingFenceBlock(s);
-  if (block && fenceBlockHolds(block, 'evidence_quote')) return block.close < 0 ? '' : block.parts.slice(block.close + 2).join('');
+  if (block && fenceBlockHoldsQuote(block)) return block.close < 0 ? '' : block.parts.slice(block.close + 2).join('');
   if (opensWithFence) return body;
   return withholdEvidenceQuoteLines(body);
 }

@@ -119,7 +119,7 @@ test('runInsightCompound refuses when git-tracked docs/solutions is a symlink', 
 // And the other default-ignorable code points: the combining grapheme joiner,
 // the variation selectors but VS16 (allowed for emoji), the Hangul fillers, U+17B4 and the musical format
 // characters.
-const INVISIBLE = [0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe0e, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
+const INVISIBLE = [0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, 0x034f, 0xfe00, 0xfe01, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x1d173, 0x1d17a];
 function captureInsight(extraFlags = {}) {
   const ws = tempDir('quote-ws-');
   const copilotHome = tempDir('quote-ch-');
@@ -314,9 +314,33 @@ test('the last --evidence-quote wins with its own form, and a swallowed --insigh
   assert.doesNotMatch(swallowedInsight.stdout + swallowedInsight.stderr, /accepted only with --insight/);
 });
 
+test('ae compound refuses --evidence-quote beside --learning-decision as a usage error, with or without --insight', () => {
+  const ws = tempDir('quote-decision-ws-');
+  const home = tempDir('quote-decision-hh-');
+  const copilotHome = tempDir('quote-decision-ch-');
+  fs.writeFileSync(path.join(ws, 'd.json'), JSON.stringify({ operation: 'op-1', decision: 'publish', rationale: 'r', title: 't', body: 'b' }));
+  for (const extra of [['--insight'], []]) {
+    const run = spawnSync(process.execPath, [path.join(packageRoot, 'bin/ae.mjs'), 'compound', ...extra, '--learning-decision', 'd.json', '--evidence-quote', 'Error: boom', '--workspace', ws, '--harness-home', home, '--copilot-home', copilotHome, '--json'],
+      { cwd: ws, env: { ...process.env, HARNESS_HOME: home, COPILOT_HOME: copilotHome, HARNESS_NO_EVENTS: '1' }, encoding: 'utf8', timeout: 30000 });
+    assert.equal(run.status, 2, run.stdout + run.stderr);
+    assert.match(run.stdout + run.stderr, /E_USAGE/);
+    assert.match(run.stdout + run.stderr, /--evidence-quote cannot be combined with --learning-decision/);
+  }
+});
+
 test('an insight without an evidence quote keeps the exact pre-quote episode bytes', () => {
   const { result, text } = captureInsight();
   assert.equal(result.pass, true, JSON.stringify(result));
   assert.equal(text, '---\ntitle: "quoted insight"\nkind: insight\ndate: 2026-11-09\n---\n\nthe retry loop masks the timeout\n');
   assert.equal(captureInsight({ evidenceQuote: null }).text, text, 'a null flag is the same as an absent one');
+});
+
+test('an insight body past the episode bound is refused before the secret scan and nothing is written', () => {
+  const started = process.hrtime.bigint();
+  const { result, written } = captureInsight({ body: 'a-'.repeat(40 * 1024) });
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 5000);
+  assert.equal(result.pass, false, JSON.stringify(result));
+  assert.equal(result.exitCode, 2);
+  assert.match(result.blockedReason, /episode text exceeds 65536 bytes/);
+  assert.deepEqual(written, []);
 });

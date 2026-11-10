@@ -15,6 +15,11 @@ import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
 import { readStoreConfig, scanSecretsFolded } from './knowledge/store.mjs';
 import { evidenceQuoteError, evidenceQuoteLine } from './knowledge/evidence-quote.mjs';
+
+// The most text an insight or teaching episode may hold. Real episodes are a
+// few kilobytes; the secret scan must run on all of it before anything is
+// written, so its cost has to stay bounded.
+const EPISODE_SCAN_CAP = 64 * 1024;
 import { EXIT } from './style.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
@@ -217,6 +222,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   // can be read in, so its JSON-escaped line is left out here. Every other
   // field and the body are still scanned, also with
   // invisible characters removed from their NFKC form (see scanSecretsFolded).
+  // The scan's cost grows faster than its input, so an episode past
+  // EPISODE_SCAN_CAP is refused rather than scanned.
+  if (Buffer.byteLength(doc, 'utf8') > EPISODE_SCAN_CAP) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: `episode text exceeds ${EPISODE_SCAN_CAP} bytes; shorten the body`, nextTools: ['shorten the body and re-run'] };
   const secrets = scanSecretsFolded(quoteLine === null ? doc : renderDoc(fmLines.filter(line => line !== quoteLine)));
   if (secrets.length) {
     return {
@@ -488,6 +496,9 @@ async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, 
     // alias, alone or with =value, or -h/--help. Other dash-led text, such as
     // `--- a/x`, `-  removed line`, `-x` or `--max-old-space-size=4096`, is a quote.
     if (flags.evidenceQuoteForm === 'space' && (await compoundFlagNames()).has(flags.evidenceQuote.split('=')[0])) throw usage(`--evidence-quote needs a value but got the flag ${flags.evidenceQuote}`, 'pass the quoted text right after --evidence-quote, or use --evidence-quote=<text>');
+    // A learning decision carries its own evidence_quote; a flag beside it
+    // would otherwise be dropped without a word.
+    if (flags.learningDecision) throw usage('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision file instead');
     if (!flags.insight) throw usage('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
   }
   if (flags.learningDecision) {

@@ -19,38 +19,15 @@ const PATTERNS = [
   },
 ];
 
-function scanWith(patterns, text) {
+export function scanSecrets(text) {
   const hits = [];
   const lines = String(text || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
-    for (const { id, re } of patterns) {
+    for (const { id, re } of PATTERNS) {
       if (re.test(lines[i])) hits.push({ id, line: i + 1 });
     }
   }
   return hits;
-}
-
-export function scanSecrets(text) {
-  return scanWith(PATTERNS, text);
-}
-
-// The same patterns with the word boundary dropped before each literal
-// prefix, so a prefix glued to a word character (`TOKEN_ghp_...`,
-// `xghp_...`, `keyAKIA...`) is still seen. Derived from PATTERNS, so it never
-// holds a pattern of its own. A boundary before a class (generic-api-key,
-// connection-string) is kept: those already absorb a leading word, and
-// dropping it would make them scan every position.
-const PATTERNS_IN_WORDS = PATTERNS.map(({ id, re }) => ({
-  id,
-  re: new RegExp(re.source.replace(/(^|\|)\\b(?=[A-Za-z]|\(\?:[A-Za-z])/g, '$1'), re.flags),
-}));
-
-/**
- * scanSecrets without the leading word boundary before a literal prefix: a
- * superset of its hits, for a write gate that refuses rather than redacts.
- */
-export function scanSecretsInWords(text) {
-  return scanWith(PATTERNS_IN_WORDS, text);
 }
 
 /**

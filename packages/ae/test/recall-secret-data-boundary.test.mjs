@@ -12,7 +12,8 @@ import { buildContextPack } from '../lib/context-pack.mjs';
 import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody, scanSecretsFolded, withholdEvidenceQuoteLines, withholdEvidenceQuoteField, withholdFrontmatterEvidenceQuote } from '../lib/knowledge/store.mjs';
 import { runIndexKnowledge } from '../lib/index-knowledge.mjs';
 import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
-import { inertEvidenceQuote, evidenceQuoteError, readEvidenceQuote, screenSecrets, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
+import { inertEvidenceQuote, evidenceQuoteError, readEvidenceQuote, screenSecrets, holdsTokenShape, EVIDENCE_QUOTE_CAP, EVIDENCE_QUOTE_READ_CAP } from '../lib/knowledge/evidence-quote.mjs';
+import { PASS_QUOTES, REFUSED_QUOTES, REFUSED_ORDINARY } from './helpers/evidence-quote-corpus.mjs';
 
 const AWS = 'AKIAIOSFODNN7EXAMPLE'; // canonical \bAKIA[0-9A-Z]{16}\b shape
 const CONN = 's3://user:AKIAIOSFODNN7EXAMPLE@host'; // \w+://[^:@/]+:[^@/]+@… shape
@@ -299,7 +300,7 @@ test('a hand-edited multi-line quote is withheld whole, C1 and bidi controls nev
   assert.ok(!/[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/.test(controls), 'C1 and bidi controls are blanked');
   for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, ...DEFAULT_IGNORABLE]) {
     const ch = String.fromCodePoint(point);
-    if (point !== 0xfe0f) assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
+    if (point !== 0xfe0f && point !== 0xfe0e) assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
     assert.equal(inertLine(`a${ch}b`), `a${ch}b`, `the shared inertLine keeps U+${point.toString(16)}; only the quote packet blanks it`);
   }
   const euros = inertEvidenceQuote('€'.repeat(1000));
@@ -331,7 +332,7 @@ test('a hand-edited quote whose secret is wrapped in terminal codes is redacted 
   const quote = 'postgres://reader:\x1b[31mpw\x1b[0m@db.invalid';
   const rendered = inertEvidenceQuote(quote);
   assert.ok(!rendered.includes('pw'), rendered);
-  assert.match(rendered, /\[redacted: connection-string\]/);
+  assert.match(rendered, /^\[redacted: connection-string, url-credentials\]$/);
 });
 
 test('a hand-edited quote whose token sits inside colour codes is redacted, and escape sequences are removed whole', () => {
@@ -363,11 +364,15 @@ test('a bare colour-code remnant inside a token does not hide it', () => {
   assert.equal(inertEvidenceQuote(quote), '[redacted: github-token]');
 });
 
-test('screening is linear and an oversize hand-edited quote is withheld before screening', () => {
+test('screening is bounded and an oversize hand-edited quote is withheld before screening', () => {
   const blanks = `${' '.repeat(200000)}x`;
   let started = process.hrtime.bigint();
-  assert.equal(screenSecrets(blanks), null);
-  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'screening 200k blanks finishes well under a second');
+  assert.deepEqual(screenSecrets(blanks), { ids: ['oversize'], shape: false }, 'text past the read bound is refused, not scanned');
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'refusing 200k blanks finishes well under a second');
+  // The worst input for the pattern scan, at the read bound, still finishes quickly.
+  started = process.hrtime.bigint();
+  screenSecrets('a-'.repeat(EVIDENCE_QUOTE_READ_CAP / 2));
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 2000, 'a 4096-byte hyphenated run screens in bounded time');
   started = process.hrtime.bigint();
   assert.equal(inertEvidenceQuote(blanks), '[redacted: oversize]');
   assert.equal(inertEvidenceQuote(`${'x'.repeat(EVIDENCE_QUOTE_READ_CAP)}\nghp_${'A'.repeat(36)}`), '[redacted: oversize]', 'nothing past the bound is shown unscreened');
@@ -410,16 +415,17 @@ test('a hand-edited quote whose token is broken by a default-ignorable character
   for (const point of DEFAULT_IGNORABLE) {
     const ch = String.fromCodePoint(point);
     const hex = point.toString(16);
-    if (point === 0xfe0f) {
-      // VS16 is allowed for emoji presentation, but still removed before the scan.
-      assert.equal(evidenceQuoteError(`ok ${ch} x`), null, 'U+fe0f is accepted on write');
-      assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /github-token/, 'U+fe0f inside a token does not hide it on write');
+    const presentation = point === 0xfe0f || point === 0xfe0e;
+    if (presentation) {
+      // VS15 and VS16 are allowed for emoji presentation, but still removed before the scan.
+      assert.equal(evidenceQuoteError(`ok ${ch} x`), null, `U+${hex} is accepted on write`);
+      assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /github-token/, `U+${hex} inside a token does not hide it on write`);
     } else {
       assert.match(evidenceQuoteError(`ok ${ch} x`) || '', /invisible character/, `U+${hex} is refused on write`);
       assert.match(evidenceQuoteError(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)}`) || '', /invisible character/, `U+${hex} inside a token is refused on write`);
     }
     assert.equal(inertEvidenceQuote(`token ghp_${'A'.repeat(18)}${ch}${'A'.repeat(18)} rejected`), '[redacted: github-token]', `U+${hex} does not hide a token on read`);
-    assert.equal(inertEvidenceQuote(`a${ch}b`), point === 0xfe0f ? `a${ch}b` : 'ab', point === 0xfe0f ? 'U+fe0f is kept on display, as the emoji allowance permits' : `U+${hex} is removed, not blanked, on read`);
+    assert.equal(inertEvidenceQuote(`a${ch}b`), presentation ? `a${ch}b` : 'ab', presentation ? `U+${hex} is kept on display, as the emoji allowance permits` : `U+${hex} is removed, not blanked, on read`);
   }
 });
 
@@ -687,9 +693,12 @@ test('a quote folded onto a deeper-indented line is read as withheld whole and b
   const closedThenDeeper = '---\nevidence_quote: "first half AKIAABCD"\n  EFGHIJKLMNOP\nkind: fix\n---\n';
   assert.equal(readEvidenceQuote(closedThenDeeper), '[redacted: multi-line]', 'a complete scalar followed by a deeper line is not one line');
   assert.equal(readEvidenceQuote('---\nevidence_quote: plain words\n\n  continued\n---\n'), '[redacted: multi-line]', 'a plain scalar continued after a blank line');
-  for (const value of ['&a "x"', '*a', '[a, b]', '{a: b}', "'open", '"open', '!!str x', '|', '>-']) {
-    assert.equal(readEvidenceQuote(`---\nevidence_quote: ${value}\nkind: fix\n---\n`), '[redacted: multi-line]', value);
+  for (const value of ['&a "x"', '*a', '[a, b]', '{a: b}', "'open", '"open', '!!str x', '|', '>-', '"x" trailing', '"\\x41"']) {
+    assert.equal(readEvidenceQuote(`---\nevidence_quote: ${value}\nkind: fix\n---\n`), '[redacted: malformed]', value);
   }
+  assert.equal(readEvidenceQuote('---\nevidence_quote: "expected 1" # copied from CI\n---\n'), 'expected 1', 'a trailing YAML comment after a double-quoted value is dropped, not reported as multi-line');
+  assert.equal(readEvidenceQuote("---\nevidence_quote: 'expected 1' # note\n---\n"), 'expected 1');
+  assert.equal(readEvidenceQuote('---\nevidence_quote: expected 1 # note\n---\n'), 'expected 1');
   assert.equal(readEvidenceQuote('---\nevidence_quote: "a"\nevidence_quote: "b"\n---\n'), '[redacted: multi-line]', 'a duplicate key');
   assert.equal(readEvidenceQuote('---\nevidence_quote: "expected 1, got 2"\nkind: fix\n---\n'), 'expected 1, got 2');
   assert.equal(readEvidenceQuote("---\nevidence_quote: 'it''s 2'\n---\n"), "it's 2");
@@ -763,37 +772,99 @@ test('a collapsed manifest field is cut from the first evidence_quote, wherever 
   assert.ok(!pack.includes('QUOTE_MARKER') && pack.includes('--- title: t evidence_quote: [withheld]'), pack);
 });
 
-test('look-alikes are refused by structure on write and withheld on read, while ordinary text in one script passes', () => {
+test('look-alikes are refused by the token shape rule on write and withheld on read, while ordinary text in any script passes', () => {
   const body = 'A1b2C3d4E5'.repeat(4).slice(0, 36);
-  for (const [name, quote, reason] of [
-    ['prefix glued to a word', `TOKEN_ghp_${body}`, /secret \(github-token\)/],
-    ['prefix glued to a letter', `xghp_${body}`, /secret \(github-token\)/],
-    ['combining overlay inside a token', `ghp_${body.slice(0, 10)}\u0336${body.slice(10)}`, /secret \(github-token\)/],
-    ['combining overlay on a word', 'retry\u0336 failed', /combining mark/],
-    ['combining keycap on a digit', 'step 1\u20e3 failed', /combining mark/],
-    ['Cyrillic shha', `gh\u04bb_${body}`, /mix Latin letters with letters of another script/],
-    ['Armenian oh', `key gh\u0555_${body}`, /mix Latin letters with letters of another script/],
-    ['Latin small capital', `ghp_\u1d00${body.slice(1)}`, /no ASCII base/],
-    ['Cherokee a', '\u13aaKIAIOSFODNN7EXAMPLE', /mix Latin letters with letters of another script/],
-    ['Braille blank', `ghp_${body.slice(0, 18)}\u2800${body.slice(18)}`, /invisible character/],
-    ['lone surrogate', `ghp_${body.slice(0, 18)}\ud800${body.slice(18)}`, /lone surrogates/],
+  const REFUSED = /looks like it contains a secret|token-shaped/;
+  for (const [name, quote, reason, marker] of [
+    ['prefix glued to a word', `TOKEN_ghp_${body}`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['prefix glued to a letter', `xghp_${body}`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['word glued after the token', `ghp_${body}_x`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['AKIA with a suffix', `${AWS}_prod`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['combining overlay inside a token', `ghp_${body.slice(0, 10)}\u0336${body.slice(10)}`, /secret \(github-token/, /^\[redacted: github-token/],
+    ['Cyrillic shha', `gh\u04bb_${body}`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['Armenian oh', `key gh\u0555_${body}`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['Latin small capital', `ghp_\u1d00${body.slice(1)}`, REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['Cherokee a', '\u13aaKIAIOSFODNN7EXAMPLE', REFUSED, /^\[redacted: [a-z, -]+\]$/],
+    ['Braille blank', `ghp_${body.slice(0, 18)}\u2800${body.slice(18)}`, /invisible character/, /^\[redacted: github-token/],
+    ['lone surrogate', `ghp_${body.slice(0, 18)}\ud800${body.slice(18)}`, /lone surrogates/, /^\[redacted: github-token/],
   ]) {
     assert.match(evidenceQuoteError(quote) || '', reason, name);
-    assert.match(inertEvidenceQuote(quote), /^\[redacted: /, `${name} is withheld on read`);
+    assert.match(inertEvidenceQuote(quote), marker, `${name} is withheld on read`);
   }
+  // Ordinary marks, mixed scripts in a word and accented identifiers are no
+  // longer refused by script rules.
   for (const quote of [
+    'retry\u0336 failed',
+    'step 1\u20e3 failed',
+    'i\u0307stanbul ofisi',
     'Ошибка: превышено время ожидания соединения',
     'ファイルconfig.jsonが見つかりません',
-    '错误：无法连接数据库 (code 42)',
-    '오류: 파일을 찾을 수 없습니다',
-    'Straße nicht gefunden',
-    'café_1 failed: résumé.pdf missing',
-    'błąd połączenia 404',
-    'त्रुटि: फ़ाइल नहीं मिली',
-    'Warning \u26a0\ufe0f test failed',
+    'błąd_404 połączenia',
+    'kullanıcı_id=5',
+    'Δt=0.5 and 5μs and R1=10Ω',
+    'sync \u2194\ufe0e retry',
     'TOKEN_LIMIT exceeded: 4097 > 4096',
   ]) {
     assert.equal(evidenceQuoteError(quote), null, quote);
     assert.equal(inertEvidenceQuote(quote), quote, quote);
   }
+});
+
+test('the evidence quote corpus: ordinary output passes and secret shapes are refused', () => {
+  for (const quote of PASS_QUOTES) {
+    assert.equal(evidenceQuoteError(quote), null, quote);
+    assert.equal(inertEvidenceQuote(quote), quote.replace(/\t/g, ' '), quote);
+  }
+  for (const [name, quote] of REFUSED_QUOTES) {
+    assert.ok(evidenceQuoteError(quote), `${name} is refused on write`);
+    assert.match(inertEvidenceQuote(quote), /^\[redacted: [a-z, -]+\]$/, `${name} is withheld on read`);
+  }
+  for (const quote of REFUSED_ORDINARY) {
+    assert.match(evidenceQuoteError(quote) || '', /token-shaped\); quote a different line/, quote);
+    assert.equal(inertEvidenceQuote(quote), '[redacted: token-shaped]', quote);
+  }
+  assert.ok(PASS_QUOTES.length >= 100 && REFUSED_QUOTES.length >= 40);
+});
+
+test('the token shape rule exempts hashes, UUIDs and short-segment identifiers, and splits base64 only where real paths have words', () => {
+  for (const token of ['3f2c9a1e8b7d6c5f4a3b2c1d0e9f8a7b6c5d4e3f', '9B2F6C1E-3D4A-4F5B-8C7D-1E2F3A4B5C6D', 'test_user_login_flow_v2_retry', 'main.a1b2c3d4e5f6a7b8.chunk.js', '/home/user/отчёт_за_2024_год.pdf', 'src/components/Button2/index.test.tsx']) {
+    assert.equal(holdsTokenShape(token), false, token);
+  }
+  for (const token of ['wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'abc-Def1234X_yz9Ab8Cd7Ef6', 'файл2024отчётфинальный', 'x9Kq2Lm7Np4Rs8Tv3Wy6Za1B']) {
+    assert.equal(holdsTokenShape(token), true, token);
+  }
+});
+
+test('a double-quoted key spelled with a backslash escape withholds the whole block in raw views, excerpts and manifest fields', () => {
+  const secret = 'QUOTE_MARKER_SECRET';
+  const shapes = {
+    hexEscape: `---\ntitle: t\n"evidence\\x5fquote": "${secret}"\n---\nbody\n`,
+    unicodeEscape: `---\ntitle: t\n"evidence\\u005Fquote": "${secret}"\n---\nbody\n`,
+    flow: `---\n{"evid\\x65nce_quote": "${secret}"}\n---\nbody\n`,
+    complexKey: `---\n? "evid\\x65nce_quote"\n: "${secret}"\n---\nbody\n`,
+    foldedKey: `---\n"evidence_\\\nquote": "${secret}"\n---\nbody\n`,
+    bomEscaped: `\ufeff---\n"evidence\\x5fquote": "${secret}"\n---\nbody\n`,
+  };
+  for (const [name, text] of Object.entries(shapes)) {
+    const shown = withholdFrontmatterEvidenceQuote(text);
+    assert.ok(!shown.includes(secret), `${name}: ${JSON.stringify(shown)}`);
+    assert.match(shown, /\[frontmatter withheld: evidence_quote\]/, name);
+    assert.equal(shown.split(/\r\n|\r|\n/).length, text.split(/\r\n|\r|\n/).length, `${name}: line breaks are kept`);
+    assert.ok(!episodeBody(text).includes(secret), `${name}: no excerpt carries it`);
+  }
+  assert.equal(withholdEvidenceQuoteField(`--- title: t "evidence\\x5fquote": "${secret}" --- body`), '--- title: t evidence_quote: [withheld]');
+  const plain = '---\ntitle: "C:\\\\Users\\\\x"\nkind: fix\n---\nbody\n';
+  assert.equal(withholdFrontmatterEvidenceQuote(plain), plain, 'a backslash in a value, not a key, is left alone');
+});
+
+test('a malformed quote that continues at the key indent is withheld up to the next well-formed key line', () => {
+  const secret = 'QUOTE_MARKER_SECRET';
+  const unclosed = `---\ntitle: t\nevidence_quote: "connect failed\n${secret} retry\nkind: fix\n---\nbody\n`;
+  const shown = withholdFrontmatterEvidenceQuote(unclosed);
+  assert.ok(!shown.includes(secret), shown);
+  assert.match(shown, /\[frontmatter withheld: evidence_quote\]/, 'an open quoted value withholds the whole block, since its string may hold key-like lines');
+  const stray = `---\ntitle: t\nevidence_quote: plain words\n${secret} stray line\n# ${secret}\nkind: fix\n---\nbody\n`;
+  assert.equal(withholdFrontmatterEvidenceQuote(stray), '---\ntitle: t\nevidence_quote: [withheld]\n\n\nkind: fix\n---\nbody\n');
+  const commented = '---\nevidence_quote: "expected 1" # from CI\nkind: fix\n---\nbody\n';
+  assert.equal(withholdFrontmatterEvidenceQuote(commented), '---\nevidence_quote: [withheld]\nkind: fix\n---\nbody\n', 'a closed value with a comment is withheld by line');
 });
