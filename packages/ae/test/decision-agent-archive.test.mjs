@@ -110,3 +110,34 @@ test('a task record that cannot be used: status reports it and uses the live tas
     assert.throws(() => recordDecision({ ...f, now: 1003, input: { schema: 1, requestId: prepared.requestId } }), refusal, `${kind}: record refuses`);
   }
 });
+
+test('record on a request archived without a receipt refuses: archived evidence is read-only, even under a raised budget', t => {
+  const f = fixture(t), budgets = seconds => ({ ...f, policy: { ...f.policy, budgets: { ...f.policy.budgets, maxDecisions: 2, maxSeconds: seconds } } });
+  const input = { schema: 1, taskId: 't0', sessionId: 's0', type: 'action', intent: 'Run the selected behavior check.', action: f.action, sources: ['test.mjs'] };
+  const prepared = prepareDecision({ ...budgets(1), now: 1000, input });
+  const judgment = { schema: 1, requestId: prepared.requestId, verdict: 'allow', reason: 'ok', evidence: ['test.mjs'] };
+  assert.equal(observeDecisionInvocation({ ...budgets(1), now: 1500, payload: { cwd: f.workspace, session_id: 's0', tool_name: 'Agent', tool_input: { subagent_type: 'decision-agent' }, tool_use_id: 'c1', tool_response: judgment, success: true } }).observed, true);
+  for (let index = 0; index < 25; index++) prepareDecision({ ...budgets(86400), now: 5000 + index, input: { ...input, taskId: `b${index}`, sessionId: `bs${index}`, context: { evidence: 'x'.repeat(30000) } } });
+  const stored = () => JSON.parse(fs.readFileSync(prepared.storePath, 'utf8'));
+  assert.equal(Object.hasOwn(stored().requests, prepared.requestId), false, 'the expired request was archived');
+  assert.throws(() => recordDecision({ ...budgets(86400), now: 6000, input: { schema: 1, requestId: prepared.requestId } }), /archived without a receipt, and archived evidence is read-only/);
+  assert.equal(Object.hasOwn(stored().requests, prepared.requestId), false);
+  assert.equal(stored().archiveFaults, undefined);
+  assert.equal(decisionStatus({ ...budgets(86400), now: 6001, requestId: prepared.requestId }).receipt, null);
+  assert.equal(inspectDecisionAction({ ...budgets(86400), now: 6002, sessionId: 's0', action: f.action, consume: true }).authorized, false);
+});
+
+test('a regular file or a symlink to one at requests makes prepare and record refuse with the remedy, not a raw lookup error', t => {
+  for (const kind of ['file', 'symlink to a file']) {
+    const f = fixture(t);
+    const input = { schema: 1, taskId: 't', sessionId: 's', type: 'action', intent: 'Run the selected behavior check.', action: f.action, sources: ['test.mjs'] };
+    const prepared = prepareDecision({ ...f, now: 1000, input });
+    const archive = path.join(f.home, 'decision-archives', path.basename(prepared.storePath, '.json'));
+    fs.mkdirSync(archive, { recursive: true });
+    if (kind === 'file') fs.writeFileSync(path.join(archive, 'requests'), 'x');
+    else { const target = path.join(path.dirname(f.home), 'plain'); fs.writeFileSync(target, 'x'); fs.symlinkSync(target, path.join(archive, 'requests')); }
+    const refusal = /the archived request record .* cannot be read .*a regular file or another non-directory stands where a directory on the record's path belongs: move it out of the way/;
+    assert.throws(() => prepareDecision({ ...f, now: 1001, input: { ...input, intent: 'Run it again.' } }), refusal, `${kind}: prepare`);
+    assert.throws(() => recordDecision({ ...f, now: 1002, input: { schema: 1, requestId: 'a'.repeat(64) } }), refusal, `${kind}: record`);
+  }
+});

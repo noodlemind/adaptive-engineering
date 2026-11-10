@@ -1808,7 +1808,7 @@ test('O1: a request record that cannot be archived is named with its cause, and 
     && /replace it with a real directory/.test(error.message) && !/allow existing task budgets to expire/.test(error.message));
 });
 
-test('O1b: a hydrated request kept live by a deferred archive keeps its mark, so it is never noted as the newest receipt', t => {
+test('O1b: a hydrated request is dropped from live state even when its record cannot be read, and is never noted as the newest receipt', t => {
   const c = seeded(t);
   const d = decisionHarness(c);
   const loc = { home: c.home, workspace: d.workspace, now: 10 };
@@ -1816,18 +1816,14 @@ test('O1b: a hydrated request kept live by a deferred archive keeps its mark, so
   assert.deepEqual(compactDecisions(loc, d.state([r1, r2])), []);
   const hydrated = d.state([]);
   hydrateArchivedDecision(loc, hydrated, r1.requestId);
-  const record = path.join(d.archive, 'requests', `${r1.requestId}.json`);
-  emfileOn(record, () => compactDecisions(loc, hydrated));
-  assert.ok(hydrated.requests[r1.requestId], 'the hydrated request stays live');
-  assert.deepEqual(hydrated.hydratedLive, [r1.requestId], 'its mark is persisted with the state');
-  // The published state loses the in-memory mark; the persisted one restores it.
-  const published = JSON.parse(JSON.stringify(hydrated));
   fs.renameSync(path.join(d.archive, 'readiness'), path.join(c.dir, 'elsewhere'));
   fs.symlinkSync(path.join(c.dir, 'elsewhere'), path.join(d.archive, 'readiness'), 'dir');
-  compactDecisions(loc, published);
-  assert.equal(published.requests[r1.requestId], undefined, 'it archives once its record reads');
-  assert.equal(published.hydratedLive, undefined);
-  assert.ok(!Object.values(published.readinessPending?.plans || {}).some(entry => entry.requestId === r1.requestId), 'R1 is never noted over R2');
+  const record = path.join(d.archive, 'requests', `${r1.requestId}.json`);
+  emfileOn(record, () => compactDecisions(loc, hydrated));
+  assert.equal(hydrated.requests[r1.requestId], undefined, 'the archive already holds it, so it leaves live state');
+  assert.equal(hydrated.archiveFaults, undefined);
+  assert.equal(hydrated.hydratedLive, undefined, 'no hydration bookkeeping is persisted');
+  assert.ok(!Object.values(hydrated.readinessPending?.plans || {}).some(entry => entry.requestId === r1.requestId), 'R1 is never noted over R2');
 });
 
 test('O2: a retained record already proving consumption stands over a later consumption; any other disagreement waits, reported', t => {
@@ -2043,4 +2039,92 @@ test('P5: deferred records are retried by decision passes at most once per inter
   compactDecisions({ ...loc, now: 6000 }, state, { archiveRetryInterval: 5000 });
   assert.equal(state.requests[item.requestId], undefined, 'past the interval it archives');
   assert.equal(state.archiveFaults, undefined, 'and the marker clears');
+});
+
+// Isolated review of PR #127 at a33804a0: a request hydrated from the archive is read-only evidence.
+
+test('Q1: a receipt minted on a hydrated request is never published or indexed; the index keeps the proven receipt', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const r1 = d.readiness('escalate', 5);
+  assert.deepEqual(compactDecisions(loc, d.state([r1])), []);
+  // R2 retires expired, without a receipt.
+  const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+  const hash = value => crypto.createHash('sha256').update(stable(value)).digest('hex');
+  const packet = { schema: 1, type: 'readiness', planPath: PLAN, nonce: 'q1', budgetKey: sha('q1-task'), budgets: { maxSeconds: 1 } }, requestId = hash(packet);
+  const value = { schema: 1, requestId, type: 'readiness', verdict: 'ready', authorized: true, recordedAt: 10, consumedAt: null };
+  const r2 = { requestId, request: { ...packet, requestId, createdAt: 10 }, receipt: { ...value, id: hash(value) } };
+  const expired = d.state([]);
+  expired.requests[r2.requestId] = r2.request;
+  expired.tasks[sha('q1-task')] = { startedAt: 0, counts: { decisions: 1, repairs: 0, acquisitions: 0 } };
+  expired.archiveFaults = { count: 1, files: [], at: 0 };
+  compactDecisions({ ...loc, now: 10 ** 9 }, expired);
+  const record = path.join(d.archive, 'requests', `${r2.requestId}.json`), bytes = fs.readFileSync(record);
+  assert.equal(JSON.parse(bytes).receipt, null);
+  // Hydrated again, a receipt is added to the live copy (as record once minted); compaction drops it.
+  const state = d.state([]);
+  hydrateArchivedDecision(loc, state, r2.requestId);
+  state.receipts[r2.requestId] = r2.receipt;
+  assert.deepEqual(compactDecisions({ ...loc, now: 10 ** 9 }, state), []);
+  assert.equal(state.requests[r2.requestId], undefined);
+  assert.equal(state.receipts[r2.requestId], undefined);
+  assert.deepEqual(fs.readFileSync(record), bytes, 'the archived evidence is unchanged');
+  assert.equal(latestArchivedReadiness(loc, PLAN).requestId, r1.requestId, 'the index still names the proven receipt');
+  assert.equal(state.readinessPending, undefined);
+});
+
+test('Q2: hydration never makes a guarded tool call compact, and a stored retry time in the future never blocks the retry', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 1000 };
+  const r1 = d.readiness('escalate', 1);
+  assert.deepEqual(compactDecisions(loc, d.state([r1])), []);
+  const item = readinessFor(d, 'docs/plans/q2.md', 'escalate', 2);
+  const state = d.state([item]);
+  state.archiveFaults = { count: 1, files: [{ file: `requests/${item.requestId}.json`, reason: 'refused-write' }], at: 999 };
+  hydrateArchivedDecision(loc, state, r1.requestId);
+  compactDecisions(loc, state, { sweep: false, retries: false });
+  assert.equal(state.requests[r1.requestId], undefined, 'the hydrated request leaves live state');
+  assert.ok(state.requests[item.requestId], 'but the guarded pass retries no deferred record');
+  assert.equal(state.archiveFaults.at, 999, 'and leaves the marker as it was');
+  compactDecisions(loc, state, { archiveRetryInterval: 5000 });
+  assert.ok(state.requests[item.requestId], 'a decision pass within the interval retries nothing');
+  state.archiveFaults.at = 10 ** 12;
+  compactDecisions(loc, state, { archiveRetryInterval: 5000 });
+  assert.equal(state.requests[item.requestId], undefined, 'a marker time in the future is retried at once');
+  assert.equal(state.archiveFaults, undefined);
+});
+
+test('Q3: a retiring request whose task record proves nothing, with no live task, leaves no archive fault', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  const key = sha('q3-task'), taskFile = path.join(d.archive, 'tasks', `${key}.json`);
+  fs.mkdirSync(path.dirname(taskFile), { recursive: true });
+  fs.writeFileSync(taskFile, '');
+  const item = d.readiness('escalate', 1);
+  item.request.budgetKey = key;
+  const state = d.state([item]);
+  compactDecisions(loc, state);
+  assert.equal(state.requests[item.requestId], undefined, 'the terminal request archives');
+  assert.equal(state.archiveFaults, undefined, 'nothing is kept live, so nothing is deferred');
+  assert.equal(fs.readFileSync(taskFile, 'utf8'), '');
+});
+
+test('Q4: a parsed record of any schema other than 1 is kept, never replaced', t => {
+  const c = seeded(t);
+  const d = decisionHarness(c);
+  const loc = { home: c.home, workspace: d.workspace, now: 10 };
+  for (const schema of [2.5, '2', 0]) {
+    const item = d.readiness('escalate', 100 + String(schema).length + (schema === 0 ? 7 : 0));
+    const record = path.join(d.archive, 'requests', `${item.requestId}.json`), text = JSON.stringify({ schema, x: 1 });
+    fs.mkdirSync(path.dirname(record), { recursive: true });
+    fs.writeFileSync(record, text);
+    const state = d.state([item]);
+    compactDecisions(loc, state);
+    assert.ok(state.requests[item.requestId], `${JSON.stringify(schema)}: the request waits`);
+    assert.equal(fs.readFileSync(record, 'utf8'), text, `${JSON.stringify(schema)}: the record is untouched`);
+    assert.deepEqual(faultsOf(state).files, [{ file: `requests/${item.requestId}.json`, reason: 'unknown-schema' }]);
+  }
 });

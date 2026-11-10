@@ -285,7 +285,7 @@ export function prepareDecision(options) {
     let task = taskOrRefuse(loc, state, taskKey);
     if (!task) task = state.tasks[taskKey] = { startedAt: now, counts: { decisions: 0, repairs: 0, acquisitions: 0 } };
     taskBudget(task, policy, now);
-    if (!hydrateArchivedDecision(loc, state, requestId)) {
+    if (!lookupDecision(loc, state, requestId)) {
       if (task.counts.decisions >= policy.budgets.maxDecisions) throw fail('task decision budget exhausted; escalate');
       task.counts.decisions++;
       state.requests[requestId] = { ...packet, requestId, createdAt: now };
@@ -298,13 +298,12 @@ export function prepareDecision(options) {
 }
 
 /**
- * The live request a native invocation may be observed for, or null. A request retired to the archive, or
- * one kept live only because its archive was deferred after it was hydrated, is immutable evidence; one
- * whose task time budget expired can no longer be decided. Neither is changed by a late observation.
+ * The live request a native invocation may be observed for, or null. A request retired to the archive is
+ * read-only evidence, never hydrated here; one whose task time budget expired can no longer be decided.
+ * Neither is changed by a late observation.
  */
 function observableRequest(loc, state, requestId, now) {
   if (typeof requestId !== 'string' || !Object.hasOwn(state.requests, requestId)) return null;
-  if (Array.isArray(state.hydratedLive) && state.hydratedLive.includes(requestId)) return null;
   const request = state.requests[requestId], seconds = request.budgets?.maxSeconds;
   let task;
   try { task = decisionTask(loc, state, request.budgetKey); } catch { return null; }
@@ -438,13 +437,16 @@ export function recordDecision(options) {
   if (options.input.schema !== 1 || !ID.test(options.input.requestId || '')) throw fail('record requires schema 1 and requestId');
   const loc = locations(options), policy = authority(options.policy), now = options.now ?? Date.now();
   return mutate(loc, state => {
-    const request = hydrateArchivedDecision(loc, state, options.input.requestId);
+    const request = lookupDecision(loc, state, options.input.requestId);
     if (!request) throw fail('unknown decision request');
+    // A request hydrated from the archive is read-only evidence: its receipt is replayed, never minted.
+    const archived = state.archivedHydrated?.has(request.requestId) === true;
     const task = taskOrRefuse(loc, state, request.budgetKey);
     taskBudget(task, policy, now);
     const current = currentRequest({ ...options, ...loc }, request, policy);
     if (!current.current) throw fail(current.reason);
     if (state.receipts[request.requestId]) return state.receipts[request.requestId];
+    if (archived) throw fail('this decision request was archived without a receipt, and archived evidence is read-only; prepare a new decision request');
     const observation = state.observations[request.requestId];
     if (!observation) throw fail('no observed native decision-agent invocation exists for this request');
     let { verdict, reason } = observation.judgment;
@@ -484,6 +486,15 @@ const ARCHIVE_REMEDIES = [
   ['redirected', 'a directory on the record\'s path is a symlink, which is never written through: replace it with a real directory'],
   ['refused-write', 'the record could not be written: make its directory a writable real directory, with free space, on a filesystem that supports hard links'],
 ];
+/** An exact request lookup; an archived record that cannot be read refuses with the remedy for its cause. */
+function lookupDecision(loc, state, requestId) {
+  try { return hydrateArchivedDecision(loc, state, requestId); }
+  catch (error) {
+    if (!error.reason) throw error;
+    const remedy = ARCHIVE_REMEDIES.find(([reason]) => reason === error.reason)?.[1] || 'make it readable';
+    throw fail(`the archived request record ${path.join(archiveFaults(loc, state).archive, 'requests', `${requestId}.json`)} cannot be read (${error.message}): ${remedy}`);
+  }
+}
 /** The task budget for prepare and record; a retained task record that cannot be used refuses with its remedy. */
 function taskOrRefuse(loc, state, key) {
   try { return decisionTask(loc, state, key); }
@@ -498,7 +509,7 @@ function archiveFaultText({ count, files, truncated, archive }) {
   const groups = ARCHIVE_REMEDIES.map(([reason, remedy]) => [files.filter(item => item.reason === reason).map(item => item.file), remedy]).filter(([named]) => named.length);
   return `${count} retained record(s) could not be archived and stay live in the decision state, which grows until they archive`
     + (files.length ? `; files under ${archive}${truncated ? ` (first ${files.length})` : ''}: ${groups.map(([named, remedy]) => `${named.join(', ')} (${remedy})`).join('; ')}` : '')
-    + '; every decision operation retries them, so each archives on the next one after its cause is fixed';
+    + `; decision prepare and record retry them at most every ${Math.round(ARCHIVE_RETRY_INTERVAL_MS / 1000)} seconds, and every pass retries them while the decision state is over 512 KB, so each archives on the first retry after its cause is fixed`;
 }
 /** The derived archive-fault warning, or none; `extra` adds a task record this status call could not use. */
 function archiveWarnings(loc, state, extra = null) {
@@ -539,7 +550,7 @@ export function decisionStatus(options) {
   // Status is read-only and takes no lock: readiness-index health is derived from what exists, and only
   // decision prepare and record advance retries and the reconciliation sweep.
   const state = readState(loc), policy = authority(options.policy);
-  const request = options.requestId ? hydrateArchivedDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const request = options.requestId ? lookupDecision(loc, state, options.requestId) : Object.values(state.requests).filter(item => item.taskId === options.taskId).sort((a, b) => b.createdAt - a.createdAt)[0];
   // A retained task record that cannot be used never hides status: the live copy is used and it is reported.
   let task = null, taskFault = null;
   if (request) {

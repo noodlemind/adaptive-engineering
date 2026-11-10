@@ -30,9 +30,9 @@ function readRecord(loc, relative) {
   if (bytes === null) throw keptRecord('retained record is unreadable, oversized or redirected', 'unreadable-now');
   let record;
   try { record = JSON.parse(bytes); } catch { throw invalidRecord('retained record is malformed or unsafe'); }
-  // A well-formed record of a schema this version does not know was written by a newer version: it is kept,
-  // never judged by this version's integrity rules and never replaced.
-  if (object(record) && Number.isSafeInteger(record.schema) && record.schema > 1) throw keptRecord(`retained record has schema ${record.schema}, written by a newer version, so it is kept`, 'unknown-schema');
+  // A parsed record whose schema is not 1 was written by another (newer) version: it is kept, never judged
+  // by this version's integrity rules and never replaced.
+  if (object(record) && Object.hasOwn(record, 'schema') && record.schema !== 1) throw keptRecord(`retained record has schema ${JSON.stringify(record.schema).slice(0, 32)}, which this version does not know, so it is kept`, 'unknown-schema');
   const { id, ...value } = record || {};
   if (!object(record) || !ID.test(id || '') || hash(value) !== id || value.schema !== 1 || value.workspace !== loc.workspace) throw invalidRecord('retained record integrity or workspace binding changed');
   return value;
@@ -121,7 +121,11 @@ function archivedRequest(loc, requestId) {
   return record;
 }
 
-/** Exact lookup only; no unbounded archive-directory scan is used for authority. */
+/**
+ * Exact lookup only; no unbounded archive-directory scan is used for authority. A request hydrated from the
+ * archive is read-only evidence: the next compaction drops it from live state without re-publishing it.
+ * A lookup that fails throws; an error with a `reason` names a cause from ARCHIVE_REASONS.
+ */
 export function hydrateArchivedDecision(loc, state, requestId) {
   if (Object.hasOwn(state.requests, requestId)) return state.requests[requestId];
   const record = archivedRequest(loc, requestId);
@@ -201,7 +205,7 @@ function readReadinessIndex(loc, relative, invalid = { value: false }) {
   let record;
   try { record = JSON.parse(bytes); } catch { invalid.value = true; return null; }
   // An index a newer version wrote is kept, never rebuilt over: readers fall back to live and noted receipts.
-  if (object(record) && Number.isSafeInteger(record.schema) && record.schema > 1) throw Object.assign(fail(`the readiness index ${file} has schema ${record.schema}, written by a newer version, so it is kept and not used`), { unknownSchema: true });
+  if (object(record) && Object.hasOwn(record, 'schema') && record.schema !== 1) throw Object.assign(fail(`the readiness index ${file} has schema ${JSON.stringify(record.schema).slice(0, 32)}, which this version does not know (a newer version wrote it), so it is kept and not used`), { unknownSchema: true });
   const { id, ...value } = object(record) ? record : {};
   if (!object(record) || !ID.test(id || '') || hash(value) !== id || value.schema !== 1 || value.workspace !== loc.workspace) { invalid.value = true; return null; }
   return value;
@@ -493,18 +497,6 @@ export function archiveFaults(loc, state) {
   const count = Math.min(MAX_UNTRACKED, Math.max(nonNegative(value.count), files.length));
   return { count, files, truncated: count > files.length, archive: path.join(loc.home, root(loc)), ...(count && Number.isFinite(value.at) ? { at: value.at } : {}) };
 }
-// A request hydrated from the archive that a pass keeps live (its archive deferred) keeps its mark across the
-// published state, so a later pass never treats it as a fresh receipt.
-function restoreHydrated(state) {
-  const ids = Array.isArray(state.hydratedLive) ? state.hydratedLive : [];
-  delete state.hydratedLive;
-  for (const id of ids) {
-    if (typeof id !== 'string' || !ID.test(id) || !Object.hasOwn(state.requests, id)) continue;
-    if (!state.archivedHydrated) Object.defineProperty(state, 'archivedHydrated', { value: new Set(), enumerable: false });
-    state.archivedHydrated.add(id);
-  }
-}
-
 /**
  * Retire terminal/expired context while retaining immutable evidence and durable budgets.
  * A refused readiness-index write never blocks compaction: the request still archives, and the plan's
@@ -523,8 +515,9 @@ function restoreHydrated(state) {
  * pass, read the index, so one pass reads at most MAX_READINESS_RETRIES indexes beyond its own writes.
  * `options.retries: false` (the pre-tool consume path) retries no note and leaves the pass counter as it is,
  * so a guarded tool call does no readiness bookkeeping beyond the receipts it archives itself.
- * A hydrated request's re-archived receipt is never noted (a newer one may already be archived); when its
- * index write fails, the plan is counted as untracked and the sweep restarts, so status reports it and a
+ * A request hydrated from the archive is read-only evidence: every pass drops it from live state without
+ * re-publishing it, and writes its plan's index forward-only from the retained record's receipt, never the
+ * live copy. That receipt is never noted (a newer one may already be archived); when its index write fails, the plan is counted as untracked and the sweep restarts, so status reports it and a
  * full sweep reconciles it. An index file read but invalid (empty, truncated, malformed) is rebuilt from
  * the receipt at hand, and its plan is likewise counted as untracked until a restarted sweep reconciles
  * it against every record. A request record that reads but proves nothing (empty, truncated, a broken
@@ -539,25 +532,33 @@ function restoreHydrated(state) {
  * it; a retained record that already proves consumption stands over a live copy consumed again later; and
  * a request or task record that cannot be archived this pass (see writeRecord and decisionTask) keeps its
  * live copy, is counted and named in `state.archiveFaults` with its reason, and is retried by later passes
- * (see the marker) until it archives. A conflict on a request hydrated from the archive is 'kept': the
- * retained record is that request, and what was added to it since is dropped. A sweep skips a live
- * request's record name, which that marker reports instead.
+ * (see the marker) until it archives. A sweep skips a live request's record name, which that marker
+ * reports instead.
  * Returns this pass's faults, `{ requestId, plan, message }` (`requestId` and `plan` null for a task,
  * `plan` null for a request without a readiness receipt); callers may ignore them, because status derives
  * readiness-index health from the index, the notes and the sweep, and archive health from the marker.
  */
 export function compactDecisions(loc, state, options = {}) {
   const faults = [];
-  restoreHydrated(state);
-  // Small state with nothing hydrated and no deferred record retires nothing; it still retries noted index writes.
+  // Requests hydrated from the archive are read-only evidence the archive already holds: they leave live
+  // state here, are never re-published from their live copy (which a caller may have changed), and their
+  // plan's index is written forward-only from the retained record's own receipt below.
+  delete state.hydratedLive;
+  const hydrated = [...(state.archivedHydrated || [])].filter(id => Object.hasOwn(state.requests, id));
+  for (const id of hydrated) {
+    delete state.requests[id]; delete state.receipts[id]; delete state.observations[id]; delete state.nativeProbes[id];
+    for (const [key, value] of Object.entries(state.invocations)) if (value?.requestId === id) delete state.invocations[key];
+  }
+  state.archivedHydrated?.clear();
+  // Small state with no deferred record retires nothing; it still retries noted index writes.
   // Deferred records are retried by a decision prepare or record pass (never a guarded tool call), at most
   // once per `options.archiveRetryInterval` ms (default 0); a large state retires on every pass anyway.
   const held = archiveFaults(loc, state), now0 = loc.now ?? Date.now();
   const retryInterval = Number.isFinite(options.archiveRetryInterval) && options.archiveRetryInterval > 0 ? options.archiveRetryInterval : 0;
   const retryHeld = held.count > 0 && options.retries !== false && (held.at === undefined || now0 < held.at || now0 - held.at >= retryInterval);
-  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || state.archivedHydrated?.size > 0 || retryHeld;
+  const retireNow = Buffer.byteLength(stable(state)) > 512 * 1024 || retryHeld;
   // The consume path (retries off) with nothing to retire leaves readiness bookkeeping untouched.
-  if (!retireNow && (state.readinessPending === undefined || options.retries === false)) return faults;
+  if (!retireNow && !hydrated.length && (state.readinessPending === undefined || options.retries === false)) return faults;
   const now = loc.now ?? Date.now(), touched = new Set();
   const noted = pendingReadiness(state), pending = new Map(noted.entries.map(entry => [entry.plan, entry]));
   let untracked = noted.untracked;
@@ -606,6 +607,20 @@ export function compactDecisions(loc, state, options = {}) {
       return false;
     }
   };
+  for (const requestId of hydrated) {
+    // The retained record, read again: what the archive proves, never the live copy.
+    let record;
+    try { record = archivedRequest(loc, requestId); } catch { continue; }
+    const receipt = record?.receipt, planPath = record?.request?.planPath;
+    if (receipt?.type !== 'readiness' || !keyablePlan(planPath)) continue;
+    const plan = readinessPlanKey(planPath);
+    try { if (retainLatestReadiness(loc, planPath, readinessCitation(receipt)) === 'rebuilt') rebuilt.add(plan); }
+    catch (error) {
+      faults.push({ requestId, plan, message: `readiness index not retained for re-archived request ${requestId}: ${error.message}` });
+      // Its record may lie behind the sweep cursor, so a sweep already past it must not clear the count.
+      untrack(plan);
+    }
+  }
   for (const [requestId, request] of retireNow ? Object.entries(state.requests) : []) {
     const task = taskOf(request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
@@ -620,14 +635,10 @@ export function compactDecisions(loc, state, options = {}) {
     let archived;
     try { archived = writeRecord(loc, path.join(root(loc), 'requests', `${requestId}.json`), record, true); }
     catch (error) {
-      // A request hydrated from the archive is that record: what was added to it since is dropped.
-      if (error.reason === 'conflict' && state.archivedHydrated?.has(requestId)) archived = 'kept';
-      else {
-        // The request stays live, is named in the archive-fault marker, and is retried on later passes.
-        faults.push({ requestId, plan: readinessPlan, message: `request ${requestId} not archived this pass, kept live: ${error.message}` });
-        defer(`requests/${requestId}.json`, error.reason);
-        continue;
-      }
+      // The request stays live, is named in the archive-fault marker, and is retried on later passes.
+      faults.push({ requestId, plan: readinessPlan, message: `request ${requestId} not archived this pass, kept live: ${error.message}` });
+      defer(`requests/${requestId}.json`, error.reason);
+      continue;
     }
     if (archived === 'replaced') {
       // The name held content that proved nothing (a crash after link, before the state was published).
@@ -635,18 +646,8 @@ export function compactDecisions(loc, state, options = {}) {
       faults.push({ requestId, plan: readinessPlan, message: `request record ${requestId} held content that proved nothing and was replaced with the verified record` });
       if (readinessPlan) untrack(readinessPlan);
     }
-    // A request hydrated from the archive was archived before; a newer receipt may already be,
-    // so it never becomes the plan's pending newest.
-    if (receipt?.type === 'readiness' && keyablePlan(request.planPath) && ID.test(receipt.id || '') && Number.isFinite(receipt.recordedAt) && !state.archivedHydrated?.has(requestId)) {
+    if (receipt?.type === 'readiness' && keyablePlan(request.planPath) && ID.test(receipt.id || '') && Number.isFinite(receipt.recordedAt)) {
       retain(request.planPath, readinessCitation(receipt));
-    } else if (receipt?.type === 'readiness' && keyablePlan(request.planPath)) {
-      const plan = readinessPlanKey(request.planPath);
-      try { if (retainLatestReadiness(loc, request.planPath, readinessCitation(receipt)) === 'rebuilt') rebuilt.add(plan); }
-      catch (error) {
-        faults.push({ requestId, plan, message: `readiness index not retained for re-archived request ${requestId}: ${error.message}` });
-        // Its record may lie behind the sweep cursor, so a sweep already past it must not clear the count.
-        untrack(plan);
-      }
     }
     touched.add(request.budgetKey);
     delete state.requests[requestId]; delete state.receipts[requestId]; delete state.observations[requestId]; delete state.nativeProbes[requestId];
@@ -707,8 +708,9 @@ export function compactDecisions(loc, state, options = {}) {
     let task;
     try { task = decisionTask(loc, state, key); }
     catch (error) {
-      // A malformed live task (no reason) is left as it is; a retained record that cannot be used is reported.
-      if (error.reason) { defer(`tasks/${key}.json`, error.reason); faults.push({ requestId: null, plan: null, message: `task budget ${key} not retired this pass, kept live: ${error.message}` }); }
+      // A malformed live task (no reason) is left as it is. A retained record that cannot be used is reported
+      // only while a live task is kept because of it; with no live task, prepare, record and status report it.
+      if (error.reason && Object.hasOwn(state.tasks, key)) { defer(`tasks/${key}.json`, error.reason); faults.push({ requestId: null, plan: null, message: `task budget ${key} not retired this pass, kept live: ${error.message}` }); }
       continue;
     }
     if (!task) continue;
@@ -722,7 +724,5 @@ export function compactDecisions(loc, state, options = {}) {
   }
   if (deferredCount) state.archiveFaults = { count: Math.min(MAX_UNTRACKED, deferredCount), files: deferredFiles, at: now };
   else delete state.archiveFaults;
-  const hydratedLive = [...(state.archivedHydrated || [])].filter(id => Object.hasOwn(state.requests, id)).sort();
-  if (hydratedLive.length) state.hydratedLive = hydratedLive;
   return faults;
 }
