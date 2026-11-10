@@ -140,8 +140,9 @@ test('a derived_from insight is traceable from the applied learning back to the 
   const derived = fs.readFileSync(file, 'utf8').match(/^derived_from: (failure-cluster:[a-f0-9]{16})$/m)?.[1];
   assert.equal(derived, `failure-cluster:${cluster.id}`);
   const traced = before.recheck.failure_clusters.find(c => `failure-cluster:${c.id}` === derived);
-  assert.deepEqual(traced.evidence.toSorted(), f.evidence.toSorted(), 'the cited cluster names the evidence records it was built from');
-  for (const rel of traced.evidence) assert.equal(JSON.parse(fs.readFileSync(path.join(f.ws, rel), 'utf8')).checks[0].id, 'unit');
+  // The cluster counts the evidence records it was built from, by their own timestamps, without naming their paths.
+  assert.equal(traced.evidence_count, f.evidence.length, 'the cited cluster counts the evidence records it was built from');
+  assert.deepEqual(traced.failure_records.map(r => r.at).toSorted(), f.evidence.map(rel => JSON.parse(fs.readFileSync(path.join(f.ws, rel), 'utf8')).verifiedAt).toSorted());
 
   // Consuming the citing episode answers the cluster: it clears until the failure recurs.
   const cleared = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters;
@@ -152,7 +153,8 @@ test('a derived_from insight is traceable from the applied learning back to the 
   });
   const reopened = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true }).recheck.failure_clusters.find(c => c.id === cluster.id);
   assert.ok(reopened, 'failures after the consolidation reopen the cluster');
-  assert.deepEqual(reopened.evidence.toSorted(), recurred.toSorted(), 'only failures after the answer count');
+  assert.equal(reopened.evidence_count, recurred.length, 'only failures after the answer count');
+  assert.deepEqual(reopened.failure_records.map(r => r.at).toSorted(), recurred.map(rel => JSON.parse(fs.readFileSync(path.join(f.ws, rel), 'utf8')).verifiedAt).toSorted());
 });
 
 /** Capture an insight answering the fixture's cluster and consume it with one op. */

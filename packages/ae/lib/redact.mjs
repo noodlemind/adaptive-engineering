@@ -20,8 +20,15 @@ const FALLBACK_MASK = mask('error');
 const DEFAULT_PATTERNS = [
   {
     kind: 'url-credentials',
-    re: /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/i,
-    mask: (_match, scheme) => `${scheme}${mask('url-credentials')}@`,
+    // The generic-scheme alternative is tried only where a run of scheme characters `[a-z0-9+.-]` starts
+    // (the lookbehind), not at every position inside it: the old `\b[a-z][a-z0-9+.-]*:` re-scanned the run
+    // from each word boundary, which is quadratic on `a-a-a-...`. A `:` can only follow the whole run, so
+    // every start inside one run succeeds or fails alike; the old pattern matched from the first letter in
+    // the run that follows a non-word character. The second group skips to that letter (digits and
+    // `+.-`, and letters that follow a word character) and is put back unchanged, so the output is the
+    // same. The credential tail `[^\\/?#\s]+@` is unchanged and still scans to the end of its segment.
+    re: /(?:((?:\b(?:https?|wss?|ftp):[\\/]*|(?<![:\w])[\\/]{2,}))|(?<![a-z0-9+.-])((?:[0-9+.-]|(?<=\w)[a-z])*)(\b[a-z][a-z0-9+.-]*:[\\/]{2,}))[^\\/?#\s]+@/i,
+    mask: (_match, scheme, lead, generic) => `${lead ?? ''}${scheme ?? generic}${mask('url-credentials')}@`,
   },
   {
     kind: 'github-token',

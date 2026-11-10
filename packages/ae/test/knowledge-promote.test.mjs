@@ -20,6 +20,9 @@ import { rebuildStore } from '../lib/knowledge/admin.mjs';
 import { bucketDirFor, listBuckets, loadLayeredLearnings } from '../lib/knowledge/overlay.mjs';
 import { branchKeyFor } from '../lib/git-context.mjs';
 import { retrievalExclusion } from '../lib/knowledge/retrieve.mjs';
+import { writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { consolidateCandidates } from '../lib/knowledge/consolidate.mjs';
+import { failureClusterId } from '../lib/learning-recheck.mjs';
 
 const tempDir = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -522,4 +525,43 @@ test('prune removes buckets by key, by merged/tombstoned state, and by staleness
   // Selector required; unknown key refused.
   assert.match(pruneBuckets({ workspace: ws, home }).blockedReason, /needs --branch/);
   assert.match(pruneBuckets({ workspace: ws, home, branchKey: 'nope-00000000' }).blockedReason, /nothing to prune|no bucket/);
+});
+
+test('promotion carries a branch answer with its original time, so a cluster that reopened after it stays open', () => {
+  const ws = featureWorkspace('feature/answer');
+  const home = tempDir('promo-home-');
+  assert.equal(writeStoreConfig(ws, { home, mode: 'on' }).pass, true);
+  assert.equal(writeRecheckConfig(ws, { home, recheck: 'suggest' }).pass, true);
+  const clusterId = failureClusterId('check:unit');
+  const rel = 'docs/solutions/insights/unit-answer.md';
+  const text = `---\nkind: insight\ntitle: Unit check answer\nderived_from: failure-cluster:${clusterId}\n---\nThe retry constant is read before config loads.\n`;
+  fs.mkdirSync(path.dirname(path.join(ws, rel)), { recursive: true });
+  fs.writeFileSync(path.join(ws, rel), text);
+  const episode = { path: rel, sha256: crypto.createHash('sha256').update(text).digest('hex'), kind: 'insight', plan: 'docs/plans/p1.md' };
+  seedBucketLearning(ws, home, 'unit-answer', { episodes: [episode] });
+  const { dir } = ensureStore(ws, { home });
+  const branchAnswer = readLedger(bucketDirFor(dir, branchKeyFor('feature/answer'))).find((e) => e.answers === clusterId);
+  assert.ok(branchAnswer, 'the branch apply answered the cluster');
+  const open = () => consolidateCandidates({ workspace: ws, home, recheck: true }).recheck.failure_clusters.some((c) => c.id === clusterId);
+
+  // The failure recurs after the branch answer: the cluster reopens.
+  const busyUntil = (ms) => { const end = Date.now() + ms; while (Date.now() < end) { /* spin */ } };
+  busyUntil(5);
+  for (const plan of ['docs/plans/a.md', 'docs/plans/b.md']) {
+    const record = { plan, outcome: 'failed', verifiedAt: new Date().toISOString(), checks: [{ id: 'unit', status: 'failed', exitCode: 1, stderr: 'again' }] };
+    const file = path.join(ws, '.harness/evidence/history', `${crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex')}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(record));
+  }
+  assert.equal(open(), true, 'failures after the branch answer reopen the cluster');
+  busyUntil(5);
+
+  const emitted = buildPromotionOps({ workspace: ws, home, all: true });
+  assert.equal(emitted.pass, true, emitted.blockedReason);
+  const applied = applyOps({ workspace: ws, opsPath: path.join(ws, PROMOTE_OPS_REL), home });
+  assert.equal(applied.exitCode, 0, JSON.stringify(applied.rejected));
+  const goldenAnswer = readLedger(dir).find((e) => e.learning === 'sql/unit-answer' && e.path === rel);
+  assert.ok(goldenAnswer, 'the golden ledger consumed the episode');
+  assert.deepEqual([goldenAnswer.answers, goldenAnswer.answeredAt], [clusterId, branchAnswer.answeredAt], 'the original answer and its time are carried over');
+  assert.equal(open(), true, 'promotion does not re-clear a cluster that reopened after the original answer');
 });

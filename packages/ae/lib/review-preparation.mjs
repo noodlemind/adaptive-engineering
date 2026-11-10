@@ -21,6 +21,7 @@ const LANGUAGE_REVIEWERS = Object.freeze([
   ['python-reviewer', /\.py$/i],
   ['sql-reviewer', /\.sql$/i],
 ]);
+export const LANGUAGE_REVIEWER_IDS = Object.freeze(LANGUAGE_REVIEWERS.map(([id]) => id));
 
 function crossesBoundary(file) {
   return /\.sql$/i.test(file) || /(?:^|[\\/_.-])(?:auth|secrets?|passwords?|migrations?|schemas?|iam)(?:[\\/_.-]|$)/i.test(file);

@@ -7,7 +7,9 @@ import { readRecheckConfig, readStoreConfig, repoId, inertLine } from './knowled
 import { learningApplicability, APPLICABILITY_VERSION } from './knowledge/applicability.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { createRedactor } from './redact.mjs';
-import { externalPlansDir } from './project-layout.mjs';
+import { externalPlansDir, normalizePlanRel } from './project-layout.mjs';
+import { loadNamedChecks } from './checks.mjs';
+import { CODE_REVIEWERS, DOCUMENT_REVIEWERS, LANGUAGE_REVIEWER_IDS } from './review-preparation.mjs';
 
 // Consolidation re-check (agent memory plan, Phase 2). Every signal here is
 // evidence for judgment built only from Harness-owned records in the
@@ -40,13 +42,19 @@ export const RECHECK_DIR_ENTRY_CAP = 4096;
 const PLAN_LIST_CAP = 5;
 const REF_LIST_CAP = 8;
 // Structured metadata only: no raw check output, finding title, command line or plan text is ever shown.
-// Names and paths are shown only when they fit a narrow character set, start with a letter or digit (so
-// nothing reads as a flag or a dot path) and match no secret pattern; anything else is replaced, never
-// escaped or trimmed. A shown name is display text only and is never used as a plain-object key.
+// Identity fields read from records (check names, review perspectives, finding files, plans) are shown only
+// when an allowlist outside the record vouches for them: a check the workspace's checks configuration
+// declares, a review perspective Harness defines, or a file that exists in the checkout or the plan store.
+// Anything else is shown as a short digest, never escaped or trimmed: what a value looks like never decides
+// whether it is shown. The character sets and secret screens below are an extra layer, not the gate. A shown
+// name is display text only and is never used as a plain-object key.
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
 const SAFE_PATH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
 const SAFE_COMMAND = /^[a-z][a-z0-9-]{0,31}$/;
 const SAFE_LEARNING_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+/** Exit codes outside this range are not process exit statuses (POSIX 0-255, negative on some runtimes) and are dropped. */
+const EXIT_CODE_MIN = -255, EXIT_CODE_MAX = 255;
+const FINDING_LINE_MAX = 10_000_000;
 const UNNAMED = '[unnamed]';
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SIGNALS = new Set(['SIGABRT', 'SIGBUS', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGPIPE', 'SIGQUIT', 'SIGSEGV', 'SIGTERM', 'SIGTRAP', 'SIGXCPU', 'SIGXFSZ']);
@@ -130,13 +138,57 @@ const REDACTOR = createRedactor({ env: {} });
 /** No secret pattern from either scanner: `scanSecrets` finds nothing and the shared redactor leaves the value unchanged. */
 const noSecret = value => scanSecrets(value).length === 0 && REDACTOR.redactText(value) === value;
 
-/** A check, reviewer or rule name as shown: unchanged when it fits `SAFE_NAME`, otherwise `[unnamed]`. */
-const safeName = value => (typeof value === 'string' && SAFE_NAME.test(value) && noSecret(value) ? value : UNNAMED);
-
-/** A relative path as shown: unchanged when it fits `SAFE_PATH` and has no `..` segment, otherwise null (shown as `[unnamed]`). */
+/** A relative path that passes the character rules: fits `SAFE_PATH`, has no `..` segment and no secret pattern; otherwise null. */
 const safePath = value => (typeof value === 'string' && SAFE_PATH.test(value) && !value.split('/').includes('..') && noSecret(value) ? value : null);
 
-/** A plan or reference path as shown: the safe path, else a 12-hex digest so distinct values stay distinct, else `[unnamed]`. */
+/** A digest stand-in for a value that no allowlist vouches for, so distinct values stay distinct. */
+const digestName = (kind, value) => `[${kind}:${shortHash(String(value))}]`;
+
+/** A regular file at `rel` under `root`, reached without following a symlink at any step. */
+function existingFile(root, rel) {
+  const full = assertNoSymlinkAncestors(root, rel);
+  if (!full) return false;
+  try { return fs.lstatSync(full).isFile(); } catch { return false; }
+}
+
+/** A path in the checkout as shown: unchanged only when it passes the character rules and names an existing regular file in the checkout. */
+const checkoutFile = (workspace, value) => {
+  const rel = safePath(value);
+  return rel && existingFile(workspace, rel) ? rel : null;
+};
+
+/** Every review perspective Harness itself defines: code, language and document reviewers. */
+const KNOWN_PERSPECTIVES = new Set([...CODE_REVIEWERS, ...LANGUAGE_REVIEWER_IDS, ...DOCUMENT_REVIEWERS]);
+
+/** A finding category (the reviewer perspective) as shown: only a perspective Harness defines, otherwise a digest. */
+const perspectiveName = value => (typeof value === 'string' && KNOWN_PERSPECTIVES.has(value) ? value : digestName('reviewer', value));
+
+/**
+ * Check IDs the workspace's checks configuration declares, read once per summary and only when a name is
+ * shown. An unreadable or invalid configuration vouches for nothing.
+ */
+function declaredChecks(workspace, home) {
+  let ids = null;
+  return () => {
+    if (ids) return ids;
+    ids = new Set();
+    try {
+      const { checks } = loadNamedChecks(workspace, { home });
+      if (checks && typeof checks === 'object') for (const id of Object.keys(checks)) ids.add(id);
+    } catch { /* vouches for nothing */ }
+    return ids;
+  };
+}
+
+/** A check name as shown: only a check the configuration declares (and that passes the character rules), otherwise a digest. */
+const checkName = (value, declared) => (typeof value === 'string' && declared().has(value) && SAFE_NAME.test(value) && noSecret(value) ? value : digestName('check', value));
+
+/**
+ * A path from a learning in the store (a source binding or a body reference) as shown: the safe path, else a
+ * 12-hex digest, else `[unnamed]`. Learning text is already shown to agents by recall, and a broken
+ * reference names a path that by definition no longer exists, so these are not held to the existence rule
+ * that record-derived plans and files are.
+ */
 const displayPath = value => safePath(value) ?? (typeof value === 'string' && value ? `[unnamed:${shortHash(value)}]` : UNNAMED);
 
 /** A run-journal command as shown: only a lowercase `ae` subcommand-shaped word, otherwise `[unnamed]`. */
@@ -181,13 +233,13 @@ const shortHash = value => crypto.createHash('sha256').update(value).digest('hex
  * output can be told apart from two with different output. To read the output
  * the agent re-runs the check.
  */
-export function failureMetadata(check, at = null) {
+export function failureMetadata(check, at = null, declared = () => new Set()) {
   const stdout = typeof check?.stdout === 'string' ? check.stdout : '';
   const stderr = typeof check?.stderr === 'string' ? check.stderr : '';
   return {
-    check: safeName(check?.id),
+    check: checkName(check?.id, declared),
     status: FAILURE_STATUSES.has(check?.status) ? check.status : null,
-    exit_code: Number.isInteger(check?.exitCode) ? check.exitCode : null,
+    exit_code: Number.isInteger(check?.exitCode) && check.exitCode >= EXIT_CODE_MIN && check.exitCode <= EXIT_CODE_MAX ? check.exitCode : null,
     signal: SIGNALS.has(check?.signal) ? check.signal : null,
     at: safeTime(at),
     stdout_lines: lineCount(stdout),
@@ -196,10 +248,13 @@ export function failureMetadata(check, at = null) {
   };
 }
 
-/** How to see a failing check's output, naming the check only when its sanitized name survived. */
-const rerunHint = name => (name === UNNAMED
-  ? 'Output is not shown. Re-run `ae verify --plan <plan>` for a listed plan to see it.'
-  : `Output is not shown. Run \`ae checks run ${name}\` to see it.`);
+/** How to see a failing check's output, naming the check only when the checks configuration declares it. */
+const rerunHint = (id, declared) => {
+  const name = checkName(id, declared);
+  return name.startsWith('[')
+    ? 'Output is not shown, and this check is not one the workspace\'s checks configuration declares. Run the workspace\'s checks (`ae checks list`, then `ae checks run <name>`) to see current output.'
+    : `Output is not shown. Run \`ae checks run ${name}\` to see it.`;
+};
 
 /**
  * A finding as shown: never its free-text title (observations are stored
@@ -210,7 +265,7 @@ function findingMetadata(finding) {
   return {
     title_sha256: typeof finding.title === 'string' && finding.title.trim() ? shortHash(finding.title.trim()) : null,
     severity: SEVERITIES.has(finding.severity) ? finding.severity : null,
-    line: Number.isInteger(finding.line) && finding.line > 0 ? finding.line : null,
+    line: Number.isInteger(finding.line) && finding.line >= 1 && finding.line <= FINDING_LINE_MAX ? finding.line : null,
   };
 }
 
@@ -230,16 +285,20 @@ const processFailed = check => (check.status === 'failed' && Number.isInteger(ch
 const byStrength = (a, b) => b.plan_count - a.plan_count || newestFirst(timeMs(a.last_seen), timeMs(b.last_seen)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /**
- * A plan as shown. A plan in the project's external plan store (managed plans and domain child plans)
- * is recorded as an absolute path under the Harness home; it is shown by its file name, which
- * `ae verify --plan <name>` resolves to the same store, so the home directory never appears. Any other
- * absolute path is shown only as a digest.
+ * A plan as shown: only a plan file that exists. A plan in the checkout is shown by its relative path
+ * when that path passes the character rules and names a regular file reached without following a
+ * symlink. A plan in the project's external plan store (managed plans and domain child plans) is
+ * recorded as an absolute path under the Harness home; it is shown by its file name when that file
+ * exists in the store, so the home directory never appears. Anything else is shown only as a digest.
  */
-function planReference(value, planDirs) {
-  if (typeof value !== 'string' || !value || !(path.isAbsolute(value) || path.win32.isAbsolute(value))) return displayPath(value);
-  const base = path.basename(value);
-  if (/\.(?:md|hplan)$/.test(base) && planDirs.has(path.dirname(path.resolve(value)))) return displayPath(base);
-  return displayPath(value);
+function planReference(value, ctx) {
+  if (typeof value !== 'string' || !value) return UNNAMED;
+  const digest = `[unnamed:${shortHash(value)}]`;
+  if (path.isAbsolute(value) || path.win32.isAbsolute(value)) {
+    const base = path.basename(value), dir = path.dirname(path.resolve(value));
+    return /\.(?:md|hplan)$/.test(base) && ctx.planDirs.has(dir) && safePath(base) && existingFile(dir, base) ? base : digest;
+  }
+  return checkoutFile(ctx.workspace, value) ?? digest;
 }
 
 /** The external plan store, as written and canonical, so a recorded plan path matches either form. */
@@ -253,10 +312,26 @@ function externalPlanDirs(workspace, home) {
   return dirs;
 }
 
-/** Plans are counted after they are mapped to what is shown, so `plan_count` matches the distinct plans listed. */
-function finishCluster(row, planDirs) {
-  const plans = [...new Set([...row.plans].map(plan => planReference(plan, planDirs)))].sort();
-  return { ...row, plans: plans.slice(0, PLAN_LIST_CAP), plan_count: plans.length };
+/**
+ * A run-journal `--plan` value as `loadPlan` would resolve it, so `./docs/plans/a.md`, `docs/plans/a.md`
+ * and the absolute path name one plan. A value that does not resolve is kept as written (shown as a digest).
+ */
+function journalPlan(value, ctx) {
+  if (ctx.journalPlans.has(value)) return ctx.journalPlans.get(value);
+  let plan = value;
+  try { plan = normalizePlanRel(ctx.workspace, value, { home: ctx.home }) || value; } catch { plan = value; }
+  ctx.journalPlans.set(value, plan);
+  return plan;
+}
+
+/**
+ * Plans are counted after they are mapped to what is shown, so `plan_count` matches the distinct plans listed.
+ * Named plans are listed before digests, so digests never crowd a named plan out of the capped list.
+ */
+function shownPlans(row, ctx) {
+  const digestLast = plan => (plan.startsWith('[') ? `1${plan}` : `0${plan}`);
+  const plans = [...new Set([...row.plans].map(plan => planReference(plan, ctx)))].sort((a, b) => (digestLast(a) < digestLast(b) ? -1 : digestLast(a) > digestLast(b) ? 1 : 0));
+  return { plans: plans.slice(0, PLAN_LIST_CAP), plan_count: plans.length };
 }
 
 /**
@@ -267,16 +342,24 @@ function finishCluster(row, planDirs) {
  */
 const unresolved = (resolved, id, at) => !resolved.has(id) || timeMs(at) > Date.parse(resolved.get(id));
 
+/** First and last seen; a time equal to the current bound keeps it, so both sources compare the same way. */
+function widen(row, at) {
+  if (!at) return;
+  if (!row.first_seen || timeMs(at) < timeMs(row.first_seen)) row.first_seen = at;
+  if (!row.last_seen || timeMs(at) > timeMs(row.last_seen)) row.last_seen = at;
+}
+
 /**
  * Failed named `ae verify` checks, grouped by check ID across plans, from the
- * digest-named evidence history Harness writes on every verification.
+ * digest-named evidence history Harness writes on every verification. The
+ * rows hold the recorded values; `evidenceRows` maps them to what is shown.
  */
 function evidenceClusters(workspace, resolved, preselect = SCAN_CAP * 2) {
   const history = listRecordNames(workspace, '.harness/evidence/history', HASH_FILE, preselect);
-  const read = history.names.map(name => ({ rel: `.harness/evidence/history/${name}`, value: readDigestRecord(workspace, `.harness/evidence/history/${name}`, name) })).filter(record => record.value);
-  const { records, omitted } = newestRecords(read, record => record.value.verifiedAt, history.omitted);
+  const read = history.names.map(name => readDigestRecord(workspace, `.harness/evidence/history/${name}`, name)).filter(Boolean);
+  const { records, omitted } = newestRecords(read, record => record.verifiedAt, history.omitted);
   const clusters = new Map();
-  for (const { rel, value } of records) {
+  for (const value of records) {
     if (typeof value.plan !== 'string' || !value.plan || !Array.isArray(value.checks)) continue;
     const at = safeTime(value.verifiedAt);
     for (const check of value.checks) {
@@ -284,30 +367,33 @@ function evidenceClusters(workspace, resolved, preselect = SCAN_CAP * 2) {
       const checkId = inertLine(check.id).slice(0, 200);
       const key = `check:${checkId}`;
       if (!unresolved(resolved, failureClusterId(key), at)) continue;
-      const name = safeName(check.id);
-      const row = clusters.get(key) || { id: failureClusterId(key), source: 'evidence', check: name, plans: new Set(), failures: 0, first_seen: null, last_seen: null, failure_records: [], hint: rerunHint(name), evidence: new Map() };
+      const row = clusters.get(key) || { id: failureClusterId(key), checkId: check.id, plans: new Set(), failures: 0, first_seen: null, last_seen: null, records: [], evidence: new Set() };
       row.plans.add(value.plan);
       row.failures += 1;
-      if (at && (!row.first_seen || timeMs(at) < timeMs(row.first_seen))) row.first_seen = at;
-      if (at && (!row.last_seen || timeMs(at) >= timeMs(row.last_seen))) row.last_seen = at;
-      row.failure_records.push(failureMetadata(check, at));
-      if (!row.evidence.has(rel)) row.evidence.set(rel, timeMs(at));
+      widen(row, at);
+      row.records.push({ check, at });
+      row.evidence.add(value);
       clusters.set(key, row);
     }
   }
-  // Newest failing records and evidence records first, each capped with an omission count: metadata only, never output.
-  const rows = [...clusters.values()].map(row => {
-    const records = row.failure_records.toSorted((a, b) => newestFirst(timeMs(a.at), timeMs(b.at)));
-    const evidence = [...row.evidence].sort((a, b) => newestFirst(a[1], b[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([rel]) => rel);
+  return { clusters: [...clusters.values()], omitted, truncated: history.truncated };
+}
+
+/**
+ * Evidence clusters as shown. Newest failing records first, capped with an omission count: metadata only,
+ * never output, and no evidence record paths (they hold retained output): `evidence_count` says how many
+ * evidence records the cluster was built from.
+ */
+function evidenceRows(rows, ctx) {
+  return rows.map(row => {
+    const records = row.records.map(({ check, at }) => failureMetadata(check, at, ctx.declared)).sort((a, b) => newestFirst(timeMs(a.at), timeMs(b.at)));
     return {
-      ...row,
-      failure_records: records.slice(0, PLAN_LIST_CAP),
-      evidence: evidence.slice(0, REF_LIST_CAP),
-      evidence_count: evidence.length,
-      omitted: { failure_records: Math.max(0, records.length - PLAN_LIST_CAP), evidence: Math.max(0, evidence.length - REF_LIST_CAP) },
+      id: row.id, source: 'evidence', check: checkName(row.checkId, ctx.declared), ...shownPlans(row, ctx), failures: row.failures,
+      first_seen: row.first_seen, last_seen: row.last_seen, failure_records: records.slice(0, PLAN_LIST_CAP), hint: rerunHint(row.checkId, ctx.declared),
+      evidence_count: row.evidence.size,
+      omitted: { failure_records: Math.max(0, records.length - PLAN_LIST_CAP) },
     };
   });
-  return { clusters: rows, omitted, truncated: history.truncated };
 }
 
 /**
@@ -328,9 +414,10 @@ function readJournalBounded(workspace) {
 /**
  * Failed runs per command across plans, from the run journal's `run.result`
  * records. Context only: a journal result cannot tell a gate refusal from a
- * broken check, so these clusters never make consolidation due.
+ * broken check, so these clusters never make consolidation due. Plans are
+ * normalized as `loadPlan` resolves them before they are counted.
  */
-function journalClusters(workspace, resolved) {
+function journalClusters(workspace, resolved, ctx) {
   const journal = readJournalBounded(workspace);
   let runs = [];
   try { runs = foldRuns(journal.records, { isAlive: () => false }); } catch { return { clusters: [], truncated: journal.truncated }; }
@@ -342,17 +429,16 @@ function journalClusters(workspace, resolved) {
     const at = safeTime(run.finishedAt) || safeTime(run.startedAt) || null;
     if (!unresolved(resolved, failureClusterId(key), at)) continue;
     const row = clusters.get(key) || { id: failureClusterId(key), source: 'run-journal', command: safeCommand(run.command), plans: new Set(), failures: 0, first_seen: null, last_seen: null };
-    row.plans.add(run.plan);
+    row.plans.add(journalPlan(run.plan, ctx));
     row.failures += 1;
-    if (at && (!row.first_seen || timeMs(at) < timeMs(row.first_seen))) row.first_seen = at;
-    if (at && (!row.last_seen || timeMs(at) > timeMs(row.last_seen))) row.last_seen = at;
+    widen(row, at);
     clusters.set(key, row);
   }
-  return { clusters: [...clusters.values()], truncated: journal.truncated };
+  return { clusters: [...clusters.values()].map(row => ({ ...row, ...shownPlans(row, ctx) })), truncated: journal.truncated };
 }
 
 /** Recurring review findings grouped by perspective (the finding category) and file across plans. */
-function findingClusters(workspace) {
+function findingClusters(workspace, ctx) {
   const { names, omitted, truncated } = listRecordNames(workspace, '.harness/reviews/observations', HASH_FILE, SCAN_CAP);
   const packetPlans = new Map(), clusters = new Map();
   for (const name of names) {
@@ -367,7 +453,7 @@ function findingClusters(workspace) {
         const file = typeof finding?.file === 'string' ? path.posix.normalize(finding.file.replace(/\\/g, '/')) : '';
         if (!file || file.startsWith('../') || /[\0\r\n]/.test(file)) continue;
         const key = `${inertLine(result.reviewer).slice(0, 80)}\0${file}`;
-        const row = clusters.get(key) || { id: findingClusterId(key), category: safeName(result.reviewer), file: safePath(file) ?? UNNAMED, plans: new Set(), findings: 0, samples: [] };
+        const row = clusters.get(key) || { id: findingClusterId(key), category: perspectiveName(result.reviewer), file: checkoutFile(workspace, file) ?? `[unnamed:${shortHash(file)}]`, plans: new Set(), findings: 0, samples: [] };
         row.plans.add(plan);
         row.findings += 1;
         const sample = findingMetadata(finding);
@@ -376,7 +462,7 @@ function findingClusters(workspace) {
       }
     }
   }
-  return { clusters: [...clusters.values()], omitted, truncated };
+  return { clusters: [...clusters.values()].map(row => ({ ...row, ...shownPlans(row, ctx) })), omitted, truncated };
 }
 
 /**
@@ -513,17 +599,31 @@ const plansAtLeast = n => row => row.plan_count >= n;
  * feedback section. Each list is capped with an omission count. `preselect`
  * bounds how many evidence-history names (newest by mtime) are opened:
  * status and orient pass `RECHECK_STATUS_PRESELECT`.
+ *
+ * `scope: 'due'` (status and orient) computes only what `recheckDue` reads:
+ * stale exposed learnings and named-check evidence clusters. The run journal,
+ * review observations, learning bodies and the checks configuration are not
+ * opened, and `counts` holds only `stale_exposed`, `review_required` and
+ * `failure_clusters` (named-check evidence clusters only).
  */
-export function recheckSummary({ workspace, home, learnings, allLearnings = learnings, reviewRequired: reviewIds = [], resolved = new Map(), preselect = SCAN_CAP * 2 }) {
+export function recheckSummary({ workspace, home, learnings, allLearnings = learnings, reviewRequired: reviewIds = [], resolved = new Map(), preselect = SCAN_CAP * 2, scope = 'full' }) {
   const reviewRequired = reviewIds.map(safeLearningId);
-  const planDirs = externalPlanDirs(workspace, home);
-  const finish = row => finishCluster(row, planDirs);
+  const ctx = { workspace, home, planDirs: externalPlanDirs(workspace, home), declared: declaredChecks(workspace, home), journalPlans: new Map() };
   const evidence = evidenceClusters(workspace, resolved, preselect);
-  const journal = journalClusters(workspace, resolved);
-  const failures = [...evidence.clusters, ...journal.clusters].map(finish).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
-  const findings = findingClusters(workspace);
-  const findingRows = findings.clusters.map(finish).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
   const { rows: stale, omitted: exposureOmitted, truncated: exposureTruncated } = staleExposed(workspace, learnings);
+  const evidenceCounted = evidence.clusters.map(row => ({ ...shownPlans(row, ctx) })).filter(plansAtLeast(RECHECK_PLAN_THRESHOLD));
+  const max_cluster_plans = evidenceCounted.reduce((n, row) => Math.max(n, row.plan_count), 0);
+  if (scope === 'due') {
+    return {
+      scope: 'due',
+      counts: { stale_exposed: stale.length, review_required: reviewRequired.length, failure_clusters: evidenceCounted.length },
+      max_cluster_plans,
+    };
+  }
+  const journal = journalClusters(workspace, resolved, ctx);
+  const failures = [...evidenceRows(evidence.clusters, ctx), ...journal.clusters].filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
+  const findings = findingClusters(workspace, ctx);
+  const findingRows = findings.clusters.filter(plansAtLeast(RECHECK_PLAN_THRESHOLD)).sort(byStrength);
   const broken = brokenReferences(workspace, learnings, allLearnings);
   const cap = list => list.slice(0, RECHECK_SECTION_CAP);
   const over = list => Math.max(0, list.length - RECHECK_SECTION_CAP);
@@ -542,7 +642,7 @@ export function recheckSummary({ workspace, home, learnings, allLearnings = lear
       ...(journal.truncated ? { journal: `only the newest ${JOURNAL_BYTE_CAP / (1024 * 1024)} MiB of the run journal was read` } : {}),
       ...(evidence.truncated || findings.truncated || exposureTruncated ? { directories: `only the first ${RECHECK_DIR_ENTRY_CAP} entries of each record directory were read` } : {}),
     },
-    max_cluster_plans: failures.filter(row => row.source === 'evidence').reduce((n, row) => Math.max(n, row.plan_count), 0),
+    max_cluster_plans,
   };
 }
 

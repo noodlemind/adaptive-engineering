@@ -22,6 +22,8 @@ import { externalPlansDir, normalizePlanRel } from '../lib/project-layout.mjs';
 const sha = text => crypto.createHash('sha256').update(text).digest('hex');
 const PLAN_A = 'docs/plans/2026-11-01-a-plan.md', PLAN_B = 'docs/plans/2026-11-02-b-plan.md', PLAN_C = 'docs/plans/2026-11-03-c-plan.md';
 const GITHUB_TOKEN = `ghp_${'A1b2C3d4E5'.repeat(4)}`;
+const DECLARED_CHECKS = ['unit', 'lint', 'types', 'slow', 'solo', 'early', 'late', 'near', 'wide', 'leaky', 'pkg/unit:fast-1.2_x', 'constructor', 'toString', 'hasOwnProperty'];
+const DIGEST_CHECK = /^\[check:[a-f0-9]{12}\]$/, DIGEST_REVIEWER = /^\[reviewer:[a-f0-9]{12}\]$/, DIGEST_PATH = /^\[unnamed:[a-f0-9]{12}\]$/;
 
 function fixture(t) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ae-recheck-')));
@@ -36,6 +38,9 @@ function fixture(t) {
   };
   const { dir } = ensureStore(ws, { home });
   assert.equal(writeStoreConfig(ws, { home, mode: 'on' }).pass, true);
+  // Check names are shown only when the checks configuration declares them, and plans only when the file exists.
+  put('.github/harness/checks.yaml', `version: 1\nchecks:\n${DECLARED_CHECKS.map(id => `  ${JSON.stringify(id)}:\n    argv: [node, --version]\n`).join('')}`);
+  for (const plan of [PLAN_A, PLAN_B, PLAN_C]) put(plan, `# ${plan}\n`);
   const learn = (domain, slug, fm = {}, body = 'Retry the delivery once before failing.') => {
     const file = path.join(dir, 'learnings', domain, `${slug}.md`);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -95,9 +100,9 @@ function seedSignals(f) {
     { schema: 1, type: 'run.result', run: 'r3', ts: '2026-11-02T00:01:00.000Z', status: 'failed', exitCode: 1, plan: PLAN_B },
   ]);
   const finding = title => ({ file: 'src/worker.mjs', line: 1, title, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
-  f.observation(PLAN_A, 'correctness', [finding('Retry count is off by one')]);
-  f.observation(PLAN_B, 'correctness', [finding(`Retry count leaks ${GITHUB_TOKEN}`)]);
-  f.observation(PLAN_A, 'security', [{ ...finding('Single-plan finding'), file: 'src/other.mjs' }]);
+  f.observation(PLAN_A, 'architecture-strategist', [finding('Retry count is off by one')]);
+  f.observation(PLAN_B, 'architecture-strategist', [finding(`Retry count leaks ${GITHUB_TOKEN}`)]);
+  f.observation(PLAN_A, 'security-sentinel', [{ ...finding('Single-plan finding'), file: 'src/other.mjs' }]);
   return { stale, wrong, broken, evidenceA, evidenceB };
 }
 
@@ -146,7 +151,9 @@ test('suggest: --recheck adds every signal from Harness-owned records and leaves
   assert.deepEqual(unit.failure_records[0], { check: 'unit', status: 'failed', exit_code: 1, signal: null, at: unit.last_seen, stdout_lines: 0, stderr_lines: 1, output_sha256: unit.failure_records[0].output_sha256 });
   assert.match(unit.failure_records[0].output_sha256, /^[a-f0-9]{12}$/);
   assert.match(unit.hint, /ae checks run unit/);
-  assert.deepEqual(unit.evidence.toSorted(), [ids.evidenceA, ids.evidenceB].toSorted());
+  assert.equal(unit.evidence_count, 2, 'the cluster counts its evidence records');
+  assert.equal('evidence' in unit, false, 'evidence record paths (which hold retained output) are not listed');
+  assert.equal(JSON.stringify(recheck).includes(ids.evidenceA), false);
   const verify = recheck.failure_clusters.find(c => c.command === 'verify');
   assert.equal(verify.source, 'run-journal');
   assert.deepEqual(verify.plans, [PLAN_A, PLAN_B]);
@@ -156,7 +163,7 @@ test('suggest: --recheck adds every signal from Harness-owned records and leaves
 
   assert.equal(recheck.finding_clusters.length, 1);
   const [cluster] = recheck.finding_clusters;
-  assert.equal(cluster.category, 'correctness');
+  assert.equal(cluster.category, 'architecture-strategist');
   assert.equal(cluster.file, 'src/worker.mjs');
   assert.deepEqual(cluster.plans, [PLAN_A, PLAN_B]);
   assert.equal(cluster.findings, 2);
@@ -345,8 +352,9 @@ test('run-journal clusters are context only and never make consolidation due', t
     { schema: 1, type: 'run.start', run: `j${i}`, ts: `2026-11-0${i + 1}T00:00:00.000Z`, command: 'verify', plan },
     { schema: 1, type: 'run.result', run: `j${i}`, ts: `2026-11-0${i + 1}T00:01:00.000Z`, status: 'failed', exitCode: 1, plan },
   ]));
+  assert.equal(f.packet({ recheck: true }).recheck.counts.failure_clusters, 1, 'the packet lists the journal cluster');
   const status = f.status();
-  assert.equal(status.recheck.counts.failure_clusters, 1);
+  assert.equal(status.recheck.counts.failure_clusters, 0, 'status counts only named-check evidence clusters, which decide due');
   assert.equal(status.due, false);
 });
 
@@ -364,7 +372,9 @@ test('status and packet see the same golden plus branch learnings', t => {
     'Builds on `runtime/golden-claim`; see `runtime/missing-claim`.'));
   const packet = consolidateCandidates({ workspace: f.ws, home: f.home, recheck: true, writeLayer: true });
   assert.deepEqual(packet.recheck.broken_references, [{ id: 'runtime/branch-claim', references: [{ kind: 'learning', ref: 'runtime/missing-claim' }] }], 'a branch learning citing a golden learning is not broken');
-  assert.deepEqual(f.status().recheck.counts, packet.recheck.counts);
+  // Status computes only what due reads; those counts match the packet's.
+  const { stale_exposed, review_required, failure_clusters } = packet.recheck.counts;
+  assert.deepEqual(f.status().recheck.counts, { stale_exposed, review_required, failure_clusters });
 });
 
 // Second review pass.
@@ -521,11 +531,15 @@ test('failing check output never appears in the packet or status: only metadata'
 });
 
 test('failure metadata fields are sanitized: hostile names, signals, statuses and timestamps are replaced', t => {
-  for (const id of ['unit\x1b[31m', 'unit\nnext', 'unit test', 'x'.repeat(65), '', 'ünit', 'a;rm -rf', 42]) {
-    assert.equal(failureMetadata({ id, status: 'failed', exitCode: 1 }).check, '[unnamed]', JSON.stringify(id));
+  const hostileIds = ['unit\x1b[31m', 'unit\nnext', 'unit test', 'x'.repeat(65), '', 'ünit', 'a;rm -rf', 42];
+  // Even a declared check is shown only when it also passes the character rules.
+  const declared = () => new Set([...hostileIds, 'pkg/unit:fast-1.2_x', 'unit']);
+  for (const id of hostileIds) {
+    assert.match(failureMetadata({ id, status: 'failed', exitCode: 1 }, null, declared).check, DIGEST_CHECK, JSON.stringify(id));
   }
-  assert.equal(failureMetadata({ id: 'pkg/unit:fast-1.2_x' }).check, 'pkg/unit:fast-1.2_x');
-  const odd = failureMetadata({ id: 'unit', status: 'failed\n', exitCode: '1', signal: 'SIGTERM\x1b[0m', stdout: 7, stderr: null }, '2026-11-01T00:00:00Z\nhunter2');
+  assert.equal(failureMetadata({ id: 'pkg/unit:fast-1.2_x' }, null, declared).check, 'pkg/unit:fast-1.2_x');
+  assert.match(failureMetadata({ id: 'pkg/unit:fast-1.2_x' }).check, DIGEST_CHECK, 'an undeclared check is a digest');
+  const odd = failureMetadata({ id: 'unit', status: 'failed\n', exitCode: '1', signal: 'SIGTERM\x1b[0m', stdout: 7, stderr: null }, '2026-11-01T00:00:00Z\nhunter2', declared);
   assert.deepEqual({ ...odd, output_sha256: undefined }, { check: 'unit', status: null, exit_code: null, signal: null, at: null, stdout_lines: 0, stderr_lines: 0, output_sha256: undefined });
   assert.equal(failureMetadata({ id: 'unit', signal: 'SIGKILL' }, '2026-11-01T00:00:00.000+02:00').signal, 'SIGKILL');
   assert.equal(failureMetadata({ id: 'unit' }, '2026-11-01T00:00:00.000+02:00').at, '2026-10-31T22:00:00.000Z', 'an offset time is shown in canonical UTC');
@@ -537,10 +551,10 @@ test('failure metadata fields are sanitized: hostile names, signals, statuses an
   for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: hostile, status: 'failed', stderr: 'boom' }]);
   const { recheck } = f.packet({ recheck: true });
   const [cluster] = recheck.failure_clusters;
-  assert.equal(cluster.check, '[unnamed]');
-  assert.ok(cluster.failure_records.every(record => record.check === '[unnamed]'));
-  assert.doesNotMatch(cluster.hint, /checks run/, 'an unnamed check is not offered as a command');
-  assert.match(cluster.hint, /ae verify/);
+  assert.match(cluster.check, DIGEST_CHECK);
+  assert.ok(cluster.failure_records.every(record => record.check === cluster.check));
+  assert.doesNotMatch(cluster.hint, /checks run [^<]/, 'an undeclared check is not offered as a command');
+  assert.match(cluster.hint, /ae checks list/);
   assert.equal(JSON.stringify(recheck).includes('hunter2'), false);
   assert.equal(/[\x00-\x1f]/.test(JSON.parse(JSON.stringify(recheck.failure_clusters)).map(c => c.check + c.hint).join('')), false);
 });
@@ -550,8 +564,9 @@ test('finding titles never appear: only a title hash, severity, line, sanitized 
   f.learn('runtime', 'baseline');
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
   const finding = (file, title, extra = {}) => ({ file, line: 4, title, severity: 'P1', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'], ...extra });
+  f.put('src/a.mjs', 'export const a = 1;\n');
   for (const [plan, title] of [[PLAN_A, RAW_SECRETS.csi], [PLAN_B, RAW_SECRETS.curl], [PLAN_C, RAW_SECRETS.cookie]]) {
-    f.observation(plan, 'security', [finding('src/a.mjs', title), finding('src/a.mjs', RAW_SECRETS.github), finding('src/a.mjs', RAW_SECRETS.pem)]);
+    f.observation(plan, 'security-sentinel', [finding('src/a.mjs', title), finding('src/a.mjs', RAW_SECRETS.github), finding('src/a.mjs', RAW_SECRETS.pem)]);
   }
   f.observation(PLAN_A, 'style\x1b[31m', [finding('src/we ird.mjs', `Slow ${'a-'.repeat(100000)}`, { severity: 'P9\nhunter2', line: 'x' })]);
   f.observation(PLAN_B, 'style\x1b[31m', [finding('src/we ird.mjs', 'Other')]);
@@ -562,7 +577,7 @@ test('finding titles never appear: only a title hash, severity, line, sanitized 
   assertNoRaw(JSON.stringify(recheck), 'packet');
   assertNoRaw(JSON.stringify(status), 'status');
   assert.equal(JSON.stringify(recheck).includes('Slow'), false);
-  const security = recheck.finding_clusters.find(c => c.category === 'security');
+  const security = recheck.finding_clusters.find(c => c.category === 'security-sentinel');
   assert.equal(security.file, 'src/a.mjs');
   assert.equal(security.samples.length, 3, 'capped');
   for (const sample of security.samples) {
@@ -571,9 +586,9 @@ test('finding titles never appear: only a title hash, severity, line, sanitized 
     assert.equal(sample.severity, 'P1');
     assert.equal(sample.line, 4);
   }
-  const style = recheck.finding_clusters.find(c => c.category !== 'security');
-  assert.equal(style.category, '[unnamed]', 'a reviewer name with an escape is not shown');
-  assert.equal(style.file, '[unnamed]', 'a path outside the safe set is not shown');
+  const style = recheck.finding_clusters.find(c => c.category !== 'security-sentinel');
+  assert.match(style.category, DIGEST_REVIEWER, 'a reviewer Harness does not define is not shown');
+  assert.match(style.file, DIGEST_PATH, 'a path outside the safe set is not shown');
   assert.ok(style.samples.some(sample => sample.severity === null && sample.line === null), 'unknown severity and line are dropped');
 });
 
@@ -595,8 +610,8 @@ test('hostile plans, journal commands and journal times never reach the packet o
   ]);
   f.put('.harness/runs.jsonl', `${runs.map(line => JSON.stringify(line)).join('\r\n')}\r\n`);
   const finding = { file: 'src/worker.mjs', line: 2, title: 't', severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] };
-  f.observation(HOSTILE_PLAN, 'correctness', [finding]);
-  f.observation(PLAN_A, 'correctness', [finding]);
+  f.observation(HOSTILE_PLAN, 'architecture-strategist', [finding]);
+  f.observation(PLAN_A, 'architecture-strategist', [finding]);
   const packet = f.packet({ recheck: true }), status = f.status();
   for (const [label, value] of [['packet', packet], ['status', status]]) {
     const json = JSON.stringify(value);
@@ -614,22 +629,24 @@ test('hostile plans, journal commands and journal times never reach the packet o
   assert.equal(findings.plan_count, 2);
 });
 
-test('a cluster lists at most eight evidence records, newest first, with a count and omissions', t => {
+test('a cluster counts its evidence records without listing their paths, and lists five failure records newest first', t => {
   const f = fixture(t);
   f.learn('runtime', 'baseline');
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
   const rels = [];
   for (let i = 0; i < 12; i++) rels.push(f.evidence(i % 2 ? PLAN_B : PLAN_A, [{ id: 'unit', status: 'failed', stderr: `run ${i}` }], `2026-11-01T00:00:${String(i).padStart(2, '0')}.000Z`));
   const [cluster] = f.packet({ recheck: true }).recheck.failure_clusters;
-  assert.deepEqual(cluster.evidence, rels.toReversed().slice(0, 8));
+  assert.equal('evidence' in cluster, false, 'evidence records hold retained output, so their paths are not listed');
+  assert.equal(rels.some(rel => JSON.stringify(cluster).includes(path.basename(rel, '.json'))), false);
   assert.equal(cluster.evidence_count, 12);
-  assert.deepEqual(cluster.omitted, { failure_records: 7, evidence: 4 });
-  assert.equal(cluster.failure_records.length, 5);
+  assert.deepEqual(cluster.omitted, { failure_records: 7 });
+  assert.deepEqual(cluster.failure_records.map(r => r.at), [11, 10, 9, 8, 7].map(i => `2026-11-01T00:00:${String(i).padStart(2, '0')}.000Z`));
 });
 
-test('names and paths must start with a letter or digit; flag-like names get the verify hint; built-in property names stay data', t => {
-  for (const id of ['--trust-all', '-x', '..', '.hidden', '.', ':x', '/etc', '__proto__', `ghp_${'A1b2C3d4E5'.repeat(4)}`]) {
-    assert.equal(failureMetadata({ id, status: 'failed', exitCode: 1 }).check, '[unnamed]', JSON.stringify(id));
+test('names and paths must start with a letter or digit; flag-like names get the generic hint; built-in property names stay data', t => {
+  const ids = ['--trust-all', '-x', '..', '.hidden', '.', ':x', '/etc', '__proto__', `ghp_${'A1b2C3d4E5'.repeat(4)}`];
+  for (const id of ids) {
+    assert.match(failureMetadata({ id, status: 'failed', exitCode: 1 }, null, () => new Set(ids)).check, DIGEST_CHECK, JSON.stringify(id));
   }
   const f = fixture(t);
   f.learn('runtime', 'baseline');
@@ -639,14 +656,16 @@ test('names and paths must start with a letter or digit; flag-like names get the
   const finding = { file: '.hidden/a.mjs', line: 1, title: 't', severity: 'P3', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] };
   for (const plan of [PLAN_A, PLAN_B]) f.observation(plan, '-security', [finding]);
   const { recheck } = f.packet({ recheck: true });
-  const flag = recheck.failure_clusters.find(c => c.check === '[unnamed]');
-  assert.match(flag.hint, /ae verify --plan/);
-  assert.doesNotMatch(flag.hint, /checks run/);
+  const flag = recheck.failure_clusters.find(c => c.id === failureClusterId('check:--trust-all'));
+  assert.match(flag.check, DIGEST_CHECK);
+  assert.match(flag.hint, /ae checks list/);
+  assert.doesNotMatch(flag.hint, /trust-all|checks run [^<]/);
   for (const name of ['constructor', 'toString', 'hasOwnProperty']) assert.equal(recheck.failure_clusters.find(c => c.check === name)?.id, failureClusterId(`check:${name}`), name);
   const ctor = recheck.failure_clusters.find(c => c.check === 'constructor');
   assert.equal(ctor.plan_count, 3);
   assert.ok(ctor.plans.some(plan => /^\[unnamed:[a-f0-9]{12}\]$/.test(plan)), 'a flag-like plan is not shown');
-  assert.deepEqual([recheck.finding_clusters[0].category, recheck.finding_clusters[0].file], ['[unnamed]', '[unnamed]']);
+  assert.match(recheck.finding_clusters[0].category, DIGEST_REVIEWER);
+  assert.match(recheck.finding_clusters[0].file, DIGEST_PATH);
 });
 
 test('timestamps compare as times: offsets, future times and answers recorded with offsets', t => {
@@ -760,6 +779,8 @@ test('plans are counted after mapping to what is shown, so plan_count matches th
   writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
   const store = externalPlansDir(f.ws, { home: f.home });
   const name = '2026-11-01-feat-a-plan.md';
+  fs.mkdirSync(store, { recursive: true });
+  fs.writeFileSync(path.join(store, name), '# a\n');
   const run = (id, plan, day) => [
     { schema: 1, type: 'run.start', run: id, ts: `2026-11-0${day}T00:00:00.000Z`, command: 'verify', plan },
     { schema: 1, type: 'run.result', run: id, ts: `2026-11-0${day}T00:01:00.000Z`, status: 'failed', exitCode: 1, plan },
@@ -784,17 +805,15 @@ test('names and paths the shared redactor would mask are not shown, even when th
   for (const plan of [PLAN_A, PLAN_B]) {
     f.observation(plan, openai, [finding('src/a.mjs')]);
     f.observation(plan, kv, [finding('src/b.mjs')]);
-    f.observation(plan, 'correctness', [finding(`src/${openai}.mjs`)]);
+    f.observation(plan, 'architecture-strategist', [finding(`src/${openai}.mjs`)]);
   }
   const { recheck } = f.packet({ recheck: true });
   assert.equal(recheck.failure_clusters.length, 2);
-  assert.ok(recheck.failure_clusters.every(c => c.check === '[unnamed]' && c.failure_records.every(r => r.check === '[unnamed]')));
-  assert.deepEqual(recheck.finding_clusters.map(c => c.category).toSorted(), ['[unnamed]', '[unnamed]', 'correctness']);
-  assert.equal(recheck.finding_clusters.find(c => c.category === 'correctness').file, '[unnamed]');
+  assert.ok(recheck.failure_clusters.every(c => DIGEST_CHECK.test(c.check) && c.failure_records.every(r => r.check === c.check)));
+  assert.deepEqual(recheck.finding_clusters.map(c => DIGEST_REVIEWER.test(c.category) ? 'digest' : c.category).toSorted(), ['architecture-strategist', 'digest', 'digest']);
+  assert.match(recheck.finding_clusters.find(c => c.category === 'architecture-strategist').file, DIGEST_PATH);
   const shown = JSON.stringify(recheck);
   assert.equal(shown.includes(openai) || shown.includes('SuperSecret123'), false);
-  // Residual: a bare high-entropy string with no key name or known prefix (for example the AWS documentation
-  // example secret key) matches neither scanner, so a name or path made only of it is shown when it fits the safe set.
 });
 
 test('finding clusters have their own ID shape that no failure-cluster reference accepts', t => {
@@ -844,4 +863,136 @@ test('impossible dates are dropped, and only positive exposure counts are summed
   const [row] = f.packet({ recheck: true }).recheck.stale_exposed;
   assert.equal(row.exposures, 5);
   assert.equal(row.plan_count, counts.length);
+});
+
+// Identity fields are shown only when an allowlist outside the record vouches for them.
+
+/** Values that fit every character set and match no secret pattern: only an allowlist can keep them out. */
+const LOOKS_SAFE = [`sk_live_${'4eC39HqLyjWDarjtT1zdp7dc'}`, `hf_${'aBcDeFgHiJkLmNoPqRsTuVwXyZ01234'}`, '3f786850e387550fdab836ed7e6dc881de23001b', 'admin:hunter2pass'];
+
+test('names, perspectives, files and plans no allowlist vouches for are digests, however safe they look', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const finding = file => ({ file, line: 1, title: 't', severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
+  const outside = path.join(f.root, 'outside.md');
+  fs.writeFileSync(outside, '# outside\n');
+  fs.symlinkSync(outside, path.join(f.ws, 'docs/plans/linked-plan.md'));
+  const journal = [];
+  for (const [n, value] of LOOKS_SAFE.entries()) {
+    // As a check name (two plans), as plans (evidence and journal), as a reviewer and as a finding file.
+    for (const plan of [PLAN_A, PLAN_B]) f.evidence(plan, [{ id: value, status: 'failed', stderr: 'boom' }]);
+    for (const plan of [value, `docs/plans/${value}.md`]) f.evidence(plan, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+    for (const [i, plan] of [value, `docs/plans/${value}.md`].entries()) {
+      journal.push({ schema: 1, type: 'run.start', run: `s${n}${i}`, ts: '2026-11-01T00:00:00.000Z', command: 'verify', plan },
+        { schema: 1, type: 'run.result', run: `s${n}${i}`, ts: '2026-11-01T00:01:00.000Z', status: 'failed', exitCode: 1, plan });
+    }
+    for (const plan of [PLAN_A, PLAN_B]) {
+      f.observation(plan, value, [finding('src/worker.mjs')]);
+      f.observation(plan, 'architecture-strategist', [finding(`src/${value}.mjs`)]);
+    }
+  }
+  f.put('src/worker.mjs', 'export const worker = 1;\n');
+  f.evidence('docs/plans/linked-plan.md', [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  f.evidence(PLAN_A, [{ id: 'unit', status: 'failed', stderr: 'boom' }]);
+  f.journal(journal);
+  const { recheck } = f.packet({ recheck: true });
+  const shown = JSON.stringify(recheck);
+  for (const value of LOOKS_SAFE) assert.equal(shown.includes(value), false, `${value} must not appear`);
+  for (const part of ['4eC39HqLyjWDarjtT1zdp7dc', 'hunter2pass', '3f786850e387550f']) assert.equal(shown.includes(part), false, part);
+
+  for (const value of LOOKS_SAFE) {
+    const cluster = recheck.failure_clusters.find(c => c.id === failureClusterId(`check:${value}`));
+    assert.ok(cluster, value);
+    assert.match(cluster.check, DIGEST_CHECK);
+    assert.ok(cluster.failure_records.every(r => r.check === cluster.check));
+    assert.match(cluster.hint, /ae checks list/);
+    assert.doesNotMatch(cluster.hint, /checks run [^<]/, 'the hint names only a declared check');
+  }
+  const unit = recheck.failure_clusters.find(c => c.check === 'unit');
+  assert.match(unit.hint, /ae checks run unit/, 'a declared check is named');
+  assert.equal(unit.plan_count, LOOKS_SAFE.length * 2 + 2);
+  assert.ok(unit.plans.includes(PLAN_A), 'an existing plan is shown');
+  assert.ok(unit.plans.filter(plan => plan !== PLAN_A).every(plan => DIGEST_PATH.test(plan)), 'missing and symlinked plans are digests');
+  const verify = recheck.failure_clusters.find(c => c.command === 'verify');
+  // `--plan <name>` and `--plan docs/plans/<name>.md` (missing) resolve to the same plan-store file, as loadPlan resolves them.
+  assert.equal(verify.plan_count, LOOKS_SAFE.length);
+  assert.ok(verify.plans.every(plan => DIGEST_PATH.test(plan)));
+
+  const byPerspective = recheck.finding_clusters.filter(c => c.file === 'src/worker.mjs');
+  assert.equal(byPerspective.length, LOOKS_SAFE.length, 'an existing file is shown');
+  assert.ok(byPerspective.every(c => DIGEST_REVIEWER.test(c.category)));
+  const byFile = recheck.finding_clusters.filter(c => c.category === 'architecture-strategist');
+  assert.equal(byFile.length, LOOKS_SAFE.length);
+  assert.ok(byFile.every(c => DIGEST_PATH.test(c.file)), 'a file that does not exist in the checkout is a digest');
+});
+
+test('status computes only what due reads: no run journal, review observations, checks configuration or reference scan', t => {
+  const f = fixture(t);
+  seedSignals(f);
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'on' });
+  const touched = [];
+  const spied = ['openSync', 'opendirSync', 'lstatSync'].map(name => {
+    const original = fs[name];
+    fs[name] = function spy(target, ...rest) { touched.push(String(target)); return original.call(this, target, ...rest); };
+    return [name, original];
+  });
+  let status;
+  try {
+    status = f.status();
+    const statusTouched = touched.splice(0);
+    for (const needle of ['runs.jsonl', path.join('reviews', 'observations'), 'checks.yaml', path.join('src', 'removed')]) {
+      assert.equal(statusTouched.some(p => p.includes(needle)), false, `status must not open ${needle}`);
+    }
+    f.packet({ recheck: true });
+    for (const needle of ['runs.jsonl', path.join('reviews', 'observations'), 'checks.yaml', path.join('src', 'removed')]) {
+      assert.equal(touched.some(p => p.includes(needle)), true, `the packet opens ${needle} (the spy sees it)`);
+    }
+  } finally {
+    for (const [name, original] of spied) fs[name] = original;
+  }
+  assert.deepEqual(status.recheck, { state: 'on', counts: { stale_exposed: 1, review_required: 1, failure_clusters: 1 } });
+});
+
+test('journal plans are resolved as loadPlan resolves them before they are counted', t => {
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  const run = (id, plan) => [
+    { schema: 1, type: 'run.start', run: id, ts: '2026-11-01T00:00:00.000Z', command: 'verify', plan },
+    { schema: 1, type: 'run.result', run: id, ts: '2026-11-01T00:01:00.000Z', status: 'failed', exitCode: 1, plan },
+  ];
+  const spellings = [`./${PLAN_A}`, PLAN_A, path.join(f.ws, PLAN_A)];
+  f.journal(spellings.flatMap((plan, i) => run(`p${i}`, plan)));
+  assert.deepEqual(f.packet({ recheck: true }).recheck.failure_clusters, [], 'three spellings of one plan are one plan');
+  f.journal([...spellings, PLAN_B].flatMap((plan, i) => run(`p${i}`, plan)));
+  const [verify] = f.packet({ recheck: true }).recheck.failure_clusters;
+  assert.deepEqual([verify.plans, verify.plan_count, verify.failures], [[PLAN_A, PLAN_B], 2, 4]);
+});
+
+test('out-of-range exit codes and finding lines are dropped', t => {
+  for (const [code, shown] of [[1, 1], [-1, -1], [255, 255], [-255, -255], [256, null], [-256, null], [70000, null], [Number.MAX_SAFE_INTEGER, null]]) {
+    assert.equal(failureMetadata({ id: 'unit', status: 'failed', exitCode: code }).exit_code, shown, String(code));
+  }
+  const f = fixture(t);
+  f.learn('runtime', 'baseline');
+  writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' });
+  f.put('src/a.mjs', 'export const a = 1;\n');
+  const finding = line => ({ file: 'src/a.mjs', line, title: `line ${line}`, severity: 'P2', confidence: 0.8, description: 'd', suggested_fix: 's', autofix_class: 'manual', evidence: ['e'] });
+  f.observation(PLAN_A, 'architecture-strategist', [finding(10_000_000)]);
+  f.observation(PLAN_B, 'architecture-strategist', [finding(10_000_001)]);
+  f.observation(PLAN_C, 'architecture-strategist', [finding(1e15)]);
+  const [cluster] = f.packet({ recheck: true }).recheck.finding_clusters;
+  assert.deepEqual(cluster.samples.map(s => s.line).toSorted(), [10_000_000, null, null]);
+});
+
+test('the consolidate skill and docs send agents to re-run a check, never to evidence records or run output', () => {
+  const repo = path.resolve(import.meta.dirname, '../../..');
+  for (const rel of ['packages/ae/corpus/skills/consolidate/SKILL.md', 'packages/ae/corpus/skills/references/learning-operations.md', 'docs/adaptive-engineering.md']) {
+    const text = fs.readFileSync(path.join(repo, rel), 'utf8');
+    assert.doesNotMatch(text, /ae run list --plan/, `${rel}: no run-list lookup for a cluster`);
+    assert.doesNotMatch(text, /read (?:its|the) evidence records/i, `${rel}: no reading of evidence records`);
+    assert.doesNotMatch(text, /high-entropy string[^.]*is shown/, `${rel}: no character-set rule decides what is shown`);
+  }
+  assert.match(fs.readFileSync(path.join(repo, 'packages/ae/corpus/skills/consolidate/SKILL.md'), 'utf8'), /re-run the check/);
 });

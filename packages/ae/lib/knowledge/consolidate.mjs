@@ -244,9 +244,11 @@ function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, l
   let recheckMode = 'off';
   try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
   // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks. A status that
-  // shows no packet opens only the newest RECHECK_STATUS_PRESELECT evidence records.
+  // shows no packet computes only what due reads (stale exposed learnings and named-check evidence
+  // clusters from the newest RECHECK_STATUS_PRESELECT evidence records); the run journal, review
+  // observations and learning-body references are scanned only for a packet.
   const recheck = (recheckMode === 'on' && withRecheck) || (recheckMode === 'suggest' && recheckRequested)
-    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir), preselect: recheckRequested ? undefined : RECHECK_STATUS_PRESELECT })
+    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir), ...(recheckRequested ? {} : { preselect: RECHECK_STATUS_PRESELECT, scope: 'due' }) })
     : null;
   const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
   const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0) || recheckIsDue);
@@ -317,7 +319,7 @@ function feedbackView({ workspace, home, learnings, withFeedback }) {
  * so output stays byte-identical. `review_required` is shared with feedback
  * and read here whatever the feedback key says: enabling re-check opts in.
  */
-function recheckView({ workspace, home, state, resolved, preselect }) {
+function recheckView({ workspace, home, state, resolved, preselect, scope = 'full' }) {
   // Golden plus the current branch bucket, whichever layer the caller routes to,
   // so status and packets see the same learnings. A subordinate branch twin of
   // a protected golden learning is not a separate learning.
@@ -329,15 +331,16 @@ function recheckView({ workspace, home, state, resolved, preselect }) {
     const key = layered.context?.branchKey;
     // Reference targets include inactive learnings from both layers.
     // Only a bucket the overlay accepted (not one excluded for ancestry).
-    allLearnings = [...listLearnings(dir), ...(layered.layered && key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
+    // Only the packet checks learning-body references, so status never lists them.
+    if (scope !== 'due') allLearnings = [...listLearnings(dir), ...(layered.layered && key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
   } catch { learnings = []; allLearnings = []; }
   let reviewRequired = [];
   try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
   try {
-    return { state, ...recheckSummary({ workspace, home, learnings, allLearnings, reviewRequired, resolved, preselect }) };
+    return { state, ...recheckSummary({ workspace, home, learnings, allLearnings, reviewRequired, resolved, preselect, scope }) };
   } catch (error) {
     // The error text can name paths or record content, so only a fixed sentence and a Node error code are shown.
-    const counts = { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
+    const counts = scope === 'due' ? { stale_exposed: 0, review_required: 0, failure_clusters: 0 } : { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
     const code = typeof error?.code === 'string' && /^E[A-Z0-9_]{1,30}$/.test(error.code) ? ` (${error.code})` : '';
     return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: `re-check scan failed${code}` };
   }

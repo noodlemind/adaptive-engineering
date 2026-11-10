@@ -702,3 +702,32 @@ test('kv-secret: the lookbehind form masks exactly what the old prefix form did,
     assert.ok(ms < 200, `${long.length} characters took ${Math.round(ms)} ms`);
   }
 });
+
+test('url-credentials: the run-start form masks exactly what the old scheme form did, and stays linear', () => {
+  const oldRe = /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/gi;
+  const oldRedact = text => text.replace(oldRe, (_m, scheme) => `${scheme}«redacted:url-credentials»@`);
+  const r = redactor();
+  // Only url-credentials can fire on these inputs, so the whole redactor output is compared with the old pattern alone.
+  const fixed = ['https://user:pw@host/x', 'git+ssh://u@h', 'x1a-b+c.d://user:pw@host', '-git://u@h', '1-ftp://u@h', '_git://u@h', 'ftp:u@h',
+    'a:\\\\u@h', '//u@h', 'see s3://k:s@bucket and redis://:p@db', 'A-B.C://U@H', 'mailto:a@b', 'svn+ssh://a@b@c/d', 'x.y-z+1://q@r'];
+  const alphabet = ['a', 'h', 't', 'p', 's', 'f', 'w', 'g', 'A', '1', '-', '+', '.', '_', ':', '/', '\\', '@', '?', '#', ' ', 'http', 'ftp', '://', 'wss', 'git+ssh'];
+  let seed = 11;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  const random = [];
+  for (let i = 0; i < 5000; i++) {
+    let text = '';
+    for (let n = next() % 24; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    random.push(text);
+  }
+  const fired = random.filter(text => r.redactText(text) !== text).length;
+  assert.ok(fired > 100, `the random inputs exercise the pattern (${fired})`);
+  for (const text of [...fixed, ...random]) assert.equal(r.redactText(text), oldRedact(text), JSON.stringify(text));
+
+  // About 100 s with the old scheme alternative; the whole redactor now finishes well under a second.
+  for (const long of ['a-'.repeat(200000), '1a'.repeat(100000), `${'a-'.repeat(100000)}://u@h`]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 1000, `${long.length} characters took ${Math.round(ms)} ms`);
+  }
+});

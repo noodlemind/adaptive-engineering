@@ -239,5 +239,5 @@ test('when re-check makes consolidation due, the orient hint asks for the rechec
   const res = run(c, ['orient', '--query', TRIGGER]);
   assert.equal(res.status, 0, res.stderr || res.stdout);
   const out = JSON.parse(res.stdout);
-  assert.ok(out.nextTools.includes('ae consolidate --candidates --recheck  # knowledge debt 0/5'), JSON.stringify(out.nextTools));
+  assert.ok(out.nextTools.includes('ae consolidate --candidates --recheck  # consolidation due: re-check evidence'), JSON.stringify(out.nextTools));
 });

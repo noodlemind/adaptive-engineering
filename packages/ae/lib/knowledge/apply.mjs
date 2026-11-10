@@ -170,6 +170,24 @@ function episodeAnswer(workspace, copilotHome, e, home) {
   return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
 }
 
+/**
+ * Answers recorded on a ledger, keyed by episode (`path@sha256`): the latest valid `answers`/`answeredAt`
+ * pair for each. Promotion carries these over from the source bucket instead of answering again, so a
+ * cluster that reopened after the branch answer is not silently cleared by the promotion.
+ */
+function recordedAnswers(ledger) {
+  const out = new Map();
+  for (const entry of ledger) {
+    if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
+    const at = Date.parse(entry.answeredAt);
+    if (!Number.isFinite(at)) continue;
+    const key = `${entry.path}@${entry.sha256}`;
+    const seen = out.get(key);
+    if (!seen || at > Date.parse(seen.answeredAt)) out.set(key, { answers: entry.answers, answeredAt: entry.answeredAt });
+  }
+  return out;
+}
+
 /** The first candidate (workspace, then the global root, then overlay) that
  * actually exists on disk and matches `sha256` — as `{ full, root, text }`, so
  * the caller can containment-verify the read against the matched root and
@@ -1516,6 +1534,14 @@ export function applyOps({
     const governed = [];
     const at = todayClamped();
     const governanceAt = new Date().toISOString();
+    // A promotion moves a claim between layers; it never answers a cluster anew. The answer and its
+    // original time come from the source bucket's ledger, so failures after that time stay open.
+    const carriedAnswers = promotionMode ? recordedAnswers(readLedger(bucketDirFor(dir, promotion.branchKey))) : null;
+    const answerFor = (e) => {
+      if (carriedAnswers) return carriedAnswers.get(`${e.path}@${e.sha256}`) || null;
+      const answers = episodeAnswer(workspace, copilotHome, e, home);
+      return answers ? { answers, answeredAt: governanceAt } : null;
+    };
 
     for (const { op, id, domain, slug, content } of writes) {
       const file = path.join(layerRoot, 'learnings', domain, `${slug}.md`);
@@ -1524,8 +1550,7 @@ export function applyOps({
       }
       applied.push({ op: op.op, id });
       for (const e of op.episodes) {
-        const answers = episodeAnswer(workspace, copilotHome, e, home);
-        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at, ...(answers ? { answers, answeredAt: governanceAt } : {}) });
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at, ...(answerFor(e) || {}) });
       }
       if (op.op === 'SUPERSEDE' && op.target !== id) {
         const target = existing.get(op.target);
@@ -1589,8 +1614,7 @@ export function applyOps({
       }
       applied.push({ op: 'STRENGTHEN', id: op.target });
       for (const e of op.episodes) {
-        const answers = episodeAnswer(workspace, copilotHome, e, home);
-        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at, ...(answers ? { answers, answeredAt: governanceAt } : {}) });
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at, ...(answerFor(e) || {}) });
       }
     }
 

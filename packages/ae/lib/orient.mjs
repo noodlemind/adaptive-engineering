@@ -140,7 +140,12 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
       if (['on', 'suggest'].includes(debt.mode)) {
         knowledgeDebt = { debt: debt.debt, threshold: debt.threshold, due: debt.due };
         if (debt.due && !active) {
-          nextTools.push(`${debt.nextTools?.[0] || 'ae consolidate --candidates'}  # knowledge debt ${debt.debt}/${debt.threshold}`);
+          const next = debt.nextTools?.[0] || 'ae consolidate --candidates';
+          // Status names the --recheck packet only when re-check evidence made consolidation due.
+          const recheckDue = next.endsWith('--recheck');
+          const reason = recheckDue && debt.debt < debt.threshold ? 'consolidation due: re-check evidence'
+            : `knowledge debt ${debt.debt}/${debt.threshold}${recheckDue ? '; re-check evidence' : ''}`;
+          nextTools.push(`${next}  # ${reason}`);
         }
       }
     }
