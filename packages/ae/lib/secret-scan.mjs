@@ -46,9 +46,15 @@ export function scanSecrets(text) {
  * itself — screening, not prevention; the never-pushed out-of-tree store stays
  * the real backstop (documented residual #5).
  */
+// Default-ignorable and format characters, as stripInvisible in
+// knowledge/store.mjs removes them. inertLine removes them from rendered
+// text, so a token broken by one would render whole after redaction.
+const INVISIBLE_CHARS = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+
 export function redactSecrets(text) {
   const s = String(text ?? '');
-  const hits = scanSecrets(s);
+  const visible = s.replace(INVISIBLE_CHARS, '');
+  const hits = visible === s ? scanSecrets(s) : [...scanSecrets(s), ...scanSecrets(visible)];
   if (!hits.length) return s;
   return `[redacted: ${[...new Set(hits.map((h) => h.id))].join(', ')}]`;
 }

@@ -80,8 +80,18 @@ function matchesAcrossJoin(re, text, joins) {
 // `WinterPass@prod.example.com`), and a dotted user name cannot be told from
 // a host. The two shapes cannot be told apart, so that log shape fails closed
 // on purpose.
+//
+// A line ends at CRLF, CR, LF, NEL (U+0085) or the Unicode line and paragraph
+// separators. Before a line is trimmed, every control character but tab and
+// every invisible character is removed from it: trim() keeps NUL, DEL and the
+// C1 controls, so one left at a line's edge would turn into a space at the
+// join and hide the split. Removing them can only join more text, so the
+// screen fails closed.
+const LINE_BREAK = /\r\n|[\r\n\u0085\u2028\u2029]/;
+const LINE_NOISE = /[\x00-\x08\x0a-\x1f\x7f-\x9f\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+
 function splitIds(form) {
-  const lines = form.split(/\r\n|\r|\n/).map(line => inertLine(line.trim()));
+  const lines = form.split(LINE_BREAK).map(line => inertLine(line.replace(LINE_NOISE, '').trim()));
   const ids = new Set();
   for (let i = 0; i < lines.length - 1; i++) {
     let text = lines[i];
@@ -178,7 +188,7 @@ function capBytes(text, max) {
  * matched patterns, or `split-secret` when only the compact form matched.
  * Otherwise invisible characters (default-ignorable and format characters)
  * are removed outright, exactly as in the form screened without them, and the
- * quote is joined to one line by inertLine (which also blanks C0, C1 and line
+ * quote is joined to one line by inertLine (which blanks C0, C1 and line
  * separator characters) and capped in bytes at a code-point boundary.
  */
 export function inertEvidenceQuote(value) {

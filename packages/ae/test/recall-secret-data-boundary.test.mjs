@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { runRecall } from '../lib/recall-cmd.mjs';
 import { runOrient } from '../lib/orient.mjs';
-import { redactRecallEntry } from '../lib/secret-scan.mjs';
+import { redactRecallEntry, redactSecrets } from '../lib/secret-scan.mjs';
 import { rankLearnings } from '../lib/knowledge/retrieve.mjs';
 import { buildContextPack } from '../lib/context-pack.mjs';
 import { ensureStore, storeDir, serializeLearning, inertLine, stripFrontmatter, splitFrontmatter, episodeBody } from '../lib/knowledge/store.mjs';
@@ -253,7 +253,8 @@ test('a hand-edited quote is joined before the secret screen, loses C1 and bidi 
   for (const point of [0x2028, 0x2029, 0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0xe0000, 0xe0041, 0xe007f, 0x00ad, 0x180e, 0x206a, 0x206f, 0xfff9, 0xfffb, ...DEFAULT_IGNORABLE]) {
     const ch = String.fromCodePoint(point);
     assert.ok(!inertEvidenceQuote(`a${ch}b`).includes(ch), `U+${point.toString(16)} is blanked in the packet`);
-    assert.equal(inertLine(`a${ch}b`), 'a b', `inertLine blanks U+${point.toString(16)}`);
+    const breaksLine = point === 0x2028 || point === 0x2029;
+    assert.equal(inertLine(`a${ch}b`), breaksLine ? 'a b' : 'ab', `inertLine ${breaksLine ? 'blanks' : 'removes'} U+${point.toString(16)}`);
   }
   const euros = inertEvidenceQuote('€'.repeat(1000));
   assert.equal(Buffer.byteLength(euros), EVIDENCE_QUOTE_CAP);
@@ -468,8 +469,51 @@ test('splitFrontmatter is the one fence rule: trailing blanks on a fence, CRLF, 
   assert.equal(splitFrontmatter(long).frontmatter, null);
   assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'the split is linear');
   assert.equal(episodeBody('---\ntitle: t\nevidence_quote: "x"\nbody without a closing fence'), '', 'an unseparated quote-bearing episode has no body');
-  assert.equal(episodeBody('evidence_quote: "x"\nbody'), '');
+  assert.equal(episodeBody('---\ntitle: t\nno close and no quote'), '---\ntitle: t\nno close and no quote');
+  assert.equal(episodeBody('evidence_quote: "x"\nbody'), 'evidence_quote: [withheld]\nbody');
   assert.equal(episodeBody('plain body'), 'plain body');
+  assert.equal(episodeBody('---\ntitle: t\n---\nbody'), 'body');
+});
+
+test('a doc that explains evidence_quote keeps its body, with only the quote lines withheld', () => {
+  const doc = '# Evidence quotes\r\n\r\nAn episode may carry one line:\r\n\r\nevidence_quote: "ghp_SECRET verbatim"\r\n  evidence_quote : "indented"\u2028trailing\nThe field is optional.\n';
+  assert.equal(episodeBody(doc), '# Evidence quotes\r\n\r\nAn episode may carry one line:\r\n\r\nevidence_quote: [withheld]\r\n  evidence_quote: [withheld]\nThe field is optional.\n');
+  assert.equal(episodeBody('Set `evidence_quote:` in frontmatter.'), 'Set `evidence_quote:` in frontmatter.', 'a mention mid-line is not a field line');
+});
+
+test('inertLine removes invisible characters instead of spacing words apart', () => {
+  assert.equal(inertLine('\u26a0\ufe0f build warning'), '\u26a0 build warning');
+  assert.equal(inertLine('\u26a0\ufe0f build'), '\u26a0 build');
+  assert.equal(inertLine('\u845b\u{E0100}\u98fe'), '\u845b\u98fe');
+  assert.equal(inertLine('1\ufe0f\u20e3 step'), '1\u20e3 step', 'a keycap keeps its digit and mark together');
+  assert.equal(inertLine('\u0600123'), '123');
+  assert.equal(inertLine('a\x00b\x85c\u2028d'), 'a b c d', 'controls and line separators still become spaces');
+});
+
+test('a token broken by an invisible character is redacted before inertLine joins it', () => {
+  const token = `ghp_${'A'.repeat(18)}\u200b${'A'.repeat(18)}`;
+  assert.equal(redactSecrets(token), '[redacted: github-token]');
+});
+
+test('a control or line-break character at a line edge cannot hide a split secret on read', () => {
+  const A = 'A'.repeat(18);
+  const B = 'B'.repeat(18);
+  for (const quote of [
+    `auth failed ghp_${A}\u0000\n${B} rejected`,
+    `auth failed ghp_${A}\x7f\n${B} rejected`,
+    `auth failed ghp_${A}\x85\n${B} rejected`,
+    `auth failed ghp_${A}\x01\n${B} rejected`,
+    `auth failed ghp_${A}\r\x00\n${B} rejected`,
+    `auth failed ghp_${A}\n\x00${B} rejected`,
+    `auth failed ghp_${A}\t\u200b\n\ufeff${B} rejected`,
+    'postgres://reader:pw\x00\n@db.invalid',
+    `ghp_${A}\u0085${B}`,
+    `ghp_${A}\u2028${B}`,
+    `ghp_${A}\u2029${B}`,
+  ]) {
+    const rendered = inertEvidenceQuote(quote);
+    assert.equal(rendered, '[redacted: split-secret]', `${JSON.stringify(quote)} leaked: ${rendered}`);
+  }
 });
 
 test('an episode whose closing fence has trailing whitespace keeps its quote out of the consolidation and recall excerpts', () => {

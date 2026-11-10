@@ -593,16 +593,27 @@ export function stripFrontmatter(text) {
 }
 
 const EVIDENCE_QUOTE_KEY = /^[ \t]*evidence_quote[ \t]*:/m;
+// A whole `evidence_quote` line, up to its line break. `[^\r\n]` also takes
+// U+2028 and U+2029, so text after one cannot escape the redaction.
+const EVIDENCE_QUOTE_LINES = /^([ \t]*)evidence_quote[ \t]*:[^\r\n]*/gm;
 
 /**
- * An episode's body for a summary or excerpt. When the frontmatter cannot be
- * separated but the text carries an `evidence_quote` key, the body is empty:
- * the quote is screened only as its own field, so raw frontmatter holding it
- * must never ride into an excerpt.
+ * An episode's body for a summary or excerpt. A text is an episode only when
+ * its first line is a frontmatter fence. When that fence never closes and the
+ * text carries an `evidence_quote` key, the body is empty: the quote is
+ * screened only as its own field, so raw frontmatter holding it must never
+ * ride into an excerpt. A text with no opening fence (such as a doc that
+ * explains the field) keeps its body, with each `evidence_quote` line replaced
+ * by `evidence_quote: [withheld]` so no quote can leak through it.
  */
 export function episodeBody(text) {
-  const { frontmatter, body } = splitFrontmatter(text);
-  return frontmatter === null && EVIDENCE_QUOTE_KEY.test(body) ? '' : body;
+  const s = String(text ?? '');
+  const firstEnd = s.indexOf('\n');
+  const opensWithFence = isFence(firstEnd === -1 ? s : s.slice(0, firstEnd));
+  const { frontmatter, body } = splitFrontmatter(s);
+  if (frontmatter !== null) return body;
+  if (opensWithFence) return EVIDENCE_QUOTE_KEY.test(body) ? '' : body;
+  return body.replace(EVIDENCE_QUOTE_LINES, '$1evidence_quote: [withheld]');
 }
 
 export function parseLearningFrontmatter(text) {
@@ -710,22 +721,23 @@ function yamlQuote(v) {
  * extra "lines" — fake headings, extra bullets, anything — into what is
  * otherwise a trusted context surface. Collapses every C0 control char
  * (0x00-0x1F), DEL (0x7F), every C1 control (0x80-0x9F, such as the CSI
- * terminal escape) and the bidirectional overrides and isolates
- * (U+202A-U+202E, U+2066-U+2069), the bidirectional marks (U+200E, U+200F,
- * U+061C), the Unicode line and paragraph separators (U+2028, U+2029), the
- * zero-width and invisible format characters (U+200B-U+200D, U+2060-U+2064,
- * U+FEFF, U+00AD, U+180E, U+206A-U+206F, U+FFF9-U+FFFB), the tag
- * characters (U+E0000-U+E007F), and every other default-ignorable code point
- * or format (Cf) character, such as U+034F, the variation selectors and the
- * Hangul fillers, to a single space so the
- * text always renders as ONE visible line in its stored order, wherever it's
- * interpolated.
+ * terminal escape) and the Unicode line and paragraph separators (U+2028,
+ * U+2029) to a single space. Removes outright every invisible character
+ * (see stripInvisible): the bidirectional overrides, isolates and marks, the
+ * zero-width and other format characters, the tag characters, the variation
+ * selectors and every other default-ignorable code point. Removing rather
+ * than blanking them keeps words whole (`⚠️ build` reads `⚠ build`, not
+ * `⚠  build`) and leaves the token a reader sees for a keyword or secret
+ * match. The text always renders as ONE visible line in its stored order,
+ * wherever it's interpolated.
  */
 export function inertLine(text) {
-  return String(text ?? '').replace(INERT_LINE_CHARS, ' ');
+  return String(text ?? '').replace(INVISIBLE_CHARS, '').replace(INERT_LINE_BREAKS, ' ');
 }
 
-const INERT_LINE_CHARS = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200e\u200f\u061c\u200b-\u200d\u2060-\u2064\ufeff\u{e0000}-\u{e007f}\u00ad\u180e\u206a-\u206f\ufff9-\ufffb\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+// What can break or rewrite a line: every C0 control, DEL, every C1 control
+// and the Unicode line and paragraph separators. Each becomes a space.
+const INERT_LINE_BREAKS = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 
 // Every default-ignorable code point and every format (Cf) character: what a
 // renderer may draw as nothing, such as U+034F, the variation selectors
