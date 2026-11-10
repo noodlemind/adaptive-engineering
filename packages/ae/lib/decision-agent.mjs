@@ -443,6 +443,12 @@ export function recordDecision(options) {
   }, { sweep: true });
 }
 
+// The remedy status gives for each reason a sweep could not use an archive file.
+const OFFENDER_REMEDIES = [
+  ['unreadable-record', 'request records that cannot be read or prove nothing: make each readable, restore it from a backup, or move it out of the archive if it cannot be restored, which loses its exact-ID lookup'],
+  ['not-regular', 'readiness index files that are symlinks or not regular files, never followed or replaced: remove them and the next decision prepare or record rebuilds them'],
+  ['refused-write', 'readiness index files that could not be read or written: make them and their readiness directory, which must be a real directory, readable and writable, or remove them, and the next decision prepare or record rebuilds them'],
+];
 // Status names at most this many stale plans, by short hash, newest first.
 const STATUS_PLAN_SAMPLE = 8;
 /** The one derived readiness-index warning, or none. Recomputed from the index on every call. */
@@ -461,11 +467,12 @@ function readinessWarnings(loc, state) {
     parts.push(`readiness index may be stale for up to ${untracked} untracked plan(s) dropped from tracking; the index is reconciling from the request archive, one bounded slice at most every ${interval} seconds on decision prepare or record; status only reports it (${progress})`
       + '; citations for plans not yet reconciled may cite an older receipt until the warning clears'
       + (last.length ? `; the previous sweep found ${last.join(' and ')}, so the warning stays until a sweep completes without them, and it stays for good while those records remain unreadable or those writes keep being refused` : '')
-      + (offenders.length ? `; files under ${archive} it could not use${offenders.length < (sweep.last.unreadable + sweep.last.failed) ? ' (first ' + offenders.length + ')' : ''}: ${offenders.join(', ')}; restore an unreadable request record from a backup, or move it out of the archive if it cannot be restored (its exact-ID lookup is then lost), and remove a readiness index file that is a symlink or not a regular file; the next full sweep then completes` : '')
+      + (offenders.length ? `; files under ${archive} it could not use${sweep.last.offendersTruncated ? ' (first ' + offenders.length + ')' : ''}: ${OFFENDER_REMEDIES.map(([reason, remedy]) => [offenders.filter(item => item.reason === reason).map(item => item.file), remedy]).filter(([files]) => files.length).map(([files, remedy]) => `${files.join(', ')} (${remedy})`).join('; ')}; the next full sweep then completes` : '')
       + (sweep.last?.overCap ? `; the request archive holds more records than one sweep can list, so no sweep can complete and the warning stays until the archive holds at most ${MAX_SWEEP_RECORDS} request records: move request records you no longer need to look up by ID out of ${path.join(archive, 'requests')}` : ''));
   }
   return [{ fault: 'readiness-index', planCount: stale.length, ...(untracked ? { atLeast: true, untrackedPlans: untracked, reconciling: { swept: sweep.swept, total: sweep.total, ...(sweep.last ? { previous: sweep.last } : {}) } } : {}), plans: shown.map(plan => plan.slice(0, 12)), omittedPlans: stale.length - shown.length,
-    ...(blocked.length || offenders.length ? { archive, files: [...new Set([...blocked, ...offenders])] } : {}),
+    ...(blocked.length || offenders.length ? { archive, files: [...new Set([...blocked, ...offenders.map(item => item.file)])] } : {}),
+    ...(offenders.length ? { offenders } : {}),
     message: parts.join('; ') }];
 }
 

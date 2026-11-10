@@ -301,7 +301,21 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
   }
 }
 
-/** `durable: true` flushes the content to disk before the rename, so a crash never leaves an empty or partial file under the name. */
+/**
+ * `durable: true` flushes the content to disk before the rename or link, so a crash never leaves an empty
+ * or partial file under the name. On a filesystem that does not support flushing (fsync fails with EINVAL,
+ * ENOTSUP, EOPNOTSUPP or ENOSYS) the write still publishes, unflushed: refusing it there would refuse every
+ * such write forever, and a reader must already treat invalid content as such. Any other flush failure
+ * (EIO, ENOSPC) refuses the write.
+ */
+const FSYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS']);
+function flush(fd) {
+  try {
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (!FSYNC_UNSUPPORTED.has(error?.code)) throw error;
+  }
+}
 export function writeFileContained(root, rel, content, { exclusive = false, mode, durable = false } = {}) {
   if (mode !== undefined && (!Number.isInteger(mode) || mode < 0 || mode > 0o777)) return null;
   const rootFull = path.resolve(root);
@@ -336,7 +350,7 @@ export function writeFileContained(root, rel, content, { exclusive = false, mode
   try {
     fs.writeFileSync(fd, content, { encoding: 'utf8' });
     if (mode !== undefined) fs.fchmodSync(fd, mode);
-    if (durable) fs.fsyncSync(fd);
+    if (durable) flush(fd);
     fs.closeSync(fd);
   } catch {
     try {
