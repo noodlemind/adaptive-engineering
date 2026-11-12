@@ -599,6 +599,13 @@ export function runEvidenceMatch({ workspace, flags }) {
 }
 
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
+  // A failure-cluster reference belongs only to an insight. Beside a learning decision it would be published late,
+  // after a pending record is written, or dropped without a word, so it is refused before anything is read or written.
+  if (flags.derivedFrom != null) {
+    const hint = 'ae compound --insight --title "..." --body "..." --derived-from failure-cluster:<id> --json';
+    if (!flags.insight) throw usageError('--derived-from is accepted only with --insight', hint);
+    if (flags.learningDecision) throw usageError('--derived-from cannot be combined with --learning-decision', hint);
+  }
   if (flags.evidenceQuote != null) {
     const hint = EVIDENCE_PIPE_HINT;
     // The line is read only from stdin, so harness never puts it in its own

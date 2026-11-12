@@ -13,7 +13,7 @@
     { "id": "capture-only", "mode": "capture-only", "baseline": "stateless", "question": "Does writing memory help without reading it?" },
     { "id": "recall", "mode": "on", "baseline": "stateless", "question": "Does current memory help at all?" },
     { "id": "recall+feedback", "mode": "on", "feedback": "on", "baseline": "recall", "question": "Does feedback add anything on top of current recall?" },
-    { "id": "recall+recheck", "mode": "on", "recheck": "on", "baseline": "recall", "question": "Does re-check add anything on top of current recall?" },
+    { "id": "recall+recheck", "mode": "on", "recheck": "on", "baseline": "recall", "diagnostic": true, "question": "Does re-check add anything on top of current recall?" },
     { "id": "frozen-seed", "mode": "freeze", "seed": true, "baseline": "stateless", "question": "Does retrieval help when capture quality is held fixed?" }
   ],
   "promotion": {

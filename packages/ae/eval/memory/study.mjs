@@ -70,13 +70,21 @@ export function validateProtocol(protocol = PROTOCOL) {
     if (arm.feedback !== undefined && !KNOWLEDGE_FEEDBACK_STATES.has(arm.feedback)) throw new TypeError(`arm ${arm.id} has unknown feedback state ${arm.feedback}`);
     if (arm.recheck !== undefined && !KNOWLEDGE_RECHECK_STATES.has(arm.recheck)) throw new TypeError(`arm ${arm.id} has unknown recheck state ${arm.recheck}`);
     if (arm.seed && arm.mode !== 'freeze') throw new TypeError(`seeded arm ${arm.id} must use mode freeze`);
+    if (arm.diagnostic !== undefined && typeof arm.diagnostic !== 'boolean') throw new TypeError(`arm ${arm.id} diagnostic must be a boolean`);
+    if (arm.diagnostic && arm.baseline === null) throw new TypeError(`reference arm ${arm.id} cannot be diagnostic`);
+    // A diagnostic arm is never scored for promotion, so no arm may depend on it.
+    if (arm.baseline !== null && protocol.arms.find(other => other.id === arm.baseline)?.diagnostic) throw new TypeError(`arm ${arm.id} cannot use diagnostic arm ${arm.baseline} as its baseline`);
     baselineChain(protocol, arm.id);
   }
   return protocol;
 }
 
+/**
+ * Arms a default run includes. Unavailable arms are left out, and so are diagnostic arms: those run only when named
+ * explicitly and are never scored for promotion.
+ */
 export function runnableArms(protocol = PROTOCOL) {
-  return protocol.arms.filter(arm => arm.available !== false).map(arm => arm.id);
+  return protocol.arms.filter(arm => arm.available !== false && !arm.diagnostic).map(arm => arm.id);
 }
 
 export function validateCatalog(catalog = CATALOG) {
@@ -1220,9 +1228,11 @@ export function scorePromotion(stats, { protocol = PROTOCOL, eligible = true, in
     decisions[id] = { baseline: arm.baseline, chain, promotable: reasons.length === 0, against, reasons };
     return decisions[id];
   };
-  for (const id of Object.keys(stats)) if (id !== 'stateless') decide(id);
+  // Diagnostic arms are reported in the statistics but never scored for promotion.
+  const diagnostic = Object.keys(stats).filter(id => armById(protocol, id).diagnostic);
+  for (const id of Object.keys(stats)) if (id !== 'stateless' && !diagnostic.includes(id)) decide(id);
   const promotable = Object.keys(decisions).filter(id => decisions[id].promotable);
-  return { comparison: !eligible ? 'inconclusive' : promotable.length ? 'candidate-requires-review' : 'no-candidate', promotable, decisions };
+  return { comparison: !eligible ? 'inconclusive' : promotable.length ? 'candidate-requires-review' : 'no-candidate', promotable, decisions, diagnostic };
 }
 
 export function summarizeStudy({ attempts, runs, provenance, protocol = PROTOCOL }) {

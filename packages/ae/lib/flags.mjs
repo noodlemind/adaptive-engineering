@@ -330,7 +330,15 @@ export function parseFlags(argv) {
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
     else if (a.startsWith('--derived-from=')) flags.derivedFrom = a.split('=').slice(1).join('=');
-    else if (a === '--derived-from') flags.derivedFrom = scan[++i] ?? '';
+    else if (a === '--derived-from') {
+      // A missing value, or the next flag in its place, is refused here, before any journal opens or stdin is read.
+      // The message names no value, so a following flag's argument never reaches an error or a log.
+      const next = scan[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        throw Object.assign(new Error('--derived-from needs a value'), { code: 'E_USAGE', hint: 'ae compound --insight --derived-from failure-cluster:<id> (as listed by ae consolidate --candidates --recheck)', exit: EXIT.usage });
+      }
+      flags.derivedFrom = scan[++i];
+    }
     else if (a.startsWith('--evidence-quote=')) {
       // Only `-` (stdin) is accepted; compound refuses any other value and a
       // repeated flag, so the count is kept.

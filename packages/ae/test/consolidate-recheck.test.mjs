@@ -310,8 +310,9 @@ test('R3: prose, refs and package names are not broken paths; anchors resolve pa
   assert.deepEqual(f.packet({ recheck: true }).recheck.broken_references, [{ id, references: [{ kind: 'path', ref: 'test/gone.test.mjs' }] }]);
 });
 
-test('R5: --derived-from without a value parses as empty and is refused, not dropped', t => {
-  const flags = parseFlags(['--insight', '--title', 't', '--body', 'b', '--derived-from']);
+test('R5: --derived-from without a value is a usage error at parse time; an empty value is refused, not dropped', t => {
+  assert.throws(() => parseFlags(['--insight', '--title', 't', '--body', 'b', '--derived-from']), /^Error: --derived-from needs a value$/);
+  const flags = parseFlags(['--insight', '--title', 't', '--body', 'b', '--derived-from', '']);
   assert.equal(flags.derivedFrom, '');
   const f = fixture(t);
   const refused = runInsightCompound({ workspace: f.ws, copilotHome: path.join(f.root, 'copilot'), home: f.home, log: () => {}, flags });

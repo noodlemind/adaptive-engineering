@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { collectEpisodes } from '../lib/knowledge/consolidate.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
+import { parseFlags } from '../lib/flags.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { trackWorkspaceSolutions } from './helpers/workspace.mjs';
 
@@ -508,4 +509,28 @@ test('compound --insight records a well-formed derived_from failure-cluster refe
   assert.match(teaching.blockedReason, /only on an insight/);
   const episodes = collectEpisodes({ workspace: ws, copilotHome: home, home: path.join(home, 'hh') });
   assert.equal(episodes.length, 1, 'refused captures write nothing');
+});
+
+test('--derived-from without a value fails closed before the journal opens or stdin is read, and names no value', () => {
+  assert.throws(() => parseFlags(['compound', '--insight', '--derived-from']), err => err.message === '--derived-from needs a value' && err.code === 'E_USAGE');
+  assert.throws(() => parseFlags(['compound', '--insight', '--derived-from', '--json']), err => err.message === '--derived-from needs a value');
+  assert.equal(parseFlags(['compound', '--derived-from', 'failure-cluster:0123456789abcdef']).derivedFrom, 'failure-cluster:0123456789abcdef');
+  const ws = keepSolutionsInWorkspace(tempDir('insight-derived-missing-'));
+  const home = tempDir('insight-derived-missingh-');
+  const marker = 'DFMISSINGMARKER';
+  const cases = [
+    ['--derived-from', '--evidence-quote', '-', '--workspace', ws, '--copilot-home', home, '--json'],
+    ['--workspace', ws, '--copilot-home', home, '--json', '--derived-from'],
+  ];
+  for (const tail of cases) {
+    const res = spawnSync(process.execPath, [binPath, 'compound', '--insight', '--title', 'Missing ref', '--body', 'A body.', ...tail], {
+      encoding: 'utf8', input: `not ok 1 ${marker}\n`, env: { ...process.env, HARNESS_HOME: path.join(home, 'hh') },
+    });
+    assert.equal(res.status, 2, res.stderr || res.stdout);
+    assert.match(res.stdout + res.stderr, /--derived-from needs a value/);
+    assert.doesNotMatch(res.stdout + res.stderr, /failure-cluster:<id> as listed/, 'not the format message');
+    assert.ok(!(res.stdout + res.stderr).includes(marker), 'stdin is never read or echoed');
+  }
+  assert.equal(fs.existsSync(path.join(ws, '.harness')), false, 'no run journal or record was opened');
+  assert.equal(collectEpisodes({ workspace: ws, copilotHome: home, home: path.join(home, 'hh') }).length, 0);
 });

@@ -78,7 +78,7 @@ function scriptedExecutor(calls, hooks = {}) {
 }
 
 const ARMS = ['stateless', 'capture-only', 'recall'];
-const RUNNABLE = ['stateless', 'capture-only', 'recall', 'recall+feedback', 'recall+recheck', 'frozen-seed'];
+const RUNNABLE = ['stateless', 'capture-only', 'recall', 'recall+feedback', 'frozen-seed'];
 const planFile = ({ harnessHome }, storeDir) => path.join(harnessHome, 'projects', path.basename(storeDir), 'plans', 'scripted-plan.md');
 
 let mainRun = null;
@@ -195,6 +195,18 @@ test('protocol: the arms map onto knowledge modes, and an arm declared unavailab
   const pending = withArms([...PROTOCOL.arms, { id: 'pending', mode: 'on', baseline: 'recall', available: false, requires: 'a later phase' }]);
   assert.deepEqual(runnableArms(pending), RUNNABLE);
   await assert.rejects(runStudy({ root: directory(t), protocol: pending, arms: ['pending'], repeats: 1, dryRun: true }), /not runnable yet: requires a later phase/);
+});
+
+test('protocol: recall+recheck is diagnostic, left out of default runs and runnable only when named', async () => {
+  assert.equal(armById(PROTOCOL, 'recall+recheck').diagnostic, true);
+  assert.ok(!runnableArms(PROTOCOL).includes('recall+recheck'), 'default runs skip the diagnostic arm');
+  const withArms = arms => ({ ...PROTOCOL, arms });
+  assert.throws(() => validateProtocol(withArms([...PROTOCOL.arms, { id: 'bad-diagnostic', mode: 'on', baseline: 'recall', diagnostic: 'yes' }])), /diagnostic must be a boolean/);
+  assert.throws(() => validateProtocol(withArms([...PROTOCOL.arms, { id: 'on-diagnostic', mode: 'on', baseline: 'recall+recheck' }])), /cannot use diagnostic arm recall\+recheck as its baseline/);
+  // Named explicitly, the diagnostic arm runs (the shared dry run names it) and reports its own rows.
+  const { result } = await dry();
+  assert.ok(result.provenance.arms.includes('recall+recheck'));
+  assert.equal(rowsFor(result, 'recall+recheck').length, 4);
 });
 
 test('arms set their knowledge mode, feedback state and re-check state before every task, in their own home', async () => {
@@ -418,6 +430,13 @@ test('promotion: the 50/10/30 example is rejected against its recall baseline', 
   assert.equal(feedback.against.recall.pass, false);
   assert.ok(Math.abs(feedback.against.recall.relativeRecurrenceReduction + 2) < 1e-9, 'it is 200% worse than recall');
   assert.ok(feedback.reasons.includes('vs-recall:recurrence-reduction-below-threshold'));
+  assert.deepEqual(result.promotable, ['recall']);
+});
+
+test('promotion: a diagnostic arm is never scored, even when its numbers would pass', () => {
+  const result = scorePromotion({ stateless: stat(0.5), recall: stat(0.1), 'recall+recheck': stat(0.01) });
+  assert.equal(result.decisions['recall+recheck'], undefined);
+  assert.deepEqual(result.diagnostic, ['recall+recheck']);
   assert.deepEqual(result.promotable, ['recall']);
 });
 
