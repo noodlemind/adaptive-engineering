@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { collectEpisodes } from '../lib/knowledge/consolidate.mjs';
 import { runInsightCompound } from '../lib/compound.mjs';
+import { parseFlags } from '../lib/flags.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 import { trackWorkspaceSolutions } from './helpers/workspace.mjs';
 
@@ -485,4 +486,51 @@ test('verified compound lane still requires a plan (unchanged)', () => {
   assert.equal(res.status, 2);
   const out = JSON.parse(res.stdout);
   assert.match(out.blockedReason, /plan/i);
+});
+
+test('compound --insight records a well-formed derived_from failure-cluster reference and refuses others', () => {
+  const ws = keepSolutionsInWorkspace(tempDir('insight-derived-'));
+  const home = tempDir('insight-derivedh-');
+  const capture = (ref, title) => run(['compound', '--insight', '--title', title, '--body', 'The unit check failed on the retry count in two plans.', '--derived-from', ref, '--workspace', ws, '--copilot-home', home, '--json']);
+  const ok = capture('failure-cluster:0123456789abcdef', 'Retry count drift');
+  assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+  const doc = fs.readFileSync(cliEpisode(ws, home, JSON.parse(ok.stdout).path), 'utf8');
+  assert.match(doc, /^derived_from: failure-cluster:0123456789abcdef$/m);
+  for (const ref of ['failure-cluster:XYZ', 'failure-cluster:0123456789abcdef0', 'finding-cluster:0123456789abcdef', 'failure-cluster:0123456789abcdef\nkind: fix', '']) {
+    const refused = capture(ref, `Refused ${ref.length}`);
+    assert.equal(refused.status, 2, ref);
+    assert.match(JSON.parse(refused.stdout).blockedReason, /failure-cluster:<id>/);
+  }
+  const finding = capture('finding-cluster:0123456789abcdef0123', 'From a finding cluster');
+  assert.equal(finding.status, 2);
+  assert.match(JSON.parse(finding.stdout).blockedReason, /finding clusters are informational and cannot be answered/);
+  const teaching = runInsightCompound({ workspace: ws, copilotHome: home, home: path.join(home, 'hh'), kind: 'human-teaching', log: () => {}, flags: { title: 'Taught', body: 'A taught claim.', derivedFrom: 'failure-cluster:0123456789abcdef' } });
+  assert.equal(teaching.pass, false);
+  assert.match(teaching.blockedReason, /only on an insight/);
+  const episodes = collectEpisodes({ workspace: ws, copilotHome: home, home: path.join(home, 'hh') });
+  assert.equal(episodes.length, 1, 'refused captures write nothing');
+});
+
+test('--derived-from without a value fails closed before the journal opens or stdin is read, and names no value', () => {
+  assert.throws(() => parseFlags(['compound', '--insight', '--derived-from']), err => err.message === '--derived-from needs a value' && err.code === 'E_USAGE');
+  assert.throws(() => parseFlags(['compound', '--insight', '--derived-from', '--json']), err => err.message === '--derived-from needs a value');
+  assert.equal(parseFlags(['compound', '--derived-from', 'failure-cluster:0123456789abcdef']).derivedFrom, 'failure-cluster:0123456789abcdef');
+  const ws = keepSolutionsInWorkspace(tempDir('insight-derived-missing-'));
+  const home = tempDir('insight-derived-missingh-');
+  const marker = 'DFMISSINGMARKER';
+  const cases = [
+    ['--derived-from', '--evidence-quote', '-', '--workspace', ws, '--copilot-home', home, '--json'],
+    ['--workspace', ws, '--copilot-home', home, '--json', '--derived-from'],
+  ];
+  for (const tail of cases) {
+    const res = spawnSync(process.execPath, [binPath, 'compound', '--insight', '--title', 'Missing ref', '--body', 'A body.', ...tail], {
+      encoding: 'utf8', input: `not ok 1 ${marker}\n`, env: { ...process.env, HARNESS_HOME: path.join(home, 'hh') },
+    });
+    assert.equal(res.status, 2, res.stderr || res.stdout);
+    assert.match(res.stdout + res.stderr, /--derived-from needs a value/);
+    assert.doesNotMatch(res.stdout + res.stderr, /failure-cluster:<id> as listed/, 'not the format message');
+    assert.ok(!(res.stdout + res.stderr).includes(marker), 'stdin is never read or echoed');
+  }
+  assert.equal(fs.existsSync(path.join(ws, '.harness')), false, 'no run journal or record was opened');
+  assert.equal(collectEpisodes({ workspace: ws, copilotHome: home, home: path.join(home, 'hh') }).length, 0);
 });

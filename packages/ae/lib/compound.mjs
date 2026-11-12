@@ -30,6 +30,7 @@ import { capabilityOptions, capabilityContext, adaptationContext, loadedResource
 import { retainVerifiedPublication } from './resource-recurrence.mjs';
 import { discoveryPolicy } from './capability-catalog.mjs';
 import { decisionPolicyFromDiscovery, inspectMemoryDecision } from './decision-agent.mjs';
+import { FAILURE_CLUSTER_REF } from './learning-recheck.mjs';
 
 import { buildStructuralIndex } from './repo-map/structural-index.mjs';
 import { createTreesitterExtract } from './repo-map/treesitter-extractor.mjs';
@@ -180,6 +181,18 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       nextTools: ['ae compound --insight --title "..." --body "..."'],
     };
   }
+  // A failure-cluster reference (plan Phase 2b) keeps a failure-derived learning
+  // traceable to its evidence. Only the format is checked: the ID is a digest of
+  // the cluster key that `consolidate --candidates --recheck` recomputes, and
+  // evidence history may be pruned or live in another checkout by the time the
+  // insight is written.
+  if (flags.derivedFrom != null && (kind !== 'insight' || !FAILURE_CLUSTER_REF.test(flags.derivedFrom))) {
+    return { pass: false, exitCode: 2, kind, path: null, indexed: null,
+      blockedReason: kind !== 'insight' ? '--derived-from is accepted only on an insight'
+        : /^finding-cluster:/.test(flags.derivedFrom) ? 'finding clusters are informational and cannot be answered: --derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck'
+          : '--derived-from must be failure-cluster:<id> as listed by ae consolidate --candidates --recheck',
+      nextTools: ['ae consolidate --candidates --recheck --json'] };
+  }
   // A learning decision hands over the fingerprint it already took; the CLI
   // flag hands over the line, which is checked and fingerprinted here.
   const evidenceQuote = flags.evidenceQuote ?? null;
@@ -203,6 +216,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
+  if (flags.derivedFrom != null) fmLines.push(`derived_from: ${flags.derivedFrom}`);
   // Only the fingerprint of the evidence line is stored; the line itself is
   // never written or shown (see evidence-fingerprint.mjs).
   if (evidence) fmLines.push(...evidenceFrontmatterLines(evidence));
@@ -507,7 +521,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
  */
 // The `ae compound` flags a read-only match refuses, as [flags key, flag name].
 const MATCH_EXCLUSIVE_FLAGS = [['learningDecision', '--learning-decision'], ['plan', '--plan'], ['insight', '--insight'], ['title', '--title'], ['body', '--body'], ['bodyFile', '--body-file'],
-  ['category', '--category'], ['tags', '--tags'], ['trigger', '--trigger'], ['claim', '--claim'], ['evidenceQuote', '--evidence-quote'], ['enforcement', '--enforcement'], ['dryRun', '--dry-run']];
+  ['category', '--category'], ['tags', '--tags'], ['trigger', '--trigger'], ['claim', '--claim'], ['derivedFrom', '--derived-from'], ['evidenceQuote', '--evidence-quote'], ['enforcement', '--enforcement'], ['dryRun', '--dry-run']];
 
 const usageError = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
 
@@ -585,6 +599,13 @@ export function runEvidenceMatch({ workspace, flags }) {
 }
 
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
+  // A failure-cluster reference belongs only to an insight. Beside a learning decision it would be published late,
+  // after a pending record is written, or dropped without a word, so it is refused before anything is read or written.
+  if (flags.derivedFrom != null) {
+    const hint = 'ae compound --insight --title "..." --body "..." --derived-from failure-cluster:<id> --json';
+    if (!flags.insight) throw usageError('--derived-from is accepted only with --insight', hint);
+    if (flags.learningDecision) throw usageError('--derived-from cannot be combined with --learning-decision', hint);
+  }
   if (flags.evidenceQuote != null) {
     const hint = EVIDENCE_PIPE_HINT;
     // The line is read only from stdin, so harness never puts it in its own

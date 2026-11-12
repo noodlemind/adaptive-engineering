@@ -279,7 +279,7 @@ function knowledgeTree({ workspace, copilotHome, home, target, depth, maxNodes }
 
     if (hasStore && !target) {
     try {
-      for (const episode of consolidateStatus({ workspace, copilotHome }).quarantined || []) {
+      for (const episode of consolidateStatus({ workspace, copilotHome, withRecheck: false }).quarantined || []) {
         const id = clean(episode.path);
         if (!id) continue;
         rows.push({

@@ -404,7 +404,7 @@ function knowledgeChecks({ workspace, copilotHome }) {
 
   try {
     const storeExists = fs.existsSync(storeDir(workspace));
-    const quarantined = storeExists ? consolidateStatus({ workspace, copilotHome }).quarantined.length : 0;
+    const quarantined = storeExists ? consolidateStatus({ workspace, copilotHome, withRecheck: false }).quarantined.length : 0;
     checks.push({
       id: 'K2',
       name: 'No quarantined episode clusters',

@@ -56,3 +56,15 @@ test('scanSecrets flags temporary AWS, npm, GitLab, Google and Basic auth creden
   const ids = scanSecrets(lines.join('\n')).map(hit => hit.id);
   assert.deepEqual(ids, ['aws-access-key', 'npm-token', 'gitlab-token', 'google-api-key', 'basic-auth', 'generic-api-key']);
 });
+
+test('the generic-api-key pattern stays linear on adversarial input and still finds prefixed keys', () => {
+  for (const long of ['a-'.repeat(5e4), 'a_'.repeat(5e4), `${'a-'.repeat(5e4)}api_key=`, 'x'.repeat(1e5)]) {
+    const started = performance.now();
+    redactSecrets(long);
+    scanSecrets(long);
+    assert.ok(performance.now() - started < 500, `100 KB scanned in ${performance.now() - started} ms`);
+  }
+  assert.deepEqual(scanSecrets('x my_api_key=ABCDEFGHIJKLMNOPQRSTUVWX y').map(h => h.id), ['generic-api-key']);
+  assert.deepEqual(scanSecrets('aws_secret_access_key: ABCDEFGHIJKLMNOPQRSTUVWX').map(h => h.id), ['generic-api-key']);
+  assert.deepEqual(scanSecrets('client-secret="ABCDEFGHIJKLMNOPQRSTUVWX"').map(h => h.id), ['generic-api-key']);
+});

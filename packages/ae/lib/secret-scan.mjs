@@ -15,7 +15,10 @@ const PATTERNS = [
   { id: 'slack-token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
   {
     id: 'generic-api-key',
-    re: /\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|access[_-]?token)["']?\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
+    // `(?<![A-Za-z0-9])` stands in for the old `\b(?:[A-Za-z0-9]+[_-])*` prefix, which backtracked
+    // superlinearly on `a-a-a-...`. It matches everything the prefix did (the keyword is preceded by a
+    // separator or a non-word character either way) but starts the match at the keyword, not the prefix.
+    re: /(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|access[_-]?token)["']?\s*[=:]\s*["']?[A-Za-z0-9_\-/+]{20,}["']?/i,
   },
 ];
 

@@ -122,6 +122,49 @@ function openReadNoFollow(full) {
   return fs.openSync(full, base);
 }
 
+/**
+ * The last `maxBytes` of a regular file, read without following a symlink, with
+ * the same root containment check as readFileNoFollow. Returns
+ * `{ buffer, truncated }`, or null when the file is unsafe or unreadable.
+ */
+export function readFileTailNoFollow(full, { root = null, maxBytes = DEFAULT_MAX_BYTES } = {}) {
+  const realRoot = canonicalRoot(root);
+  if (root != null && realRoot === null) return null;
+  if (!isRegularFile(full)) return null;
+  let fd;
+  try {
+    fd = openReadNoFollow(full);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return null;
+    if (O_NOFOLLOW === null) {
+      try {
+        if (fs.lstatSync(full).isSymbolicLink()) return null;
+      } catch {
+        return null;
+      }
+    }
+    if (realRoot !== null && !fdMatchesCanonicalUnderRoot(full, stat, realRoot)) return null;
+    const length = Math.min(stat.size, maxBytes);
+    const start = stat.size - length;
+    const buf = Buffer.alloc(length);
+    let offset = 0;
+    while (offset < length) {
+      const n = fs.readSync(fd, buf, offset, length - offset, start + offset);
+      if (n <= 0) break;
+      offset += n;
+    }
+    return { buffer: buf.subarray(0, offset), truncated: start > 0 };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function readPrefixNoFollow(full, { root = null } = {}) {
   const realRoot = canonicalRoot(root);
   if (root != null && realRoot === null) return null;

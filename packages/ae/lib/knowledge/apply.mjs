@@ -141,22 +141,64 @@ function resolveEpisodeFile(workspace, copilotHome, p, home) {
   return candidates;
 }
 
-/** The first candidate (workspace, then the global root, then overlay) that
- * actually exists on disk — as a `{ full, root }` pair so the caller can
- * containment-verify the read against the matched root — or null if the path
- * escapes every root or exists in none of them. */
+/** `{ text }` when the file matches `sha256` (the verified bytes, so a caller parses what was hashed, not a
+ * second read), `{ text: null }` when no hash is recorded (nothing read), or null on a failed read or mismatch. */
 function episodeHashMatches(full, root, sha256) {
-  if (!sha256) return true;
+  if (!sha256) return { text: null };
   const text = readFileNoFollow(full, { root });
-  if (text === null) return false;
-  return crypto.createHash('sha256').update(text).digest('hex') === sha256;
+  if (text === null) return null;
+  return crypto.createHash('sha256').update(text).digest('hex') === sha256 ? { text } : null;
 }
 
+/**
+ * The failure cluster a verified insight episode answers (`derived_from:
+ * failure-cluster:<id>`), or null. Only `kind: insight` answers: `compound
+ * --insight` is the only writer of the field, so the same line on a fix or
+ * a teaching was not written by Harness and answers nothing. Recorded on the ledger entry of a
+ * learning-writing op so the answer outlives the episode file and is visible
+ * from every layer. Absent for every other episode, so ledger bytes are
+ * unchanged.
+ */
+function episodeAnswer(workspace, copilotHome, e, home) {
+  const hit = firstExistingEpisodeFile(workspace, copilotHome, e.path, home, e.sha256);
+  if (!hit) return null;
+  const text = hit.text ?? readFileNoFollow(hit.full, { root: hit.root });
+  const fm = text?.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
+  // The last `kind:` line wins and quotes are stripped, as collectEpisodes reads it.
+  const kind = [...fm.matchAll(/^kind:\s*(.*)$/gm)].at(-1)?.[1].replace(/^["']|["']$/g, '').trim();
+  if (kind !== 'insight') return null;
+  return fm.match(/^derived_from: failure-cluster:([a-f0-9]{16})\s*$/m)?.[1] || null;
+}
+
+/**
+ * Answers recorded on a ledger, keyed by episode (`path@sha256`): the latest valid `answers`/`answeredAt`
+ * pair for each. Promotion carries these over from the source bucket instead of answering again, so a
+ * cluster that reopened after the branch answer is not silently cleared by the promotion.
+ */
+function recordedAnswers(ledger) {
+  const out = new Map();
+  for (const entry of ledger) {
+    if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
+    const at = Date.parse(entry.answeredAt);
+    if (!Number.isFinite(at)) continue;
+    const key = `${entry.path}@${entry.sha256}`;
+    const seen = out.get(key);
+    if (!seen || at > Date.parse(seen.answeredAt)) out.set(key, { answers: entry.answers, answeredAt: entry.answeredAt });
+  }
+  return out;
+}
+
+/** The first candidate (workspace, then the global root, then overlay) that
+ * actually exists on disk and matches `sha256` — as `{ full, root, text }`, so
+ * the caller can containment-verify the read against the matched root and
+ * reuse the verified bytes (`text` is null when no hash is recorded) — or null
+ * if the path escapes every root or exists in none of them. */
 function firstExistingEpisodeFile(workspace, copilotHome, p, home, sha256) {
   for (const { full, root } of resolveEpisodeFile(workspace, copilotHome, p, home)) {
     if (!fs.existsSync(full)) continue;
-    if (!episodeHashMatches(full, root, sha256)) continue;
-    return { full, root };
+    const verified = episodeHashMatches(full, root, sha256);
+    if (!verified) continue;
+    return { full, root, text: verified.text };
   }
   return null;
 }
@@ -1492,6 +1534,14 @@ export function applyOps({
     const governed = [];
     const at = todayClamped();
     const governanceAt = new Date().toISOString();
+    // A promotion moves a claim between layers; it never answers a cluster anew. The answer and its
+    // original time come from the source bucket's ledger, so failures after that time stay open.
+    const carriedAnswers = promotionMode ? recordedAnswers(readLedger(bucketDirFor(dir, promotion.branchKey))) : null;
+    const answerFor = (e) => {
+      if (carriedAnswers) return carriedAnswers.get(`${e.path}@${e.sha256}`) || null;
+      const answers = episodeAnswer(workspace, copilotHome, e, home);
+      return answers ? { answers, answeredAt: governanceAt } : null;
+    };
 
     for (const { op, id, domain, slug, content } of writes) {
       const file = path.join(layerRoot, 'learnings', domain, `${slug}.md`);
@@ -1499,7 +1549,9 @@ export function applyOps({
         throw new Error(`refused to write ${id}: the learning path does not resolve safely inside the knowledge store`);
       }
       applied.push({ op: op.op, id });
-      for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at });
+      for (const e of op.episodes) {
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: id, at, ...(answerFor(e) || {}) });
+      }
       if (op.op === 'SUPERSEDE' && op.target !== id) {
         const target = existing.get(op.target);
         if (!updateFrontmatterField(target.file, 'superseded_by', id)) {
@@ -1561,7 +1613,9 @@ export function applyOps({
         throw new Error(`refused to strengthen ${op.target}: the learning path does not resolve safely inside the knowledge store`);
       }
       applied.push({ op: 'STRENGTHEN', id: op.target });
-      for (const e of op.episodes) ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at });
+      for (const e of op.episodes) {
+        ledgerEntries.push({ path: e.path, sha256: e.sha256, learning: op.target, at, ...(answerFor(e) || {}) });
+      }
     }
 
     if (promotionMode && !dryRun) {

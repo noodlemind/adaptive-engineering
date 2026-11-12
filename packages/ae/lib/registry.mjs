@@ -88,8 +88,9 @@ import { cmdFlows, flowsResultOf, FLOW_VERBS } from './flow-model-cmd.mjs';
 import { cmdDiagrams, diagramsResultOf, DIAGRAM_VERBS } from './diagram-cmd.mjs';
 import { cmdHost, hostResultOf, HOST_VERBS } from './hosts/command.mjs';
 import { cmdMcp } from './hosts/mcp-server.mjs';
+import { REGISTRY, hasCommand } from './command-names.mjs';
 
-const REGISTRY = new Map();
+export { hasCommand };
 
 export const GLOBAL_FLAGS = [
   { name: '--json', type: 'boolean', description: 'JSON output for machine readers', required: false, default: false, tui: 'cli-only' },
@@ -260,10 +261,6 @@ export function registerCommand(entry) {
     args,
   });
   return entry.name;
-}
-
-export function hasCommand(name) {
-  return REGISTRY.has(name);
 }
 
 export function getCommand(name) {
@@ -1152,6 +1149,7 @@ registerCommand({
       { name: '--tags', type: 'string', valueName: 'a,b', description: 'comma-separated tags', required: false, default: null, tui: 'prompt' },
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
+      { name: '--derived-from', type: 'string', valueName: 'ref', description: 'insight only: failure-cluster:<id> from consolidate --candidates --recheck that this episode answers', required: false, default: null, tui: 'cli-only' },
       { name: '--evidence-quote', type: 'string', valueName: '-', description: 'only -: read the one failing line of check output for --insight from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'cli-only', valueIsLiteral: true },
       { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix; exit 0 on a match, exit 1 on no match (still recorded as a succeeded run), exit 2 on a usage error', required: false, default: null, tui: 'cli-only' },
       { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace, e.g. .harness/check-output.txt), or - for stdin', required: false, default: null, tui: 'cli-only' },
@@ -1949,7 +1947,7 @@ registerCommand({
   summary: 'knowledge layer mode switch and purge (human deletion always wins)',
   group: 'knowledge',
   sideEffect: 'mutate',
-    usage: '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | feedback <off|suggest|on> | migrate-store',
+    usage: '<on|suggest|off|freeze|capture-only> | --status | purge <file|--all> | commit <none|repo> | feedback <off|suggest|on> | recheck <off|suggest|on> | migrate-store',
     extraOptions: [
     ['status', 'layer-aware report: golden domain counts, branch buckets, recall-index drift (read-only)'],
     ['promote [--branch <key>] [--ids a,b] [--all]', 'emit a reviewable branch→golden promotion op-set (.harness/promote-ops.json)'],
@@ -1958,6 +1956,7 @@ registerCommand({
     ['purge --all', 'reset the learnings store (episodes remain, become debt)'],
     ['commit <none|repo>', 'repo mirrors ACTIVE learnings into docs/knowledge/learnings (opt-in, never git-commits the product repo); none is the default'],
     ['feedback <off|suggest|on>', 'learning-feedback read ladder: off records only (default), suggest shows feedback evidence in consolidation, on also lets it make consolidation due'],
+    ['recheck <off|suggest|on>', 're-check read ladder: off leaves consolidation unchanged (default), suggest lets consolidate --candidates --recheck show stale bindings and recurring failures, on also lets them make consolidation due'],
     ['migrate-store [--from-id <id>]', 'copy missing files from other ids of this checkout into the stable id and keep every source; --from-id preserves old knowledge and plans in place'],
   ],
     verbs: [
@@ -1986,6 +1985,11 @@ registerCommand({
       positionals: ['target'],
     },
     {
+      verb: 'recheck',
+      summary: 're-check read ladder: off leaves consolidation unchanged (default), suggest lets consolidate --candidates --recheck show stale bindings and recurring failures, on also lets them make consolidation due',
+      positionals: ['target'],
+    },
+    {
       verb: 'migrate-store',
       summary:
         'copy missing learnings into the current store and keep every source; --from-id preserves old knowledge and plans in place',
@@ -1995,11 +1999,11 @@ registerCommand({
     positionals: [
       {
         name: 'subcommand',
-        description: 'on|suggest|off|freeze|capture-only|status|promote|prune|purge|commit|feedback|migrate-store',
+        description: 'on|suggest|off|freeze|capture-only|status|promote|prune|purge|commit|feedback|recheck|migrate-store',
         required: false,
         default: null,
       },
-      { name: 'target', description: 'purge target, the commit mode (none|repo), or the feedback state (off|suggest|on)', required: false, default: null },
+      { name: 'target', description: 'purge target, the commit mode (none|repo), or the feedback or recheck state (off|suggest|on)', required: false, default: null },
     ],
     flags: [
       { name: '--from-id', type: 'string', valueName: 'id', description: 'adopt an existing local or canonical remote storage ID without moving records; refuses conflicts', required: false, default: null, tui: 'prompt', verbs: ['migrate-store'] },
@@ -2029,12 +2033,13 @@ registerCommand({
   group: 'knowledge',
   sideEffect: 'mutate',
     bareSideEffect: 'read',
-  usage: '[--status | --candidates | --apply --ops <path> | --rebuild --yes]',
+  usage: '[--status | --candidates [--recheck] | --apply --ops <path> | --rebuild --yes]',
   args: {
     positionals: [],
     flags: [
       { name: '--status', type: 'boolean', description: 'debt vs threshold, quarantine, promotion candidates (default)', required: false, default: false, tui: 'cli-only' },
             { name: '--candidates', type: 'boolean', description: 'persist a frozen work packet; --dry-run previews without publication', required: false, default: false, tui: 'verb', sideEffect: 'mutate' },
+      { name: '--recheck', type: 'boolean', description: 'with --candidates and knowledge recheck suggest|on: add stale exposed learnings, recurring failure and finding clusters, and broken references as evidence', required: false, default: false, tui: 'cli-only' },
       {
         name: '--apply',
         type: 'boolean',

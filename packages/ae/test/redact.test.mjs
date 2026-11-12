@@ -659,3 +659,106 @@ test('dropping the boundary did not start masking ordinary prose', () => {
   // …while a genuine sk- key still masks.
   assert.match(redactText('sk-abcdefghijklmnopqrstuvwxyz'), /redacted:api-key/);
 });
+
+test('kv-secret: the lookbehind form masks exactly what the old prefix form did, and stays linear', () => {
+  const keys = 'password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token';
+  const tail = `(["']?\\s*[:=]\\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\\s&"',;}]))[^\\s&"',;}]{1,500}`;
+  const oldRe = new RegExp(`\\b((?:[A-Za-z0-9]+[_-])*(?:${keys}))${tail}`, 'gi');
+  const oldRedact = text => text.replace(oldRe, (_m, key, sep) => `${key}${sep}«redacted:kv-secret»`);
+  const r = redactor();
+  // Only kv-secret can fire on these inputs, so the whole redactor output is compared with the old pattern alone.
+  const fixed = ['DB_PASSWORD=hunter2hunter2', 'aws_secret_access_key: abc123', 'my-api-key="zzz"', 'x_password_token=val', 'secret_token=abc',
+    'token=abc-password=xyz', '{"client_secret": "s3"}', 'a-b-c-token:v', 'password=null', 'PASSWD=undefinedX', 'mytoken=x', 'Token = q; secret=r&k=v',
+    'pre a-password=1 b_secret=2', 'apikey:"k"', 'private-key=p', 'tokenize=x', 'xpassword=y', 'a--password=x', '9_token=t'];
+  const alphabet = ['a', 'B', '1', '-', '_', ' ', '=', ':', '"', "'", ';', '&', 'x', 'password', 'token', 'secret', 'api-key', 'access_key', 'null', '«'];
+  let seed = 7;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  const random = [];
+  for (let i = 0; i < 3000; i++) {
+    let text = '';
+    for (let n = next() % 12; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    random.push(text);
+  }
+  assert.ok(random.filter(text => r.redactText(text) !== text).length > 50, 'the random inputs exercise the pattern');
+  let differing = 0;
+  for (const text of [...fixed, ...random]) {
+    const before = oldRedact(text), after = r.redactText(text);
+    if (after === before) continue;
+    // The one deliberate widening: a key led by `_` with no letter or digit before it, which the old prefix missed.
+    assert.match(text, /(?:^|[^A-Za-z0-9])_+[A-Za-z0-9_-]*(?:password|passwd|passphrase|secret|token|key)/i, `unexpected difference for ${JSON.stringify(text)}`);
+    assert.equal(oldRedact(after), after, `the new output leaves nothing the old pattern would mask: ${JSON.stringify(text)}`);
+    differing += 1;
+  }
+  for (const text of fixed) assert.equal(r.redactText(text), oldRedact(text), text);
+  assert.ok(differing < random.length / 10, `${differing} inputs differ`);
+  assert.equal(r.redactText('__password=hunter2'), '__password=«redacted:kv-secret»', 'now masked; the old prefix form left it');
+  assert.equal(oldRedact('__password=hunter2'), '__password=hunter2');
+
+  // `a-a_` repeated defeats the old prefix (about a second at this size) without touching the other patterns.
+  for (const long of [`${'a-a_'.repeat(10000)}:`, 'a_'.repeat(20000), `${'a-a_'.repeat(10000)}password=x`]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 200, `${long.length} characters took ${Math.round(ms)} ms`);
+  }
+});
+
+test('url-credentials: the run-start form masks exactly what the old scheme form did, and stays linear', () => {
+  const oldRe = /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/gi;
+  const oldRedact = text => text.replace(oldRe, (_m, scheme) => `${scheme}«redacted:url-credentials»@`);
+  const r = redactor();
+  // Only url-credentials can fire on these inputs, so the whole redactor output is compared with the old pattern alone.
+  const fixed = ['https://user:pw@host/x', 'git+ssh://u@h', 'x1a-b+c.d://user:pw@host', '-git://u@h', '1-ftp://u@h', '_git://u@h', 'ftp:u@h',
+    'a:\\\\u@h', '//u@h', 'see s3://k:s@bucket and redis://:p@db', 'A-B.C://U@H', 'mailto:a@b', 'svn+ssh://a@b@c/d', 'x.y-z+1://q@r'];
+  const alphabet = ['a', 'h', 't', 'p', 's', 'f', 'w', 'g', 'A', '1', '-', '+', '.', '_', ':', '/', '\\', '@', '?', '#', ' ', 'http', 'ftp', '://', 'wss', 'git+ssh'];
+  let seed = 11;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  const random = [];
+  for (let i = 0; i < 5000; i++) {
+    let text = '';
+    for (let n = next() % 24; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    random.push(text);
+  }
+  const fired = random.filter(text => r.redactText(text) !== text).length;
+  assert.ok(fired > 100, `the random inputs exercise the pattern (${fired})`);
+  for (const text of [...fixed, ...random]) assert.equal(r.redactText(text), oldRedact(text), JSON.stringify(text));
+
+  // About 100 s with the old scheme alternative; the whole redactor now finishes well under a second.
+  for (const long of ['a-'.repeat(200000), '1a'.repeat(100000), `${'a-'.repeat(100000)}://u@h`]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 1000, `${long.length} characters took ${Math.round(ms)} ms`);
+  }
+});
+
+test('url-credentials: the credential tail is not rescanned from every start in one segment, and output still matches the old form', () => {
+  const oldRe = /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/gi;
+  const oldRedact = text => text.replace(oldRe, (_m, scheme) => `${scheme}«redacted:url-credentials»@`);
+  const r = redactor();
+  const fixed = ['ftp:ftp:u@h', 'ftp:xftp://u@h', 'ftp:a@bftp:c@d', 'http:https:wss:u@h', 'ftp: ftp:u@h', 'ftp:?ftp:u@h', 'ftp:@ftp:u@h', 'FTP:ftp:U@H',
+    'a///u@h', 'a//u@h', ':///u@h', '////u@h', '\\\\u@h', 'x:\\/\\u@h', 'ftp://ftp:u@h', 'ftp:/ftp:/u@h', 'see ftp:ftp:a@b and //c@d'];
+  for (const text of fixed) assert.equal(r.redactText(text), oldRedact(text), JSON.stringify(text));
+  // Scheme words, slash runs, separators and `@` are frequent, so starts share segments and slash runs often.
+  const alphabet = ['a', 'h', 't', 'p', 's', 'f', 'w', 'A', 'F', '1', '-', '+', '.', '_', ':', '/', '\\', '@', '@', '?', '#', ' ', '\n',
+    'http', 'https', 'ftp', 'FTP:', 'ftp:', 'http:', 'wss:', 'ws:', '://', '//', ':/', 'git+ssh', 'x1'];
+  let seed = 7;
+  const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed >>> 8; };
+  let fired = 0;
+  for (let i = 0; i < 100000; i++) {
+    let text = '';
+    for (let n = next() % 30; n >= 0; n--) text += alphabet[next() % alphabet.length];
+    const expected = oldRedact(text);
+    if (expected !== text) fired += 1;
+    assert.equal(r.redactText(text), expected, JSON.stringify(text));
+  }
+  assert.ok(fired > 5000, `the random inputs exercise the pattern (${fired})`);
+
+  // Each took over a second with the old form and the earlier rewrite; every start shared one segment or slash run.
+  for (const long of ['ftp:'.repeat(20000), 'http:'.repeat(16000), `${'ftp:'.repeat(20000)} @`, ':wss'.repeat(20000), '//'.repeat(20000), '\\'.repeat(40000)]) {
+    const started = performance.now();
+    r.redactText(long);
+    const ms = performance.now() - started;
+    assert.ok(ms < 300, `${JSON.stringify(long.slice(0, 8))}... (${long.length} characters) took ${Math.round(ms)} ms`);
+  }
+});

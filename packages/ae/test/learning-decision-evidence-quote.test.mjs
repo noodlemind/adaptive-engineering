@@ -610,3 +610,18 @@ test('a relative --check-output cannot follow a symlinked directory out of the w
   assert.equal(escaped.status, 2, escaped.stdout + escaped.stderr);
   assert.match(escaped.stdout + escaped.stderr, /--check-output is missing, not a regular file/);
 });
+
+test('--derived-from beside a learning decision is refused before any learning record is written', t => {
+  const f = verifiedFixture(t);
+  const ref = 'failure-cluster:0123456789abcdef';
+  for (const value of [publish('derived-publish'), { operation: 'derived-no-learning', decision: 'no-learning', rationale: 'Nothing new.' }]) {
+    const result = f.cli(['compound', '--plan', f.plan, '--learning-decision', '-', '--derived-from', ref, '--json'], JSON.stringify(value));
+    assert.equal(result.status, 2, `${value.decision}: ${result.stderr || result.stdout}`);
+    assert.match(result.stdout + result.stderr, /--derived-from is accepted only with --insight/);
+  }
+  const both = f.cli(['compound', '--plan', f.plan, '--insight', '--learning-decision', '-', '--derived-from', ref, '--json'], JSON.stringify(publish('derived-both')));
+  assert.equal(both.status, 2, both.stderr || both.stdout);
+  assert.match(both.stdout + both.stderr, /--derived-from cannot be combined with --learning-decision/);
+  const learning = path.join(f.ws, '.harness/learning');
+  assert.equal(fs.existsSync(learning) && fs.readdirSync(learning).some(name => name !== '.ready.json'), false, 'no pending learning record is written');
+});

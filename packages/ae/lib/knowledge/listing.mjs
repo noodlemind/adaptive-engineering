@@ -82,7 +82,7 @@ export function listingView({ workspace, copilotHome, domain, home }) {
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const active = learnings.filter((l) => !['retired', 'disputed', 'superseded', 'promoted'].includes(l.status)).length;
-    const quarantined = consolidateStatus({ workspace, copilotHome, home }).quarantined.map((q) => ({
+    const quarantined = consolidateStatus({ workspace, copilotHome, home, withRecheck: false }).quarantined.map((q) => ({
     path: q.path,
     sha256: q.sha256,
   }));

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { exitForSignal, holdSignals, killLiveGroups, trackStudyGroups, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, safePath, scopeResult, snapshot, trialEnvironment, writeFiles } from '../context/study.mjs';
-import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, readFeedbackConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
+import { KNOWLEDGE_FEEDBACK_STATES, KNOWLEDGE_MODES, KNOWLEDGE_RECHECK_STATES, readFeedbackConfig, readRecheckConfig, readStoreConfig, repoId, storeDir, writeFeedbackConfig, writeRecheckConfig, writeStoreConfig } from '../../lib/knowledge/store.mjs';
 import { applyOps } from '../../lib/knowledge/apply.mjs';
 import { runOrient } from '../../lib/orient.mjs';
 import { repeatEvidenceFromServed } from '../../lib/repeat-mistake.mjs';
@@ -68,15 +68,23 @@ export function validateProtocol(protocol = PROTOCOL) {
     if (!Object.hasOwn(arm, 'baseline')) throw new TypeError(`arm ${arm.id} must declare a baseline`);
     if (!KNOWLEDGE_MODES.has(arm.mode)) throw new TypeError(`arm ${arm.id} has unknown knowledge mode ${arm.mode}`);
     if (arm.feedback !== undefined && !KNOWLEDGE_FEEDBACK_STATES.has(arm.feedback)) throw new TypeError(`arm ${arm.id} has unknown feedback state ${arm.feedback}`);
-    if (arm.recheck !== undefined && arm.available !== false) throw new TypeError(`arm ${arm.id} sets knowledge.recheck, which this harness cannot configure yet`);
+    if (arm.recheck !== undefined && !KNOWLEDGE_RECHECK_STATES.has(arm.recheck)) throw new TypeError(`arm ${arm.id} has unknown recheck state ${arm.recheck}`);
     if (arm.seed && arm.mode !== 'freeze') throw new TypeError(`seeded arm ${arm.id} must use mode freeze`);
+    if (arm.diagnostic !== undefined && typeof arm.diagnostic !== 'boolean') throw new TypeError(`arm ${arm.id} diagnostic must be a boolean`);
+    if (arm.diagnostic && arm.baseline === null) throw new TypeError(`reference arm ${arm.id} cannot be diagnostic`);
+    // A diagnostic arm is never scored for promotion, so no arm may depend on it.
+    if (arm.baseline !== null && protocol.arms.find(other => other.id === arm.baseline)?.diagnostic) throw new TypeError(`arm ${arm.id} cannot use diagnostic arm ${arm.baseline} as its baseline`);
     baselineChain(protocol, arm.id);
   }
   return protocol;
 }
 
+/**
+ * Arms a default run includes. Unavailable arms are left out, and so are diagnostic arms: those run only when named
+ * explicitly and are never scored for promotion.
+ */
 export function runnableArms(protocol = PROTOCOL) {
-  return protocol.arms.filter(arm => arm.available !== false).map(arm => arm.id);
+  return protocol.arms.filter(arm => arm.available !== false && !arm.diagnostic).map(arm => arm.id);
 }
 
 export function validateCatalog(catalog = CATALOG) {
@@ -511,8 +519,8 @@ function fixtureSetupFailure({ provenance, model, runId, item, armId, repeat, ta
     task: task.id, taskIndex: index + 1, trapRole: task.trap ?? null, kind: 'setup-error', valid: false, invalidReasons: ['fixture-setup-failed'],
     pass: false, baseline: null, publicBaseline: null, trapBaseline: null, checks: null, trapChecks: null, otherChecks: null,
     trapRecurred: null, recurrenceUnscored: null, trapFirstFailed: null, repeatMistake: null,
-    scope: null, origin: null, repoId: null, storeDir: null, storeId: null, knowledgeMode: null, feedback: null,
-    knowledgeModeAfter: null, feedbackAfter: null, configChangedByAgent: false, seeded: null,
+    scope: null, origin: null, repoId: null, storeDir: null, storeId: null, knowledgeMode: null, feedback: null, recheck: null,
+    knowledgeModeAfter: null, feedbackAfter: null, recheckAfter: null, configChangedByAgent: false, seeded: null,
     carriedForward: Object.keys(carried).sort(), externalPlansCleared: 0, externalPlansRefused: [], carriedMemoryRefused: [],
     setupErrors: [{ step: 'fixture', message }], measurementErrors: [],
     learningsInjected: [], learningsBytes: 0, injectionError: null, episodesWritten: 0,
@@ -534,7 +542,7 @@ export function seedStore({ workspace, home, series }) {
   return `${series.seed.op.domain}/${series.seed.op.slug}`;
 }
 
-/** Sets the arm's knowledge mode and feedback state. Runs before every task, so an agent-made change never carries over. */
+/** Sets the arm's knowledge mode, feedback state and re-check state. Runs before every task, so an agent-made change never carries over. */
 export function configureArm({ workspace, home, arm, series, seed = false }) {
   let seeded = null;
   if (arm.seed && seed) seeded = seedStore({ workspace, home, series });
@@ -542,6 +550,8 @@ export function configureArm({ workspace, home, arm, series, seed = false }) {
   if (!mode.pass) throw new Error(`knowledge mode configuration failed: ${mode.blockedReason}`);
   const feedback = writeFeedbackConfig(workspace, { home, feedback: arm.feedback ?? 'off' });
   if (!feedback.pass) throw new Error(`feedback configuration failed: ${feedback.blockedReason}`);
+  const recheck = writeRecheckConfig(workspace, { home, recheck: arm.recheck ?? 'off' });
+  if (!recheck.pass) throw new Error(`recheck configuration failed: ${recheck.blockedReason}`);
   return { seeded };
 }
 
@@ -564,15 +574,15 @@ function subsetResult(task, result, trap) {
   return { pass: result.integrity !== false && verdicts.length > 0 && verdicts.every(verdict => verdict === true), verdicts };
 }
 
-/** Knowledge mode and feedback state stored for an identity, read by directory so an agent-changed origin cannot redirect the read. */
+/** Knowledge mode, feedback state and re-check state stored for an identity, read by directory so an agent-changed origin cannot redirect the read. */
 function storedConfig(dir) {
   let raw = null;
   try { raw = fs.readFileSync(path.join(dir, 'config.json'), 'utf8'); } catch { /* absent or unreadable */ }
   try {
     const parsed = JSON.parse(raw);
-    return { mode: KNOWLEDGE_MODES.has(parsed?.mode) ? parsed.mode : 'on', feedback: KNOWLEDGE_FEEDBACK_STATES.has(parsed?.feedback) ? parsed.feedback : 'off', full: canonicalConfig(parsed) };
+    return { mode: KNOWLEDGE_MODES.has(parsed?.mode) ? parsed.mode : 'on', feedback: KNOWLEDGE_FEEDBACK_STATES.has(parsed?.feedback) ? parsed.feedback : 'off', recheck: KNOWLEDGE_RECHECK_STATES.has(parsed?.recheck) ? parsed.recheck : 'off', full: canonicalConfig(parsed) };
   } catch {
-    return { mode: 'on', feedback: 'off', full: raw === null ? null : `(unparsed) ${hash(raw)}` };
+    return { mode: 'on', feedback: 'off', recheck: 'off', full: raw === null ? null : `(unparsed) ${hash(raw)}` };
   }
 }
 
@@ -944,8 +954,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               for (const reason of fixedMemory?.refused || []) { carryRefused.push(reason); memoryRefused.push(reason); }
             }
             const plans = setupStep('clear-plans', () => clearExternalPlans(harnessHome, projectDir), { cleared: 0, refused: ['(clear failed)'] });
-            const before = setupStep('read-config', () => ({ ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }) }),
-              { mode: null, feedback: null, observed: null, feedbackObserved: null });
+            const before = setupStep('read-config', () => ({ ...storedConfig(identity.storeDir), observed: readStoreConfig(fixture.workspace, { home: harnessHome }).mode, feedbackObserved: readFeedbackConfig(fixture.workspace, { home: harnessHome }), recheckObserved: readRecheckConfig(fixture.workspace, { home: harnessHome }) }),
+              { mode: null, feedback: null, recheck: null, observed: null, feedbackObserved: null, recheckObserved: null });
             // A refused copy or plan clear counts as a failed setup too, so no agent runs on stores that may be contaminated.
             const setupFailed = setupErrors.length > 0 || memoryRefused.length > 0 || plans.refused.length > 0;
             // Both checkers run under this study's own protocol timeout, the value recorded in provenance.
@@ -1011,6 +1021,7 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               identity && first && identity.storeId !== first.storeId && 'store-directory-drift',
               before.observed !== arm.mode && 'knowledge-mode-mismatch',
               before.feedbackObserved !== (arm.feedback ?? 'off') && 'feedback-state-mismatch',
+              before.recheckObserved !== (arm.recheck ?? 'off') && 'recheck-state-mismatch',
               plans.refused.length > 0 && 'external-plans-not-cleared',
               memoryRefused.length > 0 && 'carried-memory-refused',
               setupErrors.some(row => row.step === 'identity') && 'identity-resolution-failed',
@@ -1023,9 +1034,9 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               baselineTimedOut && 'baseline-timeout',
               !baselineBroken && !baselineTimedOut && 'invalid-baseline',
             ].filter(Boolean);
-            const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off');
-            // Any change to the stored config is reported, a commit mode or an extra key included; only a changed mode or
-            // feedback state fails the attempt. The next task rebuilds the config from the arm alone either way.
+            const modeUnchanged = after.mode === arm.mode && after.feedback === (arm.feedback ?? 'off') && after.recheck === (arm.recheck ?? 'off');
+            // Any change to the stored config is reported, a commit mode or an extra key included; only a changed mode,
+            // feedback state or re-check state fails the attempt. The next task rebuilds the config from the arm alone either way.
             const configUnchanged = modeUnchanged && (before.full === undefined || after.full === before.full);
             const usage = usageOf(result);
             let repeatMistake = null;
@@ -1051,8 +1062,8 @@ export async function runStudy({ root, catalog = CATALOG, protocol = PROTOCOL, a
               repeatMistake,
               scope: { ...scope, pass: unexpected.length === 0, unexpected },
               origin: { expected: fixture.origin, after: originAfter, unchanged: originUnchanged },
-              repoId: identity?.repoId ?? null, storeDir: identity?.storeDir ?? null, storeId: identity?.storeId ?? null, knowledgeMode: before.observed, feedback: before.feedbackObserved,
-              knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, configChangedByAgent: !configUnchanged, seeded,
+              repoId: identity?.repoId ?? null, storeDir: identity?.storeDir ?? null, storeId: identity?.storeId ?? null, knowledgeMode: before.observed, feedback: before.feedbackObserved, recheck: before.recheckObserved,
+              knowledgeModeAfter: after.mode, feedbackAfter: after.feedback, recheckAfter: after.recheck, configChangedByAgent: !configUnchanged, seeded,
               carriedForward: fixture.carriedForward, externalPlansCleared: plans.cleared, externalPlansRefused: plans.refused, carriedMemoryRefused: memoryRefused, setupErrors, measurementErrors,
               learningsInjected: injection.learnings, learningsBytes: injection.learningsBytes, injectionError: injection.error,
               episodesWritten,
@@ -1217,9 +1228,11 @@ export function scorePromotion(stats, { protocol = PROTOCOL, eligible = true, in
     decisions[id] = { baseline: arm.baseline, chain, promotable: reasons.length === 0, against, reasons };
     return decisions[id];
   };
-  for (const id of Object.keys(stats)) if (id !== 'stateless') decide(id);
+  // Diagnostic arms are reported in the statistics but never scored for promotion.
+  const diagnostic = Object.keys(stats).filter(id => armById(protocol, id).diagnostic);
+  for (const id of Object.keys(stats)) if (id !== 'stateless' && !diagnostic.includes(id)) decide(id);
   const promotable = Object.keys(decisions).filter(id => decisions[id].promotable);
-  return { comparison: !eligible ? 'inconclusive' : promotable.length ? 'candidate-requires-review' : 'no-candidate', promotable, decisions };
+  return { comparison: !eligible ? 'inconclusive' : promotable.length ? 'candidate-requires-review' : 'no-candidate', promotable, decisions, diagnostic };
 }
 
 export function summarizeStudy({ attempts, runs, provenance, protocol = PROTOCOL }) {

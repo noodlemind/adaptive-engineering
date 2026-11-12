@@ -5,8 +5,9 @@ import { storeDir, readLedger, listLearnings, readStoreConfig, readGovernance, i
 import { readFileNoFollow, assertNoSymlinkAncestors } from '../fs-safe.mjs';
 import { solutionsScanRoots } from '../project-layout.mjs';
 import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './layer.mjs';
-import { bucketDirFor } from './overlay.mjs';
+import { bucketDirFor, isSafeBucketKey, listBuckets, loadLayeredLearnings } from './overlay.mjs';
 import { feedbackState, feedbackSummary, feedbackColumns, feedbackOrder } from '../learning-feedback.mjs';
+import { recheckState, recheckSummary, recheckDue, RECHECK_STATUS_PRESELECT } from '../learning-recheck.mjs';
 import { readEvidenceFingerprint, evidenceSummary } from './evidence-fingerprint.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
@@ -216,7 +217,17 @@ function layerView({ workspace, home, dir, writeLayer = false, layerOverride = n
   };
 }
 
-export function consolidateStatus({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, feedbackVerdicts = null }) {
+export function consolidateStatus(options) {
+  return statusWithRecheck(options).status;
+}
+
+/**
+ * `withRecheck: false` skips the re-check scan for callers that read neither `due` nor `recheck` (doctor,
+ * the growth report, the retrieval tree, resource candidates, the learning listing, archive and init, which
+ * read only `quarantined`, `promotionCandidates` or `debt`): the status then names the re-check state without counts, as `suggest` does, and
+ * re-check never adds to `due`. Orient and `ae consolidate` keep the default.
+ */
+function statusWithRecheck({ workspace, copilotHome, home, writeLayer = false, layerOverride = null, withFeedback = false, feedbackVerdicts = null, recheckRequested = false, withRecheck = true }) {
     const dir = storeDir(workspace, { home });
   const { mode } = readStoreConfig(workspace, { home });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
@@ -237,8 +248,18 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
   const active = activeLearnings(learnings);
   const debt = unconsolidated.length;
   const feedback = feedbackView({ workspace, home, learnings: active, withFeedback, verdicts: feedbackVerdicts });
-  const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0));
-  return {
+  let recheckMode = 'off';
+  try { recheckMode = recheckState({ workspace, home }); } catch { recheckMode = 'off'; }
+  // Only `on` needs the scan for due; `suggest` pays for it only when a packet asks. A status that
+  // shows no packet computes only what due reads (stale exposed learnings and named-check evidence
+  // clusters from the newest RECHECK_STATUS_PRESELECT evidence records); the run journal, review
+  // observations and learning-body references are scanned only for a packet.
+  const recheck = (recheckMode === 'on' && withRecheck) || (recheckMode === 'suggest' && recheckRequested)
+    ? recheckView({ workspace, home, state: recheckMode, resolved: answeredClusters(dir), ...(recheckRequested ? {} : { preselect: RECHECK_STATUS_PRESELECT, scope: 'due' }) })
+    : null;
+  const recheckIsDue = recheck?.state === 'on' && recheckDue(recheck);
+  const due = ['on', 'suggest'].includes(mode) && (debt >= CONSOLIDATION_THRESHOLD || (feedback?.state === 'on' && feedback.review_required.length > 0) || recheckIsDue);
+  const status = {
     mode,
     debt,
     threshold: CONSOLIDATION_THRESHOLD,
@@ -249,11 +270,39 @@ export function consolidateStatus({ workspace, copilotHome, home, writeLayer = f
     domains: domainPressure(learnings),
     promotionCandidates: promotionCandidates(learnings),
     ...(feedback ? { feedback } : {}),
+    ...(recheckMode !== 'off' ? { recheck: { state: recheckMode, ...(recheck ? { counts: recheck.counts } : {}), ...(recheck?.unavailable ? { unavailable: recheck.unavailable } : {}) } } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),
-    nextTools: due ? ['ae consolidate --candidates'] : [],
+    nextTools: due ? [recheckIsDue ? 'ae consolidate --candidates --recheck' : 'ae consolidate --candidates'] : [],
   };
+  return { status, recheck };
+}
+
+/**
+ * Cluster ID -> latest time a learning-writing op consumed an episode that
+ * answers it. Apply records `answers` and `answeredAt` on the ledger entry, so
+ * the answer survives edits or purges of the episode and is read from the
+ * golden ledger and every branch bucket. NOOP and quarantine entries carry no
+ * learning and never answer a cluster. Bucket ancestry is not checked: an
+ * answer recorded on any branch clears the cluster everywhere, because the
+ * cluster is keyed by check name rather than by branch.
+ */
+const ANSWER_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function answeredClusters(dir, now = Date.now()) {
+  const answered = new Map();
+  const ledgers = [readLedger(dir), ...listBuckets(dir).filter(bucket => isSafeBucketKey(bucket.key)).map(bucket => readLedger(bucket.dir))];
+  for (const entry of ledgers.flat()) {
+    if (typeof entry?.learning !== 'string' || entry.quarantined || !/^[a-f0-9]{16}$/.test(entry.answers || '') || typeof entry.answeredAt !== 'string') continue;
+    // Compared as times, not strings: offsets and precision vary. An unparseable time answers nothing, and
+    // neither does one more than five minutes ahead (the same skew limit failure timestamps get), so a
+    // future-dated entry cannot hide failures that have not happened yet.
+    const at = Date.parse(entry.answeredAt);
+    if (!Number.isFinite(at) || at > now + ANSWER_FUTURE_SKEW_MS) continue;
+    if (!answered.has(entry.answers) || at > Date.parse(answered.get(entry.answers))) answered.set(entry.answers, entry.answeredAt);
+  }
+  return answered;
 }
 
 /**
@@ -272,9 +321,41 @@ function feedbackView({ workspace, home, learnings, withFeedback, verdicts }) {
   }
 }
 
-export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null }) {
+/**
+ * Re-check evidence (plan Phase 2); absent when the effective state is `off`,
+ * so output stays byte-identical. `review_required` is shared with feedback
+ * and read here whatever the feedback key says: enabling re-check opts in.
+ */
+function recheckView({ workspace, home, state, resolved, preselect, scope = 'full' }) {
+  // Golden plus the current branch bucket, whichever layer the caller routes to,
+  // so status and packets see the same learnings. A subordinate branch twin of
+  // a protected golden learning is not a separate learning.
+  let learnings = [], allLearnings = [];
+  try {
+    const layered = loadLayeredLearnings({ workspace, home });
+    learnings = activeLearnings(layered.learnings.filter(l => !l.subordinate));
+    const dir = storeDir(workspace, { home });
+    const key = layered.context?.branchKey;
+    // Reference targets include inactive learnings from both layers.
+    // Only a bucket the overlay accepted (not one excluded for ancestry).
+    // Only the packet checks learning-body references, so status never lists them.
+    if (scope !== 'due') allLearnings = [...listLearnings(dir), ...(layered.layered && key && isSafeBucketKey(key) ? listLearnings(bucketDirFor(dir, key)) : [])];
+  } catch { learnings = []; allLearnings = []; }
+  let reviewRequired = [];
+  try { reviewRequired = feedbackSummary({ workspace, home, learnings }).review_required; } catch { reviewRequired = []; }
+  try {
+    return { state, ...recheckSummary({ workspace, home, learnings, allLearnings, reviewRequired, resolved, preselect, scope }) };
+  } catch (error) {
+    // The error text can name paths or record content, so only a fixed sentence and a Node error code are shown.
+    const counts = scope === 'due' ? { stale_exposed: 0, review_required: 0, failure_clusters: 0 } : { stale_exposed: 0, review_required: 0, failure_clusters: 0, finding_clusters: 0, broken_references: 0 };
+    const code = typeof error?.code === 'string' && /^E[A-Z0-9_]{1,30}$/.test(error.code) ? ` (${error.code})` : '';
+    return { state, stale_exposed: [], review_required: [], failure_clusters: [], finding_clusters: [], broken_references: [], due_clusters: [], counts, omitted: counts, max_cluster_plans: 0, unavailable: `re-check scan failed${code}` };
+  }
+}
+
+export function consolidateCandidates({ workspace, copilotHome, home, withIds = false, writeLayer = false, layerOverride = null, recheck: recheckRequested = false }) {
   const feedbackVerdicts = new Map();
-  const status = consolidateStatus({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, feedbackVerdicts });
+  const { status, recheck: computedRecheck } = statusWithRecheck({ workspace, copilotHome, home, writeLayer, layerOverride, withFeedback: true, feedbackVerdicts, recheckRequested });
   const episodes = collectEpisodes({ workspace, copilotHome, home });
   const bySha = new Map(episodes.map((e) => [`${e.path}@${e.sha256}`, e]));
 
@@ -323,6 +404,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
   const totalBytes = active.reduce((n, l) => n + l.bytes, 0);
   const includeBodies = totalBytes <= LEARNING_BODY_BUDGET_BYTES;
   const feedback = status.feedback || null;
+  const recheck = recheckRequested ? computedRecheck : null;
   // Under `on` only: review_required first, then feedback-disputed, then most exposed.
   // The history was read once for status; its verdict tallies feed the columns.
   const ordered = feedback?.state === 'on' ? feedbackOrder(active, { columns: feedbackColumns({ workspace, home, verdicts: feedbackVerdicts }), reviewRequired: feedback.review_required, layer: view.layer }) : active;
@@ -352,6 +434,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
     domains: status.domains,
     governed,
     ...(feedback ? { feedback } : {}),
+    ...(recheck ? { recheck } : {}),
     storeDir: dir,
     layer: view.layer,
     ...(view.bucketKey ? { bucketKey: view.bucketKey } : {}),

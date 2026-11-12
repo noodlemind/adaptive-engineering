@@ -20,8 +20,26 @@ const FALLBACK_MASK = mask('error');
 const DEFAULT_PATTERNS = [
   {
     kind: 'url-credentials',
-    re: /((?:\b(?:https?|wss?|ftp):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|(?<![:\w])[\\/]{2,}))[^\\/?#\s]+@/i,
-    mask: (_match, scheme) => `${scheme}${mask('url-credentials')}@`,
+    // The generic-scheme alternative is tried only where a run of scheme characters `[a-z0-9+.-]` starts
+    // (the lookbehind), not at every position inside it: the old `\b[a-z][a-z0-9+.-]*:` re-scanned the run
+    // from each word boundary, which is quadratic on `a-a-a-...`. A `:` can only follow the whole run, so
+    // every start inside one run succeeds or fails alike; the old pattern matched from the first letter in
+    // the run that follows a non-word character. The second group skips to that letter (digits and
+    // `+.-`, and letters that follow a word character) and is put back unchanged, so the output is the
+    // same. The credential tail `[^\\/?#\s]+@` is unchanged; two starts are skipped so it is not rescanned
+    // from every start in one segment (quadratic on `ftp:ftp:...` and `////...`), and both skips only drop
+    // starts the old pattern could not match from:
+    // - A slash run (`(?<![:\w])[\\/]{2,}`) is entered only at its first slash, or its second when a `:` or
+    //   word character precedes the run (the first then fails the old lookbehind). The tail cannot start on
+    //   a slash, so every start in one run ends the run at the same place and fails or succeeds alike, and
+    //   the old pattern matched from the earliest.
+    // - `ftp:` (or `http:`, `https:`, `ws:`, `wss:`) with no slash after it is skipped when an earlier such
+    //   scheme is in the same segment with no `@` between them. That earlier start was tried first (or an
+    //   earlier match covers both): if its tail failed there is no `@` later in the segment, so this one
+    //   fails too; if it matched, the match runs to an `@` past this start, which is then never tried. The lazy lookbehind stops at the nearest
+    //   earlier scheme.
+    re: /(?:((?:\b(?:https?|wss?|ftp):(?:[\\/]+|(?<!\b(?:https?|wss?|ftp):[^\\/?#\s@]+?))|(?:(?<![:\w\\/])|(?<=[:\w][\\/]))[\\/]{2,}))|(?<![a-z0-9+.-])((?:[0-9+.-]|(?<=\w)[a-z])*)(\b[a-z][a-z0-9+.-]*:[\\/]{2,}))[^\\/?#\s]+@/i,
+    mask: (_match, scheme, lead, generic) => `${lead ?? ''}${scheme ?? generic}${mask('url-credentials')}@`,
   },
   {
     kind: 'github-token',
@@ -74,8 +92,12 @@ const DEFAULT_PATTERNS = [
     // `key=value`, `key: value` and JSON `"key": "value"` for secret-named keys,
     // including prefixed names such as DB_PASSWORD or aws_secret_access_key.
     // Literal undefined/null/true/false values carry no secret and stay readable.
+    // `(?<![A-Za-z0-9])` stands in for the old `\b(?:[A-Za-z0-9]+[_-])*` prefix, which backtracked
+    // superlinearly on `a-a-a-...`. A prefix such as `DB_` is no longer part of the match but stays in
+    // the text in front of it, so the output is the same; a key led by `_` with no letter or digit
+    // before it (`__password=`) is now also masked.
     kind: 'kv-secret',
-    re: /\b((?:[A-Za-z0-9]+[_-])*(?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\s&"',;}]))[^\s&"',;}]{1,500}/i,
+    re: /(?<![A-Za-z0-9])((?:password|passwd|passphrase|secret[_-]?access[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?key|api[_-]?key|apikey|secret|token))(["']?\s*[:=]\s*["']?)(?!«|(?:undefined|null|true|false)(?![^\s&"',;}]))[^\s&"',;}]{1,500}/i,
     mask: (_match, key, sep) => `${key}${sep}${mask('kv-secret')}`,
   },
 ];

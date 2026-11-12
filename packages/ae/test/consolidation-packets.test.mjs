@@ -10,7 +10,7 @@ import { ensureBucket } from '../lib/knowledge/layer.mjs';
 import { renderLearning } from '../lib/knowledge/apply.mjs';
 import { writeStoreFile } from '../lib/knowledge/store-io.mjs';
 import { collectEpisodes } from '../lib/knowledge/consolidate.mjs';
-import { ensureStore, readLedger, writeStoreConfig } from '../lib/knowledge/store.mjs';
+import { ensureStore, readLedger, writeRecheckConfig, writeStoreConfig } from '../lib/knowledge/store.mjs';
 
 function fixture(t, count = 2) {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-consolidation-'));
@@ -191,4 +191,19 @@ test('first branch packet binds the write layer before a bucket exists', t => {
   const result = f.apply({ schema: 2, packet: packet.id, operation: 'first-branch', attempt: 1, ops: [{ op: 'NOOP', reason: 'Derivable.', episodes: packet.clusters.flatMap(c => c.episodes).map(e => ({ id: e.id })) }] });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(result.value.layer, 'branch');
+});
+
+test('a packet with a recheck section stays a schema-2 packet the apply path accepts', t => {
+  const f = fixture(t);
+  const plain = f.candidates();
+  assert.equal(writeRecheckConfig(f.ws, { home: f.home, recheck: 'suggest' }).pass, true);
+  const cli = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../bin/ae.mjs'), 'consolidate', '--candidates', '--recheck', '--workspace', f.ws, '--harness-home', f.home, '--copilot-home', f.copilot, '--json'], { encoding: 'utf8', env: { ...process.env, HARNESS_NO_EVENTS: '1' } });
+  assert.equal(cli.status, 0, cli.stderr);
+  const packet = JSON.parse(cli.stdout);
+  assert.equal(packet.schema, 2);
+  assert.equal(packet.recheck.state, 'suggest');
+  assert.notEqual(packet.id, plain.id, 'the section is part of the frozen identity');
+  assert.equal(f.candidates().id, plain.id, 'without --recheck the packet is unchanged');
+  const result = f.apply({ schema: 2, packet: packet.id, operation: 'recheck-noop', attempt: 1, ops: [{ op: 'NOOP', reason: 'Derivable.', episodes: packet.clusters.flatMap(c => c.episodes).map(e => ({ id: e.id })) }] });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });
