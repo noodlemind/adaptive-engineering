@@ -60,6 +60,8 @@ export function resolveSelection(row, values = {}) {
     validateArgs(entry, rest);
     if (typeof entry.requireArgs === 'function') {
       const message = entry.requireArgs(rest, parseFlags(rest));
+      // A hook may return a ready usage error, as dispatch accepts.
+      if (message instanceof Error) return { argv: null, missing: [], invalid: message.message };
       if (message) return { argv: null, missing: [], invalid: message };
     }
   } catch (error) {

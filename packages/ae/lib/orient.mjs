@@ -20,7 +20,9 @@ import { buildContextRecord } from './context-record.mjs';
 import { accountContext } from './token-meter.mjs';
 import { writeFileContained } from './fs-safe.mjs';
 import { recordExposure } from './learning-feedback.mjs';
-import { planRecordRoot } from './domain-context.mjs';
+import { planRecordRoot, planTrustHome } from './domain-context.mjs';
+import { readEvidence, validateEvidence } from './evidence.mjs';
+import { loadPolicy } from './policy.mjs';
 
 const ORIENT_BRANCH_CAP = 80;
 function writeContextFile(workspace, rel, content) {
@@ -37,6 +39,81 @@ function jsonGitContext(gitContext) {
     headSha: gitContext.headSha,
     baseSha: gitContext.baseSha,
   };
+}
+
+/**
+ * A resumed plan whose last `ae verify` evidence failed or no longer matches
+ * the work may hide breakage left by the previous session. Advisory only: it
+ * reorders next tools and never changes a gate. Null when there is no active
+ * plan, no evidence yet, or the evidence is current.
+ *
+ * States: `failed` (the last run failed), `changed` (head, plan or workspace
+ * moved since the run), `config` (policy, trust or check configuration moved;
+ * re-verifying cannot reveal leftover breakage and may first need trust or
+ * check repair) and `expired` (only older than the evidence TTL).
+ */
+const EVIDENCE_AGE_MESSAGE = 'Verification evidence is stale';
+// The fixed policy, trust and named-check messages from validateEvidence and loadNamedChecks.
+const CONFIG_MESSAGES = [
+  message => message === 'Policy or trust changed after verification; refresh trust and reverify',
+  message => message === 'Required named check is missing',
+  message => message.startsWith('Trusted check config not found: '),
+  message => message.startsWith('Invalid project checks'),
+  message => message.endsWith(' must declare version: 1 and checks'),
+];
+
+function resumeVerification({ workspace, copilotHome, flags, active }) {
+  if (!active?.path) return null;
+  try {
+    const evidence = readEvidence(planRecordRoot(workspace, active), active.path);
+    if (!evidence) return null;
+    const reason = message => inertLine(message || 'verification evidence is not current').replace(/`/g, "'").slice(0, 160);
+    if (evidence.outcome !== 'passed') return { state: 'failed', reason: reason(`Latest ae verify outcome is ${evidence.outcome || 'unknown'}`) };
+    // One validation, unbounded in age, tells a real change from plain expiry;
+    // the age is then checked here against the policy's evidence TTL.
+    const current = validateEvidence({ workspace, plan: active, evidence, maxAgeHours: Number.MAX_SAFE_INTEGER, copilotHome });
+    if (current.pass) {
+      const maxAgeHours = loadPolicy(workspace, flags.enforcement, { copilotHome, home: planTrustHome(workspace, active) }).evidenceTtlHours;
+      const verifiedAt = Date.parse(evidence.verifiedAt || '');
+      // An unparsable verifiedAt cannot prove freshness, so it counts as expired.
+      return !Number.isFinite(verifiedAt) || Date.now() - verifiedAt > maxAgeHours * 60 * 60 * 1000 ? { state: 'expired', reason: reason(EVIDENCE_AGE_MESSAGE) } : null;
+    }
+    const message = current.message;
+    // Only policy, trust and named-check configuration count as `config`.
+    // Intent-source, gap and playbook messages describe plan contract changes
+    // and stay `changed`.
+    return { state: CONFIG_MESSAGES.some(test => test(message || '')) ? 'config' : 'changed', reason: reason(message) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Replaces the plain verify entry with the hint. A failed or changed run goes
+ * after any readiness step; a configuration change stays in the plain verify
+ * slot, ahead of compound and completion, preceded by any trust recovery step.
+ * Nothing changes while the gate or worktree isolation is blocked, since the
+ * isolation step is only listed then.
+ */
+// A plan path as one shell word: bare when it holds only safe characters,
+// otherwise single-quoted, so a space, `#` or `$` cannot split or end the command.
+const shellArg = value => (/^[\w./@:+-]+$/.test(value) ? value : `'${String(value).replace(/'/g, "'\\''")}'`);
+
+export function withResumeVerification(nextTools, check, { planPath, gatePass, isolationBlocked }) {
+  if (!check || check.state === 'expired' || !gatePass || isolationBlocked) return nextTools;
+  const hint = check.state === 'config'
+    ? `ae verify --plan ${shellArg(planPath)}  # prior verification no longer matches configuration: ${check.reason}; first use trust.recovery or repair checks if listed`
+    : `ae verify --plan ${shellArg(planPath)}  # prior verification ${check.state}: ${check.reason}; check for leftover breakage before new work`;
+  if (check.state === 'config') {
+    const recovery = nextTools.filter(tool => /^(Use|Inspect) trust\.recovery/.test(tool));
+    const rest = nextTools.filter(tool => tool !== 'ae verify' && !recovery.includes(tool));
+    const at = nextTools.filter(tool => !recovery.includes(tool)).indexOf('ae verify');
+    return at === -1 ? [...rest, ...recovery, hint] : [...rest.slice(0, at), ...recovery, hint, ...rest.slice(at)];
+  }
+  const rest = nextTools.filter(tool => tool !== 'ae verify');
+  const lead = rest.findIndex(tool => !tool.startsWith('Use checkReadiness.'));
+  const at = lead === -1 ? rest.length : lead;
+  return [...rest.slice(0, at), hint, ...rest.slice(at)];
 }
 
 export function runOrient({ workspace, copilotHome, flags, query, files }) {
@@ -148,6 +225,11 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     // Advisory; never block orientation on it.
   }
 
+  // Computed whatever the gate says: the hint is shown only when the gate
+  // passes, but the state is always reported as resumeVerification.
+  const resumeCheck = resumeVerification({ workspace, copilotHome, flags, active });
+  if (resumeCheck) nextTools.splice(0, nextTools.length, ...withResumeVerification(nextTools, resumeCheck, { planPath: active.path, gatePass: gatePreview.pass, isolationBlocked: isolation.blocked }));
+
   if (gatePreview.pass && routingLines) {
     for (const line of routingLines) if (line.startsWith('read ') && !nextTools.includes(line)) nextTools.push(line);
     const javaFile = namedFiles.find(rel => rel.endsWith('.java'));
@@ -253,6 +335,7 @@ export function runOrient({ workspace, copilotHome, flags, query, files }) {
     repoMap: repoMapRef,
     contextAccounting: accountContext({ boundary: 'orientation-output', components: [{ category: 'pack', id: packRel, content: packBody }] }),
     knowledgeDebt,
+    ...(resumeCheck ? { resumeVerification: resumeCheck } : {}),
     gitContext: jsonGitContext(gitContext),
     worktree: {
       blocked: isolation.blocked,

@@ -84,6 +84,24 @@ function hook(name, payload, { workspace, copilotHome, harnessHome, remainingSec
   }
 }
 
+// `ae compound --match-evidence` reads --check-output; under delivery that
+// read is confined to the run workspace: an absolute path, or one that
+// resolves outside it, is refused. `-` is refused too: a delivered command's
+// stdin carries nothing but an inline decision, so it would read nothing.
+function checkOutputOutsideWorkspace(argv, workspace) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') break;
+    const value = arg === '--check-output' ? argv[i + 1] : arg.startsWith('--check-output=') ? arg.slice('--check-output='.length) : null;
+    if (value === null || value === undefined) continue;
+    if (value === '-' || path.isAbsolute(value)) return true;
+    const relative = path.relative(path.resolve(workspace), path.resolve(workspace, value));
+    // A segment check, so a name such as `..foo` inside the workspace is kept.
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return true;
+  }
+  return false;
+}
+
 export function beforeDeliveryTool(call, options) {
   if (call.name === 'exec' && (!Array.isArray(call.input?.argv) || !call.input.argv.length || !call.input.argv.every(arg => typeof arg === 'string'))) return { pass: false, reason: 'exec requires a non-empty argv array of strings' };
   if (call.name === 'todo') return { pass: true };
@@ -93,10 +111,11 @@ export function beforeDeliveryTool(call, options) {
     let decisionFlag;
     try { decisionFlag = inlineDecisionFlag(call.input); }
     catch (error) { return { pass: false, reason: error.message }; }
-    const effectiveArgv = decisionFlag ? [...argv, decisionFlag, path.join(os.tmpdir(), 'harness-agent-decision-placeholder', 'decision.json')] : argv;
+    const effectiveArgv = decisionFlag ? [...argv, decisionFlag, decisionFlag === '--learning-decision' ? '-' : path.join(os.tmpdir(), 'harness-agent-decision-placeholder', 'decision.json')] : argv;
     if (!(COMMANDS.has(argv[0]) || checkRecoveryInput(call.input) || ['todo', 'inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && harnessControlCommand(['harness', ...effectiveArgv], options.workspace) === argv[0])) return { pass: false, reason: 'ae requires argv for a supported lifecycle command or exact diagnostic/worklist control' };
     if (argv[0] === 'trust' && argv[1] && argv[1] !== 'status') return { pass: false, reason: 'Trust approval or revocation requires a person; the agent may read trust status only.' };
     if (argv.some(arg => /^--(?:workspace|copilot-home|ae-home|harness-home|home)(?:=|$)/.test(arg))) return { pass: false, reason: 'Lifecycle commands are bound to this run workspace and homes.' };
+    if (argv[0] === 'compound' && checkOutputOutsideWorkspace(argv, options.workspace)) return { pass: false, reason: '--check-output must be a relative path inside the run workspace; save the re-run check output to a file there first.' };
     return { pass: true };
   }
   const payload = toolPayload(call, options.workspace, options.sessionId);
@@ -148,13 +167,22 @@ export function afterDeliveryTool(call, result, options) {
   }, options);
 }
 
-/** Stage authored decisions outside product scope; only Harness serializes them. */
+/**
+ * Stage authored decisions outside product scope; only Harness serializes
+ * them. A learning decision goes to the child's stdin as
+ * `--learning-decision -`, so no decision file (and no evidence line) is ever
+ * written; other inline decisions are staged in an owned temporary file.
+ */
 export async function runDeliveryCommand(input, run) {
   let directory;
   try {
     const argv = [...input.argv];
     const flag = inlineDecisionFlag(input);
     if (['inventory', 'domain', 'experiment', 'diagrams'].includes(argv[0]) && !argv.includes('--verbose') && !argv.includes('-v')) argv.push('--verbose');
+    if (flag === '--learning-decision') {
+      argv.push(flag, '-');
+      return await run(argv, { input: JSON.stringify(input.decision) });
+    }
     if (flag) {
       directory = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-agent-decision-'));
       const file = path.join(directory, 'decision.json');

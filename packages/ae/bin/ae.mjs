@@ -4,7 +4,7 @@ import path from 'node:path';
 import { inspect } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { createStyle, keyWidthFor, EXIT } from '../lib/style.mjs';
-import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested, GLOBAL_FLAGS } from '../lib/registry.mjs';
+import { dispatch as dispatchRegistered, hasCommand, describeCommand, getCommand, commandHelpRequested, compoundLineMayBeSplit, GLOBAL_FLAGS } from '../lib/registry.mjs';
 import { createProcessEventRegistry, detectActor } from '../lib/event-registry.mjs';
 import { parseFlags, hasFlag } from '../lib/flags.mjs';
 import { applyHarnessHomeFlag, resolveCopilotHome } from '../lib/paths.mjs';
@@ -124,10 +124,14 @@ function emitError({ code, message, fix, exit }) {
 
 const OUTPUT_LANES = { 'json-envelope': 'json', agent: 'agent', jsonl: 'jsonl' };
 
-function extractOutputLane(rawArgs) {
+function extractOutputLane(rawArgs, entry = null) {
+  // The value of a literal-valued flag (such as --evidence-quote) is never a
+  // flag, whatever it looks like, as validateArgs and commandHelpRequested read it.
+  const literal = new Set((entry?.args?.flags || []).filter(flag => flag.valueIsLiteral === true).flatMap(flag => [flag.name, ...(flag.aliases || [])]));
   let idx = -1;
   for (let i = 0; i < rawArgs.length; i++) {
     if (rawArgs[i] === '--') break; // literal-argument boundary — nothing past this is a flag
+    if (literal.has(rawArgs[i])) { i++; continue; }
     if (rawArgs[i] === '--output' || rawArgs[i].startsWith('--output=')) {
       idx = i;
       break;
@@ -142,7 +146,10 @@ function extractOutputLane(rawArgs) {
   const consumed = hasInlineValue ? 1 : 2;
   const lane = OUTPUT_LANES[value];
   if (!lane) {
-    const shown = value === undefined ? '(missing)' : JSON.stringify(value);
+    // Under the same rule as an unknown flag, the value is not echoed when it
+    // may be a fragment of an unquoted evidence line.
+    const evidence = entry?.name === 'compound' && compoundLineMayBeSplit(rawArgs);
+    const shown = value === undefined ? '(missing)' : evidence ? 'not a known lane' : JSON.stringify(value);
     throw Object.assign(new Error(`invalid --output: ${shown} — must be json-envelope, agent, or jsonl`), {
       code: 'E_USAGE',
       hint: 'ae help',
@@ -206,7 +213,7 @@ export async function main() {
     } else if (hasCommand(command) && commandHelpRequested(args, getCommand(command))) {
       console.log(renderCommandHelp(command));
     } else if (hasCommand(command)) {
-      const { args: laneArgs, output } = extractOutputLane(args);
+      const { args: laneArgs, output } = extractOutputLane(args, getCommand(command));
       const runFlags = parseFlags(args);
       const executionWorkspace = path.resolve(runFlags.workspace);
       const domainInput = {};

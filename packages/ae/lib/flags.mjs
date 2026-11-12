@@ -149,6 +149,10 @@ export function parseFlags(argv) {
     tags: null,
     trigger: null,
     claim: null,
+    evidenceQuote: null,
+    matchEvidence: null,
+    checkOutput: null,
+    evidenceBytes: null,
     body: null,
     bodyFile: null,
     ops: null,
@@ -183,6 +187,7 @@ export function parseFlags(argv) {
     else if (a === '--packet') flags.packet = scan[++i];
     else if (a === '--reviewer') (flags.reviewers ||= []).push(scan[++i]);
     else if (a === '--learning-decision') flags.learningDecision = scan[++i];
+    else if (a.startsWith('--learning-decision=')) flags.learningDecision = a.slice('--learning-decision='.length);
     else if (a === '--explain') flags.explain = true;
     else if (a === '--read') flags.read = true;
     else if (a === '--context-version') flags.contextVersion = parseContextVersion(scan[++i]);
@@ -323,6 +328,22 @@ export function parseFlags(argv) {
     else if (a === '--trigger') flags.trigger = scan[++i];
     else if (a.startsWith('--claim=')) flags.claim = a.split('=').slice(1).join('=');
     else if (a === '--claim') flags.claim = scan[++i];
+    else if (a.startsWith('--evidence-quote=')) {
+      // Only `-` (stdin) is accepted; compound refuses any other value and a
+      // repeated flag, so the count is kept.
+      flags.evidenceQuote = a.split('=').slice(1).join('=');
+      flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
+    }
+    else if (a === '--evidence-quote') {
+      flags.evidenceQuote = scan[++i] ?? '';
+      flags.evidenceQuoteCount = (flags.evidenceQuoteCount || 0) + 1;
+    }
+    else if (a.startsWith('--match-evidence=')) flags.matchEvidence = a.split('=').slice(1).join('=');
+    else if (a === '--match-evidence') flags.matchEvidence = scan[++i] ?? '';
+    else if (a.startsWith('--evidence-bytes=')) flags.evidenceBytes = a.split('=').slice(1).join('=');
+    else if (a === '--evidence-bytes') flags.evidenceBytes = scan[++i] ?? '';
+    else if (a.startsWith('--check-output=')) flags.checkOutput = a.split('=').slice(1).join('=');
+    else if (a === '--check-output') flags.checkOutput = scan[++i] ?? '';
     else if (a.startsWith('--body=')) flags.body = a.split('=').slice(1).join('=');
     else if (a === '--body') flags.body = scan[++i];
     else if (a.startsWith('--body-file=')) flags.bodyFile = a.split('=').slice(1).join('=');

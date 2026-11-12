@@ -1,8 +1,8 @@
 export const VALUE_FLAGS = Object.freeze(new Set([
   '--acceptance', '--activity', '--adapter', '--ae-home', '--agent', '--allow-env', '--applies', '--authority', '--autonomy', '--base', '--body', '--body-file', '--branch',
-  '--category', '--changes', '--claim', '--classification', '--collection', '--command', '--constraint', '--content', '--copilot-home', '--criteria', '--critical-open',
-  '--cursor', '--context-version', '--cwd', '--date', '--depth', '--docid', '--does-not-apply', '--domain', '--enforcement',
-  '--expect', '--expected-output', '--file', '--from', '--from-home', '--from-id', '--gap', '--gap-fulfillment', '--goal', '--harness-home', '--host', '--id', '--ids', '--impacted', '--intent', '--intent-source', '--layer', '--learnings',
+  '--category', '--changes', '--check-output', '--claim', '--classification', '--collection', '--command', '--constraint', '--content', '--copilot-home', '--criteria', '--critical-open',
+  '--cursor', '--context-version', '--cwd', '--date', '--depth', '--docid', '--does-not-apply', '--domain', '--enforcement', '--evidence-bytes', '--evidence-quote',
+  '--expect', '--expected-output', '--file', '--from', '--from-home', '--from-id', '--gap', '--gap-fulfillment', '--goal', '--harness-home', '--host', '--id', '--ids', '--impacted', '--intent', '--intent-source', '--layer', '--learnings', '--match-evidence',
   '--intent-page', '--intent-page-size',
   '--editor', '--name', '--launcher', '--installation', '--user-data', '--config-root', '--plugins-root',
   '--config-home', '--host-home', '--skills-home', '--output-directory',

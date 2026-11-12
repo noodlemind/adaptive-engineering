@@ -237,7 +237,7 @@ Every check in the `verify` payload carries its effective `severity`; non-passin
 
 **compound**
 
-For delivery completion, submit a publish or explicit no-learning decision with `ae compound --plan <path> --learning-decision <file> --json`; see [learning-operations.md](learning-operations.md). A bare legacy compound call does not record the required decision. Then pipe a revision-bound complete decision to `ae plan-update --plan <path> --file - --json`; see [plan-operations.md](plan-operations.md). The legacy result shape below remains readable; use the returned decision/publication record for the current operation.
+For delivery completion, pipe a publish or explicit no-learning decision to `ae compound --plan <path> --learning-decision - --json` (a decision with `evidence_quote` is refused from a file); see [learning-operations.md](learning-operations.md). A bare legacy compound call does not record the required decision. Then pipe a revision-bound complete decision to `ae plan-update --plan <path> --file - --json`; see [plan-operations.md](plan-operations.md). The legacy result shape below remains readable; use the returned decision/publication record for the current operation.
 
 ```json
 {
@@ -259,7 +259,7 @@ For delivery completion, submit a publish or explicit no-learning decision with 
 }
 ```
 
-**consolidate** (`--status` default shown; `--candidates` returns `{ schema, contract, clusters, learnings, domains, governed, storeDir }` — `governed: [{ id, action }]` lists every id a human already retired/disputed/promoted so the skill doesn't propose an op a governed write would just reapply over, and each cluster episode carries its raw `kind` (`fix`/`insight`/`human-teaching`), never flattened, so a rebuild-regenerated op can re-derive `source: human`; `--apply` returns `{ applied, rejected, committed, exitCode, governed }` — `applied[].op` includes `MERGE`, `rejected[].code` includes `E_DOMAIN_CAP`, `governed: [{ id, action }]` lists ids whose regenerated write just reapplied a standing retire/dispute/promote decision (always `[]` on a dry run); `--rebuild --yes` returns `{ pass, exitCode, archived, debt, nextTools }`)
+**consolidate** (`--status` default shown; `--candidates` returns `{ schema, contract, clusters, learnings, domains, governed, storeDir }` — `governed: [{ id, action }]` lists every id a human already retired/disputed/promoted so the skill doesn't propose an op a governed write would just reapply over, and each cluster episode carries its raw `kind` (`fix`/`insight`/`human-teaching`), never flattened, so a rebuild-regenerated op can re-derive `source: human`, and an episode with an evidence line carries `evidence: { sha256_prefix, bytes }`, a fingerprint never the text (confirm with `compound --match-evidence <prefix> --evidence-bytes <bytes> --check-output <file>`); `--apply` returns `{ applied, rejected, committed, exitCode, governed }` — `applied[].op` includes `MERGE`, `rejected[].code` includes `E_DOMAIN_CAP`, `governed: [{ id, action }]` lists ids whose regenerated write just reapplied a standing retire/dispute/promote decision (always `[]` on a dry run); `--rebuild --yes` returns `{ pass, exitCode, archived, debt, nextTools }`)
 ```json
 {
   "mode": "on",

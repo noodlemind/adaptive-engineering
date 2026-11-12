@@ -31,7 +31,7 @@ import {
   cmdResolve,
 } from './commands.mjs';
 import { cmdPlanNew, normalizePlanNewArgs } from './plan-new.mjs';
-import { VALUE_FLAGS } from './positionals.mjs';
+import { VALUE_FLAGS, positionalsOf } from './positionals.mjs';
 import { cmdPlanUpdate } from './plan-update.mjs';
 import { cmdWorktree } from './worktree-cmd.mjs';
 import { cmdPrepare } from './prepare.mjs';
@@ -46,7 +46,7 @@ import { cmdResources, resourcesResultOf, resourcesExitFor, RESOURCES_VERBS } fr
 import { cmdReview, reviewResultOf, REVIEW_VERBS } from './review.mjs';
 import { CONFIG_KEYS, SCOPES } from './config.mjs';
 import { RUN_STATUSES } from './run-journal.mjs';
-import { cmdExec, execResultOf, cmdBash, bashResultOf, exitFor as execExitFor } from './exec-cmd.mjs';
+import { cmdExec, execResultOf, cmdBash, bashResultOf, exitFor as execExitFor, execJournalArgv } from './exec-cmd.mjs';
 import {
   cmdEdit, editResultOf, cmdWrite, writeResultOf, cmdUndo, undoResultOf,
   exitFor as editExitFor, literalFlag,
@@ -73,6 +73,8 @@ import { resolveCopilotHome } from './paths.mjs';
 import { createEnvelope, createErrorEnvelope, STATUS } from './envelope.mjs';
 import { renderAgentLane, recordAgentLaneBytes } from './agent-lane.mjs';
 import { EVENT_TYPE, summarizeArgFlags } from './event-registry.mjs';
+import { compoundJournalArgv } from './knowledge/evidence-fingerprint.mjs';
+import { compoundStrayArgumentsError } from './compound.mjs';
 import { createRedactor, redactedJson } from './redact.mjs';
 import { cmdModel, modelResultOf, MODEL_VERBS } from './model-cmd.mjs';
 import { cmdInspect, inspectResultOf, inspectExitFor, INSPECT_VERBS } from './inspect-cmd.mjs';
@@ -300,6 +302,13 @@ export function commandHelpRequested(argv, entry = null) {
   return false;
 }
 
+/** Whether a compound argv may hold fragments of an unquoted evidence line. */
+export function compoundLineMayBeSplit(argv) {
+  const has = name => argv.some(t => typeof t === 'string' && (t === name || t.startsWith(`${name}=`)));
+  if (has('--evidence-quote')) return true;
+  return has('--learning-decision') && (argv.includes('--') || positionalsOf(argv).length > 0);
+}
+
 export function validateArgs(entry, argv) {
   const known = flagIndex(entry);
     const present = new Set();
@@ -323,6 +332,12 @@ export function validateArgs(entry, argv) {
       const hint = flagName === '--files' && known.has('--file')
         ? fileInputHint(entry.name)
         : `ae help ${entry.name}`;
+      // Beside compound's --evidence-quote, or beside --learning-decision
+      // with stray arguments, a flag-shaped token may be a fragment of an
+      // unquoted evidence line, so it is not echoed.
+      if (entry.name === 'compound' && compoundLineMayBeSplit(argv)) {
+        throw usageError('unknown flag (not shown, because it may be part of an unquoted evidence line)', `ae help ${entry.name}`);
+      }
       throw usageError(`unknown flag: ${flagName}`, hint);
     }
     if (def.type !== 'boolean' || eq === -1) present.add(def.name);
@@ -369,6 +384,8 @@ export async function dispatch(argv, ctx = {}) {
   assertLaneSupported(entry, lane);
     if (typeof entry.requireArgs === 'function') {
     const message = entry.requireArgs(rest, parseFlags(rest));
+    // A hook may return a ready usage error, hint included.
+    if (message instanceof Error) throw message;
     if (message) throw usageError(message);
   }
     ctx.onRunStart?.();
@@ -601,9 +618,12 @@ function planNewRequireArgs(rest) {
   }
 }
 
+// A flag whose only value is the literal `-` (stdin) shows `-`, not `<->`.
+const valueLabel = def => (def.valueName === '-' ? '-' : `<${def.valueName || 'value'}>`);
+
 function flagLabel(def) {
   const names = [def.name, ...(def.aliases || [])];
-  return def.type === 'boolean' ? names.join(', ') : `${names.join(', ')} <${def.valueName || 'value'}>`;
+  return def.type === 'boolean' ? names.join(', ') : `${names.join(', ')} ${valueLabel(def)}`;
 }
 
 function buildUsage(entry) {
@@ -612,7 +632,7 @@ function buildUsage(entry) {
     parts.push(p.required ? `<${p.name}>` : `[${p.name}]`);
   }
   for (const f of entry.args.flags) {
-    const label = f.type === 'boolean' ? f.name : `${f.name} <${f.valueName || 'value'}>`;
+    const label = f.type === 'boolean' ? f.name : `${f.name} ${valueLabel(f)}`;
     parts.push(f.required ? label : `[${label}]`);
   }
   return parts.join(' ');
@@ -1122,9 +1142,9 @@ registerCommand({
   args: {
     positionals: [],
     flags: [
-      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'Structured verified learning decision JSON file, or - for stdin' },
+      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'Structured verified learning decision JSON file, or - for stdin (a decision with evidence_quote must come on stdin)' },
       { name: '--plan', type: 'string', valueName: 'path', description: 'explicit plan file', required: false, default: null, tui: 'prompt', choices: 'plan' },
-            { name: '--insight', type: 'boolean', description: 'evidence-free investigation capture (kind: insight, secret-scanned)', required: false, default: false, tui: 'verb' },
+            { name: '--insight', type: 'boolean', description: 'investigation capture without verified delivery evidence (kind: insight, secret-scanned; may cite one failing line by fingerprint via --evidence-quote -)', required: false, default: false, tui: 'verb' },
             { name: '--title', type: 'string', valueName: 't', description: 'insight title (required with --insight)', required: false, default: null, tui: 'prompt' },
       { name: '--body', type: 'string', valueName: 'text', description: 'insight body text', required: false, default: null, tui: 'prompt' },
       { name: '--body-file', type: 'string', valueName: 'path', description: 'read insight body from a file', required: false, default: null, tui: 'prompt', choices: 'path' },
@@ -1132,10 +1152,19 @@ registerCommand({
       { name: '--tags', type: 'string', valueName: 'a,b', description: 'comma-separated tags', required: false, default: null, tui: 'prompt' },
       { name: '--trigger', type: 'string', valueName: 't', description: 'applicability condition frontmatter', required: false, default: null, tui: 'prompt' },
       { name: '--claim', type: 'string', valueName: 't', description: 'one-line claim frontmatter', required: false, default: null, tui: 'prompt' },
+      { name: '--evidence-quote', type: 'string', valueName: '-', description: 'only -: read the one failing line of check output for --insight from stdin (single line, at most 600 bytes); only its sha256 and length are stored, never the text', required: false, default: null, tui: 'cli-only', valueIsLiteral: true },
+      { name: '--match-evidence', type: 'string', valueName: 'sha256', description: 'read-only: report whether a line of --check-output matches this evidence fingerprint prefix; exit 0 on a match, exit 1 on no match (still recorded as a succeeded run), exit 2 on a usage error', required: false, default: null, tui: 'cli-only' },
+      { name: '--check-output', type: 'string', valueName: 'path', description: 'output of the re-run check for --match-evidence (relative to --workspace, e.g. .harness/check-output.txt), or - for stdin', required: false, default: null, tui: 'cli-only' },
+      { name: '--evidence-bytes', type: 'string', valueName: 'n', description: 'optional stored evidence length for --match-evidence; a matching line must have it', required: false, default: null, tui: 'cli-only' },
             { name: '--enforcement', type: 'string', valueName: 'mode', description: 'observe | warn | enforce (default enforce)', required: false, default: null, tui: 'prompt', choices: ['observe', 'warn', 'enforce'] },
     ],
   },
   handler: cmdCompound,
+  // Stray arguments beside the stdin-only evidence flags are refused here,
+  // before the run journal opens.
+  requireArgs: compoundStrayArgumentsError,
+  // The evidence line is never journaled, accepted or refused.
+  journalArgv: compoundJournalArgv,
 });
 
 registerCommand({
@@ -1313,7 +1342,7 @@ registerCommand({
       { name: '--offset', type: 'string', valueName: 'line', description: 'first parent-plan line to read', tui: 'prompt' },
       { name: '--lines', type: 'string', valueName: 'count', description: 'bounded parent-plan line count', tui: 'prompt' },
       { name: '--packet', type: 'string', valueName: 'id', description: 'prepared review packet identity', tui: 'prompt' },
-      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'verified learning or no-learning JSON decision', tui: 'prompt' },
+      { name: '--learning-decision', type: 'string', valueName: 'path', description: 'verified learning or no-learning JSON decision file, or - for stdin (a decision with evidence_quote must come on stdin)', tui: 'prompt' },
       { name: '--validate-completion', type: 'boolean', description: 'validate the current bound parent completion receipt', appliesToVerbs: ['status'], tui: 'cli-only' },
     ],
   },
@@ -1509,6 +1538,8 @@ registerCommand({
     ],
   },
   handler: cmdExec,
+  // A script piping into --evidence-quote - is journaled as length and digest.
+  journalArgv: execJournalArgv,
   resultOf: execResultOf,
     exitOf: execExitFor,
 });
@@ -1530,6 +1561,8 @@ registerCommand({
     ],
   },
   handler: cmdBash,
+  // A script piping into --evidence-quote - is journaled as length and digest.
+  journalArgv: execJournalArgv,
   resultOf: bashResultOf,
   exitOf: execExitFor,
 });

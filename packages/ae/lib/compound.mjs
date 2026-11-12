@@ -4,6 +4,7 @@ import { gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { planRecordRoot, planHome, planTrustHome, validateDomainContext } from './domain-context.mjs';
 import fs from 'fs';
 import path from 'path';
+import tty from 'tty';
 import { createHash } from 'node:crypto';
 import { runIndexKnowledge, withKnowledgeIndexLock } from './index-knowledge.mjs';
 import { resolveIndexDir } from './recall-config.mjs';
@@ -15,6 +16,9 @@ import { resolveCopilotHome } from './paths.mjs';
 import { recordSkillUsage } from './telemetry.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { readStoreConfig } from './knowledge/store.mjs';
+import { evidenceLineError, evidenceFingerprint, evidenceFrontmatterLines, evidencePrefixError, evidenceBytesError, evidenceSummary, matchEvidence, EVIDENCE_OUTPUT_CAP, EVIDENCE_RAW_CAP } from './knowledge/evidence-fingerprint.mjs';
+import { EXIT } from './style.mjs';
+import { positionalsOf } from './positionals.mjs';
 import { deriveGitContext } from './git-context.mjs';
 import { assertNoSymlinkAncestors, writeFileContainedExclusive, readFileNoFollow, readBoundedInput } from './fs-safe.mjs';
 import { withPlanUpdateLock } from './plan-update.mjs';
@@ -176,6 +180,12 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       nextTools: ['ae compound --insight --title "..." --body "..."'],
     };
   }
+  // A learning decision hands over the fingerprint it already took; the CLI
+  // flag hands over the line, which is checked and fingerprinted here.
+  const evidenceQuote = flags.evidenceQuote ?? null;
+  const quoteError = evidenceQuote === null ? null : evidenceLineError(evidenceQuote);
+  if (quoteError) return { pass: false, exitCode: 2, kind, path: null, indexed: null, blockedReason: quoteError, nextTools: ['pass the single failing line of check output in --evidence-quote and re-run'] };
+  const evidence = flags.evidenceFingerprint ?? (evidenceQuote === null ? null : evidenceFingerprint(evidenceQuote));
   const date = flags.captureDate || new Date().toISOString().slice(0, 10);
   // Category is one safe path segment — never a traversal vector.
   const category = slugify(flags.category || 'insights');
@@ -193,6 +203,9 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
   if (tags) fmLines.push(`tags: ${tags}`);
   if (flags.trigger) fmLines.push(`trigger: ${yamlQuote(flags.trigger)}`);
   if (flags.claim) fmLines.push(`claim: ${yamlQuote(flags.claim)}`);
+  // Only the fingerprint of the evidence line is stored; the line itself is
+  // never written or shown (see evidence-fingerprint.mjs).
+  if (evidence) fmLines.push(...evidenceFrontmatterLines(evidence));
   // Git provenance (blueprint P1/P9): optional commit/branch/base stamped at
   // capture time from the CURRENT workspace HEAD. This is the sole CLI
   // episode writer — `compound --insight` (kind: insight) and
@@ -366,6 +379,7 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
       ...publication,
       indexed,
       resourceUses,
+      ...(evidence ? { evidence: evidenceSummary(evidence) } : {}),
       blockedReason: null,
       nextTools: ['ae consolidate --status'],
     };
@@ -374,12 +388,35 @@ export function runInsightCompound({ workspace, copilotHome, flags, log = () => 
 
 async function runLearningDecision({ workspace, copilotHome, flags, log, domainContext = null }) {
   if (flags.insight) throw new Error('A verified learning decision cannot be combined with --insight');
+  // A decision may carry the evidence line, so a terminal is never read.
+  if (flags.learningDecision === '-') refuseTerminalStdin('--learning-decision');
   const text = flags.learningDecision === '-' ? readBoundedInput() : readFileNoFollow(path.resolve(workspace, flags.learningDecision), { maxBytes: 1024 * 1024 });
   if (!text || Buffer.byteLength(text) > 1024 * 1024) throw new Error('Learning decision is missing, unreadable, or too large');
-  const decision = JSON.parse(text);
+  let decision;
+  try {
+    decision = JSON.parse(text);
+  } catch (error) {
+    // The parser's message can quote the decision text, evidence line
+    // included, so only the position is reported.
+    const at = String(error?.message || '').match(/position (\d+)/);
+    throw new Error(`Learning decision is not valid JSON${at ? ` at position ${at[1]}` : ''}`);
+  }
   if (!decision || typeof decision !== 'object' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(decision.operation || '') || !['no-learning', 'publish'].includes(decision.decision)
-    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
+    || typeof decision.rationale !== 'string' || !decision.rationale.trim() || (decision.scope && !['private', 'global', 'ship-set-proposal'].includes(decision.scope)) || Object.keys(decision).some(key => !['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'evidence_quote'].includes(key))) throw new Error('Learning decision requires operation, decision, rationale, and a supported publication scope');
   if (decision.decision === 'publish' && (typeof decision.title !== 'string' || !decision.title.trim() || typeof decision.body !== 'string' || !decision.body.trim() || decision.tags !== undefined && (!Array.isArray(decision.tags) || !decision.tags.every(tag => typeof tag === 'string')))) throw new Error('Publication requires authored title, body and optional text tags');
+  if (decision.evidence_quote !== undefined) {
+    // A decision file would leave the evidence line on disk, so a decision
+    // carrying one must arrive on stdin.
+    if (flags.learningDecision !== '-') throw usageError('evidence_quote is accepted only from stdin; pipe the decision to --learning-decision - instead of naming a file, and delete that file', 'ae compound --plan <path> --learning-decision - --json');
+    if (decision.decision !== 'publish') throw usageError('evidence_quote applies only to a publish decision');
+    const quoteError = evidenceLineError(decision.evidence_quote);
+    if (quoteError) throw usageError(quoteError);
+    // The line is replaced by its fingerprint before anything is recorded, so
+    // the stored decision, its digest and the episode never hold it.
+    const { evidence_quote: line, ...rest } = decision;
+    const fingerprint = evidenceFingerprint(line);
+    decision = { ...rest, evidence_sha256: fingerprint.sha256, evidence_bytes: fingerprint.bytes };
+  }
   const selected = selectPlan(workspace, { planPath: flags.plan, session: readSession(workspace), requireUnique: true, home: flags.harnessHome, domainContext });
   if (!selected.plan) throw new Error('Learning decision requires an unambiguous plan');
   const recordRoot = planRecordRoot(workspace, selected.plan);
@@ -417,7 +454,7 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   const rel = `.harness/learning/${operation}.json`;
   const existing = readReviewRecord(recordRoot, rel);
   compatible(existing);
-  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
+  const publish = captureDate => runInsightCompound({ workspace, copilotHome, flags: { ...flags, plan: selected.plan.path, title: decision.title, body: decision.body, category: decision.category, tags: Array.isArray(decision.tags) ? decision.tags.join(',') : '', trigger: decision.trigger, claim: decision.claim, evidenceQuote: null, evidenceFingerprint: decision.evidence_sha256 ? { sha256: decision.evidence_sha256, bytes: decision.evidence_bytes } : null, captureDate, operationSuffix: operation.slice(0, 16), publicationScope: decision.scope || 'private' }, log, kind: 'fix', home, domainContext, authorizedPlan: selected.plan });
   if (flags.dryRun) return decision.decision === 'publish' ? { ...publish(existing?.captureDate), dryRun: true } : { pass: true, exitCode: 0, dryRun: true, decision: decision.decision, path: null, indexed: null };
   publishReviewRecord(recordRoot, '.harness/learning/.ready.json', { version: 1 });
   const pointer = learningPointerRel(selected.plan.path);
@@ -462,7 +499,110 @@ async function runLearningDecision({ workspace, copilotHome, flags, log, domainC
   }));
 }
 
+/**
+ * `ae compound --match-evidence <sha256-prefix> --evidence-bytes <bytes> --check-output <path|->`:
+ * reports whether any line of check output an agent obtained by re-running
+ * the check matches an episode's evidence fingerprint (see matchEvidence).
+ * Reads only; the output is never stored or echoed.
+ */
+// The `ae compound` flags a read-only match refuses, as [flags key, flag name].
+const MATCH_EXCLUSIVE_FLAGS = [['learningDecision', '--learning-decision'], ['plan', '--plan'], ['insight', '--insight'], ['title', '--title'], ['body', '--body'], ['bodyFile', '--body-file'],
+  ['category', '--category'], ['tags', '--tags'], ['trigger', '--trigger'], ['claim', '--claim'], ['evidenceQuote', '--evidence-quote'], ['enforcement', '--enforcement'], ['dryRun', '--dry-run']];
+
+const usageError = (message, hint) => Object.assign(new Error(message), { code: 'E_USAGE', exit: EXIT.usage, hint });
+
+/**
+ * Stray positionals or literal arguments after `--` beside --evidence-quote
+ * or --learning-decision are refused: an unquoted line would otherwise be
+ * split, part fingerprinted and the rest carried in argv.
+ */
+// Registered as the compound requireArgs hook (undefined when the arguments
+// are fine, as every requireArgs hook returns), so it runs in dispatch before
+// the run journal opens: a stray fragment of an unquoted line never reaches
+// runs.jsonl, events or the ledger.
+export function compoundStrayArgumentsError(argv, flags) {
+  if (flags.matchEvidence != null || flags.checkOutput != null || flags.evidenceBytes != null) {
+    const hint = 'ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <path|->';
+    if (argv.includes('--')) return usageError('ae compound --match-evidence takes no arguments after --', hint);
+    if (positionalsOf(argv).length) return usageError('ae compound --match-evidence takes no positional arguments', hint);
+  }
+  if (flags.evidenceQuote == null && flags.learningDecision == null) return undefined;
+  if (argv.includes('--')) return usageError('ae compound takes no arguments after -- with --evidence-quote or --learning-decision', 'pipe the line or decision on stdin');
+  if (positionalsOf(argv).length) return usageError('ae compound takes no positional arguments with --evidence-quote or --learning-decision; quote nothing on the command line', 'pipe the line or decision on stdin');
+  return undefined;
+}
+
+// The line is produced by a command that never names it, run in the host
+// shell (not through ae bash, ae exec or TUI !, whose scripts are recorded).
+const EVIDENCE_PIPE_HINT = "in the host shell, pipe the line from the saved check output without naming it: sed -n '<N>p' <check-log> | ae compound --insight --evidence-quote -";
+const STDIN_TTY_HINTS = {
+  '--evidence-quote': EVIDENCE_PIPE_HINT,
+  '--learning-decision': "in the host shell, pipe the decision instead of typing it: ae compound --plan <path> --learning-decision - <<'EOF' (the decision JSON, then EOF on its own line)",
+  '--check-output': "in the host shell, pipe the re-run check output: <check> 2>&1 | ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output -",
+};
+
+// stdin is never read from a terminal, which would wait silently for input
+// the person was never asked to type.
+export function stdinIsTerminal() {
+  try { return tty.isatty(0); } catch { return false; }
+}
+
+export function refuseTerminalStdin(flagName) {
+  if (stdinIsTerminal()) throw usageError(`${flagName} - reads stdin, and stdin is a terminal`, STDIN_TTY_HINTS[flagName]);
+}
+
+export function runEvidenceMatch({ workspace, flags }) {
+  const hint = 'ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <path|->';
+  const other = MATCH_EXCLUSIVE_FLAGS.filter(([key]) => flags[key] != null && flags[key] !== false).map(([, name]) => name);
+  if (other.length) throw usageError(`--match-evidence only reads check output; it cannot be combined with ${other.join(', ')}`, hint);
+  if (flags.matchEvidence == null) throw usageError('--check-output and --evidence-bytes are used only with --match-evidence', hint);
+  const prefixError = evidencePrefixError(flags.matchEvidence);
+  if (prefixError) throw usageError(prefixError, hint);
+  const bytesError = flags.evidenceBytes == null ? null : evidenceBytesError(flags.evidenceBytes);
+  if (bytesError) throw usageError(bytesError, hint);
+  if (!flags.checkOutput) throw usageError('--match-evidence needs --check-output <path|->: the output of the re-run check', hint);
+  // A relative path resolves against --workspace, as --learning-decision does.
+  if (flags.checkOutput === '-') refuseTerminalStdin('--check-output');
+  const output = flags.checkOutput === '-'
+    ? readBoundedInput(0, { maxBytes: EVIDENCE_OUTPUT_CAP })
+    // A relative path is read under --workspace with every component
+    // checked, so a symlinked directory cannot lead outside it.
+    : readFileNoFollow(path.resolve(workspace, flags.checkOutput), { maxBytes: EVIDENCE_OUTPUT_CAP, ...(path.isAbsolute(flags.checkOutput) ? {} : { root: workspace }) });
+  // An unreadable input is a usage error (exit 2), never a mismatch (exit 1).
+  if (output === null) throw usageError(`--check-output is missing, not a regular file, unreadable, or over ${EVIDENCE_OUTPUT_CAP} bytes`, hint);
+  // Empty output means nothing was re-run or captured; it is never a mismatch.
+  if (!output.trim()) throw usageError('--check-output is empty: capture the output of the re-run check', hint);
+  const { matched, line } = matchEvidence(output, flags.matchEvidence, { bytes: flags.evidenceBytes == null ? null : Number(flags.evidenceBytes) });
+  return {
+    pass: matched,
+    exitCode: matched ? 0 : 1,
+    matched,
+    line,
+    sha256Prefix: flags.matchEvidence.toLowerCase(),
+    blockedReason: matched ? null : 'No line of the check output matches the evidence fingerprint',
+    nextTools: matched ? [] : ['confirm the same check was re-run on the code the episode describes, or treat the evidence as unconfirmed'],
+  };
+}
+
 async function runCompoundCore({ workspace, copilotHome, flags, log = () => {}, domainContext = null }) {
+  if (flags.evidenceQuote != null) {
+    const hint = EVIDENCE_PIPE_HINT;
+    // The line is read only from stdin, so harness never puts it in its own
+    // argv, run journal or TUI ledger, and never echoes it. A producer that
+    // names the line (printf "<line>") would still leave it in shell history
+    // and in any recorded script, so the hint uses one that does not.
+    if (flags.evidenceQuoteCount > 1) throw usageError('--evidence-quote may be given only once', hint);
+    if (flags.evidenceQuote !== '-') throw usageError('--evidence-quote takes only - and reads the line from stdin', hint);
+    // A learning decision carries its own evidence_quote; a flag beside it
+    // would otherwise be dropped without a word.
+    if (flags.learningDecision) throw usageError('--evidence-quote cannot be combined with --learning-decision', 'put evidence_quote in the learning decision piped to --learning-decision -');
+    if (!flags.insight) throw usageError('--evidence-quote is accepted only with --insight', 'put evidence_quote in a learning decision instead');
+    refuseTerminalStdin('--evidence-quote');
+    // One trailing line break (as echo or a pipe adds) is dropped.
+    const piped = readBoundedInput(0, { maxBytes: EVIDENCE_RAW_CAP + 2 });
+    if (piped === null) throw usageError(`--evidence-quote - could not read stdin, or it holds more than ${EVIDENCE_RAW_CAP} bytes`, hint);
+    flags = { ...flags, evidenceQuote: piped.replace(/\r?\n$/, '') };
+  }
   if (flags.learningDecision) {
     const result = await runLearningDecision({ workspace, copilotHome, flags, log, domainContext });
     if (result.pass) {
