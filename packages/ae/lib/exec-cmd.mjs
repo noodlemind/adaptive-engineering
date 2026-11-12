@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { compoundJournalArgv } from './knowledge/evidence-fingerprint.mjs';
 import { parseFlags } from './flags.mjs';
 import { createStyle, keyWidthFor, EXIT } from './style.mjs';
 import { redactedJson, createRedactor } from './redact.mjs';
@@ -30,6 +32,42 @@ export function splitAtBoundary(argv) {
   const i = argv.indexOf('--');
   if (i === -1) return { harnessArgs: argv, childArgs: null };
   return { harnessArgs: argv.slice(0, i), childArgs: argv.slice(i + 1) };
+}
+
+// A script that mentions a stdin-only evidence flag may carry the evidence
+// line in its own text (a producer that names the line, a here-string, a
+// quoted or escaped `-`, a nested sh -c), so no attempt is made to parse it:
+// any mention masks the whole script as its length and a digest prefix, as an
+// agent task is, in the run journal, the exec audit, the rendered header and
+// the result. Every other script is kept as typed.
+const MENTIONS_EVIDENCE = /--(?:evidence-quote|learning-decision)\b/;
+
+export function mentionsStdinEvidence(childArgs) {
+  return Array.isArray(childArgs) && MENTIONS_EVIDENCE.test(childArgs.join(' '));
+}
+
+function scriptPlaceholder(childArgs) {
+  const text = childArgs.join(' ');
+  return `<script:${Buffer.byteLength(text, 'utf8')}b:${createHash('sha256').update(text).digest('hex').slice(0, 12)}>`;
+}
+
+// When delivery pipes an inline decision on stdin (`input`), the argv is
+// harness-built and the decision travels only on stdin: the command and its
+// flags stay visible and only compound's own argv is reduced as its run
+// journal reduces it.
+export function maskedChildArgs(childArgs, { input = null } = {}) {
+  if (!mentionsStdinEvidence(childArgs)) return childArgs;
+  if (input !== null) {
+    const at = childArgs.indexOf('compound');
+    if (at !== -1) return [...childArgs.slice(0, at + 1), ...compoundJournalArgv(childArgs.slice(at + 1))];
+  }
+  return [scriptPlaceholder(childArgs)];
+}
+
+/** The run-journal argv of `ae exec` and `ae bash`. */
+export function execJournalArgv(argv) {
+  const { harnessArgs, childArgs } = splitAtBoundary(argv);
+  return mentionsStdinEvidence(childArgs) ? [...harnessArgs, '--', scriptPlaceholder(childArgs)] : argv;
 }
 
 function repeatedFlag(argv, name) {
@@ -143,7 +181,7 @@ function emitAudit(ctx, mode, p, result) {
     exec: {
       shell: p.shell,
             shellPath: p.shellPath,
-      argv: p.childArgs,
+      argv: p.shownArgs,
       cwd: p.cwd,
       timeoutSeconds: p.timeoutSeconds,
       env: { allowed: p.envReport.allowed, droppedCount: p.envReport.dropped.length, refused: p.envReport.refused },
@@ -155,15 +193,16 @@ function emitAudit(ctx, mode, p, result) {
   });
 }
 
-async function execute(argv, ctx, { shell }) {
+async function execute(argv, ctx, { shell, input = null }) {
   const p = plan(argv, { shell });
+  p.shownArgs = maskedChildArgs(p.childArgs, { input });
 
     if (p.flags.dryRun) {
     return {
       schema: 1,
       mode: p.shell ? 'bash' : 'exec',
       dryRun: true,
-      argv: p.childArgs,
+      argv: p.shownArgs,
       cwd: p.cwd,
       timeoutSeconds: p.timeoutSeconds,
       status: 'ok',
@@ -193,13 +232,14 @@ async function execute(argv, ctx, { shell }) {
     signal: ctx?.signal,
     onStdout: (chunk) => streamer.onStdout(chunk),
     onStderr: (chunk) => streamer.onStderr(chunk),
+    input,
   });
   streamer.flush();
 
   const result = {
     schema: 1,
     mode: p.shell ? 'bash' : 'exec',
-        argv: p.childArgs,
+    argv: p.shownArgs,
     cwd: p.cwd,
     timeoutSeconds: p.timeoutSeconds,
     status: execution.status,
@@ -261,8 +301,9 @@ export function exitFor(result) {
     return result.exitCode === null || result.exitCode === 0 ? 1 : result.exitCode;
 }
 
-export async function execResultOf(argv, ctx = {}) {
-  return execute(argv, ctx, { shell: false });
+/** `input`, when given, is written to the child's stdin (an inline decision for `--learning-decision -`). */
+export async function execResultOf(argv, ctx = {}, { input = null } = {}) {
+  return execute(argv, ctx, { shell: false, input });
 }
 
 export async function cmdExec(argv, ctx = {}) {

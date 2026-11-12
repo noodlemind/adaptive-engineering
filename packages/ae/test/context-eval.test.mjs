@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { contextAgentArgs, prepareCase, resolveStudyOutput, runChecks, runStudy, summarizeStudy } from '../eval/context/study.mjs';
+import { contextAgentArgs, killLiveGroups, prepareCase, resolveStudyOutput, runChecks, runGroupedProcess, runPublicChecks, runStudy, summarizeStudy, trackStudyGroups } from '../eval/context/study.mjs';
 import { agentResultOf } from '../lib/agent-cmd.mjs';
 import { buildTaskHandoff, validateContextSnapshot } from '../lib/task-handoff.mjs';
 import { readSession, writeSession } from '../lib/session.mjs';
@@ -238,9 +239,115 @@ test('acceptance timeout remains a failure when source exits zero on termination
     checks: [{ module: 'src/value.mjs', export: 'value', args: [], expected: 2 }],
   } });
   const result = await runChecks(fixture);
-  assert.equal(result.error, 'ETIMEDOUT');
-  if (process.platform !== 'win32') assert.equal(result.exitCode, 0);
+  // Checked code runs in a probe child under the checker's own budget: the hang becomes a failed verdict before the
+  // outer timeout, and its SIGTERM handler cannot turn the checker's exit into zero.
+  assert.equal(result.error, null);
+  assert.notEqual(result.exitCode, 0);
+  assert.deepEqual(result.verdicts, [false]);
   assert.equal(result.pass, false);
+});
+
+test('a daemon that checked code starts at import does not outlive the private or public checks', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'daemons');
+  const source = `import { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nconst c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\nc.unref();\nfs.appendFileSync(${JSON.stringify(marker)}, c.pid + '\\n');\nexport const value = 2;\nexport const version = 1;\n`;
+  const fixture = await prepareCase({ root, id: 'daemon', task: { ...publicTask, files: { 'src/value.mjs': source } } });
+  const pids = () => fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).map(Number) : [];
+  t.after(() => { for (const pid of pids()) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  const running = pid => {
+    try { process.kill(pid, 0); } catch { return false; }
+    // A killed process that no init reaps stays a zombie; on Linux its /proc state says so.
+    try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
+  };
+  const allDead = async () => {
+    for (let i = 0; i < 100; i++) { if (!pids().some(running)) return true; await new Promise(done => setTimeout(done, 20)); }
+    return false;
+  };
+  assert.equal((await runChecks(fixture)).pass, true);
+  assert.ok(pids().length >= 1, 'the checked module started a daemon');
+  assert.equal(await allDead(), true, 'the private checker daemon was killed with its group');
+  const before = pids().length;
+  assert.equal((await runPublicChecks(fixture)).pass, true);
+  assert.ok(pids().length > before, 'the public verifier started a daemon');
+  assert.equal(await allDead(), true, 'the public verifier daemon was killed with its group');
+});
+
+/** Whether `pid` is gone; a killed process that no init reaps stays a zombie, which counts as gone. */
+async function waitGone(pid, tries = 100) {
+  const running = () => {
+    try { process.kill(pid, 0); } catch { return false; }
+    try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch { return true; }
+  };
+  for (let i = 0; i < tries; i++) { if (!running()) return true; await new Promise(done => setTimeout(done, 20)); }
+  return !running();
+}
+
+test('checked code that floods stderr cannot overflow the checker output', async t => {
+  const source = `for (let i = 0; i < 16; i++) await new Promise(done => process.stderr.write('x'.repeat(32_768), done));\nexport const value = 2;\nexport const version = 1;\n`;
+  const fixture = await prepareCase({ root: directory(t), id: 'stderr-flood', task: { ...publicTask, files: { 'src/value.mjs': source } } });
+  const checked = await runChecks(fixture, { timeoutMs: 20_000 });
+  assert.equal(checked.error, null);
+  assert.equal(checked.pass, true, checked.diagnostic);
+});
+
+test('a study kills only the process groups it started', { skip: process.platform === 'win32' && 'POSIX process groups' }, async t => {
+  const mine = new Set(), other = new Set();
+  const run = groups => trackStudyGroups(groups, () => runGroupedProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 30_000 }));
+  const minePromise = run(mine), otherPromise = run(other);
+  const pids = { mine: [...mine][0], other: [...other][0] };
+  assert.ok(pids.mine && pids.other, 'each study tracks the group it started');
+  t.after(() => { for (const pid of Object.values(pids)) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+  killLiveGroups(mine);
+  await minePromise;
+  assert.equal(await waitGone(pids.mine), true, 'the study group was killed');
+  assert.equal(await waitGone(pids.other, 5), false, 'another study\'s group keeps running');
+  killLiveGroups(other);
+  await otherPromise;
+  assert.equal(await waitGone(pids.other), true);
+});
+
+test('SIGTERM to the context runner kills its live checker and agent groups', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'agent.pid');
+  const script = path.join(root, 'runner.mjs');
+  const study = pathToFileURL(path.resolve(import.meta.dirname, '../eval/context/study.mjs')).href;
+  const agent = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000);`;
+  fs.writeFileSync(script, `import { runGroupedProcess, runStudy } from ${JSON.stringify(study)};
+await runStudy({ root: ${JSON.stringify(path.join(root, 'out'))}, cases: [${JSON.stringify(publicTask)}], repeats: 1, policies: ['legacy'], host: 'scripted-test',
+  execute: async fixture => { process.stdout.write('READY\\n'); await runGroupedProcess(process.execPath, ['-e', ${JSON.stringify(agent)}], { cwd: fixture.workspace, env: process.env, timeoutMs: 60_000 }); return { status: 'ok' }; } });
+`);
+  const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  await new Promise((resolve, reject) => {
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; if (output.includes('READY')) resolve(); });
+    child.on('exit', code => reject(new Error(`exited early: ${code}`)));
+  });
+  for (let i = 0; i < 250 && !fs.existsSync(marker); i++) await new Promise(done => setTimeout(done, 20));
+  const pid = Number(fs.readFileSync(marker, 'utf8'));
+  t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } });
+  const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+  child.kill('SIGTERM');
+  assert.equal(await exited, 143);
+  assert.equal(await waitGone(pid), true, 'the agent group was killed with the runner');
+});
+
+test('a process checked code leaves holding the checker output cannot hold the check result', { skip: process.platform === 'win32' }, async t => {
+  const root = directory(t);
+  const marker = path.join(root, 'holders');
+  // The holder inherits stdio, so it keeps the checker's stderr pipe open after the checker exits.
+  const source = `import { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nconst c = spawn('sleep', ['30'], { stdio: 'inherit' });\nc.unref();\nfs.appendFileSync(${JSON.stringify(marker)}, c.pid + '\\n');\nexport const value = 2;\nexport const version = 1;\n`;
+  const fixture = await prepareCase({ root, id: 'holder', task: { ...publicTask, files: { 'src/value.mjs': source } } });
+  const pids = () => fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).map(Number) : [];
+  t.after(() => { for (const pid of pids()) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  let started = Date.now();
+  const checked = await runChecks(fixture, { timeoutMs: 20_000 });
+  assert.equal(checked.pass, true, checked.diagnostic);
+  assert.ok(Date.now() - started < 8000, `private checks resolved after ${Date.now() - started} ms`);
+  started = Date.now();
+  const verified = await runPublicChecks(fixture, { timeoutMs: 20_000 });
+  assert.equal(verified.pass, true, verified.diagnostic);
+  assert.ok(Date.now() - started < 8000, `public checks resolved after ${Date.now() - started} ms`);
 });
 
 test('source cannot pass acceptance by exiting before the assertions run', async t => {
@@ -248,7 +355,8 @@ test('source cannot pass acceptance by exiting before the assertions run', async
     ...simple, files: { 'src/value.mjs': 'process.exit(0);\nexport const value = 0;\n' },
   } });
   const result = await runChecks(fixture);
-  assert.equal(result.exitCode, 0);
+  // The early exit stops only the probe child; the checker reports the missing results and never prints its completion line.
+  assert.equal(result.completed, false);
   assert.equal(result.error, null);
   assert.equal(result.pass, false);
 });
@@ -318,6 +426,30 @@ test('study counts failures and scope violations across fresh arm workspaces', a
   assert.ok(result.provenance.corpusHash);
   assert.ok(result.provenance.checkerHash);
   assert.ok(result.provenance.protocolHash);
+});
+
+test('a SIGTERM during the context study\'s final write leaves complete results and still ends the runner with 143', { skip: process.platform === 'win32' && 'POSIX signals' }, async t => {
+  const root = directory(t);
+  const out = path.join(root, 'out');
+  const script = path.join(root, 'final.mjs');
+  const study = pathToFileURL(path.resolve(import.meta.dirname, '../eval/context/study.mjs')).href;
+  fs.writeFileSync(script, `import fs from 'node:fs';
+import { runStudy } from ${JSON.stringify(study)};
+const results = ${JSON.stringify(path.join(out, 'results.json'))};
+const write = fs.writeFileSync;
+fs.writeFileSync = function (file, ...rest) {
+  if (String(file) === results) { process.kill(process.pid, 'SIGTERM'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
+  return write.call(this, file, ...rest);
+};
+await runStudy({ root: ${JSON.stringify(out)}, cases: [${JSON.stringify(simple)}], policies: ['legacy'], repeats: 1, dryRun: true });
+process.stdout.write('RETURNED\\n');
+`);
+  const child = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(child.status, 143, child.stderr);
+  assert.doesNotMatch(child.stdout, /RETURNED/);
+  const results = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8'));
+  assert.ok(results.summary, 'the complete results were written');
+  assert.equal(results.attempts.length, 1);
 });
 
 test('dry run and unavailable model remain inconclusive and never count as accepted tasks', async (t) => {

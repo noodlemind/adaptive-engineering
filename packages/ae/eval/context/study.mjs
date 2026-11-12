@@ -1,13 +1,15 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { execFileSync, spawn } from 'node:child_process';
 import { buildTaskContext } from '../../lib/context-policy.mjs';
 import { buildStructuralIndex } from '../../lib/repo-map/structural-index.mjs';
 import { lexicalV2 } from '../../lib/repo-map/treesitter-extractor.mjs';
 import { ensureHarnessDir, writeSession } from '../../lib/session.mjs';
 import { readOrientSlice } from '../../lib/orient-read.mjs';
+import { publicVerifierSource } from './check.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const here = import.meta.dirname;
@@ -33,14 +35,43 @@ export function resolveStudyOutput({ checkout, output }) {
   return resolved;
 }
 
-function safePath(file) {
+export function safePath(file) {
   if (typeof file !== 'string' || !file || file.includes('\\') || path.posix.isAbsolute(file) || file.split('/').some(part => ['.', '..', '.git', '.harness', ''].includes(part))) {
     throw new TypeError(`invalid fixture path: ${file}`);
   }
   return file;
 }
 
-function writeFiles(workspace, files = {}) {
+/**
+ * Swaps a study's signal handlers (`handler`) for recorders, for the study's final synchronous phase: removing its files and
+ * writing its results. A handler cannot run before the event loop turns, and once the last listener for a signal goes, Node
+ * restores the default action and discards a signal that arrived meanwhile; removing the handlers straight after the write
+ * would drop a signal sent during it, and the runner would exit 0. The recorders stay installed until `release()` has let
+ * the event loop turn twice, so a signal sent during the final phase reaches one; `release()` then removes them and returns
+ * the first signal recorded, or null, and the caller ends the process for it with `exitForSignal`. A recorder never writes
+ * anything, so complete results already written are never replaced by partial ones.
+ */
+export function holdSignals(signals, handler = null) {
+  const held = [];
+  const record = signal => { held.push(signal); };
+  for (const signal of signals) process.on(signal, record);
+  if (handler) for (const signal of signals) process.off(signal, handler);
+  return {
+    async release() {
+      // A signal raised during a synchronous write is read in the next poll phase; the second turn makes sure that phase ran.
+      for (let turn = 0; turn < 2; turn++) await new Promise(resolve => setImmediate(resolve));
+      for (const signal of signals) process.off(signal, record);
+      return held[0] ?? null;
+    },
+  };
+}
+
+/** Ends the runner for a handled signal with the shell's status for it, 128 plus the signal number. */
+export function exitForSignal(signal) {
+  process.exit(128 + (os.constants.signals[signal] ?? 15));
+}
+
+export function writeFiles(workspace, files = {}) {
   for (const [file, content] of Object.entries(files)) {
     const target = path.join(workspace, safePath(file));
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -48,7 +79,7 @@ function writeFiles(workspace, files = {}) {
   }
 }
 
-function trialEnvironment({ trial, copilotHome, harnessHome }) {
+export function trialEnvironment({ trial, copilotHome, harnessHome }) {
   const bin = path.resolve(here, '../../bin/ae.mjs');
   const directory = path.join(trial, 'runtime-bin');
   fs.mkdirSync(directory);
@@ -65,7 +96,7 @@ function trialEnvironment({ trial, copilotHome, harnessHome }) {
   return env;
 }
 
-function snapshot(workspace) {
+export function snapshot(workspace) {
   const files = {};
   const walk = dir => {
     for (const entry of fs.readdirSync(path.join(workspace, dir), { withFileTypes: true })) {
@@ -73,7 +104,9 @@ function snapshot(workspace) {
       const file = path.posix.join(dir, entry.name);
       if (GENERATED_METADATA.has(file) && entry.isFile()) continue;
       if (Object.keys(files).length > 1000) throw new Error('fixture file limit exceeded');
-      if (entry.isDirectory()) walk(file);
+      // An installed dependency tree is one entry, so `npm install` cannot exceed the limit; it is still a change if new.
+      if (entry.isDirectory() && entry.name === 'node_modules') files[`${file}/`] = 'excluded-directory';
+      else if (entry.isDirectory()) walk(file);
       else files[file] = entry.isFile() ? hash(fs.readFileSync(path.join(workspace, file))) : 'unsupported';
     }
   };
@@ -116,8 +149,8 @@ export async function prepareCase({ task, root, id }) {
     const control = path.join(workspace, '.harness');
     fs.mkdirSync(control, { recursive: true });
     fs.writeFileSync(path.join(control, 'context-public-checks.json'), JSON.stringify({ checks: task.publicChecks }), { mode: 0o444 });
-    const source = `import fs from 'node:fs';\nimport { checkCases } from ${JSON.stringify(pathToFileURL(checker).href)};\nconst task = JSON.parse(fs.readFileSync(new URL('./context-public-checks.json', import.meta.url), 'utf8'));\nawait checkCases(process.cwd(), task.checks);\n`;
-    fs.writeFileSync(path.join(control, 'context-verify.mjs'), source, { mode: 0o444 });
+    // The verifier embeds the public checks and the check function, so it never names the AE checkout.
+    fs.writeFileSync(path.join(control, 'context-verify.mjs'), publicVerifierSource(task.publicChecks), { mode: 0o444 });
     verifyCmd = `"${process.execPath}" .harness/context-verify.mjs`;
   }
   const checkFile = path.join(trial, 'checks.json');
@@ -127,22 +160,142 @@ export async function prepareCase({ task, root, id }) {
 }
 
 function integrity(fixture) {
-  try { return hash(fs.readFileSync(fixture.checkFile)) === fixture.checkHash && hash(fs.readFileSync(checker)) === fixture.checkerHash; }
+  try { return (fixture.checkText !== undefined || hash(fs.readFileSync(fixture.checkFile)) === fixture.checkHash) && hash(fs.readFileSync(checker)) === fixture.checkerHash; }
   catch { return false; }
 }
 
-export async function runChecks(fixture) {
-  if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
-  const challenge = randomBytes(16).toString('hex');
-  const result = spawnSync(process.execPath, [checker, fixture.workspace, fixture.checkFile], { input: challenge, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
-  const intact = integrity(fixture);
-  const completed = (result.stdout || '').split(/\r?\n/).includes(`harness-context-checked-v1:${challenge}:${fixture.task.checks.length}`);
-  return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
+/** Process groups still running, killed if the runner exits or is signalled mid-task. */
+const liveGroups = new Set();
+let exitHookInstalled = false;
+/** The live-group set of the study whose async context started a process, so a study kills only its own groups. */
+const studyGroups = new AsyncLocalStorage();
+
+/**
+ * Runs `action` with `groups` as the current study's live-group set: every process group started by runGroupedProcess
+ * inside it, including in an executor the study calls, joins that set while it runs.
+ */
+export function trackStudyGroups(groups, action) {
+  return studyGroups.run(groups, action);
 }
 
-function runPublicChecks(fixture) {
+/**
+ * SIGKILLs live process groups: those in `groups` (one study's set) or, by default, every live group of this process. A
+ * group leaves the sets when its leader exits, so a pid that has been reaped, and may have been reused, is never signalled
+ * from here.
+ */
+export function killLiveGroups(groups = liveGroups) {
+  for (const pid of [...groups]) {
+    if (liveGroups.has(pid)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* group already gone */ }
+    }
+    liveGroups.delete(pid);
+  }
+  groups.clear();
+}
+
+/** How long the runner waits for the output pipes to close after the process exits or is killed. */
+const CLOSE_GRACE_MS = 1500;
+
+/**
+ * Runs a process in its own process group (POSIX) and resolves like spawnSync: { status, signal, stdout, stderr, error }.
+ * Agents and checkers both run through it. When the leader exits, the whole group is killed once, so a background process
+ * it left behind (even one that still holds the output pipes) cannot outlive it. Node emits the leader's exit event only
+ * after it has reaped the leader, so that kill already follows the reap: it reaches the group because a process group id
+ * stays reserved while any member is alive, and if none is, it finds no group. After that one kill the pid may be reused,
+ * so nothing signals it again. On timeout or overflow the group is killed too. The pipes then get a short grace period to close;
+ * a process that started its own session and still holds a pipe escapes the group kill but cannot delay the result past it.
+ * `status` is null whenever `error` is set, and stdout and stderr are cut at `maxBuffer` bytes each. `input`, when given, is
+ * written to stdin. On Windows only the direct child is killed.
+ */
+export function runGroupedProcess(command, args, { cwd, env, input, timeoutMs, maxBuffer = 20 * 1024 * 1024, closeGraceMs = CLOSE_GRACE_MS } = {}) {
+  return new Promise(resolve => {
+    const group = process.platform !== 'win32';
+    let child;
+    try { child = spawn(command, args, { cwd, env, detached: group, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
+    catch (caught) { resolve({ status: null, signal: null, stdout: '', stderr: '', error: caught }); return; }
+    const owner = studyGroups.getStore();
+    if (group && child.pid) {
+      liveGroups.add(child.pid);
+      owner?.add(child.pid);
+      if (!exitHookInstalled) { process.on('exit', () => killLiveGroups()); exitHookInstalled = true; }
+    }
+    const out = { stdout: [], stderr: [] };
+    const size = { stdout: 0, stderr: 0 };
+    let error = null, timer = null, grace = null, exited = null, settled = false, reaped = false;
+    // Until the exit event has been handled: the leader is reaped before that event, and once it has passed (and the group
+    // kill in it has run) the pid may belong to another process.
+    const kill = () => {
+      if (reaped) return;
+      try { if (group && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* group already gone */ }
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      kill();
+      if (reaped) { liveGroups.delete(child.pid); owner?.delete(child.pid); }
+      for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+      const text = name => Buffer.concat(out[name]).toString('utf8');
+      resolve({ status: error ? null : exited?.status ?? null, signal: exited?.signal ?? null, stdout: text('stdout'), stderr: text('stderr'), error });
+    };
+    const startGrace = () => { if (!grace && !settled) grace = setTimeout(finish, closeGraceMs); };
+    for (const name of ['stdout', 'stderr']) {
+      child[name].on('data', chunk => {
+        if (settled) return;
+        const room = maxBuffer - size[name];
+        if (chunk.length <= room) { out[name].push(chunk); size[name] += chunk.length; return; }
+        if (room > 0) out[name].push(chunk.subarray(0, room));
+        size[name] = maxBuffer;
+        if (!error) { error = Object.assign(new Error(`${name} maxBuffer exceeded`), { code: 'ENOBUFS' }); kill(); startGrace(); }
+      });
+    }
+    if (input !== undefined) { child.stdin.on('error', () => { /* the process stopped reading */ }); child.stdin.end(input); }
+    if (timeoutMs) timer = setTimeout(() => { if (!error) error = Object.assign(new Error('process timed out'), { code: 'ETIMEDOUT' }); kill(); startGrace(); }, timeoutMs);
+    child.on('error', caught => { error ||= caught; startGrace(); });
+    child.on('exit', (status, signal) => {
+      exited ||= { status, signal };
+      clearTimeout(timer);
+      // Node has already reaped the leader. The group id stays reserved while any member lives, so this one kill still
+      // reaches a background process the leader left; with no member left there is no group to signal.
+      kill();
+      reaped = true;
+      liveGroups.delete(child.pid);
+      owner?.delete(child.pid);
+      startGrace();
+    });
+    child.on('close', (status, signal) => { exited ||= { status, signal }; finish(); });
+  });
+}
+
+/** `timeoutMs` is the outer checker timeout; a study passes its own protocol's `checkerTimeoutMs`. */
+export async function runChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
+  if (!integrity(fixture)) return { pass: false, integrity: false, reason: 'check content changed' };
+  const challenge = randomBytes(16).toString('hex');
+  // The checks travel on stdin, so the check-file path never appears in a command line the checked code could read.
+  // A fixture may hold its checks in memory (`checkText`), so no private file exists for checked code to find.
+  let checkText = fixture.checkText;
+  if (checkText === undefined) {
+    try { checkText = fs.readFileSync(fixture.checkFile, 'utf8'); } catch { return { pass: false, integrity: false, reason: 'check content unreadable' }; }
+  }
+  if (hash(checkText) !== fixture.checkHash) return { pass: false, integrity: false, reason: 'check content changed' };
+  // Verdicts cover every check the checker receives, which can be more than the task's own private checks.
+  const count = JSON.parse(checkText).checks.length;
+  // The checker gets a budget below the outer timeout, so a hang or exit in checked code still yields per-check verdicts.
+  // It runs in its own process group, killed when the checker exits, so a process checked code left holding stdio cannot hold the result.
+  const budget = Math.max(1000, timeoutMs - 3000);
+  const result = await runGroupedProcess(process.execPath, [checker, fixture.workspace], { input: `${challenge} ${budget} ${Math.min(8000, budget)}\n${checkText}`, timeoutMs, maxBuffer: 256_000 });
+  const intact = integrity(fixture);
+  const lines = (result.stdout || '').split(/\r?\n/);
+  const completed = lines.includes(`harness-context-checked-v1:${challenge}:${count}`);
+  // Per-check verdicts let a caller score subsets (for example trap checks) from one run; null when the checker did not report.
+  const verdicts = Array.from({ length: count }, (_, index) => lines.includes(`harness-context-check-v1:${challenge}:${index}:pass`) ? true : lines.includes(`harness-context-check-v1:${challenge}:${index}:fail`) ? false : null);
+  return { pass: intact && !result.error && result.status === 0 && completed, integrity: intact, completed, verdicts: intact && !result.error ? verdicts : verdicts.map(() => null), exitCode: result.status, signal: result.signal, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || (!completed ? 'Checker did not report completed assertions.' : null) };
+}
+
+export async function runPublicChecks(fixture, { timeoutMs = PROTOCOL.checkerTimeoutMs } = {}) {
   if (!fixture.verifyCmd) return null;
-  const result = spawnSync(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, encoding: 'utf8', timeout: PROTOCOL.checkerTimeoutMs, maxBuffer: 64_000 });
+  const result = await runGroupedProcess(process.execPath, ['.harness/context-verify.mjs'], { cwd: fixture.workspace, timeoutMs, maxBuffer: 64_000 });
   return { pass: !result.error && result.status === 0, exitCode: result.status, error: result.error?.code ?? null, diagnostic: result.stderr?.slice(0, 2000) || null };
 }
 
@@ -171,7 +324,7 @@ function undoMetadata(fixture, after) {
   }
 }
 
-function scopeResult(fixture) {
+export function scopeResult(fixture) {
   const after = snapshot(fixture.workspace);
   const metadata = new Set(undoMetadata(fixture, after));
   const changed = [...new Set([...Object.keys(fixture.before), ...Object.keys(after)])].filter(file => !metadata.has(file) && fixture.before[file] !== after[file]);
@@ -213,6 +366,14 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
   provenance.sourceHash = hash(execFileSync('git', ['ls-files', '-z', 'packages/ae/lib', 'packages/ae/bin', 'packages/ae/corpus', 'packages/ae/eval/context'], { cwd: path.resolve(here, '../../../..') }).toString().split('\0').filter(Boolean).map(file => `${file}:${hash(fs.readFileSync(path.resolve(here, '../../../..', file)))}`).join('\n'));
   fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx' });
   const attempts = [];
+  // Checker groups run detached, so a signal to the runner does not reach them; this study's handler kills its own first.
+  const groups = new Set();
+  const signals = ['SIGINT', 'SIGTERM'];
+  const onSignal = signal => { killLiveGroups(groups); exitForSignal(signal); };
+  for (const signal of signals) process.once(signal, onSignal);
+  let hold = null;
+  try {
+  await trackStudyGroups(groups, async () => {
   for (const [caseIndex, task] of cases.entries()) {
     for (let repeat = 0; repeat < repeats; repeat++) {
       const offset = (caseIndex + repeat) % policies.length;
@@ -221,7 +382,7 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
         const id = `${task.id}-${repeat + 1}-${policy}`;
         const fixture = await prepareCase({ task, root, id });
         const baseline = await runChecks(fixture);
-        const publicBaseline = runPublicChecks(fixture);
+        const publicBaseline = await runPublicChecks(fixture);
         if (baseline.pass || !baseline.integrity || baseline.error || publicBaseline?.pass || publicBaseline?.error) throw new Error(`invalid broken baseline: ${id}`);
         const startedAt = Date.now();
         let result = {}, error = null;
@@ -248,9 +409,20 @@ export async function runStudy({ root, cases, repeats = PROTOCOL.repeats, polici
       }
     }
   }
+  });
+  // A signal during the (synchronous) final write is recorded, not lost: the write finishes, then the runner exits for it.
+  hold = holdSignals(signals, onSignal);
   const result = { schema: 1, provenance, attempts, summary: summarizeStudy(attempts, provenance) };
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2));
   return result;
+  } finally {
+    for (const signal of signals) process.off(signal, onSignal);
+    killLiveGroups(groups);
+    if (hold) {
+      const signal = await hold.release();
+      if (signal) exitForSignal(signal);
+    }
+  }
 }
 
 export function summarizeStudy(attempts, provenance) {

@@ -185,6 +185,18 @@ test('summarizeArgFlags: with a flag-type schema (as lib/registry.mjs\'s dispatc
   assert.deepEqual(summarizeArgFlags(argv, knownFlags), ['--query', '--limit', '--explain', '-c']);
 });
 
+test('summarizeArgFlags: a literal-valued flag takes the next token even when it is dash-led, so the value is never recorded', () => {
+  const knownFlags = new Map([
+    ['--evidence-quote', { type: 'string', valueIsLiteral: true }],
+    ['--intent', { type: 'string', valueIsLiteral: true }],
+    ['--insight', { type: 'boolean' }],
+    ['--title', { type: 'string' }],
+  ]);
+  const argv = ['--insight', '--evidence-quote', '--- a/secret-path.mjs', '--intent', '--literal-intent', '--title', 't'];
+  assert.deepEqual(summarizeArgFlags(argv, knownFlags), ['--insight', '--evidence-quote', '--intent', '--title']);
+  assert.deepEqual(summarizeArgFlags(['--title', '--insight'], knownFlags), ['--title', '--insight'], 'a non-literal flag still leaves a dash-led next token alone');
+});
+
 test('summarizeArgFlags: a --flag=value token contributes only the flag name', () => {
   assert.deepEqual(summarizeArgFlags(['--query=super secret task', '--limit=5']), ['--query', '--limit']);
 });

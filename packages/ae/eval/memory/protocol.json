@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "profile": "deliver",
+  "publicVerifier": "fixture-public-checks-v1",
+  "repeats": 4,
+  "maxTurns": 30,
+  "maxSeconds": 300,
+  "checkerTimeoutMs": 15000,
+  "origin": "https://eval.invalid/ae-memory/<series-id>.git",
+  "carryForward": "docs/solutions",
+  "arms": [
+    { "id": "stateless", "mode": "off", "baseline": null, "question": "Reference arm: no capture, no recall." },
+    { "id": "capture-only", "mode": "capture-only", "baseline": "stateless", "question": "Does writing memory help without reading it?" },
+    { "id": "recall", "mode": "on", "baseline": "stateless", "question": "Does current memory help at all?" },
+    { "id": "recall+feedback", "mode": "on", "feedback": "on", "baseline": "recall", "question": "Does feedback add anything on top of current recall?" },
+    { "id": "recall+recheck", "mode": "on", "recheck": "on", "baseline": "recall", "available": false, "requires": "knowledge.recheck (memory plan phase 2)", "question": "Does re-check add anything on top of current recall?" },
+    { "id": "frozen-seed", "mode": "freeze", "seed": true, "baseline": "stateless", "question": "Does retrieval help when capture quality is held fixed?" }
+  ],
+  "promotion": {
+    "split": "held-out",
+    "minimumRelativeTrapRecurrenceReduction": 0.3,
+    "passRateNonInferiorityMargin": 0.02,
+    "episodesMayRiseOnlyIfRecurrenceFalls": true,
+    "minimumHeldOutAttemptsPerArm": 30,
+    "minimumRecurrenceObservationsPerArm": 30,
+    "maximumRecurrenceTestPValue": 0.05,
+    "maximumUnscoredRateDifference": 0.1,
+    "requireSameBatchBaseline": true,
+    "requireCompleteObservedUsage": true,
+    "incrementalArmsMustAlsoPassAgainstStateless": true,
+    "maximumBaselineDepth": 2
+  },
+  "limits": "This small JavaScript pilot is diagnostic. Each held-out series has one recurrence task, so the default 4 repeats give 8 recurrence observations per arm, below the 30 the promotion rule requires; 15 repeats on the held-out split is only a floor, because unscored recurrence tasks reduce the count. With 32 held-out attempts, one attempt is about 3 percentage points, so the 2-point non-inferiority margin tolerates no additional failure. Results apply to the model and runtime that produced them. Auto-routed models, dry runs and scripted runs never qualify for promotion."
+}

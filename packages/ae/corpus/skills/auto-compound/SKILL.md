@@ -66,7 +66,7 @@ Supply a learning decision to Harness with an approved private/global publicatio
 }
 ```
 
-Use `decision: "no-learning"` with a rationale when no durable lesson exists. It produces no episode. Operation IDs support safe replay; reuse an ID only for the same decision and proof. Promotion recommendations are proposals, never activation authority.
+When one failing line of check output shows the lesson, add it as `evidence_quote` (one line, at most 600 bytes). Harness stores only its SHA-256 and length, never the text, and accepts it only on stdin; the contract is in `learning-operations.md`. Use `decision: "no-learning"` with a rationale when no durable lesson exists. It produces no episode. Operation IDs support safe replay; reuse an ID only for the same decision and proof. Promotion recommendations are proposals, never activation authority.
 
 Report whether memory held up, so it can improve. When this plan's context pack listed learnings, add `recalled` with a `helped`, `irrelevant` or `wrong` verdict for each one you can judge. When review raised findings, add `findings` with `fixed` or `dismissed` for each one you resolved. Both fields are optional, work on `publish` and `no-learning` decisions, and are evidence for consolidation only. The field contract is in `learning-operations.md`.
 
@@ -86,10 +86,10 @@ Every promoted skill must have 8–10 positive trigger evals, 8–10 negative/co
 
 For configured autonomous private publication, first preview this same request with `--dry-run`. Read `<copilot-home>/skills/references/native-decisions.md` with the host read tool. Prepare `type: memory` using the returned `memoryDecision` and exact raw `memoryContent` in `context.memoryContent`; use the observed current native session and accepted plan. Obtain the native decision-agent's observed `allow`, record it, then retry the unchanged publication. The writer consumes that exact receipt once and rechecks bytes, destination, proof and standing memory consent. This private grant does not authorize global publication or ship-set promotion. Explicit user teaching retains its separate attributed authority.
 
-Pass the JSON decision file to the writer:
+Pipe the JSON decision to the writer on stdin, never as a file, so an `evidence_quote` line leaves no copy on disk (Harness refuses one from a file). For the `--dry-run` preview and the retry, pipe the same JSON again:
 
 ```bash
-ae compound --plan <path> --learning-decision <file> --workspace . --json
+ae compound --plan <path> --learning-decision - --workspace . --json
 ```
 
 The command validates current proof, publishes through the existing writer, and reports the persisted destination and index or dormant proposal result. Never edit learning frontmatter before publication. Reuse valid proof; refresh verification and required review when the checkout, HEAD or evidence binding changed or records are missing. Report actual evidence and publication outcomes.

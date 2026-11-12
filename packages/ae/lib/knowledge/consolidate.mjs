@@ -8,8 +8,12 @@ import { resolveWriteLayer, episodeEligibleForLayer, storeHasBuckets } from './l
 import { bucketDirFor, isSafeBucketKey, listBuckets, loadLayeredLearnings } from './overlay.mjs';
 import { feedbackState, feedbackSummary, feedbackColumns, feedbackOrder } from '../learning-feedback.mjs';
 import { recheckState, recheckSummary, recheckDue, RECHECK_STATUS_PRESELECT } from '../learning-recheck.mjs';
+import { readEvidenceFingerprint, evidenceSummary } from './evidence-fingerprint.mjs';
 
 export const CONSOLIDATION_THRESHOLD = 5;
+// How an agent checks an episode's `evidence` fingerprint: the evidence line
+// itself is never stored, so it re-runs the check and matches the output.
+export const EVIDENCE_MATCH_CONTRACT = 'An episode evidence entry is a fingerprint of one failing check line, never its text. To confirm it, re-run the check and run ae compound --match-evidence <sha256_prefix> --evidence-bytes <bytes> --check-output <file>.';
 export const MAX_OPS_PER_RUN = 5;
 export const LEARNING_BYTE_CAP = 1200;
 export const QUARANTINE_THRESHOLD = 3;
@@ -103,6 +107,8 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
         const text = readFileNoFollow(full, { root: base });
         if (text === null) continue;
         const fm = parseFrontmatter(text);
+        // Only the fingerprint fields are read; an `evidence_quote` key is never read.
+        const evidence = readEvidenceFingerprint(fm);
         episodes.push({
           path: fileRel.split(path.sep).join('/'),
           sha256: crypto.createHash('sha256').update(text).digest('hex'),
@@ -111,6 +117,7 @@ export function collectEpisodes({ workspace, copilotHome, home }) {
           title: fm.title || f.replace(/\.md$/, ''),
           tags: fm.tags ? fm.tags.split(',').map((t) => t.trim()) : [],
           excerpt: excerpt(text),
+          ...(evidence ? { evidence } : {}),
           date: fm.date || null,
                     branch: fm.branch || null,
         });
@@ -375,6 +382,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
             title: inertLine(full.title).slice(0, CANDIDATE_TITLE_CAP),
       tags: capTags(full.tags, CANDIDATE_TAGS_TOTAL_CAP),
       excerpt: full.excerpt,
+      ...(full.evidence ? { evidence: evidenceSummary(full.evidence) } : {}),
     };
     const entryBytes = Buffer.byteLength(JSON.stringify(entry), 'utf8');
     if (includedEntries.length > 0 && usedBytes + entryBytes > CANDIDATE_EPISODE_BUDGET_BYTES) break;
@@ -419,6 +427,7 @@ export function consolidateCandidates({ workspace, copilotHome, home, withIds = 
       byteCap: LEARNING_BYTE_CAP,
       threshold: CONSOLIDATION_THRESHOLD,
       domainCap: DOMAIN_ACTIVE_CAP,
+      evidenceMatch: EVIDENCE_MATCH_CONTRACT,
     },
     clusters: [...clusters.entries()].map(([id, eps]) => ({ id, episodes: eps })),
     learnings,

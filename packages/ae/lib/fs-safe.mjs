@@ -204,6 +204,21 @@ export function readPrefixNoFollow(full, { root = null } = {}) {
   }
 }
 
+/**
+ * Exactly `size` bytes from the start of `fd`, looping over short reads, or null when the file ends early
+ * (it shrank between fstat and read): a transient state, never content to parse.
+ */
+function readExactly(fd, size) {
+  const buf = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const n = fs.readSync(fd, buf, offset, size - offset, offset);
+    if (!(n > 0)) return null;
+    offset += n;
+  }
+  return buf;
+}
+
 export function readFileNoFollow(full, { maxBytes = DEFAULT_MAX_BYTES, root = null, encoding = 'utf8' } = {}) {
   const realRoot = canonicalRoot(root);
     if (root != null && realRoot === null) return null;
@@ -220,8 +235,8 @@ export function readFileNoFollow(full, { maxBytes = DEFAULT_MAX_BYTES, root = nu
       const stat = fs.fstatSync(fd);
       if (!stat.isFile() || stat.size > maxBytes) return null;
       if (realRoot !== null && !fdMatchesCanonicalUnderRoot(full, stat, realRoot)) return null;
-      const buf = Buffer.alloc(stat.size);
-      fs.readSync(fd, buf, 0, stat.size, 0);
+      const buf = readExactly(fd, stat.size);
+      if (buf === null) return null;
       return encoding == null ? buf : buf.toString(encoding);
     } catch {
       return null;
@@ -246,8 +261,8 @@ export function readFileNoFollow(full, { maxBytes = DEFAULT_MAX_BYTES, root = nu
       return null;
     }
     if (realRoot !== null && !fdMatchesCanonicalUnderRoot(full, stat, realRoot)) return null;
-    const buf = Buffer.alloc(stat.size);
-    fs.readSync(fd, buf, 0, stat.size, 0);
+    const buf = readExactly(fd, stat.size);
+    if (buf === null) return null;
     return encoding == null ? buf : buf.toString(encoding);
   } catch {
     return null;
@@ -344,7 +359,25 @@ export function appendFileContained(root, rel, content, { newlineGuard = false }
   }
 }
 
-/** `durable: true` flushes the content to disk before the rename, so a crash never leaves an empty or partial file under the name. */
+// fsync errors that mean the filesystem cannot flush this file at all, rather than that the data failed to
+// reach the disk: EPERM and EISDIR come from some Windows network and virtual drives (libuv reports
+// ERROR_INVALID_FUNCTION as EISDIR).
+const FSYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'EISDIR']);
+function flush(fd, durable) {
+  try {
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (durable !== 'best-effort' && !FSYNC_UNSUPPORTED.has(error?.code)) throw error;
+  }
+}
+/**
+ * `durable: true` flushes the content to disk before the rename or link, so a crash never leaves an empty
+ * or partial file under the name. On a filesystem that cannot flush (fsync fails with EINVAL, ENOTSUP,
+ * EOPNOTSUPP, ENOSYS, EPERM or EISDIR) the write still publishes, unflushed: refusing it there would refuse
+ * every such write forever, and a reader must already treat invalid content as such. Any other flush
+ * failure (EIO, ENOSPC) refuses the write. `durable: 'best-effort'` tries the flush and publishes unflushed
+ * on any flush failure, for a caller that must never be refused over durability.
+ */
 export function writeFileContained(root, rel, content, { exclusive = false, mode, durable = false } = {}) {
   if (mode !== undefined && (!Number.isInteger(mode) || mode < 0 || mode > 0o777)) return null;
   const rootFull = path.resolve(root);
@@ -379,7 +412,7 @@ export function writeFileContained(root, rel, content, { exclusive = false, mode
   try {
     fs.writeFileSync(fd, content, { encoding: 'utf8' });
     if (mode !== undefined) fs.fchmodSync(fd, mode);
-    if (durable) fs.fsyncSync(fd);
+    if (durable) flush(fd, durable);
     fs.closeSync(fd);
   } catch {
     try {

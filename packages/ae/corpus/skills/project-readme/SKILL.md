@@ -105,7 +105,7 @@ Before finishing:
 - Confirm project workflows and conventions match the repo artifacts
 - Confirm incoming and outgoing integration points are called out when evidence exists
 
-Record accepted progress through Harness. Collect any required review, require passed `ae verify`, record durable learning or explicit no-learning through `ae compound --learning-decision <file>`, then submit a complete decision. A README edit uses the same evidence and completion authority as other file changes.
+Record accepted progress through Harness. Collect any required review, require passed `ae verify`, record durable learning or explicit no-learning through `ae compound --learning-decision -` (the decision piped on stdin), then submit a complete decision. A README edit uses the same evidence and completion authority as other file changes.
 
 ## Non-Interactive Mode
 
