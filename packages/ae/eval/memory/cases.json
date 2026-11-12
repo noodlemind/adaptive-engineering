@@ -1,0 +1,1088 @@
+{
+  "schema": 1,
+  "note": "Two development and two held-out JavaScript task series. Each series plants one recurring trap: task 1 fails a private trap check with the obvious implementation, and a later task repeats the trap in a different form. reference, naive and idioms files stay outside the workspace; tests use them to prove each fix exists and that the obvious implementation and common alternative idioms all fall into the trap. Each checkout contains the reference files of earlier non-trap tasks, as if their work had merged; earlier trap tasks keep their stubs so the repository holds no fix for the trap. This pilot does not establish statistical power or cross-language quality.",
+  "series": [
+    {
+      "id": "catalog-ordering",
+      "split": "development",
+      "trap": {
+        "id": "case-insensitive-order",
+        "description": "User-visible lists use compareText (case-insensitive); the default sort puts capitals first."
+      },
+      "files": {
+        "package.json": "{ \"name\": \"catalog\", \"private\": true, \"type\": \"module\" }\n",
+        "README.md": "# Catalog\n\nSmall catalog helpers. See docs/CONVENTIONS.md.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nEvery list shown to users is ordered with `compareText` from `src/text.mjs`. It ignores case first; names that differ only in case put the capitalized one first. The default `Array.prototype.sort`, `localeCompare` and `Intl.Collator` orders all get this wrong.\n",
+        "src/text.mjs": "export function compareText(a, b) {\n  const x = a.toLowerCase();\n  const y = b.toLowerCase();\n  if (x !== y) return x < y ? -1 : 1;\n  return a < b ? -1 : a > b ? 1 : 0;\n}\n"
+      },
+      "seed": {
+        "episode": {
+          "path": "docs/solutions/seed/display-order.md",
+          "content": "---\ntitle: \"Display order uses compareText\"\nkind: fix\ndate: 2026-11-01\n---\n\nsortNames used the default sort and put Bob before alice. Fixed by sorting with compareText from src/text.mjs.\n"
+        },
+        "op": {
+          "domain": "javascript",
+          "slug": "display-order-compare-text",
+          "trigger": "sorting or ordering names, tags or lists in display order",
+          "body": "Sort display lists with compareText from src/text.mjs; default sort, localeCompare and Collator order case wrongly."
+        }
+      },
+      "tasks": [
+        {
+          "id": "sort-names",
+          "trap": "first",
+          "prompt": "Implement sortNames(names) in src/names.mjs. Return a new array with the names sorted in display order.",
+          "files": {
+            "src/names.mjs": "export function sortNames(names) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/names.mjs"
+          ],
+          "seeds": [
+            "src/names.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/names.mjs",
+              "export": "sortNames",
+              "args": [
+                []
+              ],
+              "expected": []
+            },
+            {
+              "module": "src/names.mjs",
+              "export": "sortNames",
+              "args": [
+                [
+                  "carol",
+                  "bob",
+                  "Bob",
+                  "alice"
+                ]
+              ],
+              "expected": [
+                "alice",
+                "Bob",
+                "bob",
+                "carol"
+              ],
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/names.mjs",
+              "export": "sortNames",
+              "args": [
+                [
+                  "carol",
+                  "alice",
+                  "bob"
+                ]
+              ],
+              "expected": [
+                "alice",
+                "bob",
+                "carol"
+              ]
+            }
+          ],
+          "reference": {
+            "src/names.mjs": "import { compareText } from './text.mjs';\nexport function sortNames(names) {\n  return [...names].sort(compareText);\n}\n"
+          },
+          "naive": {
+            "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort();\n}\n"
+          },
+          "idioms": [
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort((a, b) => a.localeCompare(b));\n}\n"
+            },
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));\n}\n"
+            },
+            {
+              "src/names.mjs": "export function sortNames(names) {\n  return [...names].sort(new Intl.Collator('en').compare);\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "initials",
+          "trap": null,
+          "prompt": "Implement initials(name) in src/initials.mjs. Return the uppercase first letter of each word in the name.",
+          "files": {
+            "src/initials.mjs": "export function initials(name) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/initials.mjs"
+          ],
+          "seeds": [
+            "src/initials.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/initials.mjs",
+              "export": "initials",
+              "args": [
+                "grace brewster hopper"
+              ],
+              "expected": "GBH"
+            },
+            {
+              "module": "src/initials.mjs",
+              "export": "initials",
+              "args": [
+                "Ada"
+              ],
+              "expected": "A"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/initials.mjs",
+              "export": "initials",
+              "args": [
+                "Ada Lovelace"
+              ],
+              "expected": "AL"
+            }
+          ],
+          "reference": {
+            "src/initials.mjs": "export function initials(name) {\n  return name.split(/\\s+/).filter(Boolean).map(word => word[0].toUpperCase()).join('');\n}\n"
+          }
+        },
+        {
+          "id": "unique-tags",
+          "trap": "recurrence",
+          "prompt": "Implement uniqueTags(posts) in src/tags.mjs. Each post has a tags array. Return the distinct tags across all posts, sorted in display order.",
+          "files": {
+            "src/tags.mjs": "export function uniqueTags(posts) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/tags.mjs"
+          ],
+          "seeds": [
+            "src/tags.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/tags.mjs",
+              "export": "uniqueTags",
+              "args": [
+                []
+              ],
+              "expected": []
+            },
+            {
+              "module": "src/tags.mjs",
+              "export": "uniqueTags",
+              "args": [
+                [
+                  {
+                    "tags": [
+                      "zeta",
+                      "beta"
+                    ]
+                  },
+                  {
+                    "tags": [
+                      "Beta",
+                      "alpha"
+                    ]
+                  }
+                ]
+              ],
+              "expected": [
+                "alpha",
+                "Beta",
+                "beta",
+                "zeta"
+              ],
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/tags.mjs",
+              "export": "uniqueTags",
+              "args": [
+                [
+                  {
+                    "tags": [
+                      "b",
+                      "a"
+                    ]
+                  },
+                  {
+                    "tags": [
+                      "a",
+                      "c"
+                    ]
+                  }
+                ]
+              ],
+              "expected": [
+                "a",
+                "b",
+                "c"
+              ]
+            }
+          ],
+          "reference": {
+            "src/tags.mjs": "import { compareText } from './text.mjs';\nexport function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort(compareText);\n}\n"
+          },
+          "naive": {
+            "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort();\n}\n"
+          },
+          "idioms": [
+            {
+              "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort((a, b) => a.localeCompare(b));\n}\n"
+            },
+            {
+              "src/tags.mjs": "export function uniqueTags(posts) {\n  return [...new Set(posts.flatMap(post => post.tags))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "slugify",
+          "trap": null,
+          "prompt": "Implement slugify(title) in src/slug.mjs. Return the title in lowercase with runs of whitespace replaced by single hyphens and no leading or trailing hyphen.",
+          "files": {
+            "src/slug.mjs": "export function slugify(title) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/slug.mjs"
+          ],
+          "seeds": [
+            "src/slug.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/slug.mjs",
+              "export": "slugify",
+              "args": [
+                "  Multiple   spaces here "
+              ],
+              "expected": "multiple-spaces-here"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/slug.mjs",
+              "export": "slugify",
+              "args": [
+                "Hello World"
+              ],
+              "expected": "hello-world"
+            }
+          ],
+          "reference": {
+            "src/slug.mjs": "export function slugify(title) {\n  return title.trim().toLowerCase().split(/\\s+/).filter(Boolean).join('-');\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "orders-csv",
+      "split": "development",
+      "trap": {
+        "id": "string-csv-fields",
+        "description": "Rows from parseCsv keep every field as a string; numeric fields need Number() before arithmetic or comparison."
+      },
+      "files": {
+        "package.json": "{ \"name\": \"orders\", \"private\": true, \"type\": \"module\" }\n",
+        "README.md": "# Orders\n\nOrder report helpers. Rows come from `parseCsv` in `src/csv.mjs`. See docs/CONVENTIONS.md.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nRows returned by `parseCsv` keep every field as a string, including quantities and prices. Convert numeric fields with `Number()` before arithmetic or comparison.\n",
+        "src/csv.mjs": "export function parseCsv(text) {\n  const [header, ...lines] = text.trim().split('\\n');\n  const keys = header.split(',');\n  return lines.map(line => Object.fromEntries(line.split(',').map((value, i) => [keys[i], value])));\n}\n"
+      },
+      "seed": {
+        "episode": {
+          "path": "docs/solutions/seed/csv-fields-are-strings.md",
+          "content": "---\ntitle: \"CSV fields are strings\"\nkind: fix\ndate: 2026-11-01\n---\n\ntotalQuantity concatenated qty strings from parseCsv rows. Fixed by converting with Number().\n"
+        },
+        "op": {
+          "domain": "javascript",
+          "slug": "csv-rows-string-fields",
+          "trigger": "adding or summing quantity, price or shipping fields of order rows",
+          "body": "Order rows from parseCsv hold strings; convert quantity, price and shipping fields with Number() before adding."
+        }
+      },
+      "tasks": [
+        {
+          "id": "total-quantity",
+          "trap": "first",
+          "prompt": "Implement totalQuantity(rows) in src/orders.mjs. rows are order rows as returned by parseCsv. Return the sum of the qty field.",
+          "files": {
+            "src/orders.mjs": "export function totalQuantity(rows) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/orders.mjs"
+          ],
+          "seeds": [
+            "src/orders.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/orders.mjs",
+              "export": "totalQuantity",
+              "args": [
+                []
+              ],
+              "expected": 0
+            },
+            {
+              "module": "src/orders.mjs",
+              "export": "totalQuantity",
+              "args": [
+                [
+                  {
+                    "qty": "2"
+                  },
+                  {
+                    "qty": "3"
+                  }
+                ]
+              ],
+              "expected": 5,
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/orders.mjs",
+              "export": "totalQuantity",
+              "args": [
+                [
+                  {
+                    "qty": 2
+                  },
+                  {
+                    "qty": 3
+                  }
+                ]
+              ],
+              "expected": 5
+            }
+          ],
+          "reference": {
+            "src/orders.mjs": "export function totalQuantity(rows) {\n  return rows.reduce((sum, row) => sum + Number(row.qty), 0);\n}\n"
+          },
+          "naive": {
+            "src/orders.mjs": "export function totalQuantity(rows) {\n  return rows.reduce((sum, row) => sum + row.qty, 0);\n}\n"
+          },
+          "idioms": [
+            {
+              "src/orders.mjs": "export function totalQuantity(rows) {\n  return rows.map(row => row.qty).reduce((a, b) => a + b, 0);\n}\n"
+            },
+            {
+              "src/orders.mjs": "export function totalQuantity(rows) {\n  let total = 0;\n  for (const row of rows) total += row.qty;\n  return total;\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "order-id",
+          "trap": null,
+          "prompt": "Implement formatOrderId(n) in src/format.mjs. Return 'ORD-' followed by n padded with zeros to at least four digits.",
+          "files": {
+            "src/format.mjs": "export function formatOrderId(n) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/format.mjs"
+          ],
+          "seeds": [
+            "src/format.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/format.mjs",
+              "export": "formatOrderId",
+              "args": [
+                7
+              ],
+              "expected": "ORD-0007"
+            },
+            {
+              "module": "src/format.mjs",
+              "export": "formatOrderId",
+              "args": [
+                12345
+              ],
+              "expected": "ORD-12345"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/format.mjs",
+              "export": "formatOrderId",
+              "args": [
+                42
+              ],
+              "expected": "ORD-0042"
+            }
+          ],
+          "reference": {
+            "src/format.mjs": "export function formatOrderId(n) {\n  return `ORD-${String(n).padStart(4, '0')}`;\n}\n"
+          }
+        },
+        {
+          "id": "order-total",
+          "trap": "recurrence",
+          "prompt": "Implement orderTotal(row) in src/total.mjs. row is one order row as returned by parseCsv. Return its price plus its shipping, as a number.",
+          "files": {
+            "src/total.mjs": "export function orderTotal(row) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/total.mjs"
+          ],
+          "seeds": [
+            "src/total.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/total.mjs",
+              "export": "orderTotal",
+              "args": [
+                {
+                  "price": 0,
+                  "shipping": 0
+                }
+              ],
+              "expected": 0
+            },
+            {
+              "module": "src/total.mjs",
+              "export": "orderTotal",
+              "args": [
+                {
+                  "price": "9",
+                  "shipping": "3"
+                }
+              ],
+              "expected": 12,
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/total.mjs",
+              "export": "orderTotal",
+              "args": [
+                {
+                  "price": 9,
+                  "shipping": 3
+                }
+              ],
+              "expected": 12
+            }
+          ],
+          "reference": {
+            "src/total.mjs": "export function orderTotal(row) {\n  return Number(row.price) + Number(row.shipping);\n}\n"
+          },
+          "naive": {
+            "src/total.mjs": "export function orderTotal(row) {\n  return row.price + row.shipping;\n}\n"
+          },
+          "idioms": [
+            {
+              "src/total.mjs": "export function orderTotal(row) {\n  return Number(row.price + row.shipping);\n}\n"
+            },
+            {
+              "src/total.mjs": "export function orderTotal({ price, shipping }) {\n  return [price, shipping].reduce((a, b) => a + b, 0);\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "active-only",
+          "trap": null,
+          "prompt": "Implement activeOnly(rows) in src/filter.mjs. Return the rows whose status is 'active', in their original order.",
+          "files": {
+            "src/filter.mjs": "export function activeOnly(rows) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/filter.mjs"
+          ],
+          "seeds": [
+            "src/filter.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/filter.mjs",
+              "export": "activeOnly",
+              "args": [
+                [
+                  {
+                    "id": "1",
+                    "status": "paused"
+                  },
+                  {
+                    "id": "2",
+                    "status": "active"
+                  }
+                ]
+              ],
+              "expected": [
+                {
+                  "id": "2",
+                  "status": "active"
+                }
+              ]
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/filter.mjs",
+              "export": "activeOnly",
+              "args": [
+                [
+                  {
+                    "status": "active"
+                  }
+                ]
+              ],
+              "expected": [
+                {
+                  "status": "active"
+                }
+              ]
+            }
+          ],
+          "reference": {
+            "src/filter.mjs": "export function activeOnly(rows) {\n  return rows.filter(row => row.status === 'active');\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "invoice-rounding",
+      "split": "held-out",
+      "trap": {
+        "id": "decimal-rounding",
+        "description": "Money is rounded with roundCents; toFixed misrounds binary halves such as 1.005."
+      },
+      "files": {
+        "package.json": "{ \"name\": \"invoices\", \"private\": true, \"type\": \"module\" }\n",
+        "README.md": "# Invoices\n\nInvoice helpers. See docs/CONVENTIONS.md.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nRound money to cents with `roundCents` from `src/money.mjs`. `toFixed(2)` and `Math.round(x * 100)` misround values such as 1.005, because they are stored just below the half.\n",
+        "src/money.mjs": "export function roundCents(value) {\n  return Math.round((value + Number.EPSILON) * 100) / 100;\n}\n"
+      },
+      "seed": {
+        "episode": {
+          "path": "docs/solutions/seed/round-cents.md",
+          "content": "---\ntitle: \"Round money with roundCents\"\nkind: fix\ndate: 2026-11-01\n---\n\nformatTotal used toFixed and printed 1.00 for 1.005. Fixed by rounding with roundCents from src/money.mjs first.\n"
+        },
+        "op": {
+          "domain": "javascript",
+          "slug": "money-round-cents",
+          "trigger": "rounding money amounts, totals or tax to cents",
+          "body": "Round money with roundCents from src/money.mjs; toFixed misrounds halves such as 1.005."
+        }
+      },
+      "tasks": [
+        {
+          "id": "format-total",
+          "trap": "first",
+          "prompt": "Implement formatTotal(amount) in src/invoice.mjs. Return the amount rounded to cents as a string with exactly two decimals.",
+          "files": {
+            "src/invoice.mjs": "export function formatTotal(amount) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/invoice.mjs"
+          ],
+          "seeds": [
+            "src/invoice.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/invoice.mjs",
+              "export": "formatTotal",
+              "args": [
+                3
+              ],
+              "expected": "3.00"
+            },
+            {
+              "module": "src/invoice.mjs",
+              "export": "formatTotal",
+              "args": [
+                1.005
+              ],
+              "expected": "1.01",
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/invoice.mjs",
+              "export": "formatTotal",
+              "args": [
+                2.5
+              ],
+              "expected": "2.50"
+            }
+          ],
+          "reference": {
+            "src/invoice.mjs": "import { roundCents } from './money.mjs';\nexport function formatTotal(amount) {\n  return roundCents(amount).toFixed(2);\n}\n"
+          },
+          "naive": {
+            "src/invoice.mjs": "export function formatTotal(amount) {\n  return amount.toFixed(2);\n}\n"
+          },
+          "idioms": [
+            {
+              "src/invoice.mjs": "export function formatTotal(amount) {\n  return (Math.round(amount * 100) / 100).toFixed(2);\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "invoice-label",
+          "trap": null,
+          "prompt": "Implement invoiceLabel(year, n) in src/label.mjs. Return 'INV-', the year, a hyphen, and n padded with zeros to three digits.",
+          "files": {
+            "src/label.mjs": "export function invoiceLabel(year, n) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/label.mjs"
+          ],
+          "seeds": [
+            "src/label.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/label.mjs",
+              "export": "invoiceLabel",
+              "args": [
+                2026,
+                7
+              ],
+              "expected": "INV-2026-007"
+            },
+            {
+              "module": "src/label.mjs",
+              "export": "invoiceLabel",
+              "args": [
+                2025,
+                1234
+              ],
+              "expected": "INV-2025-1234"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/label.mjs",
+              "export": "invoiceLabel",
+              "args": [
+                2026,
+                42
+              ],
+              "expected": "INV-2026-042"
+            }
+          ],
+          "reference": {
+            "src/label.mjs": "export function invoiceLabel(year, n) {\n  return `INV-${year}-${String(n).padStart(3, '0')}`;\n}\n"
+          }
+        },
+        {
+          "id": "tax-amount",
+          "trap": "recurrence",
+          "prompt": "Implement taxAmount(net, rate) in src/tax.mjs. Return net multiplied by rate, rounded to cents, as a number.",
+          "files": {
+            "src/tax.mjs": "export function taxAmount(net, rate) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/tax.mjs"
+          ],
+          "seeds": [
+            "src/tax.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/tax.mjs",
+              "export": "taxAmount",
+              "args": [
+                0,
+                0.2
+              ],
+              "expected": 0
+            },
+            {
+              "module": "src/tax.mjs",
+              "export": "taxAmount",
+              "args": [
+                2.01,
+                0.5
+              ],
+              "expected": 1.01,
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/tax.mjs",
+              "export": "taxAmount",
+              "args": [
+                10,
+                0.2
+              ],
+              "expected": 2
+            }
+          ],
+          "reference": {
+            "src/tax.mjs": "import { roundCents } from './money.mjs';\nexport function taxAmount(net, rate) {\n  return roundCents(net * rate);\n}\n"
+          },
+          "naive": {
+            "src/tax.mjs": "export function taxAmount(net, rate) {\n  return Number((net * rate).toFixed(2));\n}\n"
+          },
+          "idioms": [
+            {
+              "src/tax.mjs": "export function taxAmount(net, rate) {\n  return Math.round(net * rate * 100) / 100;\n}\n"
+            },
+            {
+              "src/tax.mjs": "export function taxAmount(net, rate) {\n  return parseFloat((net * rate).toFixed(2));\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "eligible",
+          "trap": null,
+          "prompt": "Implement isEligible(total) in src/discount.mjs. Return true when the total is at least 100.",
+          "files": {
+            "src/discount.mjs": "export function isEligible(total) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/discount.mjs"
+          ],
+          "seeds": [
+            "src/discount.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/discount.mjs",
+              "export": "isEligible",
+              "args": [
+                100
+              ],
+              "expected": true
+            },
+            {
+              "module": "src/discount.mjs",
+              "export": "isEligible",
+              "args": [
+                99.99
+              ],
+              "expected": false
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/discount.mjs",
+              "export": "isEligible",
+              "args": [
+                150
+              ],
+              "expected": true
+            }
+          ],
+          "reference": {
+            "src/discount.mjs": "export function isEligible(total) {\n  return total >= 100;\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "profile-names",
+      "split": "held-out",
+      "trap": {
+        "id": "unicode-normalization",
+        "description": "User text may arrive decomposed (NFD); compare and key strings only after normalizeText."
+      },
+      "files": {
+        "package.json": "{ \"name\": \"profiles\", \"private\": true, \"type\": \"module\" }\n",
+        "README.md": "# Profiles\n\nProfile helpers. See docs/CONVENTIONS.md.\n",
+        "docs/CONVENTIONS.md": "# Conventions\n\nNames from the sign-up form may arrive decomposed (NFD) or in full-width compatibility characters from some keyboards, so the same name can have different code points. Compare or key user text only after `normalizeText` from `src/strings.mjs`, which applies NFKC, and then compare exactly: case and accents are significant (Jose and José are different people). NFC, `localeCompare` and `Intl.Collator` are not enough.\n",
+        "src/strings.mjs": "export function normalizeText(value) {\n  return value.normalize('NFKC');\n}\n"
+      },
+      "seed": {
+        "episode": {
+          "path": "docs/solutions/seed/normalize-names.md",
+          "content": "---\ntitle: \"Normalize names before comparing\"\nkind: fix\ndate: 2026-11-01\n---\n\nsameName returned false for a decomposed accented name. Fixed by comparing normalizeText values from src/strings.mjs.\n"
+        },
+        "op": {
+          "domain": "javascript",
+          "slug": "names-normalize-before-compare",
+          "trigger": "comparing, counting or deduplicating user names",
+          "body": "Compare or key names only after normalizeText (NFKC) from src/strings.mjs; names may arrive decomposed or full-width."
+        }
+      },
+      "tasks": [
+        {
+          "id": "same-name",
+          "trap": "first",
+          "prompt": "Implement sameName(a, b) in src/users.mjs. Return true when the two user names are the same name.",
+          "files": {
+            "src/users.mjs": "export function sameName(a, b) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/users.mjs"
+          ],
+          "seeds": [
+            "src/users.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Ana",
+                "Bo"
+              ],
+              "expected": false
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "José",
+                "José"
+              ],
+              "expected": true,
+              "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Ａna",
+                "Ana"
+              ],
+              "expected": true,
+              "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Jose",
+                "José"
+              ],
+              "expected": false,
+              "trap": true
+            },
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "ana",
+                "Ana"
+              ],
+              "expected": false,
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/users.mjs",
+              "export": "sameName",
+              "args": [
+                "Ana",
+                "Ana"
+              ],
+              "expected": true
+            }
+          ],
+          "reference": {
+            "src/users.mjs": "import { normalizeText } from './strings.mjs';\nexport function sameName(a, b) {\n  return normalizeText(a) === normalizeText(b);\n}\n"
+          },
+          "naive": {
+            "src/users.mjs": "export function sameName(a, b) {\n  return a === b;\n}\n"
+          },
+          "idioms": [
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b) === 0;\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.normalize() === b.normalize();\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.toLowerCase() === b.toLowerCase();\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b, undefined, { sensitivity: 'base' }) === 0;\n}\n"
+            },
+            {
+              "src/users.mjs": "export function sameName(a, b) {\n  return a.localeCompare(b, undefined, { sensitivity: 'accent' }) === 0;\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "greeting",
+          "trap": null,
+          "prompt": "Implement greeting(name) in src/greeting.mjs. Return 'Welcome, ' followed by the name and an exclamation mark.",
+          "files": {
+            "src/greeting.mjs": "export function greeting(name) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/greeting.mjs"
+          ],
+          "seeds": [
+            "src/greeting.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/greeting.mjs",
+              "export": "greeting",
+              "args": [
+                "Lin"
+              ],
+              "expected": "Welcome, Lin!"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/greeting.mjs",
+              "export": "greeting",
+              "args": [
+                "Ana"
+              ],
+              "expected": "Welcome, Ana!"
+            }
+          ],
+          "reference": {
+            "src/greeting.mjs": "export function greeting(name) {\n  return `Welcome, ${name}!`;\n}\n"
+          }
+        },
+        {
+          "id": "count-unique",
+          "trap": "recurrence",
+          "prompt": "Implement countUnique(names) in src/directory.mjs. Return how many different user names the list contains.",
+          "files": {
+            "src/directory.mjs": "export function countUnique(names) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/directory.mjs"
+          ],
+          "seeds": [
+            "src/directory.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/directory.mjs",
+              "export": "countUnique",
+              "args": [
+                []
+              ],
+              "expected": 0
+            },
+            {
+              "module": "src/directory.mjs",
+              "export": "countUnique",
+              "args": [
+                [
+                  "Zoë",
+                  "Zoë",
+                  "Ａnn",
+                  "Ann"
+                ]
+              ],
+              "expected": 2,
+              "trap": true
+            },
+            {
+              "module": "src/directory.mjs",
+              "export": "countUnique",
+              "args": [
+                [
+                  "Jose",
+                  "José",
+                  "ann",
+                  "Ann"
+                ]
+              ],
+              "expected": 4,
+              "trap": true
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/directory.mjs",
+              "export": "countUnique",
+              "args": [
+                [
+                  "a",
+                  "b",
+                  "a"
+                ]
+              ],
+              "expected": 2
+            }
+          ],
+          "reference": {
+            "src/directory.mjs": "import { normalizeText } from './strings.mjs';\nexport function countUnique(names) {\n  return new Set(names.map(normalizeText)).size;\n}\n"
+          },
+          "naive": {
+            "src/directory.mjs": "export function countUnique(names) {\n  return new Set(names).size;\n}\n"
+          },
+          "idioms": [
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  return new Set(names.map(name => name.normalize())).size;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  return names.filter((name, i) => names.findIndex(other => other.localeCompare(name) === 0) === i).length;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  const collator = new Intl.Collator('en', { sensitivity: 'base' });\n  return names.filter((name, i) => names.findIndex(other => collator.compare(other, name) === 0) === i).length;\n}\n"
+            },
+            {
+              "src/directory.mjs": "export function countUnique(names) {\n  const collator = new Intl.Collator('en', { sensitivity: 'accent' });\n  return names.filter((name, i) => names.findIndex(other => collator.compare(other, name) === 0) === i).length;\n}\n"
+            }
+          ]
+        },
+        {
+          "id": "truncate",
+          "trap": null,
+          "prompt": "Implement truncate(text, max) in src/truncate.mjs. Return text unchanged when it has at most max characters; otherwise return its first max characters followed by three dots.",
+          "files": {
+            "src/truncate.mjs": "export function truncate(text, max) {\n  throw new Error('not implemented');\n}\n"
+          },
+          "editable": [
+            "src/truncate.mjs"
+          ],
+          "seeds": [
+            "src/truncate.mjs"
+          ],
+          "checks": [
+            {
+              "module": "src/truncate.mjs",
+              "export": "truncate",
+              "args": [
+                "abcdef",
+                3
+              ],
+              "expected": "abc..."
+            },
+            {
+              "module": "src/truncate.mjs",
+              "export": "truncate",
+              "args": [
+                "abc",
+                3
+              ],
+              "expected": "abc"
+            }
+          ],
+          "publicChecks": [
+            {
+              "module": "src/truncate.mjs",
+              "export": "truncate",
+              "args": [
+                "hello world",
+                5
+              ],
+              "expected": "hello..."
+            }
+          ],
+          "reference": {
+            "src/truncate.mjs": "export function truncate(text, max) {\n  return text.length <= max ? text : `${text.slice(0, max)}...`;\n}\n"
+          }
+        }
+      ]
+    }
+  ]
+}
