@@ -48,7 +48,7 @@ Return `flow_ledger` as an array in the result object. Each row has exactly thes
 | `test` | The test that covers the flow, or `null`. |
 | `finding` | On a `defect`: the exact title of the finding this flow produced. Omit it or use `null` on other rows. |
 
-Cover every class for each entry point you trace. Each hop must name a line that exists in the workspace, and `test` must start with the path of an existing test file. A `pass` needs a covering test. A traced flow with correct behavior but no test is a `gap`, and it belongs in `testing_gaps` too. A positive flow is never `not-applicable`. Keep the ledger to at most 128 rows and 24 hops per row. A diff with no source file needs no ledger.
+Cover every class for each entry point you trace; entries that differ only in case or spacing are one entry, and at most 16 entries fit the row cap. Each hop must name a line that exists in the workspace. `test` must start with the path of an existing test file (a `test`/`spec` directory or a `.test`/`.spec` name), such as `test/export.test.mjs: rejects a zero limit`. A `pass` needs a covering test. A traced flow with correct behavior but no test is a `gap`, and it belongs in `testing_gaps` too. A positive flow is never `not-applicable`. Keep the ledger to at most 128 rows and 24 hops per row. A diff of only prose or media files (Markdown, text, images) needs no ledger.
 
 ```json
 {

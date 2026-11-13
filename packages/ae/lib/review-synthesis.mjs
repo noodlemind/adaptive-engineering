@@ -22,7 +22,9 @@ const flowText = value => typeof value === 'string' && value.trim() !== '' && va
  * cannot report a defect that the findings omit.
  */
 const HOP = /^([^\0\r\n]{1,512}):(\d+)$/;
+// The covering test is named by its file path first, such as `test/x.test.mjs: rejects empty input`.
 const testPath = value => /^[^\s:]+/.exec(value)?.[0] || '';
+const TEST_FILE = /(?:^|\/)(?:tests?|specs?|__tests__)\/|[._-](?:test|spec)\.[A-Za-z0-9]+$|(?:^|\/)test_[^/]+\.py$|Tests?\.[A-Za-z]+$/;
 
 /**
  * Line counts of workspace files, for binding ledger hops and tests to real code. Returns null for a path
@@ -35,7 +37,10 @@ export function workspaceLines(workspace) {
     if (!file || path.posix.isAbsolute(file) || /^[A-Za-z]:/.test(file) || file.split('/').includes('..')) return null;
     if (!cache.has(file)) {
       const text = readFileNoFollow(path.join(workspace, file), { root: workspace, maxBytes: 4 * 1024 * 1024 });
-      cache.set(file, text === null ? null : text.split(/\r?\n/).length);
+      // Lines, not newline-separated pieces: a trailing newline does not add a line, and an empty file has none.
+      let lines = 0;
+      if (text !== null && text.length) { for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) lines += 1; if (!text.endsWith('\n')) lines += 1; }
+      cache.set(file, text === null ? null : lines);
     }
     return cache.get(file);
   };
@@ -64,7 +69,7 @@ export function validateFlowLedger(ledger, findings = [], { lineCount = null } =
       }
     }
     if (row.test !== null && !flowText(row.test)) errors.push(`${label} test must name the covering test or be null`);
-    else if (row.test !== null && lineCount && lineCount(testPath(row.test)) === null) errors.push(`${label} test must start with the path of an existing test file`);
+    else if (row.test !== null && lineCount && (!TEST_FILE.test(testPath(row.test)) || lineCount(testPath(row.test)) === null)) errors.push(`${label} test must start with the path of an existing test file`);
     if (row.verdict === 'pass' && row.test === null) errors.push(`${label} passing flow without a covering test is a gap`);
     if (row.verdict === 'defect' && (!flowText(row.finding) || !titles.has(normalizedTitle(row.finding)))) errors.push(`${label} defect must name the title of a finding in the same result`);
     if (row.verdict !== 'defect' && row.finding !== undefined && row.finding !== null) errors.push(`${label} only a defect names a finding`);
@@ -74,7 +79,7 @@ export function validateFlowLedger(ledger, findings = [], { lineCount = null } =
   // Every traced entry point covers every class, so eight rows on one trivial entry cannot stand for the change.
   const entries = new Map();
   for (const row of rows) if (flowText(row.entry)) {
-    const key = normalizedClaim(row.entry);
+    const key = normalizedTitle(row.entry);
     if (!entries.has(key)) entries.set(key, new Set());
     entries.get(key).add(row.flow_class);
   }

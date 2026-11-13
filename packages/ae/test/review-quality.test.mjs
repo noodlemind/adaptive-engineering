@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { validateFlowLedger, synthesizeReview, FLOW_CLASSES } from '../lib/review-synthesis.mjs';
+import { validateFlowLedger, synthesizeReview, workspaceLines, FLOW_CLASSES } from '../lib/review-synthesis.mjs';
 import { reviewBudget, FLOW_REVIEWER } from '../lib/review-preparation.mjs';
 import { reviewImpact, impactDependents, MAX_IMPACT_SEEDS } from '../lib/review-impact.mjs';
 import { prepareDecision, observeDecisionInvocation, recordDecision, findingVerification } from '../lib/decision-agent.mjs';
@@ -42,6 +42,9 @@ test('the flow ledger needs every class, evidence for each verdict and a matchin
   assert.ok(validateFlowLedger(fullLedger({ boundary: { path: ['src/a.mjs:4'] } }), [], { lineCount }).errors.some(e => /does not name a line/.test(e)));
   assert.ok(validateFlowLedger(fullLedger({ boundary: { path: ['src/missing.mjs:1'] } }), [], { lineCount }).errors.some(e => /does not name a line/.test(e)));
   assert.ok(validateFlowLedger(fullLedger({ positive: { verdict: 'pass', test: 'it works' } }), [], { lineCount }).errors.some(e => /existing test file/.test(e)));
+  assert.ok(validateFlowLedger(fullLedger({ positive: { verdict: 'pass', test: 'src/a.mjs' } }), [], { lineCount }).errors.some(e => /existing test file/.test(e)), 'a source file is not a covering test');
+  // Entries that differ only in case or spacing are one entry.
+  assert.deepEqual(validateFlowLedger(FLOW_CLASSES.map((c, i) => row(c, { entry: i % 2 ? 'AE  Example' : 'ae example' }))).errors, []);
   assert.deepEqual(missing.rows, []);
   const cases = [
     [{ positive: { verdict: 'pass' } }, /without a covering test is a gap/],
@@ -228,6 +231,8 @@ test('missed defects become rules for their area and match changed files under i
   assert.equal(same.active.length, 0);
   assert.equal(same.candidates[0].missed, 1);
   assert.equal(reviewRules({ records: [record('p1', [], [miss('docs/My File.md')]), record('p2', [], [miss('docs/Ünïcode.md')])] }).active[0].area, 'docs');
+  assert.equal(reviewRules({ records: [record('p1', [], [miss('docs/Cafe\u0301.md')]), record('p2', [], [miss('docs/x.md')])] }).active[0].missed, 2, 'decomposed names count');
+  assert.equal(reviewRules({ records: [record('p1', [], [miss('docs/\u0301x.md')]), record('p2', [], [miss('docs/\u0301y.md')])] }).candidates.length + reviewRules({ records: [record('p1', [], [miss('docs/\u0301x.md')])] }).active.length, 0, 'no segment starts with a combining mark');
 });
 
 test('a missed field is validated, joins feedback identity only when present and never needs a review record', t => {
@@ -247,4 +252,30 @@ test('a missed field is validated, joins feedback identity only when present and
   for (const value of bad) assert.throws(() => validateFeedbackFields(value, { recordRoot: root, planPath: 'docs/plans/x.md' }), JSON.stringify(value).slice(0, 60));
   assert.equal(feedbackIdentity({ recalled: [], findings: [] }), JSON.stringify([[], []]), 'records without missed keep their identity');
   assert.notEqual(feedbackIdentity({ recalled: [], findings: [], missed: decision.missed }), feedbackIdentity({ recalled: [], findings: [] }));
+});
+
+test('workspace line counts ignore a trailing newline and refuse paths outside the workspace', t => {
+  const ws = tmp(t, 'ae-lines-');
+  fs.writeFileSync(path.join(ws, 'two.txt'), 'a\nb\n');
+  fs.writeFileSync(path.join(ws, 'open.txt'), 'a\nb');
+  fs.writeFileSync(path.join(ws, 'empty.txt'), '');
+  fs.writeFileSync(path.join(ws, 'crlf.txt'), 'a\r\nb\r\n');
+  fs.symlinkSync(os.tmpdir(), path.join(ws, 'out'));
+  const lines = workspaceLines(ws);
+  assert.deepEqual(['two.txt', 'open.txt', 'empty.txt', 'crlf.txt'].map(lines), [2, 2, 0, 2]);
+  for (const bad of ['../x', '/etc/passwd', 'C:/x', 'missing.txt', 'out/anything', '']) assert.equal(lines(bad), null, bad);
+});
+
+test('old decision state with a malformed finding counter is refused', t => {
+  const root = tmp(t, 'ae-finding-state-');
+  const workspace = path.join(root, 'product'), home = path.join(root, 'state');
+  fs.mkdirSync(path.join(workspace, 'src'), { recursive: true }); fs.mkdirSync(home);
+  fs.writeFileSync(path.join(workspace, 'src/a.mjs'), 'export const a = 1;\n');
+  const policy = { revision: 'consent-1', enabled: true, tools: [], types: ['finding'], create: [], update: [], memory: false, budgets: { maxDecisions: 8, maxRepairs: 2, maxAcquisitions: 2, maxSeconds: 60 } };
+  const input = { schema: 1, taskId: 'task-1', sessionId: 'session-1', type: 'finding', intent: 'Verify one finding.', finding: { packet: PACKET, id: 'c'.repeat(64), file: 'src/a.mjs', line: 1, severity: 'P2', title: 'T' }, sources: [] };
+  const prepared = prepareDecision({ workspace, home, policy, input });
+  const store = prepared.storePath, state = JSON.parse(fs.readFileSync(store, 'utf8'));
+  for (const task of Object.values(state.tasks)) task.counts.findings = -5;
+  fs.writeFileSync(store, JSON.stringify(state));
+  assert.throws(() => prepareDecision({ workspace, home, policy, input: { ...input, finding: { ...input.finding, id: 'd'.repeat(64) } } }), /malformed/);
 });

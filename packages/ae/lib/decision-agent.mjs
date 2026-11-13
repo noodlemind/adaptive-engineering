@@ -236,7 +236,8 @@ function memoryTargetNow(memory) {
 }
 
 function taskBudget(task, policy, now) {
-  if (!task || !Number.isFinite(task.startedAt) || !object(task.counts) || ['decisions', 'repairs', 'acquisitions'].some(key => !Number.isSafeInteger(task.counts[key]) || task.counts[key] < 0)) throw fail('task state is malformed');
+  if (!task || !Number.isFinite(task.startedAt) || !object(task.counts) || ['decisions', 'repairs', 'acquisitions'].some(key => !Number.isSafeInteger(task.counts[key]) || task.counts[key] < 0)
+    || (task.counts.findings !== undefined && (!Number.isSafeInteger(task.counts.findings) || task.counts.findings < 0))) throw fail('task state is malformed');
   if (now < task.startedAt || now - task.startedAt > policy.budgets.maxSeconds * 1000) throw fail('task time budget expired; escalate without renewing the task');
 }
 
@@ -475,8 +476,8 @@ export function recordDecision(options) {
     let { verdict, reason } = observation.judgment;
     const refusal = permission(request, verdict, policy, { ...options, ...loc });
     if (refusal) { verdict = 'escalate'; reason = refusal; }
-    // A finding judged `revise` needs more evidence; it is not a repair of the task's work.
-    const counter = verdict === 'revise' && request.type !== 'finding' ? 'repairs' : verdict === 'acquire' ? 'acquisitions' : null;
+    // A finding judgment needs no repair or acquisition budget: `revise` asks for evidence, not a repair of the task's work.
+    const counter = request.type === 'finding' ? null : verdict === 'revise' ? 'repairs' : verdict === 'acquire' ? 'acquisitions' : null;
     if (counter) {
       const limit = counter === 'repairs' ? policy.budgets.maxRepairs : policy.budgets.maxAcquisitions;
       if (task.counts[counter] >= limit) { verdict = 'escalate'; reason = `Task ${counter} budget exhausted; human decision or narrower work is required`; }

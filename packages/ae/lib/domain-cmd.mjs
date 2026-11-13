@@ -154,7 +154,7 @@ async function runDomainOperation(parsed, ctx) {
           let verificationFor;
           if (input?.verifications !== undefined) {
             const { findingVerification } = await import('./decision-agent.mjs');
-            verificationFor = requestId => findingVerification({ workspace, home: flags.harnessHome, requestId });
+            verificationFor = requestId => findingVerification({ workspace, home, requestId });
           }
           return assembleReview({ ...common, plan, packetId: value('--packet'), input, verificationFor });
         })();

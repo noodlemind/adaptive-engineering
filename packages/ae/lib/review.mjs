@@ -14,7 +14,6 @@ import { resolveCopilotHome } from './paths.mjs';
 import { redactedJson } from './redact.mjs';
 import { reviewPreparation, preparationIsCurrent, selectedDocumentSources, refreshDocumentSources, reviewHash, stableJson, compareText, DOCUMENT_REVIEW_DEFINITIONS, FLOW_REVIEWER } from './review-preparation.mjs';
 import { synthesizeReview, renderReview } from './review-synthesis.mjs';
-import { SOURCE_EXTENSIONS } from './repo-map/lexical-extractor.mjs';
 import { createReviewTour, validateReviewTour } from './review-tour.mjs';
 import { discoverCapabilities } from './capability-catalog.mjs';
 import * as nativeSpecialists from './native-specialist-observation.mjs';
@@ -118,7 +117,9 @@ export function prepareReview({ workspace, plan, base = null, copilotHome, kind 
   return packet;
 }
 
-const touchesSource = files => (Array.isArray(files) ? files : []).some(file => SOURCE_EXTENSIONS.has(path.extname(String(file)).toLowerCase()));
+// The ledger is waived only when every changed file is prose or media; any other file may carry behavior.
+const PROSE_OR_MEDIA = /\.(?:md|markdown|mdx|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico)$/i;
+const touchesSource = files => (Array.isArray(files) ? files : []).some(file => !PROSE_OR_MEDIA.test(String(file)));
 
 export function assembleReview({ workspace, plan, packetId, input, copilotHome, dryRun = false, home, verificationFor }) {
   const recordRoot = planRecordRoot(workspace, plan);
@@ -131,7 +132,7 @@ export function assembleReview({ workspace, plan, packetId, input, copilotHome, 
   if (input?.packet !== packetId || !Array.isArray(input.results)) throw usage('Results must reference the packet and contain a results array');
   const synthesis = synthesizeReview(workspace, packet.required, input, packet.preparation?.failures || [], packet.kind === 'document' ? packet.preparation.refs : [], scope.mode === 'selected-document-v1', {
     requireIndependent: Boolean(packet.adaptive?.independentReview), providers: packet.preparation?.providers || [],
-    // A diff with no source file (docs or config only) needs no flow ledger; one that is supplied is still checked.
+    // A diff of only prose or media files needs no flow ledger; one that is supplied is still checked.
     ledgerReviewers: packet.kind !== 'document' && packet.required.includes(FLOW_REVIEWER) && (touchesSource(packet.scope?.changedFiles) || input.results.some(r => r?.reviewer === FLOW_REVIEWER && r.flow_ledger !== undefined)) ? [FLOW_REVIEWER] : [],
     packetId, verificationFor,
     observationFor: (result, provider) => nativeSpecialists.validateReviewObservation?.({ workspace, home: plan ? planHome(workspace, plan) : home,

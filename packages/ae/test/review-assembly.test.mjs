@@ -718,3 +718,14 @@ test('assembly loads recorded finding verifications through the CLI and refuses 
   assert.equal(output.status, 1);
   assert.ok(output.value.failures.some(entry => entry.errors.some(e => /no recorded decision-agent receipt/.test(e))), output.stdout);
 });
+
+test('any changed file that is not prose or media needs the flow ledger', t => {
+  const f = fixture(t, { changed: false });
+  fs.appendFileSync(path.join(f.ws, '.gitignore'), 'build/\n');
+  const packet = f.prepare();
+  assert.deepEqual(packet.scope.changedFiles.filter(file => !file.endsWith('.md')), ['.gitignore']);
+  const bare = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
+  const refused = f.assemble(packet, bare);
+  assert.equal(refused.status, 1);
+  assert.ok(refused.value.failures.some(entry => entry.errors.some(e => /Missing flow_ledger/.test(e))));
+});

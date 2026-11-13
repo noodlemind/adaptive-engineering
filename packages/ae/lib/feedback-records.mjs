@@ -64,7 +64,8 @@ export const RULE_THRESHOLDS = Object.freeze({
 // Correctness and security findings are never treated as noise, whatever their dismissal history.
 export const NOISE_EXEMPT_REVIEWERS = Object.freeze(['spec-flow-analyzer', 'flow-tracer', 'security-reviewer', 'security-sentinel']);
 const RULE_CAP = 12, TITLE_CAP = 3;
-export const SAFE_RELATIVE_FILE = /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?! )(?!.* $)[\p{L}\p{N} ._@+\/-]{1,300}$/u;
+// Letters may carry combining marks (decomposed names, as macOS reports them), but no segment starts with one.
+export const SAFE_RELATIVE_FILE = /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*(?:^|\/)\p{M})(?! )(?!.* $)[\p{L}\p{M}\p{N} ._@+\/-]{1,300}$/u;
 const areaOf = file => {
   const dir = path.posix.dirname(file);
   return dir === '.' ? '.' : dir;
