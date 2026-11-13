@@ -166,6 +166,77 @@ test('re-running init extends an existing domain without losing its bindings', t
   assert.deepEqual(config.assets, [{ id: 'core', components: [{ id: 'ledger', repo: 'ledger' }, { id: 'gateway', repo: 'gateway' }] }]);
 });
 
+test('re-init recognises local checkouts, keeps component ids unique and prunes spec scopes that disappear', t => {
+  const f = fixture(t);
+  f.remote('ledger');
+  const ledger = f.checkout('ledger');
+  const local = path.join(f.dir, 'work', 'scratch');
+  fs.mkdirSync(local, { recursive: true });
+  f.git(local, ['init', '-q']);
+  f.git(local, ['commit', '-q', '--allow-empty', '-m', 'seed']);
+  f.run(['init', '--name', 'payments', '--repo', `ledger=${ledger}`, '--repo', `scratch=${local}`]);
+  f.run(['init', '--name', 'payments', '--accept']);
+  const again = f.run(['init', '--name', 'payments', '--repo', `scratch=${local}`]);
+  assert.deepEqual(again.repos.map(r => r.id), ['ledger', 'scratch'], 'the local-identity checkout is not added twice');
+
+  // A component named like a repo already used by another asset gets a distinct id.
+  const doc = YAML.parse(fs.readFileSync(again.draftPath, 'utf8'));
+  doc.config.assets = [{ id: 'core', components: [{ id: 'scratch', repo: 'ledger', path: 'pkg' }] }];
+  doc.config.spec_sources = [];
+  fs.writeFileSync(again.draftPath, YAML.stringify(doc));
+  const grouped = f.run(['init', '--name', 'payments', '--repo', `scratch=${local}`, '--asset', 'tools=scratch']);
+  const ids = grouped.assets.flatMap(a => a.components.map(c => c.id));
+  assert.equal(new Set(ids).size, ids.length, `component ids are unique: ${ids}`);
+  assert.deepEqual(grouped.assets.find(a => a.id === 'tools').components, [{ id: 'scratch-2', repo: 'scratch' }]);
+
+  // A spec source scoped to an asset that a later --asset empties is dropped with a note.
+  const withScope = YAML.parse(fs.readFileSync(grouped.draftPath, 'utf8'));
+  withScope.config.sources = [{ id: 'spec', local_identity: { id: 'spec', approved: true } }];
+  withScope.config.bindings.sources = { spec: local };
+  withScope.config.spec_sources = [{ source: 'spec', scope: 'asset/tools', include: [], authority: 'reference' }];
+  fs.writeFileSync(grouped.draftPath, YAML.stringify(withScope));
+  const moved = f.run(['init', '--name', 'payments', '--repo', `scratch=${local}`, '--asset', 'core=scratch']);
+  assert.deepEqual(moved.specSources, []);
+  assert.ok(moved.notes.some(n => /dropped spec source spec for asset\/tools/.test(n)), moved.notes.join('\n'));
+});
+
+test('init and accept handle hostile drafts, occupied clone targets and remote helpers', t => {
+  const f = fixture(t);
+  f.remote('ledger');
+  f.remote('gateway');
+  const cloneRoot = path.join(f.dir, 'clones');
+  fs.mkdirSync(cloneRoot);
+  fs.writeFileSync(path.join(cloneRoot, 'gateway'), 'a file, not a directory');
+  const draft = f.run(['init', '--name', 'payments', '--repo', `ledger=${REMOTE}ledger.git`, '--repo', `gateway=${REMOTE}gateway.git`, '--clone-root', cloneRoot]);
+  assert.deepEqual(draft.clones.map(c => c.repo), ['ledger']);
+  assert.deepEqual(draft.unbound, ['gateway']);
+  assert.ok(draft.notes.some(n => /clone target .*gateway exists/.test(n)));
+
+  // A second init keeps the first draft's repositories and clone plan.
+  const second = f.run(['init', '--name', 'payments', '--repo', `gateway=${REMOTE}gateway.git`, '--clone-root', path.join(f.dir, 'other')]);
+  assert.deepEqual(second.repos.map(r => r.id), ['ledger', 'gateway']);
+  assert.deepEqual(second.clones.map(c => c.repo).sort(), ['gateway', 'ledger']);
+
+  for (const broken of [{ draft_version: 1, config: { name: 'payments', repos: 'x', bindings: {} }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: [] }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: {} }, clones: [null] }]) {
+    fs.writeFileSync(second.draftPath, YAML.stringify(broken));
+    assert.throws(() => f.run(['init', '--name', 'payments', '--accept']), /unsupported shape/);
+  }
+  assert.throws(() => f.run(['init', '--name', 'other', '--repo', 'x=ext::sh -c touch% /tmp/pwned', '--clone-root', cloneRoot]), /absolute/);
+  assert.throws(() => f.run(['init', '--name', 'other', '--repo', 'x=https://example.invalid/a::b', '--clone-root', cloneRoot]), /remote helper/);
+});
+
+test('accept refuses two repositories bound to the same checkout', t => {
+  const f = fixture(t);
+  f.remote('ledger');
+  const ledger = f.checkout('ledger');
+  const draft = f.run(['init', '--name', 'payments', '--repo', `ledger=${ledger}`]);
+  const doc = YAML.parse(fs.readFileSync(draft.draftPath, 'utf8'));
+  doc.config.repos.push({ id: 'twin', origin: doc.config.repos[0].origin.replace('ledger', 'twin') });
+  doc.config.bindings.repos.twin = ledger;
+  fs.writeFileSync(draft.draftPath, YAML.stringify(doc));
+  assert.throws(() => f.run(['init', '--name', 'payments', '--accept']), /ledger and twin are both bound/);
+});
+
 test('bind repoints a repository only at a checkout with the expected origin', t => {
   const f = fixture(t);
   f.remote('ledger');

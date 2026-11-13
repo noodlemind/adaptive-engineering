@@ -83,6 +83,8 @@ function validateV1(config, name) {
 
 export function normalizeDomainOrigin(value) {
   if (!boundedText(value, 2048) || value.includes('\\')) throw failure('origin must be a bounded supported repository identity');
+  // `<helper>::<address>` makes Git run a remote helper; never accept it.
+  if (value.includes('::')) throw failure('origin must not name a Git remote helper');
   let parsed;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
     try { parsed = new URL(value); } catch { throw failure('origin must be a supported repository identity'); }
@@ -90,7 +92,7 @@ export function normalizeDomainOrigin(value) {
     if (!['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol) || !parsed.hostname || parsed.search || parsed.hash) throw failure('origin must not contain query credentials, fragments or unsupported schemes');
   } else {
     const scp = value.match(/^(?:[^@/:\s]+@)?([^@/:\s]+):([^?#\s]+)$/);
-    if (!scp || !scp[2] || scp[2].startsWith('/') || scp[2].includes('@')) throw failure('origin must be a supported repository identity without credentials');
+    if (!scp || !scp[2] || scp[2].startsWith('/') || scp[2].startsWith(':') || scp[2].includes('@')) throw failure('origin must be a supported repository identity without credentials');
     try { parsed = new URL(`ssh://${scp[1]}/${scp[2]}`); } catch { throw failure('origin must be a supported repository identity'); }
   }
   const pathname = parsed.pathname.replace(/\/+$/, '').replace(/\.git$/, '');
@@ -156,9 +158,9 @@ function validateAssets(assets, repoIds) {
       if (!validName(component.id) || componentIds.has(component.id)) throw failure('component IDs must be unique lowercase names across the domain');
       componentIds.add(component.id);
       if (!repoIds.has(component.repo)) throw failure(`component ${component.id} names an unknown repo`);
-      if (component.path !== undefined && !safeRelative(String(component.path).replace(/\/$/, ''))) throw failure(`component ${component.id} path must be a safe relative path`);
-      if (component.role !== undefined && !validName(component.role)) throw failure(`component ${component.id} role must be a lowercase name`);
-      return { id: component.id, repo: component.repo, ...(component.path !== undefined ? { path: String(component.path).replace(/\/$/, '') } : {}), ...(component.role !== undefined ? { role: component.role } : {}) };
+      if (component.path !== undefined && (typeof component.path !== 'string' || !safeRelative(component.path.replace(/\/$/, '')))) throw failure(`component ${component.id} path must be a safe relative path`);
+      if (component.role !== undefined && (typeof component.role !== 'string' || !validName(component.role))) throw failure(`component ${component.id} role must be a lowercase name`);
+      return { id: component.id, repo: component.repo, ...(component.path !== undefined ? { path: component.path.replace(/\/$/, '') } : {}), ...(component.role !== undefined ? { role: component.role } : {}) };
     });
     return { id: asset.id, components };
   });

@@ -91,7 +91,28 @@ export function stripJsonc(text) {
     out += c;
     i++;
   }
-  return out.replace(/,(\s*[}\]])/g, '$1');
+  return dropTrailingCommas(out);
+}
+
+function dropTrailingCommas(text) {
+  let out = '', inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === '\\') { out += text[++i] ?? ''; continue; }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; out += c; continue; }
+    if (c === ',') {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === '}' || text[j] === ']') continue;
+    }
+    out += c;
+  }
+  return out;
 }
 
 /** Folders listed by a VS Code `.code-workspace` file, resolved against it. */
@@ -127,7 +148,7 @@ function linkTarget(cell) {
 }
 
 const COLUMN = {
-  url: /^(repo|repository|repo url|repository url|git|git url|origin|source)$/i,
+  url: /^(repo|repository|repo url|repository url|git|git url|origin)$/i,
   id: /^(id|name|component|service|microservice|module)$/i,
   asset: /^(asset|domain area|group|system)$/i,
   role: /^(role|type|kind)$/i,
@@ -148,6 +169,7 @@ export function markdownRepoTables(text) {
       const row = cells(lines[j]);
       if (!row) break;
       const url = linkTarget(row[urlAt] || '');
+      if (!looksLikeUrl(url)) continue;
       try { normalizeDomainOrigin(url); } catch { continue; }
       rows.push({ url, id: idAt >= 0 ? row[idAt] : null, asset: assetAt >= 0 ? row[assetAt] : null, role: roleAt >= 0 ? row[roleAt] : null });
     }
@@ -161,8 +183,9 @@ function manifestRepos(value, label) {
   return value.map(entry => {
     if (typeof entry === 'string') return { url: entry };
     if (!entry || typeof entry !== 'object') throw failure(`${label} repo entries must be URLs or mappings`);
-    const url = entry.url ?? entry.origin ?? entry.repo ?? entry.repository;
-    return { url, id: entry.id ?? entry.name ?? null, asset: entry.asset ?? null, role: entry.role ?? null, component: entry.component ?? null, path: entry.path ?? null };
+    const text = value => (typeof value === 'string' && bounded(value, 1024) ? value : null);
+    const url = text(entry.url ?? entry.origin ?? entry.repo ?? entry.repository);
+    return { url, id: text(entry.id ?? entry.name), asset: text(entry.asset), role: text(entry.role), component: text(entry.component), path: text(entry.path) };
   });
 }
 
@@ -207,6 +230,23 @@ function uniqueId(wanted, taken) {
   return id;
 }
 
+/** Remove spec sources whose asset or component scope is gone; returns the removed ones. */
+function pruneSpecScopes(specSources, assets) {
+  const assetIds = new Set((assets || []).map(a => a.id));
+  const componentIds = new Set((assets || []).flatMap(a => a.components.map(c => c.id)));
+  const live = ref => ref.scope === 'domain' || (ref.scope.startsWith('asset/') && assetIds.has(ref.scope.slice(6))) || (ref.scope.startsWith('component/') && componentIds.has(ref.scope.slice(10)));
+  const dropped = specSources.filter(ref => !live(ref));
+  for (const ref of dropped) specSources.splice(specSources.indexOf(ref), 1);
+  return dropped;
+}
+
+/** A target that is missing, or an empty real directory, can take a clone. */
+function cloneTargetFree(target) {
+  const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (!stat) return true;
+  return stat.isDirectory() && !stat.isSymbolicLink() && fs.readdirSync(target).length === 0;
+}
+
 function draftPath(home, name) { return path.join(home, 'domains', `${name}.draft.yaml`); }
 
 function selectedHome(home) {
@@ -244,19 +284,25 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
   if (!fromWorkspace && !fromSpec && !repoFlags.length) throw failure('init needs --from-workspace, --from-spec or at least one --repo', 'E_USAGE');
   home = selectedHome(home);
   const existing = existingConfig(name, home);
-  const repos = existing ? existing.repos.map(repo => ({ ...repo })) : [];
-  const bindings = { repos: { ...(existing?.bindings.repos || {}) }, sources: { ...(existing?.bindings.sources || {}) } };
-  const sources = existing ? existing.sources.map(source => ({ ...source })) : [];
-  const assets = existing?.assets ? existing.assets.map(asset => ({ id: asset.id, components: asset.components.map(c => ({ ...c })) })) : [];
-  const specSources = existing?.spec_sources ? existing.spec_sources.map(ref => ({ ...ref })) : [];
+  // A pending draft already holds the published config plus earlier inputs,
+  // so a second init extends it rather than starting over.
+  const prior = fs.existsSync(draftPath(home, name)) ? readDraft(home, name).draft : null;
+  const base = prior?.config || existing;
+  const repos = base ? base.repos.map(repo => ({ ...repo })) : [];
+  const bindings = { repos: { ...(base?.bindings?.repos || {}) }, sources: { ...(base?.bindings?.sources || {}) } };
+  const sources = base?.sources ? base.sources.map(source => ({ ...source })) : [];
+  const assets = base?.assets ? base.assets.map(asset => ({ id: asset.id, components: asset.components.map(c => ({ ...c })) })) : [];
+  const specSources = base?.spec_sources ? base.spec_sources.map(ref => ({ ...ref })) : [];
   const taken = new Set([...repos.map(r => r.id), ...sources.map(s => s.id)]);
   const byOrigin = new Map(repos.filter(r => r.origin).map(r => [r.origin, r]));
-  const urls = {};
+  const urls = Object.fromEntries((prior?.clones || []).map(clone => [clone.repo, clone.url]));
   const notes = [], inputs = [];
   let defaultCloneRoot = null;
 
   const addRepo = ({ id = null, origin = null, url = null, root = null, asset = null, role = null, path: subpath = null }) => {
     let entry = origin ? byOrigin.get(origin) : null;
+    // A local-identity checkout is recognised again by its bound root.
+    if (!entry && !origin && root) entry = repos.find(r => !r.origin && bindings.repos[r.id] === root) || null;
     if (!entry) {
       const wanted = (id && NAME.test(id) ? id : null) || idFrom(id) || idFrom(url) || idFrom(root);
       if (!wanted) { notes.push(`skipped a repository without a usable name: ${url || root}`); return null; }
@@ -299,12 +345,14 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
     const specDir = safeDirectory(path.resolve(fromSpec), 'spec repository');
     const checkout = observeCheckout(specDir);
     if (!checkout) throw failure('--from-spec must name a local Git checkout of the spec repository');
-    let source = checkout.origin ? sources.find(s => s.origin === checkout.origin) : null;
+    let source = checkout.origin ? sources.find(s => s.origin === checkout.origin) : sources.find(s => !s.origin && bindings.sources[s.id] === checkout.root);
     if (!source) {
       source = checkout.origin ? { id: uniqueId(idFrom(checkout.url) || 'spec', taken), origin: checkout.origin } : { id: uniqueId(idFrom(checkout.root) || 'spec', taken), local_identity: { id: idFrom(checkout.root) || 'spec', approved: true } };
       sources.push(source);
     }
-    bindings.sources[source.id] = checkout.root;
+    // An existing binding is kept; ae domain bind moves it deliberately.
+    if (bindings.sources[source.id] && bindings.sources[source.id] !== checkout.root) notes.push(`source ${source.id} stays bound to ${bindings.sources[source.id]}; use ae domain bind --source ${source.id}=<path> to move it`);
+    bindings.sources[source.id] ??= checkout.root;
     if (!specSources.some(ref => ref.source === source.id && ref.scope === 'domain')) specSources.push({ source: source.id, scope: 'domain', include: [], authority: 'reference' });
     const declared = specRepos(checkout.root);
     inputs.push({ kind: 'spec', path: checkout.root, manifests: declared.found });
@@ -314,7 +362,8 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
       try { origin = normalizeDomainOrigin(row.url); } catch (error) { notes.push(`skipped spec repository ${String(row.url).slice(0, 200)}: ${error.message}`); continue; }
       addRepo({ id: row.id ? idFrom(row.id) : null, origin, url: row.url, asset: row.asset, role: row.role, path: row.path });
     }
-    defaultCloneRoot ??= path.dirname(checkout.root);
+    // Clones sit beside the spec repository unless --clone-root says otherwise.
+    defaultCloneRoot = path.dirname(checkout.root);
   }
 
   for (const { id, value } of parsePairs(repoFlags, '--repo')) {
@@ -334,11 +383,18 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
     if (!group) { group = { id, components: [] }; assets.push(group); }
     for (const member of members) {
       if (!repos.some(r => r.id === member)) throw failure(`--asset ${id} names an unknown repo: ${member}`, 'E_USAGE');
-      for (const other of assets) other.components = other.components.filter(c => !(c.repo === member && !c.path));
-      group.components.push({ id: member, repo: member });
+      // The whole repository moves into this asset; a moved component keeps its ID.
+      let kept = null;
+      for (const other of assets) {
+        kept ??= other.components.find(c => c.repo === member && !c.path) || null;
+        other.components = other.components.filter(c => !(c.repo === member && !c.path));
+      }
+      const componentIds = new Set(assets.flatMap(a => a.components.map(c => c.id)));
+      group.components.push(kept ? (componentIds.add(kept.id), kept) : { id: uniqueId(member, componentIds), repo: member });
     }
   }
   for (let i = assets.length - 1; i >= 0; i--) if (!assets[i].components.length) assets.splice(i, 1);
+  for (const ref of pruneSpecScopes(specSources, assets)) notes.push(`dropped spec source ${ref.source} for ${ref.scope}: that scope no longer exists`);
 
   if (!repos.length) throw failure('the inputs named no usable repositories');
   defaultCloneRoot ??= Object.values(bindings.repos)[0] ? path.dirname(Object.values(bindings.repos)[0]) : null;
@@ -351,11 +407,11 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
     const target = path.join(root, repo.id);
     const present = observeCheckout(target);
     if (present && present.origin === repo.origin && present.root === canonicalPath(target)) { bindings.repos[repo.id] = present.root; continue; }
-    if (fs.existsSync(target) && fs.readdirSync(target).length) throw failure(`clone target ${target} exists and is not a checkout of ${repo.origin}`);
+    if (!cloneTargetFree(target)) { notes.push(`clone target ${target} exists and is not a checkout of ${repo.origin}; bind ${repo.id} with ae domain bind after accepting, or pass another --clone-root`); continue; }
     clones.push({ repo: repo.id, url: urls[repo.id] || `${repo.origin}.git`, path: target });
   }
 
-  const config = { domain_version: 2, name, repos, sources, bindings, ...(existing?.shared_specs?.length ? { shared_specs: existing.shared_specs } : {}), ...(existing?.shared_conventions?.length ? { shared_conventions: existing.shared_conventions } : {}), ...(assets.length ? { assets } : {}), ...(specSources.length ? { spec_sources: specSources } : {}) };
+  const config = { domain_version: 2, name, repos, sources, bindings, ...(base?.shared_specs?.length ? { shared_specs: base.shared_specs } : {}), ...(base?.shared_conventions?.length ? { shared_conventions: base.shared_conventions } : {}), ...(assets.length ? { assets } : {}), ...(specSources.length ? { spec_sources: specSources } : {}) };
   // Validate everything except the bindings that clones will supply.
   const probe = structuredClone(config);
   for (const clone of clones) probe.bindings.repos[clone.repo] = clone.path;
@@ -378,7 +434,10 @@ function cloneHead({ url, path: target }) {
   // The user's own Git configuration and credential helpers apply; prompts
   // are disabled so an unattended run fails instead of hanging.
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  const result = spawnGitSync(['clone', '--depth', '1', '--single-branch', '--no-tags', '--', url, target], { env, encoding: 'utf8', timeout: CLONE_TIMEOUT, maxBuffer: 1024 * 1024 });
+  // Only network transports by default; remote helpers and ext:: stay off
+  // unless the user's own config allows a protocol by name.
+  const protocols = ['-c', 'protocol.allow=never', ...['https', 'http', 'ssh', 'git'].flatMap(p => ['-c', `protocol.${p}.allow=always`])];
+  const result = spawnGitSync([...protocols, 'clone', '--depth', '1', '--single-branch', '--no-tags', '--', url, target], { env, encoding: 'utf8', timeout: CLONE_TIMEOUT, maxBuffer: 1024 * 1024 });
   if (result?.status === 0) return { ok: true };
   const reason = String(result?.stderr || result?.error?.message || 'clone failed').trim().split('\n').pop().slice(0, 300);
   try { if (fs.existsSync(target) && !fs.readdirSync(target).length) fs.rmdirSync(target); } catch {}
@@ -391,9 +450,32 @@ function readDraft(home, name) {
   if (text === null) throw failure(`no draft for ${name}; run ae domain init --name ${name} with an input first`);
   let draft;
   try { draft = YAML.parse(text, { maxAliasCount: 0 }); } catch { throw failure('the domain draft is not valid YAML'); }
-  if (draft?.draft_version !== DRAFT_VERSION || !draft.config || !Array.isArray(draft.clones)) throw failure('the domain draft has an unsupported shape');
+  const mapping = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const members = value => value === undefined || (Array.isArray(value) && value.every(m => mapping(m) && typeof m.id === 'string'));
+  const shaped = draft?.draft_version === DRAFT_VERSION && mapping(draft.config) && Array.isArray(draft.clones) && draft.clones.every(mapping)
+    && Array.isArray(draft.config.repos) && members(draft.config.repos) && members(draft.config.sources)
+    && mapping(draft.config.bindings) && [draft.config.bindings.repos, draft.config.bindings.sources].every(b => b === undefined || mapping(b))
+    && (draft.config.assets === undefined || (Array.isArray(draft.config.assets) && draft.config.assets.every(a => mapping(a) && Array.isArray(a.components) && a.components.every(mapping))))
+    && (draft.config.spec_sources === undefined || (Array.isArray(draft.config.spec_sources) && draft.config.spec_sources.every(r => mapping(r) && typeof r.scope === 'string')));
+  if (!shaped) throw failure(`the domain draft has an unsupported shape; fix or delete ${file} and run init again`);
   if (draft.config.name !== name) throw failure('the domain draft names another domain');
   return { draft, file };
+}
+
+/** Two repositories of one domain cannot share a checkout. */
+function assertDistinctRepoBindings(validated) {
+  const seen = new Map();
+  for (const repo of validated.repos) {
+    const root = validated.bindings.repos[repo.id];
+    if (seen.has(root)) throw failure(`repositories ${seen.get(root)} and ${repo.id} are both bound to ${root}`);
+    seen.set(root, repo.id);
+  }
+}
+
+/** The validated config in its canonical published form. */
+function publishable(validated) {
+  const { shared_specs: specs, shared_conventions: conventions, ...rest } = validated;
+  return { ...rest, ...(specs?.length ? { shared_specs: specs } : {}), ...(conventions?.length ? { shared_conventions: conventions } : {}) };
 }
 
 /** Clone the draft's missing repositories and publish the domain config. */
@@ -416,7 +498,7 @@ export function acceptDomainDraft({ name, home, dryRun = false }) {
     const target = safeDirectory(clone.path, `clone path for ${clone.repo}`);
     const present = observeCheckout(target);
     if (present && present.origin === origin && present.root === target) { config.bindings.repos[clone.repo] = target; continue; }
-    if (fs.existsSync(target) && fs.readdirSync(target).length) { failed.push({ repo: clone.repo, path: target, reason: 'target exists and is not this repository' }); pending.push(clone); continue; }
+    if (!cloneTargetFree(target)) { failed.push({ repo: clone.repo, path: target, reason: 'target exists and is not this repository' }); pending.push(clone); continue; }
     if (dryRun) { cloned.push({ repo: clone.repo, path: target, dryRun: true }); config.bindings.repos[clone.repo] = target; continue; }
     const outcome = cloneHead({ url: clone.url, path: target });
     if (outcome.ok) { cloned.push({ repo: clone.repo, path: target }); config.bindings.repos[clone.repo] = canonicalPath(target); } else { failed.push({ repo: clone.repo, path: target, reason: outcome.reason }); pending.push(clone); }
@@ -431,19 +513,19 @@ export function acceptDomainDraft({ name, home, dryRun = false }) {
       if (!published.assets.length) delete published.assets;
     }
     if (published.spec_sources) {
-      const componentIds = new Set((published.assets || []).flatMap(a => a.components.map(c => c.id)));
-      const assetIds = new Set((published.assets || []).map(a => a.id));
-      published.spec_sources = published.spec_sources.filter(ref => ref.scope === 'domain' || (ref.scope.startsWith('asset/') && assetIds.has(ref.scope.slice(6))) || (ref.scope.startsWith('component/') && componentIds.has(ref.scope.slice(10))));
+      pruneSpecScopes(published.spec_sources, published.assets);
+      if (!published.spec_sources.length) delete published.spec_sources;
     }
   }
   if (!published.repos.length) throw failure(`no repository could be bound; failed: ${failed.map(f => `${f.repo} (${f.reason})`).join('; ') || unbound.join(', ')}`);
   const validated = validateDomainConfig(published, name);
+  assertDistinctRepoBindings(validated);
   const warnings = [];
   for (const repo of validated.repos) {
+    if (dryRun && cloned.some(c => c.repo === repo.id)) continue;
     const observed = observeDomainRepositoryIdentity(validated.bindings.repos[repo.id], repo);
-    if (dryRun && observed.status !== 'available') continue;
     const mismatch = observed.warnings.find(w => /differs|unavailable/i.test(w));
-    if (mismatch) throw failure(`${repo.id}: ${mismatch}`);
+    if (observed.status !== 'available' || mismatch) throw failure(`${repo.id}: ${mismatch || observed.warnings[0] || `checkout at ${validated.bindings.repos[repo.id]} is ${observed.status}`}`);
   }
   for (const source of validated.sources) {
     const observed = observeDomainRepositoryIdentity(validated.bindings.sources[source.id], source);
@@ -452,7 +534,7 @@ export function acceptDomainDraft({ name, home, dryRun = false }) {
   }
   const configPath = path.join(home, 'domains', `${name}.yaml`);
   if (!dryRun) {
-    if (!writeFileContained(home, path.relative(home, configPath), YAML.stringify(published))) throw failure('could not write the domain config');
+    if (!writeFileContained(home, path.relative(home, configPath), YAML.stringify(publishable(validated)))) throw failure('could not write the domain config');
     if (pending.length) {
       const rest = { draft_version: DRAFT_VERSION, config, clones: pending };
       if (!writeFileContained(home, path.relative(home, file), YAML.stringify(rest))) throw failure('could not update the domain draft');
@@ -487,7 +569,8 @@ export function bindDomain({ name, home, repos: repoFlags = [], sources: sourceF
     }
   }
   const validated = validateDomainConfig(next, name);
+  assertDistinctRepoBindings(validated);
   const configPath = path.join(home, 'domains', `${name}.yaml`);
-  if (!dryRun && !writeFileContained(home, path.relative(home, configPath), YAML.stringify(next))) throw failure('could not write the domain config');
+  if (!dryRun && !writeFileContained(home, path.relative(home, configPath), YAML.stringify(publishable(validated)))) throw failure('could not write the domain config');
   return { verb: 'bind', status: 'ok', exitCode: 0, name, home, configPath, written: !dryRun, changed, repos: validated.repos.map(repo => ({ id: repo.id, binding: validated.bindings.repos[repo.id] })) };
 }
