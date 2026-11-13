@@ -172,6 +172,7 @@ const DECLARED_VERBS = Object.freeze({
   domain: ['init', 'bind', 'show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound'],
   experiment: ['begin', 'evaluate', 'resolve', 'status'],
   flows: ['prepare', 'publish', 'status', 'show'],
+  specs: ['index', 'status', 'search', 'get'],
   diagrams: ['render', 'graph', 'flow', 'status'],
   performance: ['analyze'],
   inventory: ['show', 'refresh'],

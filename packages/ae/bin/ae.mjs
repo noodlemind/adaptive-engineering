@@ -23,7 +23,7 @@ const ui = createStyle({ argv: args, stream: process.stderr });
 const out = createStyle({ argv: args });
 
 export const HELP_COMMAND_ORDER = [
-  'host', 'mcp', 'install', 'upgrade', 'doctor', 'inventory', 'domain', 'experiment', 'performance', 'flows', 'diagrams', 'status', 'uninstall',
+  'host', 'mcp', 'install', 'upgrade', 'doctor', 'inventory', 'domain', 'specs', 'experiment', 'performance', 'flows', 'diagrams', 'status', 'uninstall',
   'init-repo', 'prepare', 'migrate', 'index', 'plan-new', 'plan-update', 'worktree', 'route', 'config',
   'model', 'trust', 'resources', 'review', 'graph',
     'orient', 'gate', 'verify', 'checks', 'exec', 'bash', 'agent', 'validate-plan', 'compound', 'recall', 'get', 'edit', 'write', 'apply', 'todo', 'undo', 'search', 'lookup', 'tree', 'run', 'inspect', 'tui', 'events', 'report',
