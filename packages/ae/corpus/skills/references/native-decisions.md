@@ -75,7 +75,7 @@ Use the common schema/task/session/intent fields with `type: "readiness"` and `p
 
 After `review assemble`, verify each P1 and P2 finding before acting on it. Use the common fields with `type: "finding"` and a `finding` object copied from the assembled record: `packet` (the review packet ID), `id`, `file`, `line`, `severity` and `title`. Put the finding's description, evidence and suggested fix, plus the cited lines and the packet's `impact` dependents, in `context`. Harness binds the finding file's bytes. The judge returns `allow` when the code shows the defect, `deny` when the code refutes it, and `revise` or `escalate` when evidence is insufficient. A cheap Node reproduction under the existing exec policy is the strongest evidence for either answer.
 
-Record the judgment as below, then assemble the same packet again with `verifications: [{"finding":"<finding id>","request":"<requestId>"}]` beside `results`. A confirmed finding is marked confirmed. A refuted P2 or P3 moves to suppressed with its receipt. A refuted P1 stays open as disputed: fix it or take it to a human. A verification without a matching recorded receipt fails assembly. A finding judgment grants no authority.
+Record the judgment as below, then assemble the same packet again with `verifications: [{"finding":"<finding id>","request":"<requestId>"}]` beside `results`. A confirmed finding is marked confirmed. A refuted P2 or P3 stays listed, marked refuted with its receipt. A refuted P1 stays open as disputed: fix it or take it to a human. A verification without a matching recorded receipt fails assembly. A finding judgment grants no authority.
 
 ## Invoke, observe, record
 

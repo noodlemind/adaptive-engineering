@@ -46,20 +46,20 @@ Return `flow_ledger` as an array in the result object. Each row has exactly thes
 | `observed` | What the code actually does, from reading it; for `not-applicable`, why no input of the class can reach the change. |
 | `verdict` | `pass`, `defect`, `gap`, or `not-applicable`. |
 | `test` | The test that covers the flow, or `null`. |
-| `finding` | Only on a `defect`: the exact title of the finding this flow produced. |
+| `finding` | On a `defect`: the exact title of the finding this flow produced. Omit it or use `null` on other rows. |
 
-A `pass` needs a covering test. A traced flow with correct behavior but no test is a `gap`, and it belongs in `testing_gaps` too. A positive flow is never `not-applicable`. Keep the ledger to at most 64 rows and 24 hops per row.
+Cover every class for each entry point you trace. Each hop must name a line that exists in the workspace, and `test` must start with the path of an existing test file. A `pass` needs a covering test. A traced flow with correct behavior but no test is a `gap`, and it belongs in `testing_gaps` too. A positive flow is never `not-applicable`. Keep the ledger to at most 128 rows and 24 hops per row. A diff with no source file needs no ledger.
 
 ```json
 {
-  "flow_class": "abuse",
-  "entry": "ae compound --evidence-quote",
-  "input": "--evidence-quote followed by --category=logic",
-  "path": ["packages/ae/lib/compound.mjs:474"],
-  "expected": "Refuse with E_USAGE because the quote value is missing",
-  "observed": "Stores the flag text as the quote and exits 0",
+  "flow_class": "boundary",
+  "entry": "ae export --limit",
+  "input": "--limit 0",
+  "path": ["packages/ae/lib/export.mjs:42", "packages/ae/lib/paging.mjs:17"],
+  "expected": "Refuse with E_USAGE because a page needs at least one row",
+  "observed": "Treats 0 as no limit and exports every row",
   "verdict": "defect",
   "test": null,
-  "finding": "Swallowed flag accepted as evidence text"
+  "finding": "Zero limit exports everything"
 }
 ```

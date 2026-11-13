@@ -1,6 +1,6 @@
 {
   "schema": "review-recall-cases-v1",
-  "note": "Pre-fix heads of merged AE pull requests whose defects an external reviewer found after AE's own review. Expected defects come from those review threads; each was confirmed and fixed. Clean controls are the merged results and carry no known defect, which is not proof that none exists.",
+  "note": "Pre-fix heads of merged AE pull requests whose defects an external reviewer found after AE's own review. Expected defects come from those review threads; each was confirmed and fixed. Clean controls are the merged results and carry no known defect, which is not proof that none exists. The flow-tracing probe lists (flag-like values, CRLF, secrets split across lines) were learned from these same pull requests, so every case here is development data. Held-out cases must come from defects found after the corpus is frozen, ideally in another repository.",
   "repository": "noodlemind/adaptive-engineering",
   "cases": [
     {
@@ -123,7 +123,7 @@
     },
     {
       "id": "pr124-evidence-first",
-      "split": "held-out",
+      "split": "development",
       "pull": 124,
       "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
       "head": "fe27ac8964bb58b7ec56786a5136d524db961ca3",
@@ -154,7 +154,7 @@
     },
     {
       "id": "pr124-evidence-second",
-      "split": "held-out",
+      "split": "development",
       "pull": 124,
       "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
       "head": "7c079b2a73c1b54ce52cbdce4a2bba0f2857a091",
@@ -194,7 +194,7 @@
     },
     {
       "id": "clean-pr124-merged",
-      "split": "held-out",
+      "split": "development",
       "pull": 124,
       "base": "3d09b09bb1a79babbf64a1762b8e7f60881fe1f2",
       "head": "fd69526004c68fcc293ceb8e56980c82f88fa7a3",

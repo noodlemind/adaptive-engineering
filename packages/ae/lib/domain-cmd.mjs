@@ -148,7 +148,16 @@ async function runDomainOperation(parsed, ctx) {
     } else if (verb === 'review') {
       result = reviewVerb === 'prepare'
         ? prepareReview({ ...common, plan, base: flags.base, kind: value('--domain') || 'code', reviewers: values.get('--reviewer') || [], files: values.get('--file') || null, maxBytes: value('--max-bytes') ? Number(value('--max-bytes')) : undefined })
-        : assembleReview({ ...common, plan, packetId: value('--packet'), input: readDecision(workspace, value('--file')) });
+        : await (async () => {
+          const input = readDecision(workspace, value('--file'));
+          // Same lazy lookup as `ae review assemble`, so recorded finding verifications apply here too.
+          let verificationFor;
+          if (input?.verifications !== undefined) {
+            const { findingVerification } = await import('./decision-agent.mjs');
+            verificationFor = requestId => findingVerification({ workspace, home: flags.harnessHome, requestId });
+          }
+          return assembleReview({ ...common, plan, packetId: value('--packet'), input, verificationFor });
+        })();
     } else if (verb === 'verify') {
       result = await runVerify({ workspace, flags, domainContext, signal: ctx.signal, events: ctx.events });
       result.status = statusForVerifyResult(result);

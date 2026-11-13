@@ -14,7 +14,9 @@ const protocol = JSON.parse(fs.readFileSync(path.join(dir, 'protocol.json'), 'ut
 test('the frozen review-recall cases are well formed and tag defects with flow classes', () => {
   assert.deepEqual(validateCases(cases), []);
   for (const item of cases.cases) for (const defect of item.defects) assert.ok(FLOW_CLASSES.includes(defect.flow_class), `${item.id} ${defect.flow_class}`);
-  assert.ok(cases.cases.some(c => c.split === 'held-out' && c.defects.length));
+  // The flow-tracing probes were learned from these pull requests, so none of them can be held out.
+  assert.equal(cases.cases.some(c => c.split === 'held-out'), false);
+  assert.match(protocol.heldOut, /pending/);
   assert.equal(planTrials({ cases, protocol }).length, protocol.arms.length * cases.cases.length * protocol.repeats);
   assert.match(protocol.status, /no arm has been run/);
   assert.ok(validateCases({ schema: 'review-recall-cases-v1', cases: [{ id: 'x', split: 'dev', base: 'abc', head: 'abc', defects: [{ file: '../x', line: 0 }] }] }).length >= 4);
@@ -28,7 +30,7 @@ test('scoring matches by file and line window one to one and counts clean-contro
   assert.equal(m.missed.length, 2);
   assert.equal(m.unmatched.length, 2);
   const testCases = [{ id: 'd', defects }, { id: 'clean', defects: [] }];
-  const records = { d: { findings, suppressed: [{ reason: 'Refuted by decision-agent verification' }] }, clean: { findings: [{ file: 'z.mjs', line: 1, verification: { state: 'confirmed' } }] } };
+  const records = { d: { findings: findings.map((f, i) => i === 1 ? { ...f, verification: { state: 'refuted' } } : f) }, clean: { findings: [{ file: 'z.mjs', line: 1, verification: { state: 'confirmed' } }] } };
   const score = scoreArm({ cases: testCases, records, protocol });
   assert.equal(score.recall, 0.333);
   assert.equal(score.perClassRecall.abuse.expected, 2);
@@ -38,4 +40,21 @@ test('scoring matches by file and line window one to one and counts clean-contro
   const none = scoreArm({ cases: testCases, records: {}, protocol });
   assert.equal(none.recall, 0);
   assert.equal(none.cases[0].reviewed, false);
+});
+
+test('corpus text never quotes a held-out defect', () => {
+  const corpus = path.join(dir, '../../corpus');
+  const texts = [];
+  const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.md')) texts.push(fs.readFileSync(p, 'utf8')); } };
+  walk(corpus);
+  const all = texts.join('\n');
+  for (const item of cases.cases.filter(c => c.split === 'held-out')) {
+    for (const defect of item.defects) {
+      assert.equal(all.includes(`${path.posix.basename(defect.file)}:${defect.line}`), false, `${item.id} ${defect.file}:${defect.line}`);
+      assert.equal(all.includes(defect.summary), false, `${item.id} summary`);
+    }
+  }
+  // The worked example in flow tracing is synthetic and cites no file from any case.
+  const example = fs.readFileSync(path.join(corpus, 'skills/code-review/references/flow-tracing.md'), 'utf8').match(/```json([\s\S]*?)```/)[1];
+  for (const item of cases.cases) for (const defect of item.defects) assert.equal(example.includes(defect.file), false, defect.file);
 });

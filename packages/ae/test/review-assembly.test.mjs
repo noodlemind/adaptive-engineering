@@ -694,3 +694,27 @@ test('the code packet binds reverse dependents, and a changed dependent makes th
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr + stale.stdout, /stale|changed/);
 });
+
+test('a diff with no source file needs no flow ledger, but a supplied ledger is still checked', t => {
+  const f = fixture(t, { changed: false });
+  fs.appendFileSync(path.join(f.ws, f.plan), '\nA clarifying note.\n');
+  const packet = f.prepare();
+  assert.ok(packet.required.includes('spec-flow-analyzer'));
+  assert.ok(packet.scope.changedFiles.every(file => file.endsWith('.md')), JSON.stringify(packet.scope.changedFiles));
+  const bare = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
+  const accepted = f.assemble(packet, bare);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  const malformed = bare.map(r => r.reviewer === 'spec-flow-analyzer' ? { ...r, flow_ledger: [] } : r);
+  assert.equal(f.assemble(packet, malformed).status, 1);
+});
+
+test('assembly loads recorded finding verifications through the CLI and refuses one without a receipt', t => {
+  const f = fixture(t), packet = f.prepare();
+  const results = packet.required.map(clean);
+  results[0].findings = [finding()];
+  const first = f.assemble(packet, results).value;
+  const id = first.findings[0].id;
+  const output = f.assemble(packet, results, { verifications: [{ finding: id, request: '1'.repeat(64) }] });
+  assert.equal(output.status, 1);
+  assert.ok(output.value.failures.some(entry => entry.errors.some(e => /no recorded decision-agent receipt/.test(e))), output.stdout);
+});

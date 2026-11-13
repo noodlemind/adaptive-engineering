@@ -28,9 +28,20 @@ test('the flow ledger needs every class, evidence for each verdict and a matchin
   assert.match(validateFlowLedger(undefined).errors[0], /Missing flow_ledger/);
   assert.match(validateFlowLedger([]).errors[0], /Missing flow_ledger/);
   assert.deepEqual(validateFlowLedger(fullLedger()).errors, []);
+  assert.deepEqual(validateFlowLedger(fullLedger({ positive: { finding: null }, boundary: { finding: null } })).errors, [], 'a null finding on a non-defect row is allowed');
   assert.equal(validateFlowLedger(fullLedger()).rows.length, FLOW_CLASSES.length);
   const missing = validateFlowLedger(fullLedger().filter(r => r.flow_class !== 'abuse'));
   assert.ok(missing.errors.some(e => /missing flow classes: abuse/.test(e)));
+  // Each traced entry point covers every class: a second entry with one row is incomplete.
+  const twoEntries = validateFlowLedger([...fullLedger(), row('positive', { entry: 'ae other' })]);
+  assert.ok(twoEntries.errors.some(e => /entry ae other is missing flow classes: malformed-input/.test(e)));
+  assert.deepEqual(validateFlowLedger([...fullLedger(), ...FLOW_CLASSES.map(c => row(c, { entry: 'ae  other' }))]).errors, []);
+  // With a workspace resolver, hops and tests must name real files and lines.
+  const lineCount = file => ({ 'src/a.mjs': 3, 'test/a.test.mjs': 10 })[file] ?? null;
+  assert.deepEqual(validateFlowLedger(fullLedger({ positive: { verdict: 'pass', test: 'test/a.test.mjs: exports a' } }), [], { lineCount }).errors, []);
+  assert.ok(validateFlowLedger(fullLedger({ boundary: { path: ['src/a.mjs:4'] } }), [], { lineCount }).errors.some(e => /does not name a line/.test(e)));
+  assert.ok(validateFlowLedger(fullLedger({ boundary: { path: ['src/missing.mjs:1'] } }), [], { lineCount }).errors.some(e => /does not name a line/.test(e)));
+  assert.ok(validateFlowLedger(fullLedger({ positive: { verdict: 'pass', test: 'it works' } }), [], { lineCount }).errors.some(e => /existing test file/.test(e)));
   assert.deepEqual(missing.rows, []);
   const cases = [
     [{ positive: { verdict: 'pass' } }, /without a covering test is a gap/],
@@ -48,7 +59,7 @@ test('the flow ledger needs every class, evidence for each verdict and a matchin
   // A not-applicable negative class needs no hop; a defect binds the finding by normalized title.
   const ok = validateFlowLedger(fullLedger({ concurrency: { verdict: 'not-applicable', path: [] }, abuse: { verdict: 'defect', finding: 'swallowed  FLAG' } }), [{ title: 'Swallowed flag' }]);
   assert.deepEqual(ok.errors, []);
-  assert.match(validateFlowLedger(Array.from({ length: 65 }, () => row('positive'))).errors[0], /exceeds 64 rows/);
+  assert.match(validateFlowLedger(Array.from({ length: 129 }, () => row('positive'))).errors[0], /exceeds 128 rows/);
 });
 
 test('the review budget always spends one seat on correctness and covers JavaScript with the language reviewer', () => {
@@ -121,8 +132,12 @@ test('decision-agent verification confirms, refutes or disputes a finding only t
   const byTitle = Object.fromEntries(verified.findings.map(f => [f.title, f]));
   assert.equal(byTitle['Unchecked input'].verification.state, 'confirmed');
   assert.equal(byTitle.Critical.verification.state, 'disputed', 'a refuted P1 stays open for a person');
-  assert.equal(byTitle.Second, undefined);
-  assert.ok(verified.suppressed.some(f => f.title === 'Second' && /Refuted/.test(f.reason)));
+  assert.equal(byTitle.Second.verification.state, 'refuted', 'a refuted P2 stays listed until refutation accuracy is measured');
+  assert.equal(verified.suppressed.length, 0);
+  // The receipt must also carry the finding's title.
+  const retitled = new Map([['5'.repeat(64), { ...receipts.get('1'.repeat(64)), requestId: '5'.repeat(64), finding: { ...receipts.get('1'.repeat(64)).finding, title: 'Another claim' } }]]);
+  const wrongTitle = synthesizeReview(ws, ['code-simplicity-reviewer'], { ...input, verifications: [{ finding: ids['Unchecked input'].id, request: '5'.repeat(64) }] }, [], [], false, { packetId: PACKET, verificationFor: id => retitled.get(id) });
+  assert.ok(wrongTitle.failures.some(f => f.errors.some(e => /no recorded decision-agent receipt/.test(e))));
   // A receipt for another packet, location or severity never applies.
   const other = new Map([['4'.repeat(64), { ...receipts.get('1'.repeat(64)), requestId: '4'.repeat(64), finding: { ...receipts.get('1'.repeat(64)).finding, packet: 'b'.repeat(64) } }]]);
   const mismatched = synthesizeReview(ws, ['code-simplicity-reviewer'], { ...input, verifications: [{ finding: ids['Unchecked input'].id, request: '4'.repeat(64) }] }, [], [], false, { packetId: PACKET, verificationFor: id => other.get(id) });
@@ -159,6 +174,10 @@ test('the decision agent judges a finding moment and the receipt is readable for
   assert.deepEqual(verification.finding, value);
   assert.match(verification.receipt, /^[a-f0-9]{64}$/);
   assert.equal(findingVerification({ workspace, home, requestId: 'not-an-id' }), null);
+  // Finding moments use their own counter: a tight decision budget still allows verification, and vice versa.
+  const tight = { ...policy, budgets: { ...policy.budgets, maxDecisions: 1 } };
+  for (let i = 0; i < 3; i += 1) prepareDecision({ workspace, home, policy: tight, input: { ...input, taskId: 'task-2', finding: { ...value, id: String(i).repeat(64) } } });
+  prepareDecision({ workspace, home, policy: tight, input: { schema: 1, taskId: 'task-2', sessionId: 'session-1', type: 'action', intent: 'Run a check.', action: { tool: 'Bash', input: { command: 'true' }, cwd: workspace }, sources: [] } });
 });
 
 const record = (plan, findings = [], missed) => ({ version: 1, operation: 'op', plan, findings, ...(missed ? { missed } : {}) });
@@ -179,7 +198,7 @@ test('learned review rules need repeated dismissals across plans and never quiet
   // One plan alone, or a low dismissed share, stays a candidate.
   assert.equal(reviewRules({ records: [record('p1', [dismissed('lib/a.mjs'), dismissed('lib/b.mjs'), dismissed('lib/c.mjs')])] }).active.length, 0);
   const fixed = { ...dismissed('lib/d.mjs'), disposition: 'fixed' };
-  assert.equal(reviewRules({ records: [...records, record('p3', [fixed, fixed])] }).active.length, 0);
+  assert.equal(reviewRules({ records: [...records, record('p3', [fixed, { ...fixed, id: '2'.repeat(64) }])] }).active.length, 0);
   for (const reviewer of ['spec-flow-analyzer', 'security-sentinel']) {
     const exempt = reviewRules({ records: [1, 2, 3, 4].map(n => record(`p${n}`, [dismissed('lib/a.mjs', reviewer)])) });
     assert.equal(exempt.active.length + exempt.candidates.length, 0, reviewer);
@@ -187,11 +206,14 @@ test('learned review rules need repeated dismissals across plans and never quiet
   // Unsafe or absent files never form a rule.
   assert.equal(reviewRules({ records: [1, 2, 3].map(n => record(`p${n}`, [dismissed('../x.mjs'), dismissed(undefined)])) }).candidates.length, 0);
   assert.ok(t.noiseActive >= t.noiseCandidate);
+  // Repeated decisions of one plan count a disposition once.
+  const repeated = { ...dismissed('lib/a.mjs'), id: '1'.repeat(64) };
+  assert.equal(reviewRules({ records: [record('p1', [repeated]), record('p1', [repeated]), record('p2', [dismissed('lib/b.mjs')])] }).active.length, 0);
 });
 
 test('missed defects become rules for their area and match changed files under it', () => {
   const miss = (file, source = 'copilot') => ({ file, title: `Bug in ${file}`, source });
-  const one = reviewRules({ records: [record('p1', [], [miss('lib/knowledge/a.mjs')])] });
+  const one = reviewRules({ records: [record('p1', [], [miss('lib/knowledge/a.mjs'), miss('lib/knowledge/b.mjs')])] });
   assert.equal(one.active.length, 0);
   assert.equal(one.candidates[0].kind, 'missed');
   const rules = reviewRules({ records: [record('p1', [], [miss('lib/knowledge/a.mjs')]), record('p2', [], [miss('lib/knowledge/b.mjs', 'ci')])] });
@@ -201,6 +223,11 @@ test('missed defects become rules for their area and match changed files under i
   assert.equal(rulesForFiles(rules, ['lib/knowledge/deep/c.mjs']).length, 1);
   assert.equal(rulesForFiles(rules, ['lib/knowledgebase/c.mjs']).length, 0);
   assert.equal(rulesForFiles(rules, ['lib/other.mjs']).length, 0);
+  // The same miss repeated in two decisions of one plan stays a candidate.
+  const same = reviewRules({ records: [record('p1', [], [miss('lib/x/a.mjs')]), record('p1', [], [miss('lib/x/a.mjs')])] });
+  assert.equal(same.active.length, 0);
+  assert.equal(same.candidates[0].missed, 1);
+  assert.equal(reviewRules({ records: [record('p1', [], [miss('docs/My File.md')]), record('p2', [], [miss('docs/Ünïcode.md')])] }).active[0].area, 'docs');
 });
 
 test('a missed field is validated, joins feedback identity only when present and never needs a review record', t => {

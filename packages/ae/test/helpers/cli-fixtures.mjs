@@ -265,3 +265,17 @@ export const primitiveAnalysis = `
 - Verification expectations: run prompt, host, and built-asset contracts.
 - Registry and documentation impact: update them only if a new skill is justified.
 `.trim();
+
+const FLOW_CLASSES = ['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary'];
+const SOURCE_FILE = /\.(?:java|py|[cm]?[jt]s|[jt]sx|sql|tf)$/i;
+
+/**
+ * Scripted spec-flow-analyzer ledger for delivery fixtures: every flow class left as a testing gap through
+ * line 1 of the packet's first changed source file. It exercises collection, not flow-tracing quality.
+ */
+export function scriptedFlowLedger(packet, reviewer) {
+  if (reviewer !== 'spec-flow-analyzer') return {};
+  const file = (packet?.scope?.changedFiles || []).find(name => SOURCE_FILE.test(name));
+  if (!file) return {};
+  return { flow_ledger: FLOW_CLASSES.map(flow_class => ({ flow_class, entry: `scripted ${file}`, input: `${flow_class} fixture input`, path: [`${file}:1`], expected: 'Scripted fixture expectation', observed: 'Not traced by the scripted fixture', verdict: 'gap', test: null })) };
+}

@@ -68,7 +68,7 @@ Supply a learning decision to Harness with an approved private/global publicatio
 
 When one failing line of check output shows the lesson, add it as `evidence_quote` (one line, at most 600 bytes). Harness stores only its SHA-256 and length, never the text, and accepts it only on stdin; the contract is in `learning-operations.md`. Use `decision: "no-learning"` with a rationale when no durable lesson exists. It produces no episode. Operation IDs support safe replay; reuse an ID only for the same decision and proof. Promotion recommendations are proposals, never activation authority.
 
-Report whether memory held up, so it can improve. When this plan's context pack listed learnings, add `recalled` with a `helped`, `irrelevant` or `wrong` verdict for each one you can judge. When review raised findings, add `findings` with `fixed` or `dismissed` for each one you resolved. Both fields are optional, work on `publish` and `no-learning` decisions, and are evidence for consolidation only. The field contract is in `learning-operations.md`.
+Report whether memory held up, so it can improve. When this plan's context pack listed learnings, add `recalled` with a `helped`, `irrelevant` or `wrong` verdict for each one you can judge. When review raised findings, add `findings` with `fixed` or `dismissed` for each one you resolved. When a later reviewer, check or person caught a defect review missed, add it to `missed`. All three fields are optional, work on `publish` and `no-learning` decisions, and are evidence for consolidation only. The field contract is in `learning-operations.md`.
 
 ## Continuous memory and recurring work
 

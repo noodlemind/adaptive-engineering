@@ -5,8 +5,6 @@ export const SCORE_SCHEMA = 'review-recall-score-v1';
 
 const unitLine = value => Number.isSafeInteger(value) && value > 0;
 const norm = file => String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
-// The verified-out findings an assembled record lists under `suppressed`.
-const refutedOf = record => (Array.isArray(record?.suppressed) ? record.suppressed : []).filter(f => /Refuted by decision-agent verification/.test(f?.reason || ''));
 
 /** Pair findings with expected defects: same file, line within the window, closest first, one-to-one. */
 export function matchFindings(defects, findings, { lineWindow = 8 } = {}) {
@@ -35,9 +33,7 @@ export function scoreArm({ cases, records, protocol }) {
   for (const item of cases) {
     const record = records?.[item.id] ?? null;
     const findings = Array.isArray(record?.findings) ? record.findings : [];
-    for (const f of findings) if (f?.verification) judged += 1;
-    const refutedHere = refutedOf(record);
-    refuted += refutedHere.length; judged += refutedHere.length;
+    for (const f of findings) if (f?.verification) { judged += 1; if (f.verification.state === 'refuted' || f.verification.state === 'disputed') refuted += 1; }
     if (!item.defects.length) {
       cleanFindings += findings.length;
       perCase.push({ id: item.id, kind: 'clean', reviewed: Boolean(record), findings: findings.length });

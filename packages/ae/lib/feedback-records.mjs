@@ -59,12 +59,12 @@ export function readFeedbackRecords({ workspace, home }) {
 // finding, lowers a severity or skips a reviewer; synthesis ignores it.
 export const REVIEW_RULES_SCHEMA = 'review-rules-v1';
 export const RULE_THRESHOLDS = Object.freeze({
-  noiseCandidate: 2, noiseActive: 3, noisePlans: 2, noiseShare: 0.75, missCandidate: 1, missActive: 2,
+  noiseCandidate: 2, noiseActive: 3, noisePlans: 2, noiseShare: 0.75, missCandidate: 1, missActive: 2, missPlans: 2,
 });
 // Correctness and security findings are never treated as noise, whatever their dismissal history.
 export const NOISE_EXEMPT_REVIEWERS = Object.freeze(['spec-flow-analyzer', 'flow-tracer', 'security-reviewer', 'security-sentinel']);
 const RULE_CAP = 12, TITLE_CAP = 3;
-export const SAFE_RELATIVE_FILE = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._@+\/-]{1,300}$/;
+export const SAFE_RELATIVE_FILE = /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?! )(?!.* $)[\p{L}\p{N} ._@+\/-]{1,300}$/u;
 const areaOf = file => {
   const dir = path.posix.dirname(file);
   return dir === '.' ? '.' : dir;
@@ -76,10 +76,15 @@ const order = (a, b) => b.weight - a.weight || (a.key < b.key ? -1 : a.key > b.k
 export function reviewRules({ workspace, home, records = null }) {
   const history = records || readFeedbackRecords({ workspace, home }).records;
   const noise = new Map(), misses = new Map();
+  // Several decisions of one plan can repeat a disposition or a miss; each counts once per plan.
+  const seenFindings = new Set(), seenMisses = new Set();
   for (const record of history) {
     const plan = typeof record?.plan === 'string' ? record.plan : null;
     for (const entry of Array.isArray(record?.findings) ? record.findings : []) {
       if (!['fixed', 'dismissed'].includes(entry?.disposition) || typeof entry.file !== 'string' || !SAFE_RELATIVE_FILE.test(entry.file)) continue;
+      const findingKey = JSON.stringify([plan, entry.id ?? null, entry.file]);
+      if (seenFindings.has(findingKey)) continue;
+      seenFindings.add(findingKey);
       const area = areaOf(entry.file);
       for (const reviewer of Array.isArray(entry.reviewers) ? entry.reviewers.filter(r => typeof r === 'string' && r) : []) {
         const key = `${reviewer}\u0000${area}`;
@@ -91,6 +96,9 @@ export function reviewRules({ workspace, home, records = null }) {
     }
     for (const entry of Array.isArray(record?.missed) ? record.missed : []) {
       if (typeof entry?.file !== 'string' || !SAFE_RELATIVE_FILE.test(entry.file) || typeof entry.title !== 'string') continue;
+      const missKey = JSON.stringify([plan, entry.file, entry.title]);
+      if (seenMisses.has(missKey)) continue;
+      seenMisses.add(missKey);
       const area = areaOf(entry.file);
       const row = misses.get(area) || { key: area, area, missed: 0, sources: new Set(), titles: [], plans: new Set() };
       row.missed += 1;
@@ -118,7 +126,7 @@ export function reviewRules({ workspace, home, records = null }) {
       guidance: `Reviews missed ${row.missed} defect(s) in ${row.area} that ${[...row.sources].sort().join(', ') || 'a later reviewer'} caught, such as: ${row.titles.join('; ')}. Trace the negative flows there before reporting a clean result.`,
       weight: row.missed, key: row.key,
     };
-    (row.missed >= t.missActive ? active : candidates).push(rule);
+    (row.missed >= t.missActive && row.plans.size >= t.missPlans ? active : candidates).push(rule);
   }
   const strip = ({ weight, key, ...rule }) => rule;
   active.sort(order); candidates.sort(order);

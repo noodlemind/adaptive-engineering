@@ -19,6 +19,9 @@ const MAX_STATE_BYTES = 2 * 1024 * 1024;
 // Records that could not be archived are retried by decision prepare and record at most this often.
 const ARCHIVE_RETRY_INTERVAL_MS = 5 * 1000;
 const DEFAULT_BUDGETS = Object.freeze({ maxDecisions: 24, maxRepairs: 3, maxAcquisitions: 3, maxSeconds: 900 });
+// Finding verification has its own counter, matching the most verifications one assembly accepts, so
+// verifying a large review never spends the task's action, memory or readiness decisions.
+export const MAX_FINDING_DECISIONS = 64;
 const LOCAL_INSPECTION = new Set(['read', 'Read', 'read_file', 'readFile', 'copilot_readFile', 'read_skill', 'readSkill', 'grep_search', 'file_search', 'list_dir', 'semantic_search', 'list_code_usages', 'get_errors', 'get_changed_files', 'get_search_view_results', 'test_search', 'open_file', 'codebase', 'search', 'usages', 'changes', 'problems', 'terminalLastCommand', 'get_terminal_output', 'think', 'todos']);
 const NATIVE_LOCAL_INSPECTION = new Set([...LOCAL_INSPECTION, 'ReadFile', 'Glob', 'Grep', 'ListDir', 'view', 'glob', 'grep', 'rg']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -301,8 +304,13 @@ export function prepareDecision(options) {
     if (!task) task = state.tasks[taskKey] = { startedAt: now, counts: { decisions: 0, repairs: 0, acquisitions: 0 } };
     taskBudget(task, policy, now);
     if (!lookupDecision(loc, state, requestId)) {
-      if (task.counts.decisions >= policy.budgets.maxDecisions) throw fail('task decision budget exhausted; escalate');
-      task.counts.decisions++;
+      if (packet.type === 'finding') {
+        if ((task.counts.findings || 0) >= MAX_FINDING_DECISIONS) throw fail('task finding verification budget exhausted; leave remaining findings unverified');
+        task.counts.findings = (task.counts.findings || 0) + 1;
+      } else {
+        if (task.counts.decisions >= policy.budgets.maxDecisions) throw fail('task decision budget exhausted; escalate');
+        task.counts.decisions++;
+      }
       state.requests[requestId] = { ...packet, requestId, createdAt: now };
     }
     return { schema: 1, operation: 'prepare', status: 'prepared', requestId, packet: state.requests[requestId], storePath: loc.file,

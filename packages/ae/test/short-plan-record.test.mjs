@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { externalPlansDir } from '../corpus/hooks/lib/external-plans.mjs';
 import { approveProject } from '../lib/trust.mjs';
-import { writeChecks } from './helpers/cli-fixtures.mjs';
+import { writeChecks, scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(packageRoot, '../..');
@@ -312,7 +312,7 @@ test('a short plan passes verify after a green file change', () => {
     fs.writeFileSync(path.join(c.ws, 'src', 'app.js'), 'export const n = 2;\n');
     const packet = JSON.parse(harness(c, ['review', 'prepare', '--plan', plan, '--base', 'HEAD', '--json']).stdout);
     const input = path.join(c.ws, '.harness/review-input.json');
-    fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
+    fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
     const reviewed = harness(c, ['review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json']);
     assert.equal(reviewed.status, 0, reviewed.stdout + reviewed.stderr);
     const verified = harness(c, ['verify', '--plan', plan, '--base', 'HEAD', '--json']);

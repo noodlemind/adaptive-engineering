@@ -150,7 +150,9 @@ async function positive() {
   await mutate(2);
   const packet = await f.cli('prepare-review', ['review', 'prepare', '--plan', plan, '--base', 'HEAD']);
   const review = path.join(f.ws, '.harness/decisions/review.json');
-  write(review, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture exercises review collection, not reviewer quality.'], testing_gaps: [] })) }));
+  const flowLedger = ['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary']
+    .map(flow_class => ({ flow_class, entry: 'value export', input: `${flow_class} input`, path: ['src/example.js:1'], expected: 'Export the value', observed: 'Exports the value', verdict: 'gap', test: null }));
+  write(review, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture exercises review collection, not reviewer quality.'], testing_gaps: [], ...(reviewer === 'spec-flow-analyzer' ? { flow_ledger: flowLedger } : {}) })) }));
   await f.cli('collect-review', ['review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', review]);
   assert.equal((await f.cli('passed-proof', ['verify', '--plan', plan, '--base', 'HEAD'])).outcome, 'passed');
   await mutate(4);

@@ -44,5 +44,6 @@
   "promotion": {
     "note": "Arms are compared incrementally on the same model, host and budget. A change is kept when held-out recall rises without a rise in clean-control findings. Thresholds are set before the first held-out run."
   },
-  "status": "scaffold: no arm has been run"
+  "status": "scaffold: no arm has been run",
+  "heldOut": "pending: no held-out case exists yet; recall on these cases measures fit to lessons the corpus already encodes"
 }
