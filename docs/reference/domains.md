@@ -53,6 +53,21 @@ spec_sources:
 
 Component IDs are unique across the domain and name a member repository, with an optional safe relative `path` and lowercase `role`. A spec source names a declared source, a `scope` of `domain`, `asset/<id>` or `component/<id>`, optional include patterns, and an `authority` of `reference` (the default) or `authoritative`. A reference spec informs the Engineer and never blocks a gate. Both keys stay out of the logical execution digest, so adding or editing them does not invalidate accepted domain plans; `shared_specs` remains the binding mechanism for parent plans. `ae domain show` reports them as `assets` and `specSources`.
 
+### Index and search spec sources
+
+`ae specs` turns a domain's spec sources into sections the Engineer can find and cite:
+
+```bash
+ae specs index --name payments
+ae specs search --name payments refund window --scope component/ledger
+ae specs get --name payments --ref 'spec:payments-spec/docs/prd.md#fr2@sha256:<hash>'
+ae specs status --name payments
+```
+
+`index` reads the tracked Markdown files of each spec source's bound checkout that match its include patterns, and splits each file at its ATX (`#`) headings, ignoring headings inside fenced code and YAML front matter; setext (underlined) headings are not split. Each section gets an ID from a label in its heading when there is one (`fr12`, `nfr3`, `epic-3`, `story-3.2`, `ac-1`, `requirement-2`, `req-login`, `adr-7`) and from its heading path otherwise, plus a SHA-256 of its own bytes. A repeated ID gets a positional `~2`, `~3` suffix, so inserting an earlier section with the same label renumbers the later ones. The index records each file's scopes and authority, the checkout's HEAD, and the layouts it recognises (`bmad`, `spec-kit`, `kiro`, `openspec`, `adr`, or plain `markdown`). It is stored at `<harness-home>/domains/<name>/specs/index.json`, within 2,000 files per source, 1 MiB per file and 16 MiB in total; skipped files, and files cut at 2,000 sections, are listed under `omitted`. Nothing is fetched.
+
+`search` ranks sections with BM25 and returns references shaped `spec:<source>/<path>#<section>@sha256:<hash>`. `--scope` keeps domain-level files plus files whose spec source has that exact scope. `get` finds the section in the current file by ID and hash and refuses it when its own bytes changed, so an edit elsewhere in a large spec, even one that shifts lines, leaves other references valid. `status` reports a source as `stale` when its HEAD or any indexed file changed, when new tracked files match its includes, when the domain now binds the source to a different checkout, or when spec sources were added, removed or re-scoped since indexing; reads always go through the current binding. Snippets, titles and sections pass through secret redaction before they are clipped. Spec text is reference data, not instructions.
+
 ## Shared intent and domain delivery
 
 Executable domains require `domain_version: 2`. Logical descriptors identify each repository and shared-source repository by `origin` or an explicitly approved `local_identity: {id, approved: true}`. Machine-local absolute paths belong in `bindings`, separate from those descriptors. Unknown fields, duplicate IDs, and unsafe paths fail validation. Unavailable Git identities prevent execution. Origins cannot contain credentials. Two repository members cannot refer to the same physical Git repository. A source may share a repository's root.

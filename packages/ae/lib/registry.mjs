@@ -79,6 +79,8 @@ import { createRedactor, redactedJson } from './redact.mjs';
 import { cmdModel, modelResultOf, MODEL_VERBS } from './model-cmd.mjs';
 import { cmdInspect, inspectResultOf, inspectExitFor, INSPECT_VERBS } from './inspect-cmd.mjs';
 import { cmdDomain, domainResultOf, parseDomainArguments, DOMAIN_VERBS } from './domain-cmd.mjs';
+import { cmdSpecs, specsResultOf } from './specs-cmd.mjs';
+import { SPEC_VERBS } from './spec-index.mjs';
 import { cmdExperiment, experimentResultOf, parseExperimentArguments, EXPERIMENT_VERBS } from './experiment-cmd.mjs';
 import { cmdInventory, inventoryResultOf, INVENTORY_VERBS } from './inventory-cmd.mjs';
 import { cmdPerformance, performanceResultOf, PERFORMANCE_VERBS } from './performance-cmd.mjs';
@@ -1452,6 +1454,37 @@ registerCommand({
   },
   handler: cmdFlows,
   resultOf: flowsResultOf,
+  exitOf: result => result.exitCode,
+});
+
+registerCommand({
+  name: 'specs',
+  summary: 'index, search and read a domain\'s spec sources by section',
+  group: 'engineer loop',
+  sideEffect: 'mutate',
+  instrument: false,
+  workspaceJournal: false,
+  capabilities: [],
+  outputModes: ['ledger', 'json'],
+  surfaces: ['cli', 'tui', 'agent'],
+  usage: '<index|status|search|get> --name <name> [query] [--scope <scope>] [--ref <ref>]',
+  verbs: [
+    { verb: 'index', summary: 'split the domain spec sources into hashed sections' },
+    { verb: 'status', summary: 'compare the index with the bound spec checkouts', sideEffect: 'read' },
+    { verb: 'search', summary: 'rank indexed sections for a query', sideEffect: 'read', positionals: ['query'] },
+    { verb: 'get', summary: 'read one section by reference, refusing changed bytes', sideEffect: 'read' },
+  ],
+  args: {
+    positionals: [{ name: 'verb', description: SPEC_VERBS.join('|'), required: true }, { name: 'query', description: 'search words', required: false }],
+    flags: [
+      { name: '--name', type: 'string', valueName: 'name', description: 'existing local domain name', required: true, tui: 'prompt' },
+      { name: '--scope', type: 'string', valueName: 'scope', description: 'domain, asset/<id> or component/<id> for search', verbs: ['search'], tui: 'prompt' },
+      { name: '--limit', type: 'string', valueName: 'n', description: 'search results, 1 to 50 (default 10)', verbs: ['search'], tui: 'prompt' },
+      { name: '--ref', type: 'string', valueName: 'ref', description: 'section reference spec:<source>/<path>#<section>@sha256:<hash>', required: true, verbs: ['get'], tui: 'prompt' },
+    ],
+  },
+  handler: cmdSpecs,
+  resultOf: specsResultOf,
   exitOf: result => result.exitCode,
 });
 

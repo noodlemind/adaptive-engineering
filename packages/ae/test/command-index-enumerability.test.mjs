@@ -172,6 +172,7 @@ const DECLARED_VERBS = Object.freeze({
   domain: ['init', 'bind', 'show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound'],
   experiment: ['begin', 'evaluate', 'resolve', 'status'],
   flows: ['prepare', 'publish', 'status', 'show'],
+  specs: ['index', 'status', 'search', 'get'],
   diagrams: ['render', 'graph', 'flow', 'status'],
   performance: ['analyze'],
   inventory: ['show', 'refresh'],
@@ -198,6 +199,7 @@ const VERB_FLAGS = Object.freeze({
  * same failure mode as a verb that never reached the index at all.
  */
 const VERB_POSITIONALS = Object.freeze({
+  specs: { search: ['query'] },
   graph: { deps: ['file'], dependents: ['file'], path: ['file', 'target'], explain: ['file', 'target'], impact: ['file'] },
   knowledge: { purge: ['target'], commit: ['target'], feedback: ['target'], recheck: ['target'] },
   learning: { retire: ['id'], dispute: ['id'], confirm: ['id'], promote: ['id'] },
