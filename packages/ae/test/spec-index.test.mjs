@@ -5,7 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import YAML from 'yaml';
-import { specsResultOf, parseSpecArguments } from '../lib/specs-cmd.mjs';
+import { specsResultOf, parseSpecArguments, cmdSpecs } from '../lib/specs-cmd.mjs';
+import { getCommand } from '../lib/registry.mjs';
 import { splitSections, labelOf, globToRegExp, detectFormats, parseSectionRef } from '../lib/spec-index.mjs';
 import { kindOf, intentSourcesCheck, discoverIntent } from '../lib/intent-sources.mjs';
 
@@ -250,4 +251,35 @@ test('status reports spec sources added, removed or re-scoped after indexing', t
   config.spec_sources[0].include = ['docs/*.md'];
   fs.writeFileSync(configPath, YAML.stringify(config));
   assert.match(f.run(['status']).sources[0].reason, /scopes or include patterns changed/);
+});
+
+test('search counts every occurrence of a term, and redacts heading-keyed secrets and plain-text output', t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.spec, 'docs/tf.md'), '# TF\n\n## Once\nwidget appears here.\n\n## Many\nwidget widget widget widget appears here.\n');
+  fs.writeFileSync(path.join(f.spec, 'docs/keys.md'), '# Keys\n\n## API_KEY:\nabcd1234efgh5678ijkl\n');
+  f.git(f.spec, ['add', '.']);
+  f.git(f.spec, ['commit', '-qm', 'tf']);
+  f.run(['index']);
+  const ranked = f.run(['search', 'widget']).results.map(r => r.section);
+  assert.ok(ranked.indexOf('tf/many') >= 0 && ranked.indexOf('tf/many') < ranked.indexOf('tf/once'), `repeated term outranks a single occurrence: ${ranked}`);
+  const keyHit = f.run(['search', 'abcd1234efgh5678ijkl']).results.find(r => r.section === 'keys/apikey');
+  assert.ok(keyHit, 'the key section is found');
+  assert.doesNotMatch(keyHit.snippet, /abcd1234efgh5678ijkl/);
+
+  const logged = [];
+  const original = console.log;
+  console.log = (...args) => logged.push(args.join(' '));
+  try { cmdSpecs(['search', 'refund', `ghp_${'B'.repeat(36)}`, '--name', 'payments'], { harnessHome: f.home }); }
+  finally { console.log = original; }
+  assert.doesNotMatch(logged.join('\n'), /ghp_B{10}/, 'the echoed query is redacted in text mode');
+});
+
+test('the specs registry declares the search query positional and requires --ref only for get', () => {
+  const entry = getCommand('specs');
+  assert.deepEqual(entry.verbs.find(v => v.verb === 'search').positionals, ['query']);
+  const flag = name => entry.args.flags.find(x => x.name === name);
+  assert.deepEqual(flag('--ref').verbs, ['get']);
+  assert.equal(flag('--ref').required, true);
+  assert.deepEqual(flag('--scope').verbs, ['search']);
+  assert.deepEqual(flag('--limit').verbs, ['search']);
 });

@@ -1,6 +1,6 @@
 import { parseFlags } from './flags.mjs';
 import { harnessGlobalHome } from './paths.mjs';
-import { redactedJson } from './redact.mjs';
+import { createRedactor, redactedJson } from './redact.mjs';
 import { inertLine } from './knowledge/store.mjs';
 import { SPEC_VERBS, indexDomainSpecs, specStatus, searchSpecs, getSpecSection } from './spec-index.mjs';
 
@@ -53,8 +53,10 @@ export function cmdSpecs(argv, ctx = {}) {
   const result = specsResultOf(argv, ctx), { flags } = parseSpecArguments(argv);
   if (flags.json) console.log(redactedJson(result, { pretty: flags.verbose }));
   else if (result.verb === 'search') {
-    console.log(`${result.results.length} of ${result.total} section(s) for "${inertLine(result.query)}"`);
-    for (const hit of result.results) console.log(`  ${inertLine(hit.ref)}${hit.stale ? ' (stale)' : ''}\n    ${inertLine(hit.headingPath.join(' > '))}: ${inertLine(hit.snippet)}`);
+    // The query and refs echo user and repository text; redact them like JSON output.
+    const shown = createRedactor().redactValue(result);
+    console.log(`${shown.results.length} of ${shown.total} section(s) for "${inertLine(shown.query)}"`);
+    for (const hit of shown.results) console.log(`  ${inertLine(hit.ref)}${hit.stale ? ' (stale)' : ''}\n    ${inertLine(hit.headingPath.join(' > '))}: ${inertLine(hit.snippet)}`);
   } else if (result.verb === 'get') console.log(result.text.replace(/[\x00-\x08\x0b-\x1f\x7f\x9b]/g, ''));
   else console.log(redactedJson(result, { pretty: true }));
   ctx.reportStatus?.(result.status);

@@ -14,7 +14,8 @@ import { createRedactor } from './redact.mjs';
 // It runs in Node only, reads local checkouts the domain already binds, and
 // never fetches. Spec content is reference data, not instructions.
 
-const INDEX_VERSION = 1;
+// Version 2: term counts keep every occurrence, so BM25 sees true term frequency.
+const INDEX_VERSION = 2;
 const MAX_FILES = 2000;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -165,9 +166,13 @@ function markdownOf(tracked) {
 
 function termCounts(text) {
   const counts = Object.create(null);
-  for (const line of text.split('\n')) for (const term of tokenize(line)) counts[term] = (counts[term] || 0) + 1;
+  // tokenize() deduplicates its input, so count it word by word to keep every
+  // occurrence; the result no longer depends on how lines are wrapped.
+  for (const word of text.split(/\s+/)) if (word) for (const term of tokenize(word)) counts[term] = (counts[term] || 0) + 1;
   return counts;
 }
+
+const termTotal = terms => Object.values(terms).reduce((n, c) => n + c, 0);
 
 const countOf = (terms, term) => Object.hasOwn(terms, term) && Number.isInteger(terms[term]) ? terms[term] : 0;
 
@@ -216,7 +221,11 @@ export function indexDomainSpecs({ name, home, dryRun = false }) {
       total += Buffer.byteLength(text);
       const split = splitSections(text, rel);
       if (split.truncated) omitted.push({ source: sourceId, path: rel, reason: `more than ${MAX_SECTIONS_PER_FILE} sections; the last one runs to the end of the file` });
-      const sections = split.map(s => ({ id: s.id, title: s.title, headingPath: s.headingPath, level: s.level, startLine: s.startLine, endLine: s.endLine, sha256: sha256(s.text), terms: termCounts(`${s.headingPath.join(' ')}\n${s.text}`), length: s.text.length }));
+      const sections = split.map(s => {
+        const terms = termCounts(`${s.headingPath.join(' ')}\n${s.text}`);
+        // BM25 document length is the number of indexed tokens.
+        return { id: s.id, title: s.title, headingPath: s.headingPath, level: s.level, startLine: s.startLine, endLine: s.endLine, sha256: sha256(s.text), terms, length: termTotal(terms) };
+      });
       files.push({ path: rel, sha256: sha256(text), scopes, sections });
     }
     sources.push({ id: sourceId, origin: descriptor.origin ?? null, root, status: 'indexed', refs: JSON.stringify(refs.map(ref => [ref.scope, ref.authority, ref.include])), head, dirty, formats: detectFormats(allTracked), files });
@@ -346,7 +355,11 @@ export function searchSpecs({ name, home, query, scope = null, limit = 10 }) {
     }
     const text = changedFiles.get(key);
     const stale = text === null || sha256(text) !== file.sha256;
-    const body = stale ? '' : redactSecrets(text.split('\n').slice(section.level ? section.startLine : section.startLine - 1, section.endLine).join(' ')).replace(/\s+/g, ' ').trim();
+    // Redact the whole section with its heading and line breaks first, so a
+    // key named in the heading or a multi-line secret is still recognised;
+    // only then drop the heading line and flatten whitespace for the snippet.
+    const redacted = stale ? '' : redactSecrets(text.split('\n').slice(section.startLine - 1, section.endLine).join('\n'));
+    const body = (section.level ? redacted.split('\n').slice(1) : redacted.split('\n')).join(' ').replace(/\s+/g, ' ').trim();
     return {
       ref: sectionRef(source.id, file.path, section), source: source.id, path: file.path, section: section.id, title: redactSecrets(section.title), headingPath: section.headingPath.map(h => redactSecrets(h)),
       lines: [section.startLine, section.endLine], scopes: file.scopes, score: Number(score.toFixed(6)), stale, snippet: [...body].slice(0, SNIPPET).join(''),

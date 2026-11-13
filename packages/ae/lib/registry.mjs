@@ -1471,16 +1471,16 @@ registerCommand({
   verbs: [
     { verb: 'index', summary: 'split the domain spec sources into hashed sections' },
     { verb: 'status', summary: 'compare the index with the bound spec checkouts', sideEffect: 'read' },
-    { verb: 'search', summary: 'rank indexed sections for a query', sideEffect: 'read' },
+    { verb: 'search', summary: 'rank indexed sections for a query', sideEffect: 'read', positionals: ['query'] },
     { verb: 'get', summary: 'read one section by reference, refusing changed bytes', sideEffect: 'read' },
   ],
   args: {
     positionals: [{ name: 'verb', description: SPEC_VERBS.join('|'), required: true }, { name: 'query', description: 'search words', required: false }],
     flags: [
       { name: '--name', type: 'string', valueName: 'name', description: 'existing local domain name', required: true, tui: 'prompt' },
-      { name: '--scope', type: 'string', valueName: 'scope', description: 'domain, asset/<id> or component/<id> for search', appliesToVerbs: ['search'], tui: 'prompt' },
-      { name: '--limit', type: 'string', valueName: 'n', description: 'search results, 1 to 50 (default 10)', appliesToVerbs: ['search'], tui: 'prompt' },
-      { name: '--ref', type: 'string', valueName: 'ref', description: 'section reference spec:<source>/<path>#<section>@sha256:<hash>', appliesToVerbs: ['get'], tui: 'prompt' },
+      { name: '--scope', type: 'string', valueName: 'scope', description: 'domain, asset/<id> or component/<id> for search', verbs: ['search'], tui: 'prompt' },
+      { name: '--limit', type: 'string', valueName: 'n', description: 'search results, 1 to 50 (default 10)', verbs: ['search'], tui: 'prompt' },
+      { name: '--ref', type: 'string', valueName: 'ref', description: 'section reference spec:<source>/<path>#<section>@sha256:<hash>', required: true, verbs: ['get'], tui: 'prompt' },
     ],
   },
   handler: cmdSpecs,
