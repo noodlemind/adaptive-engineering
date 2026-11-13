@@ -12,6 +12,47 @@ Inventory records source paths and local scope. CLI-selected launcher paths do n
 
 `ae domain show --name <name> --json` reads `<harness-home>/domains/<name>.yaml` without creating records or repairing drift. It reports expected identity separately from observed Git identity, checkout roots, worktree roots, HEAD, and checks-file presence. Missing or changed identities remain explicit. The original `domain_version: 1` shape remains readable. Its shared references are advisory, and its configuration cannot authorize delivery.
 
+## Create a domain
+
+A domain groups the repositories that make up one system: assets, each holding several components (microservices, workers, infrastructure), where a component is a whole repository or a folder inside one. Developers usually check out one component at a time, so the domain records how they belong together.
+
+`ae domain init` creates a domain the way `ae init-repo` sets up a repository. It reads only the inputs you name, writes a draft for review, and publishes nothing until you accept it:
+
+```bash
+ae domain init --name payments --from-workspace ~/work/payments.code-workspace
+ae domain init --name payments --from-spec /work/payments-spec --clone-root /work/payments
+ae domain init --name payments --repo ledger=/work/ledger --repo gateway=https://example.invalid/pay/gateway.git --asset core=ledger,gateway
+ae domain init --name payments --accept
+```
+
+- `--from-workspace` reads a VS Code `.code-workspace` file (comments and trailing commas allowed). Each folder that is a Git checkout joins with its origin and local path. AE still never looks for workspace files on its own; this one is used because you named it.
+- `--from-spec` names a local checkout of the domain's spec repository. AE reads the repositories it declares from the first of `ae-domain.yaml`, `.ae/domain.yaml` or `docs/ae-domain.yaml`, from `repos` front matter, and from Markdown tables with a repository column in `README.md`, `architecture.md`, `docs/architecture.md`, `docs/architecture/index.md`, `prd.md`, `docs/prd.md` or `docs/prd/index.md`. Optional `asset`, `id`/`name`/`service` and `role` columns or keys place each repository. The spec repository itself becomes a source with a domain-level spec reference.
+- `--repo id=<absolute path or URL>` and `--asset id=repo,repo` add repositories and group them directly. Inputs combine.
+
+The draft lives at `<harness-home>/domains/<name>.draft.yaml`. It lists every repository, its binding, its asset and component, and the clones still needed. Edit it if you want, for example to point a repository at an existing checkout. `--accept` then clones each missing repository from the head of its default branch (`git clone --depth 1 --single-branch --no-tags`) into `--clone-root`, which defaults to the folder holding the spec repository, the workspace file or the first bound repository. Git uses your own configuration and credential helpers; prompts are disabled so an unattended run fails instead of waiting, and credential-bearing URLs are refused. Only the `https`, `http`, `ssh` and `git` transports are allowed for clones, and origins that name a Git remote helper (`::`) are refused. A clone target that already holds something other than that repository is left alone: init notes it, and the repository stays in the draft, unbound, until you set its binding there and accept again. Accept validates the result as a version 2 domain, refuses two repositories bound to the same checkout, requires every repository checkout to be present with the expected origin (a spec source with a different origin is reported as a warning), and writes `<harness-home>/domains/<name>.yaml`. If a clone fails or a repository is still unbound, the other repositories are published and the rest stay in the draft; rerun `--accept` to retry. Bindings published since the draft was written, for example by `ae domain bind`, win over the draft's copy. `git fetch --unshallow` restores full history in a clone you start working in.
+
+Running `init` again with new inputs extends the pending draft, or the published domain when there is no draft, and keeps existing repository and source bindings; a checkout without an origin is recognised by its path. `--asset core=ledger,gateway` moves whole repositories into an asset, and a spec source whose asset or component scope no longer exists is dropped with a note. `ae domain bind --name payments --repo ledger=/work/ledger` points a repository (or `--source` a spec source) at another checkout; the checkout must have the expected origin. `--dry-run` shows either step without cloning or writing.
+
+The domain lives in the selected Harness home beside each repository's knowledge, plans and configuration, never in a product or spec repository. Init and bind grant no trust and create no plans.
+
+### Assets, components and spec sources
+
+Version 2 domains accept two optional descriptive keys:
+
+```yaml
+assets:
+  - id: core
+    components:
+      - { id: ledger-api, repo: ledger, role: service }
+      - { id: ledger-worker, repo: ledger, path: worker, role: service }
+spec_sources:
+  - { source: payments-spec, scope: domain, include: [docs/domain/**] }
+  - { source: payments-spec, scope: asset/core }
+  - { source: payments-spec, scope: component/ledger-worker, authority: reference }
+```
+
+Component IDs are unique across the domain and name a member repository, with an optional safe relative `path` and lowercase `role`. A spec source names a declared source, a `scope` of `domain`, `asset/<id>` or `component/<id>`, optional include patterns, and an `authority` of `reference` (the default) or `authoritative`. A reference spec informs the Engineer and never blocks a gate. Both keys stay out of the logical execution digest, so adding or editing them does not invalidate accepted domain plans; `shared_specs` remains the binding mechanism for parent plans. `ae domain show` reports them as `assets` and `specSources`.
+
 ## Shared intent and domain delivery
 
 Executable domains require `domain_version: 2`. Logical descriptors identify each repository and shared-source repository by `origin` or an explicitly approved `local_identity: {id, approved: true}`. Machine-local absolute paths belong in `bindings`, separate from those descriptors. Unknown fields, duplicate IDs, and unsafe paths fail validation. Unavailable Git identities prevent execution. Origins cannot contain credentials. Two repository members cannot refer to the same physical Git repository. A source may share a repository's root.

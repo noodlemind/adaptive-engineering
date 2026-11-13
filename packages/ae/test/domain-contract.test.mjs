@@ -555,7 +555,7 @@ test('show flags and explicit Harness home work outside any product workspace', 
   const result = domainResultOf(['show', '--name', 'catalog', '--harness-home', f.home, '--workspace', path.join(f.dir, 'does-not-exist'), '--json'], { harnessHome: path.join(f.dir, 'wrong-home') });
   assert.equal(result.name, 'catalog');
   assert.equal(result.configPath, f.file);
-  assert.deepEqual(DOMAIN_VERBS, ['show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound']);
+  assert.deepEqual(DOMAIN_VERBS, ['init', 'bind', 'show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound']);
   assert.equal(domainResultOf(['show', '--name=catalog'], { harnessHome: f.home }).configPath, f.file);
 });
 

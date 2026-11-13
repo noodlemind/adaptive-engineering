@@ -53,7 +53,8 @@ what it actually observes; filesystem heuristics cannot substitute for that
 host contract.
 
 An authored multi-repo domain remains the explicit mechanism for shared intent
-and delivery. Use the existing domain commands and reviewed configuration.
+and delivery. To create one from a saved workspace file you name, use
+`ae domain init --from-workspace <file>` (see [Create a domain](domains.md#create-a-domain)). Use the existing domain commands and reviewed configuration.
 Discovery does not create membership, share stores, approve trust, or permit
 mutations in another checkout. Plans stay on their bound repository unless an
 accepted domain plan supplies the existing separate authority.

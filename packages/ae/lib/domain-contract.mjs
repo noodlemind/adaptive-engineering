@@ -83,6 +83,8 @@ function validateV1(config, name) {
 
 export function normalizeDomainOrigin(value) {
   if (!boundedText(value, 2048) || value.includes('\\')) throw failure('origin must be a bounded supported repository identity');
+  // `<helper>::<address>` makes Git run a remote helper; never accept it.
+  if (value.includes('::')) throw failure('origin must not name a Git remote helper');
   let parsed;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
     try { parsed = new URL(value); } catch { throw failure('origin must be a supported repository identity'); }
@@ -90,9 +92,11 @@ export function normalizeDomainOrigin(value) {
     if (!['http:', 'https:', 'ssh:', 'git:'].includes(parsed.protocol) || !parsed.hostname || parsed.search || parsed.hash) throw failure('origin must not contain query credentials, fragments or unsupported schemes');
   } else {
     const scp = value.match(/^(?:[^@/:\s]+@)?([^@/:\s]+):([^?#\s]+)$/);
-    if (!scp || !scp[2] || scp[2].startsWith('/') || scp[2].includes('@')) throw failure('origin must be a supported repository identity without credentials');
+    if (!scp || !scp[2] || scp[2].startsWith('/') || scp[2].startsWith(':') || scp[2].includes('@')) throw failure('origin must be a supported repository identity without credentials');
     try { parsed = new URL(`ssh://${scp[1]}/${scp[2]}`); } catch { throw failure('origin must be a supported repository identity'); }
   }
+  // A host that starts with `-` could be read as an ssh option.
+  if (parsed.hostname.startsWith('-') || decodeURIComponent(parsed.username || '').startsWith('-')) throw failure('origin host must not start with -');
   const pathname = parsed.pathname.replace(/\/+$/, '').replace(/\.git$/, '');
   if (!pathname || pathname === '/') throw failure('origin must identify a repository path');
   return `${parsed.protocol}//${parsed.host}${pathname}`;
@@ -129,8 +133,76 @@ function sourceReferences(refs, sourceIds, label, convention = false) {
   }).sort((a, b) => a.source.localeCompare(b.source) || a.path.localeCompare(b.path));
 }
 
+const MAX_ASSETS = 32;
+const MAX_COMPONENTS = 64;
+const MAX_SPEC_SOURCES = 64;
+const MAX_INCLUDES = 16;
+export const SPEC_AUTHORITIES = Object.freeze(['reference', 'authoritative']);
+
+function safeRelative(value, max = 1024) {
+  return boundedText(value, max) && !path.isAbsolute(value) && !value.includes('\\') && !value.includes(':') && !value.split('/').some(part => !part || part === '.' || part === '..');
+}
+
+function validateAssets(assets, repoIds) {
+  if (assets === undefined) return { assets: [], assetIds: new Set(), componentIds: new Set() };
+  if (!Array.isArray(assets) || assets.length > MAX_ASSETS) throw failure(`assets must contain at most ${MAX_ASSETS} members`);
+  const assetIds = new Set(), componentIds = new Set();
+  let total = 0;
+  const result = assets.map(asset => {
+    objectWithKeys(asset, ['id', 'components'], 'domain asset');
+    if (!validName(asset.id) || assetIds.has(asset.id)) throw failure('asset IDs must be unique lowercase names');
+    assetIds.add(asset.id);
+    if (!Array.isArray(asset.components) || asset.components.length < 1) throw failure(`asset ${asset.id} must contain at least one component`);
+    total += asset.components.length;
+    if (total > MAX_COMPONENTS) throw failure(`assets must contain at most ${MAX_COMPONENTS} components in total`);
+    const components = asset.components.map(component => {
+      objectWithKeys(component, ['id', 'repo', 'path', 'role'], 'asset component');
+      if (!validName(component.id) || componentIds.has(component.id)) throw failure('component IDs must be unique lowercase names across the domain');
+      componentIds.add(component.id);
+      if (!repoIds.has(component.repo)) throw failure(`component ${component.id} names an unknown repo`);
+      if (component.path !== undefined && (typeof component.path !== 'string' || !safeRelative(component.path.replace(/\/$/, '')))) throw failure(`component ${component.id} path must be a safe relative path`);
+      if (component.role !== undefined && (typeof component.role !== 'string' || !validName(component.role))) throw failure(`component ${component.id} role must be a lowercase name`);
+      return { id: component.id, repo: component.repo, ...(component.path !== undefined ? { path: component.path.replace(/\/$/, '') } : {}), ...(component.role !== undefined ? { role: component.role } : {}) };
+    });
+    return { id: asset.id, components };
+  });
+  return { assets: result, assetIds, componentIds };
+}
+
+function validateSpecSources(refs, sourceIds, assetIds, componentIds) {
+  if (refs === undefined) return [];
+  if (!Array.isArray(refs) || refs.length > MAX_SPEC_SOURCES) throw failure(`spec_sources must contain at most ${MAX_SPEC_SOURCES} entries`);
+  const seen = new Set();
+  return refs.map(ref => {
+    objectWithKeys(ref, ['source', 'scope', 'include', 'authority'], 'spec source');
+    if (!sourceIds.has(ref.source)) throw failure('spec source names an unknown source');
+    const scope = ref.scope ?? 'domain';
+    const match = typeof scope === 'string' ? scope.match(/^(domain|asset|component)(?:\/(.+))?$/) : null;
+    if (!match || (match[1] === 'domain') !== (match[2] === undefined)) throw failure('spec source scope must be domain, asset/<id> or component/<id>');
+    if (match[1] === 'asset' && !assetIds.has(match[2])) throw failure('spec source scope names an unknown asset');
+    if (match[1] === 'component' && !componentIds.has(match[2])) throw failure('spec source scope names an unknown component');
+    const include = ref.include ?? [];
+    if (!Array.isArray(include) || include.length > MAX_INCLUDES || include.some(pattern => !safeRelative(pattern, 256))) throw failure(`spec source include must list at most ${MAX_INCLUDES} safe relative patterns`);
+    const authority = ref.authority ?? 'reference';
+    if (!SPEC_AUTHORITIES.includes(authority)) throw failure('spec source authority must be reference or authoritative');
+    const key = `${ref.source}\0${scope}`;
+    if (seen.has(key)) throw failure('spec_sources contains a duplicate source and scope');
+    seen.add(key);
+    return { source: ref.source, scope, include: [...include], authority };
+  });
+}
+
+/** Descriptive asset and spec-source membership. It is reference context:
+ * it never enters the logical execution digest, so adding or editing it does
+ * not invalidate accepted domain plans. */
+export function descriptiveDomainContract(config, logical = logicalDomainContract(config)) {
+  const repoIds = new Set(logical.repos.map(repo => repo.id));
+  const { assets, assetIds, componentIds } = validateAssets(config.assets, repoIds);
+  return { assets, spec_sources: validateSpecSources(config.spec_sources, new Set(logical.sources.map(source => source.id)), assetIds, componentIds) };
+}
+
 export function logicalDomainContract(config) {
-  objectWithKeys(config, ['domain_version', 'name', 'repos', 'sources', 'bindings', 'shared_specs', 'shared_conventions'], 'domain config');
+  objectWithKeys(config, ['domain_version', 'name', 'repos', 'sources', 'bindings', 'shared_specs', 'shared_conventions', 'assets', 'spec_sources'], 'domain config');
   if (config.domain_version !== 2 || !validName(config.name)) throw failure('executable domain authority requires domain_version 2 and a valid name');
   const repos = descriptors(config.repos, 'repos');
   const sources = descriptors(config.sources, 'sources', { allowEmpty: true });
@@ -138,8 +210,14 @@ export function logicalDomainContract(config) {
   return { domain_version: 2, name: config.name, repos, sources, shared_specs: sourceReferences(config.shared_specs, sourceIds, 'shared_specs'), shared_conventions: sourceReferences(config.shared_conventions, sourceIds, 'shared_conventions', true) };
 }
 
+export function validateDomainConfig(config, name) {
+  if (config?.domain_version !== 2) throw failure('domain configuration requires domain_version 2');
+  return validateV2(config, name);
+}
+
 function validateV2(config, name) {
   const logical = logicalDomainContract(config);
+  const descriptive = descriptiveDomainContract(config, logical);
   if (logical.name !== name) throw failure('config name does not match the selected domain name');
   objectWithKeys(config.bindings, ['repos', 'sources'], 'domain bindings');
   const bindings = {};
@@ -148,7 +226,7 @@ function validateV2(config, name) {
     objectWithKeys(config.bindings[kind], members.map(member => member.id), `${kind} bindings`);
     bindings[kind] = Object.fromEntries(members.map(member => [member.id, safeAbsolute(config.bindings[kind][member.id], `${kind} ${member.id} binding`)]));
   }
-  return { ...logical, bindings };
+  return { ...logical, bindings, ...(descriptive.assets.length ? { assets: descriptive.assets } : {}), ...(descriptive.spec_sources.length ? { spec_sources: descriptive.spec_sources } : {}) };
 }
 
 export function readDomain(name, { home = harnessGlobalHome() } = {}) {
@@ -300,6 +378,7 @@ export function inspectDomain(record) {
     ...(executable ? { sources: config.sources.map(source => inspectRepo({ ...source, root: config.bindings.sources[source.id] }, { normalizeIdentity: true })) } : {}),
     sharedSpecs: config.shared_specs.map(ref => ({ ...ref, authority: executable ? 'spec' : 'advisory' })),
     sharedConventions: config.shared_conventions.map(ref => ({ ...ref, authority: executable ? ref.authority : 'advisory' })),
+    ...(executable ? { assets: config.assets ?? [], specSources: config.spec_sources ?? [] } : {}),
     warnings: [executable ? 'Version 2 supports explicit accepted domain plans; these observations alone confer no execution authority.' : 'Version 1 membership and shared references are advisory; executable domain delivery is unavailable.'],
   };
 }
