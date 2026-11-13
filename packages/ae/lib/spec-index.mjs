@@ -167,8 +167,9 @@ function markdownOf(tracked) {
 function termCounts(text) {
   const counts = Object.create(null);
   // tokenize() deduplicates its input, so count it word by word to keep every
-  // occurrence; the result no longer depends on how lines are wrapped.
-  for (const word of text.split(/\s+/)) if (word) for (const term of tokenize(word)) counts[term] = (counts[term] || 0) + 1;
+  // occurrence. Split on the punctuation tokenize() drops too, so "|x|x|" or
+  // "api/users/users" count each repeat.
+  for (const word of text.replace(/[^A-Za-z0-9_\s-]/g, ' ').split(/\s+/)) if (word) for (const term of tokenize(word)) counts[term] = (counts[term] || 0) + 1;
   return counts;
 }
 

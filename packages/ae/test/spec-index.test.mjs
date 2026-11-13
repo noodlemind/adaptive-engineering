@@ -255,7 +255,7 @@ test('status reports spec sources added, removed or re-scoped after indexing', t
 
 test('search counts every occurrence of a term, and redacts heading-keyed secrets and plain-text output', t => {
   const f = fixture(t);
-  fs.writeFileSync(path.join(f.spec, 'docs/tf.md'), '# TF\n\n## Once\nwidget appears here.\n\n## Many\nwidget widget widget widget appears here.\n');
+  fs.writeFileSync(path.join(f.spec, 'docs/tf.md'), '# TF\n\n## Once\nwidget appears here.\n\n## Many\n|widget|widget|widget|widget| appears here.\n');
   fs.writeFileSync(path.join(f.spec, 'docs/keys.md'), '# Keys\n\n## API_KEY:\nabcd1234efgh5678ijkl\n');
   f.git(f.spec, ['add', '.']);
   f.git(f.spec, ['commit', '-qm', 'tf']);
