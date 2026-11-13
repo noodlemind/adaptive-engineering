@@ -34,7 +34,7 @@ export function parseSpecArguments(argv) {
   if (verb === 'search' && !words.length) throw usage('search needs a query');
   if (verb !== 'search' && words.length) throw usage('unexpected positional argument');
   if (verb === 'get' && !values.get('--ref')) throw usage('get requires --ref');
-  if (values.has('--limit') && !/^\d+$/.test(values.get('--limit'))) throw usage('--limit requires an integer');
+  if (values.has('--limit') && (!/^\d+$/.test(values.get('--limit')) || Number(values.get('--limit')) < 1 || Number(values.get('--limit')) > 50)) throw usage('--limit requires an integer from 1 to 50');
   return { verb, name, query: words.join(' '), values, flags: parseFlags(argv) };
 }
 
