@@ -10,6 +10,45 @@ const normalizedClaim = text => text.trim().replace(/\s+/g, ' ');
 export const findingIdentity = finding => reviewHash({ file: finding.file, line: finding.line, title: normalizedTitle(finding.title), description: normalizedClaim(finding.description), suggested_fix: normalizedClaim(finding.suggested_fix) });
 const findingOrder = (a, b) => severityRank[a.severity] - severityRank[b.severity] || b.confidence - a.confidence || compareText(a.file, b.file) || a.line - b.line || compareText(a.title, b.title) || compareText(stableJson(a), stableJson(b));
 
+export const FLOW_CLASSES = Object.freeze(['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary']);
+export const FLOW_VERDICTS = Object.freeze(['pass', 'defect', 'gap', 'not-applicable']);
+const FLOW_ROW_KEYS = Object.freeze(['flow_class', 'entry', 'input', 'path', 'expected', 'observed', 'verdict', 'test', 'finding']);
+const MAX_FLOW_ROWS = 64, MAX_FLOW_TEXT = 2000, MAX_FLOW_HOPS = 24;
+const flowText = value => typeof value === 'string' && value.trim() !== '' && value.length <= MAX_FLOW_TEXT && !/\0/.test(value);
+
+/**
+ * The flow ledger a flow-tracing reviewer returns: one positive flow and every negative class, each traced,
+ * judged not applicable, or left as a testing gap. A defect row names the finding it produced, so a ledger
+ * cannot report a defect that the findings omit.
+ */
+export function validateFlowLedger(ledger, findings = []) {
+  if (!Array.isArray(ledger) || !ledger.length) return { errors: ['Missing flow_ledger: trace one positive flow and every negative flow class'], rows: [] };
+  if (ledger.length > MAX_FLOW_ROWS) return { errors: [`flow_ledger exceeds ${MAX_FLOW_ROWS} rows`], rows: [] };
+  const errors = [], rows = [];
+  const titles = new Set(findings.filter(f => f && typeof f.title === 'string').map(f => normalizedTitle(f.title)));
+  ledger.forEach((row, index) => {
+    const label = `flow_ledger[${index}]`;
+    if (!row || typeof row !== 'object' || Array.isArray(row)) { errors.push(`${label} must be an object`); return; }
+    const unknown = Object.keys(row).filter(key => !FLOW_ROW_KEYS.includes(key));
+    if (unknown.length) errors.push(`${label} has unknown fields: ${unknown.sort(compareText).join(', ')}`);
+    if (!FLOW_CLASSES.includes(row.flow_class)) errors.push(`${label} has an invalid flow_class`);
+    if (!FLOW_VERDICTS.includes(row.verdict)) errors.push(`${label} has an invalid verdict`);
+    for (const key of ['entry', 'input', 'expected', 'observed']) if (!flowText(row[key])) errors.push(`${label} needs ${key} text of at most ${MAX_FLOW_TEXT} characters`);
+    if (!Array.isArray(row.path) || row.path.length > MAX_FLOW_HOPS || !row.path.every(hop => typeof hop === 'string' && /^[^\0\r\n]{1,512}:\d+$/.test(hop))) errors.push(`${label} path must list at most ${MAX_FLOW_HOPS} file:line hops`);
+    else if (row.verdict !== 'not-applicable' && !row.path.length) errors.push(`${label} traced flow needs at least one file:line hop`);
+    if (row.test !== null && !flowText(row.test)) errors.push(`${label} test must name the covering test or be null`);
+    if (row.verdict === 'pass' && row.test === null) errors.push(`${label} passing flow without a covering test is a gap`);
+    if (row.verdict === 'defect' && (!flowText(row.finding) || !titles.has(normalizedTitle(row.finding)))) errors.push(`${label} defect must name the title of a finding in the same result`);
+    if (row.verdict !== 'defect' && row.finding !== undefined) errors.push(`${label} only a defect names a finding`);
+    if (row.flow_class === 'positive' && row.verdict === 'not-applicable') errors.push(`${label} positive flow cannot be not-applicable`);
+    rows.push(row);
+  });
+  const classes = new Set(rows.map(row => row.flow_class));
+  const missing = FLOW_CLASSES.filter(flowClass => !classes.has(flowClass));
+  if (missing.length) errors.push(`flow_ledger is missing flow classes: ${missing.join(', ')}`);
+  return { errors, rows: errors.length ? [] : rows };
+}
+
 export function normalizeFinding(workspace, finding, sourceRefs = [], selectedOnly = false) {
   const errors = [];
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) return { errors: ['Finding must be an object'] };
@@ -69,8 +108,42 @@ function mergedPartitions(ids, decisions) {
   return { representative, groups: [...groups.values()].map(group => group.sort(compareText)) };
 }
 
-export function synthesizeReview(workspace, required, input, preparationFailures = [], sourceRefs = [], selectedOnly = false, { requireIndependent = false, providers = [], observationFor } = {}) {
-  const results = [], failures = preparationFailures.map(message => ({ reviewer: null, errors: [message] })), suppressed = [], accepted = [];
+export const MAX_VERIFICATIONS = 64;
+const VERIFICATION_ID = /^[a-f0-9]{64}$/;
+
+/**
+ * Apply recorded decision-agent finding judgments. A confirmed finding is marked; a refuted P2 or P3 moves
+ * to suppressed with the receipt kept; a refuted P1 stays open as disputed, because a model verdict alone
+ * never discharges a critical finding. A claimed verification without a matching receipt is a failure.
+ */
+function applyVerifications(findings, suppressed, failures, verifications, { packetId, verificationFor }) {
+  if (verifications === undefined) return findings;
+  const fail = message => failures.push({ reviewer: null, errors: [message] });
+  if (!Array.isArray(verifications) || verifications.length > MAX_VERIFICATIONS) { fail(`Verifications must be an array of at most ${MAX_VERIFICATIONS} entries`); return findings; }
+  const byId = new Map(findings.map(finding => [finding.id, finding])), seen = new Set(), refuted = new Set();
+  for (const entry of verifications.toSorted((a, b) => compareText(stableJson(a), stableJson(b)))) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).sort().join(',') !== 'finding,request'
+      || !VERIFICATION_ID.test(entry.finding || '') || !VERIFICATION_ID.test(entry.request || '')) { fail('Invalid finding verification entry'); continue; }
+    if (seen.has(entry.finding)) { fail(`Finding ${entry.finding} has more than one verification`); continue; }
+    seen.add(entry.finding);
+    const finding = byId.get(entry.finding);
+    if (!finding) { fail(`Verification names finding ${entry.finding}, which this review does not report`); continue; }
+    let judged = null;
+    try { judged = verificationFor?.(entry.request) || null; } catch { judged = null; }
+    if (!judged || judged.requestId !== entry.request || judged.finding?.packet !== packetId || judged.finding?.id !== entry.finding
+      || judged.finding.file !== finding.file || judged.finding.line !== finding.line || judged.finding.severity !== finding.severity) {
+      fail(`Verification ${entry.request} has no recorded decision-agent receipt for finding ${entry.finding} in this packet`); continue;
+    }
+    const state = judged.verdict === 'allow' ? 'confirmed' : judged.verdict === 'deny' ? (finding.severity === 'P1' ? 'disputed' : 'refuted') : 'unresolved';
+    finding.verification = { state, request: judged.requestId, receipt: judged.receipt, verdict: judged.verdict, reason: judged.reason };
+    if (state === 'refuted') refuted.add(finding.id);
+  }
+  for (const finding of findings) if (refuted.has(finding.id)) suppressed.push({ ...finding, reason: 'Refuted by decision-agent verification' });
+  return findings.filter(finding => !refuted.has(finding.id));
+}
+
+export function synthesizeReview(workspace, required, input, preparationFailures = [], sourceRefs = [], selectedOnly = false, { requireIndependent = false, providers = [], observationFor, ledgerReviewers = [], packetId = null, verificationFor } = {}) {
+  const results = [], failures = preparationFailures.map(message => ({ reviewer: null, errors: [message] })), suppressed = [], accepted = [], ledger = [];
   for (const result of input.results) {
     const errors = [];
     if (!required.includes(result?.reviewer)) errors.push('Unexpected reviewer');
@@ -82,6 +155,12 @@ export function synthesizeReview(workspace, required, input, preparationFailures
       const parsed = normalizeFinding(workspace, finding, sourceRefs, selectedOnly);
       errors.push(...parsed.errors);
       if (parsed.value) normalized.push({ ...parsed.value, reviewer: result.reviewer });
+    }
+    let flowRows = [];
+    if (ledgerReviewers.includes(result?.reviewer)) {
+      const checked = validateFlowLedger(result?.flow_ledger, Array.isArray(result?.findings) ? result.findings : []);
+      errors.push(...checked.errors);
+      flowRows = checked.rows;
     }
     const raw = result && typeof result === 'object' ? { ...result, ...(Array.isArray(result.findings) ? { findings: result.findings.toSorted((a, b) => compareText(stableJson(a), stableJson(b))) } : {}) } : result;
     const provider = providers.find(value => value.perspective === result?.reviewer);
@@ -98,7 +177,8 @@ export function synthesizeReview(workspace, required, input, preparationFailures
     if (requireIndependent && provenance.independence !== 'separate-reviewer') errors.push('Required independent specialist invocation is missing or rejected');
     results.push({ reviewer: result?.reviewer || null, status: errors.length ? 'invalid' : 'completed', provenance, raw, errors: unique(errors) });
     if (errors.length) failures.push({ reviewer: result?.reviewer || null, errors: unique(errors) });
-    else for (const finding of normalized) {
+    else ledger.push(...flowRows.map(row => ({ reviewer: result.reviewer, ...row })));
+    if (!errors.length) for (const finding of normalized) {
       const recorded = { ...finding, invocation: provenance.independence };
       if (finding.confidence >= (finding.severity === 'P1' ? 0.50 : 0.60)) accepted.push(recorded);
       else suppressed.push({ ...recorded, reason: 'Below confidence floor before aggregation' });
@@ -159,11 +239,12 @@ export function synthesizeReview(workspace, required, input, preparationFailures
     unresolved.set(stableJson(members), { ...overlap, members });
   }
   const overlaps = [...unresolved.values()];
+  findings = applyVerifications(findings, suppressed, failures, input.verifications, { packetId, verificationFor });
   const missing = required.filter(id => results.filter(r => r.reviewer === id && r.status === 'completed').length !== 1);
   const complete = missing.length === 0 && failures.length === 0;
   const risks = unique(results.flatMap(r => Array.isArray(r.raw?.residual_risks) ? r.raw.residual_risks.filter(s => typeof s === 'string') : []));
   const gaps = unique(results.flatMap(r => Array.isArray(r.raw?.testing_gaps) ? r.raw.testing_gaps.filter(s => typeof s === 'string') : []));
-  return { results: results.sort((a, b) => compareText(stableJson(a), stableJson(b))), findings, suppressed: suppressed.sort(findingOrder), overlaps: overlaps.sort((a, b) => compareText(stableJson(a), stableJson(b))), adjudications: adjudications.sort((a, b) => compareText(stableJson(a), stableJson(b))), failures: failures.sort((a, b) => compareText(stableJson(a), stableJson(b))), coverage: { complete, missing, collected: results.filter(r => r.status === 'completed').length, expected: required.length }, residual_risks: risks, testing_gaps: gaps, counts: { P1: findings.filter(f => f.severity === 'P1').length, P2: findings.filter(f => f.severity === 'P2').length, P3: findings.filter(f => f.severity === 'P3').length, suppressed: suppressed.length, failures: failures.length }, status: complete ? 'ok' : 'blocked' };
+  return { results: results.sort((a, b) => compareText(stableJson(a), stableJson(b))), findings, suppressed: suppressed.sort(findingOrder), overlaps: overlaps.sort((a, b) => compareText(stableJson(a), stableJson(b))), adjudications: adjudications.sort((a, b) => compareText(stableJson(a), stableJson(b))), failures: failures.sort((a, b) => compareText(stableJson(a), stableJson(b))), coverage: { complete, missing, collected: results.filter(r => r.status === 'completed').length, expected: required.length }, residual_risks: risks, testing_gaps: gaps, ...(ledgerReviewers.length ? { flow_ledger: ledger.sort((a, b) => FLOW_CLASSES.indexOf(a.flow_class) - FLOW_CLASSES.indexOf(b.flow_class) || compareText(stableJson(a), stableJson(b))) } : {}), counts: { P1: findings.filter(f => f.severity === 'P1').length, P2: findings.filter(f => f.severity === 'P2').length, P3: findings.filter(f => f.severity === 'P3').length, suppressed: suppressed.length, failures: failures.length }, status: complete ? 'ok' : 'blocked' };
 }
 
 export function renderReview(record, maxBytes = 16384) {
@@ -179,6 +260,13 @@ export function renderReview(record, maxBytes = 16384) {
   for (const f of record.findings) {
     const line = `| ${escape(f.file)}:${f.line} | ${escape(f.title)} | ${f.severity} | ${f.reviewers.map(escape).join(', ')} | ${f.confidence.toFixed(2)} | ${f.autofix_class} |`;
     if (Buffer.byteLength(lines.join('\n') + line) + 512 > maxBytes) omitted++; else lines.push(line);
+  }
+  const verified = state => record.findings.filter(f => f.verification?.state === state).length;
+  const refutedCount = (record.suppressed || []).filter(f => f.verification?.state === 'refuted').length;
+  if (record.findings.some(f => f.verification) || refutedCount) lines.push('', `Verification: ${verified('confirmed')} confirmed, ${verified('disputed')} disputed, ${verified('unresolved')} unresolved, ${refutedCount} refuted and suppressed.`);
+  if (Array.isArray(record.flow_ledger)) {
+    const tally = verdict => record.flow_ledger.filter(row => row.verdict === verdict).length;
+    lines.push('', `Flow ledger: ${record.flow_ledger.length} flows (${tally('pass')} pass, ${tally('defect')} defect, ${tally('gap')} gap, ${tally('not-applicable')} not applicable).`);
   }
   lines.push('', `Missing results: ${record.coverage.missing.join(', ') || 'none'}.`, `Omitted finding rows: ${omitted}. Full results: ${record.recordPath}.`);
   return { text: lines.join('\n'), omittedRows: omitted };

@@ -12,12 +12,14 @@ import { parsePlanFrontmatter } from './plan-parse.mjs';
 import { readFileNoFollow, assertNoSymlinkAncestors, canonicalPath } from './fs-safe.mjs';
 import { readProductDiff, gitMetadataEnvironment } from '../corpus/hooks/lib/product-diff.mjs';
 import { discoverCapabilities, resolveCapability } from './capability-catalog.mjs';
+import { reviewImpact, impactDependents } from './review-impact.mjs';
 
 export const CODE_REVIEWERS = Object.freeze(['architecture-strategist', 'security-sentinel', 'performance-oracle', 'code-simplicity-reviewer', 'pattern-recognition-specialist']);
 export const REVIEW_BUDGET_CAP = 3;
+export const FLOW_REVIEWER = 'spec-flow-analyzer';
 const LANGUAGE_REVIEWERS = Object.freeze([
   ['java-reviewer', /\.java$/i],
-  ['compounding-typescript-reviewer', /\.tsx?$/i],
+  ['compounding-typescript-reviewer', /\.(?:[cm]?[jt]s|[jt]sx)$/i],
   ['python-reviewer', /\.py$/i],
   ['sql-reviewer', /\.sql$/i],
 ]);
@@ -27,10 +29,12 @@ function crossesBoundary(file) {
   return /\.sql$/i.test(file) || /(?:^|[\\/_.-])(?:auth|secrets?|passwords?|migrations?|schemas?|iam)(?:[\\/_.-]|$)/i.test(file);
 }
 
+// spec-flow-analyzer is the correctness perspective: it traces positive and negative flows through every
+// code diff, so the cap never drops it. Simplicity fills a remaining slot on diffs of eight files or fewer.
 export function reviewBudget(files) {
   const paths = [...new Set((files || []).map(file => String(file).replace(/\\/g, '/')).filter(Boolean))];
   const large = paths.length > 8;
-  const selected = ['code-simplicity-reviewer'];
+  const selected = [FLOW_REVIEWER];
   if (paths.some(crossesBoundary) || large) selected.push('security-sentinel');
   if (large) selected.push('architecture-strategist');
   const languages = new Set();
@@ -43,6 +47,7 @@ export function reviewBudget(files) {
     const [id] = languages;
     if (!selected.includes(id)) selected.push(id);
   }
+  if (!large) selected.push('code-simplicity-reviewer');
   return selected.slice(0, REVIEW_BUDGET_CAP);
 }
 export const DOCUMENT_REVIEWERS = Object.freeze(['design', 'scope', 'coherence', 'feasibility']);
@@ -257,6 +262,7 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
   const failures = [...discovery.failures, ...collisions, ...sources.filter(s => !s.sha256).map(s => `Review definition unavailable: ${s.path}`), ...acquisitionPrerequisites.map(value => `Independent review provider unavailable for ${value.perspective}; follow create-primitive` )];
   const performance = kind === 'code' ? performanceContext({ workspace, home: plan ? planHome(workspace, plan) : home || harnessGlobalHome(), files: covered }) : null;
   if (performance?.state === 'invalid') failures.push('Performance profile is invalid; inspect the current profile before completing review');
+  const impact = kind === 'code' ? reviewImpact({ workspace, home: plan ? planHome(workspace, plan) : home, files: covered }) : null;
   const refs = selectedDocument ? scope.files : covered.map(file => selectedRefs.get(file) || source(workspace, file, 'product'));
   const diff = selectedDocument ? null : readProductDiff(workspace, { base: scope.base || 'HEAD', planPath: plan?.path });
   const branchResult = spawnGitSync(['branch', '--show-current'], { cwd: workspace, encoding: 'utf8', timeout: 4000, env: gitMetadataEnvironment() });
@@ -272,7 +278,7 @@ export function reviewPreparation({ workspace, scope, plan, kind, reviewers, fil
     bytes += Buffer.byteLength(excerpt);
     included.push({ ...ref, excerpt, truncated: Buffer.byteLength(text) > Buffer.byteLength(excerpt) });
   }
-  return { declaredRequired, required, ...(adaptive ? { adaptive: { schema: 1, policyRevision: catalog.policyRevision, independentReview: true, tourRequired: true } } : {}), preparation: { kind, ...(adaptive ? { catalog: { policyRevision: catalog.policyRevision }, providers, acquisitionPrerequisites, findingsSchema: 'review-findings-v1' } : {}), ...(performance ? { performance } : {}), branch: branchResult.status === 0 ? branchResult.stdout.trim() : null, checks: discovery.checks, sources, refs, files: included, omitted, diff: diff === null ? null : Buffer.from(diff).subarray(0, budget).toString('utf8'), diffTruncated: selectedDocument ? false : diff === null || Buffer.byteLength(diff) > budget, coverage: { totalFiles: covered.length, includedFiles: included.length, omittedFiles: omitted.length, byteBudget: budget, excerptBytes: bytes }, failures, provenance: 'Host invocation identity unknown; declarations and same-context perspectives are not independent evidence' } };
+  return { declaredRequired, required, ...(adaptive ? { adaptive: { schema: 1, policyRevision: catalog.policyRevision, independentReview: true, tourRequired: true } } : {}), preparation: { kind, ...(adaptive ? { catalog: { policyRevision: catalog.policyRevision }, providers, acquisitionPrerequisites, findingsSchema: 'review-findings-v1' } : {}), ...(performance ? { performance } : {}), ...(impact ? { impact } : {}), branch: branchResult.status === 0 ? branchResult.stdout.trim() : null, checks: discovery.checks, sources, refs, files: included, omitted, diff: diff === null ? null : Buffer.from(diff).subarray(0, budget).toString('utf8'), diffTruncated: selectedDocument ? false : diff === null || Buffer.byteLength(diff) > budget, coverage: { totalFiles: covered.length, includedFiles: included.length, omittedFiles: omitted.length, byteBudget: budget, excerptBytes: bytes }, failures, provenance: 'Host invocation identity unknown; declarations and same-context perspectives are not independent evidence' } };
 }
 
 export function preparationIsCurrent(workspace, preparation, options = {}) {
@@ -293,6 +299,7 @@ export function preparationIsCurrent(workspace, preparation, options = {}) {
     } else if (performanceContext({ workspace, home, files: preparation.refs.map(ref => ref.path) }) !== null) return false;
   }
   if (preparation.kind !== 'document' && preparation.refs.some(ref => ref.origin === 'project-plan')) return false;
+  if (preparation.impact && !impactDependents(preparation.impact).every(row => source(workspace, row.file, 'product').sha256 === row.sha256)) return false;
   if (preparation.kind === 'code') {
     const discovery = discoverReviewChecks(workspace, preparation.refs.map(ref => ref.path));
     if (stableJson(discovery.checks) !== stableJson(preparation.checks)) return false;

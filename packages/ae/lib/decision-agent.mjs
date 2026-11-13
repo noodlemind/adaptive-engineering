@@ -12,7 +12,7 @@ import { normalizeToolPayload, toolMutationSucceeded, harnessControlCommand, TER
 import { decisionInputStaging } from '../corpus/hooks/lib/decision-staging.mjs';
 import { hydrateArchivedDecision, decisionTask, compactDecisions, latestArchivedReadiness, pendingArchivedReadiness, readinessIndexHealth, archiveFaults, READINESS_SWEEP_INTERVAL_MS, MAX_SWEEP_RECORDS } from './decision-archive.mjs';
 
-const TYPES = new Set(['action', 'capability', 'readiness', 'memory']);
+const TYPES = new Set(['action', 'capability', 'readiness', 'memory', 'finding']);
 const VERDICTS = new Set(['allow', 'revise', 'acquire', 'ready', 'escalate', 'deny']);
 const ID = /^[a-f0-9]{64}$/;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
@@ -210,6 +210,18 @@ function memoryValue(value) {
   return { operation: value.operation, kind: value.kind, scope: value.scope, destination: value.destination, contentDigest: value.contentDigest, proofIdentity: value.proofIdentity };
 }
 
+// A finding moment asks the decision agent whether one assembled review finding is real. `allow` confirms
+// it, `deny` refutes it, and any other verdict leaves it unresolved. It never authorizes an action.
+function findingValue(workspace, value) {
+  fields(value, ['packet', 'id', 'file', 'line', 'severity', 'title'], 'finding');
+  if (!ID.test(value.packet || '') || !ID.test(value.id || '')) throw fail('finding must bind its review packet and finding IDs');
+  if (!['P1', 'P2', 'P3'].includes(value.severity) || !Number.isSafeInteger(value.line) || value.line < 1) throw fail('finding needs a severity and a positive line');
+  text(value.title, 'finding title', 500);
+  const file = typeof value.file === 'string' ? value.file.replace(/\\/g, '/') : '';
+  if (!file || path.isAbsolute(file) || path.win32.isAbsolute(file) || file.split('/').includes('..') || /[\u0000-\u001f\u007f]/.test(file) || !within(workspace, path.resolve(workspace, file))) throw fail('finding file must be a relative path inside the workspace');
+  return { packet: value.packet, id: value.id, file: path.posix.normalize(file), line: value.line, severity: value.severity, title: value.title };
+}
+
 function memoryTargetNow(memory) {
   const root = path.parse(memory.destination).root, relative = path.relative(root, memory.destination);
   if (!relative || !assertNoSymlinkAncestors(root, relative)) throw fail('memory destination is unsafe or redirected');
@@ -257,7 +269,7 @@ function currentRequest(options, packet, policy) {
 /** Prepare bounded context only. The host, not this CLI, executes decision-agent. */
 export function prepareDecision(options) {
   const input = options.input;
-  fields(input, ['schema', 'operation', 'taskId', 'sessionId', 'type', 'intent', 'action', 'sources', 'context', 'planPath', 'capability', 'memory'], 'prepare input');
+  fields(input, ['schema', 'operation', 'taskId', 'sessionId', 'type', 'intent', 'action', 'sources', 'context', 'planPath', 'capability', 'memory', 'finding'], 'prepare input');
   if (input.schema !== 1 || !TYPES.has(input.type)) throw fail('prepare requires schema 1 and a supported decision type');
   const taskId = text(input.taskId, 'taskId', 1024), sessionId = text(input.sessionId, 'sessionId', 200), intent = text(input.intent, 'intent', 4000);
   const loc = locations(options), policy = authority(options.policy), now = options.now ?? Date.now();
@@ -266,11 +278,14 @@ export function prepareDecision(options) {
   if (input.type === 'action' && !action) throw fail('action decisions require the exact action');
   if (input.type === 'capability' && !input.capability) throw fail('capability decisions require the exact draft');
   if (input.type === 'memory' && !input.memory) throw fail('memory decisions require the exact publication');
+  if (input.type === 'finding' && !input.finding) throw fail('finding decisions require the exact review finding');
+  if (input.type !== 'finding' && input.finding !== undefined) throw fail('only finding decisions carry a review finding');
+  const finding = input.type === 'finding' ? findingValue(loc.workspace, input.finding) : null;
   if (input.sources !== undefined && !Array.isArray(input.sources)) throw fail('source paths must be a bounded list');
   const planBinding = acceptedPlan(options, input, loc.workspace);
-  const packet = { schema: 1, taskId, sessionId, budgetKey: budgetIdentity(input, planBinding), planBinding, type: input.type, intent, workspace: loc.workspace, policyRevision: policy.revision, sources: sourcesNow(loc.workspace, [...(input.sources || []), ...actionSources(loc.workspace, action)]),
+  const packet = { schema: 1, taskId, sessionId, budgetKey: budgetIdentity(input, planBinding), planBinding, type: input.type, intent, workspace: loc.workspace, policyRevision: policy.revision, sources: sourcesNow(loc.workspace, [...(input.sources || []), ...actionSources(loc.workspace, action), ...(finding ? [finding.file] : [])]),
     action, context: bounded(input.context || {}, 'decision context'), capability: input.capability ? capabilityValue(input.capability) : null,
-    planPath: input.planPath === undefined ? null : text(input.planPath, 'planPath', 4096), modelExecution: 'host-native', authority: 'Recommendation within standing user consent; no new permissions granted',
+    planPath: input.planPath === undefined ? null : text(input.planPath, 'planPath', 4096), ...(finding ? { finding } : {}), modelExecution: 'host-native', authority: 'Recommendation within standing user consent; no new permissions granted',
     sourceCoverage: 'Explicit selected files only; external effects and undeclared script dependencies are not inferred', budgets: policy.budgets };
   if (packet.type === 'memory') {
     packet.memory = memoryValue(input.memory);
@@ -452,7 +467,8 @@ export function recordDecision(options) {
     let { verdict, reason } = observation.judgment;
     const refusal = permission(request, verdict, policy, { ...options, ...loc });
     if (refusal) { verdict = 'escalate'; reason = refusal; }
-    const counter = verdict === 'revise' ? 'repairs' : verdict === 'acquire' ? 'acquisitions' : null;
+    // A finding judged `revise` needs more evidence; it is not a repair of the task's work.
+    const counter = verdict === 'revise' && request.type !== 'finding' ? 'repairs' : verdict === 'acquire' ? 'acquisitions' : null;
     if (counter) {
       const limit = counter === 'repairs' ? policy.budgets.maxRepairs : policy.budgets.maxAcquisitions;
       if (task.counts[counter] >= limit) { verdict = 'escalate'; reason = `Task ${counter} budget exhausted; human decision or narrower work is required`; }
@@ -741,3 +757,17 @@ export function latestReadinessReceipt(options) {
   } catch { /* retained evidence unreadable */ }
   return latest ?{ id: latest.id, requestId: latest.requestId, verdict: latest.verdict, recordedAt: latest.recordedAt } : null;
 }
+
+/**
+ * Read-only lookup of a recorded finding judgment for review assembly. It returns the bound finding and
+ * the receipt verdict, or null when no receipt exists. It never records, consumes or renews anything.
+ */
+export function findingVerification(options) {
+  if (!ID.test(options?.requestId || '')) return null;
+  let loc, state, request;
+  try { loc = locations(options); state = readState(loc); request = lookupDecision(loc, state, options.requestId); } catch { return null; }
+  const receipt = request ? state.receipts[request.requestId] : null;
+  if (!request || request.type !== 'finding' || !object(request.finding) || !receipt || receipt.type !== 'finding' || !ID.test(receipt.id || '')) return null;
+  return { requestId: request.requestId, finding: request.finding, verdict: receipt.verdict, receipt: receipt.id, reason: receipt.reason };
+}
+

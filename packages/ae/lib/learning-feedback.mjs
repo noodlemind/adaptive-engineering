@@ -9,6 +9,9 @@ import { projectStoreDir } from './project-layout.mjs';
 import { loadLayeredLearnings } from './knowledge/overlay.mjs';
 import { readFeedbackConfig, readStoreConfig } from './knowledge/store.mjs';
 import { latestReadinessReceipt } from './decision-agent.mjs';
+import { FEEDBACK_RECORD_MAX_BYTES, feedbackKey, feedbackRecordRel, readFeedbackFile, feedbackIdentity, readFeedbackRecords, reviewRules, SAFE_RELATIVE_FILE } from './feedback-records.mjs';
+
+export { readFeedbackRecords, reviewRules };
 
 // Recall feedback loop (agent memory plan, Phase 1). Everything here is
 // Harness bookkeeping and evidence for judgment: nothing in this module
@@ -21,16 +24,17 @@ export const FEEDBACK_NOTE_CAP = 280;
 export const RECALLED_VERDICTS = Object.freeze(['helped', 'irrelevant', 'wrong']);
 export const FINDING_DISPOSITIONS = Object.freeze(['fixed', 'dismissed']);
 const FINDING_ENTRY_CAP = 128;
+export const MISSED_ENTRY_CAP = 32;
+const MISSED_TITLE_CAP = 200;
+const MISSED_SOURCE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const FEEDBACK_SECTION_CAP = 20;
 // One cap for every feedback record read or write. Plain-text notes keep a
 // full record near 110 KiB; escaped content can exceed it and is refused.
-const FEEDBACK_RECORD_MAX_BYTES = 256 * 1024;
 const FEEDBACK_RECORD_RESERVE_BYTES = 2 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 const LEARNING_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 
 export const exposureRel = planPath => `.harness/learning/exposures/plan-${recordHash(planPath)}.json`;
-const feedbackDirRel = 'feedback';
 
 /** Content identity of a learning version; any mutation, confirmation or supersession changes it. */
 export const learningVersion = learning => recordHash({ fm: learning.fm, body: learning.body });
@@ -155,6 +159,27 @@ function checkEntries(value, { field, cap, keys, choiceKey, choices }) {
   }
 }
 
+/**
+ * Defects a review missed and a later reviewer, test or person caught. They are authored evidence for
+ * learned review rules; nothing binds them to a review record, and they never change a finding.
+ */
+function checkMissed(value) {
+  if (!Array.isArray(value) || !value.length || value.length > MISSED_ENTRY_CAP) throw new Error(`missed must be a nonempty array of at most ${MISSED_ENTRY_CAP} entries`);
+  const seen = new Set();
+  return value.map(entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).some(key => !['file', 'title', 'source', 'note'].includes(key))) throw new Error('missed entries allow only file, title, source, note');
+    if (typeof entry.file !== 'string' || !SAFE_RELATIVE_FILE.test(entry.file)) throw new Error('missed file must be a relative path inside the repository');
+    if (typeof entry.title !== 'string' || !entry.title.trim() || entry.title.length > MISSED_TITLE_CAP || /[\u0000-\u001f\u007f]/.test(entry.title)) throw new Error(`missed title must be one line of at most ${MISSED_TITLE_CAP} characters`);
+    if (scanSecrets(entry.title).length) throw new Error('missed title looks like it contains a secret; remove it');
+    if (typeof entry.source !== 'string' || !MISSED_SOURCE.test(entry.source)) throw new Error('missed source must be a short lowercase name such as copilot, ci or person');
+    checkNote(entry.note, 'missed');
+    const key = JSON.stringify([entry.file, entry.title]);
+    if (seen.has(key)) throw new Error(`missed lists ${entry.file}: ${entry.title} more than once`);
+    seen.add(key);
+    return { file: entry.file, title: entry.title, source: entry.source, ...(entry.note ? { note: entry.note } : {}) };
+  });
+}
+
 // Review records are published as {"version": N, "plan": ..., ...}; anything else reads in full.
 const REVIEW_HEADER = /^\{\s*"version":\s*\d+,\s*"plan":\s*("(?:[^"\\]|\\.)*"|null)/;
 
@@ -167,7 +192,7 @@ function reviewHeaderPlan(full, root) {
 }
 
 /** Findings from every review record bound to this plan; fixing a finding drops it from the next review. */
-export function planReviewFindings(recordRoot, planPath) {
+export function planReviewFindings(recordRoot, planPath, details = null) {
   const dir = path.join(recordRoot, '.harness/reviews/records');
   const found = new Map();
   if (!assertNoSymlinkAncestors(recordRoot, '.harness/reviews/records')) return found;
@@ -185,6 +210,8 @@ export function planReviewFindings(recordRoot, planPath) {
       const reviewers = Array.isArray(finding.reviewers) ? finding.reviewers : finding.reviewer ? [finding.reviewer] : [];
       const prior = found.get(finding.id) || [];
       found.set(finding.id, [...new Set([...prior, ...reviewers.filter(r => typeof r === 'string')])].sort());
+      // The file locates the finding for learned review rules; a finding ID binds its file, so the first wins.
+      if (details && !details.has(finding.id) && typeof finding.file === 'string' && SAFE_RELATIVE_FILE.test(finding.file)) details.set(finding.id, { file: finding.file });
     }
   }
   return found;
@@ -212,8 +239,8 @@ const observedFinding = (latest, id) => latest === null ? 'no-latest-review' : l
  * decision bytes and digests stay identical.
  */
 export function validateFeedbackFields(decision, { recordRoot, planPath }) {
-  const hasRecalled = decision.recalled !== undefined, hasFindings = decision.findings !== undefined;
-  if (!hasRecalled && !hasFindings) return null;
+  const hasRecalled = decision.recalled !== undefined, hasFindings = decision.findings !== undefined, hasMissed = decision.missed !== undefined;
+  if (!hasRecalled && !hasFindings && !hasMissed) return null;
   const out = {};
   if (hasRecalled) {
     checkEntries(decision.recalled, { field: 'recalled', cap: EXPOSURE_ENTRY_CAP, keys: ['id', 'verdict', 'note'], choiceKey: 'verdict', choices: RECALLED_VERDICTS });
@@ -231,36 +258,20 @@ export function validateFeedbackFields(decision, { recordRoot, planPath }) {
   }
   if (hasFindings) {
     checkEntries(decision.findings, { field: 'findings', cap: FINDING_ENTRY_CAP, keys: ['id', 'disposition', 'note'], choiceKey: 'disposition', choices: FINDING_DISPOSITIONS });
-    const known = planReviewFindings(recordRoot, planPath);
+    const details = new Map();
+    const known = planReviewFindings(recordRoot, planPath, details);
     const unknown = decision.findings.filter(entry => !known.has(entry.id)).map(entry => entry.id);
     if (unknown.length) throw new Error(`findings lists IDs that no review record of this plan contains: ${unknown.join(', ')}`);
     const latest = latestReviewFindingIds(recordRoot, planPath);
-    out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), observed: observedFinding(latest, entry.id), ...(entry.note ? { note: entry.note } : {}) }));
+    out.findings = decision.findings.map(entry => ({ id: entry.id, disposition: entry.disposition, reviewers: known.get(entry.id), ...(details.get(entry.id) || {}), observed: observedFinding(latest, entry.id), ...(entry.note ? { note: entry.note } : {}) }));
   }
+  if (hasMissed) out.missed = checkMissed(decision.missed);
   // Notes are bounded in characters, not bytes; refuse before acceptance a record that could never be published.
   // The reserve covers operation, digest, capture date and a readiness citation.
   const bytes = Buffer.byteLength(JSON.stringify({ version: 1, plan: planPath, ...out }, null, 2));
-  if (bytes + FEEDBACK_RECORD_RESERVE_BYTES > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`recalled and findings serialize to ${bytes} bytes; the feedback record limit is ${FEEDBACK_RECORD_MAX_BYTES - FEEDBACK_RECORD_RESERVE_BYTES}`);
+  if (bytes + FEEDBACK_RECORD_RESERVE_BYTES > FEEDBACK_RECORD_MAX_BYTES) throw new Error(`recalled, findings and missed serialize to ${bytes} bytes; the feedback record limit is ${FEEDBACK_RECORD_MAX_BYTES - FEEDBACK_RECORD_RESERVE_BYTES}`);
   return out;
 }
-
-// Operation receipts are checkout-local, so two worktrees can accept different
-// decisions under one operation name. The project-wide key adds the plan and
-// the accepted decision/proof digest; records without a digest keep the
-// operation key.
-const feedbackKey = ({ operation, plan, digest }) => digest ? recordHash({ operation, plan, digest }) : operation;
-const feedbackRecordRel = key => `${feedbackDirRel}/${key}.json`;
-
-function readFeedbackFile(base, rel) {
-  const text = readFileNoFollow(path.join(base, rel), { root: base, maxBytes: FEEDBACK_RECORD_MAX_BYTES });
-  try { return text === null ? null : JSON.parse(text); } catch { return null; }
-}
-
-/** The authored part of a verdict set; Harness observations such as versions may differ on replay. */
-const feedbackIdentity = ({ recalled, findings }) => JSON.stringify([
-  (Array.isArray(recalled) ? recalled : []).map(entry => [entry?.id, entry?.verdict, entry?.note || null]),
-  (Array.isArray(findings) ? findings : []).map(entry => [entry?.id, entry?.disposition, entry?.note || null]),
-]);
 
 /**
  * A record accepted before keys carried the digest lives at `<operation>.json`.
@@ -315,24 +326,6 @@ export function acceptedFeedbackRecord({ workspace, home, operation, digest, pla
   return feedbackFileExists(base, rel) ? path.join(base, rel) : null;
 }
 
-export function readFeedbackRecords({ workspace, home }) {
-  const base = projectStoreDir(workspace, { home });
-  if (!assertNoSymlinkAncestors(base, feedbackDirRel)) return { records: [] };
-  let names = [];
-  try { names = fs.readdirSync(path.join(base, feedbackDirRel)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).sort(); } catch { return { records: [] }; }
-  // The full history decides review_required and due; only displayed rows are
-  // capped. Callers read it only under `suggest` or `on`, and each file is small.
-  const records = [];
-  for (const name of names) {
-    const record = readFeedbackFile(base, `${feedbackDirRel}/${name}`);
-    if (record?.version === 1 && (record.digest === undefined || ID.test(record.digest)) && `${feedbackKey(record)}.json` === name) records.push(record);
-  }
-  // A keyed record repeating a legacy record's operation, plan and authored verdicts is the same decision; count it once.
-  const sameDecision = record => JSON.stringify([record.operation, record.plan, feedbackIdentity(record)]);
-  const legacy = new Set(records.filter(record => record.digest === undefined).map(sameDecision));
-  return { records: records.filter(record => record.digest === undefined || !legacy.has(sameDecision(record))) };
-}
-
 /**
  * Evidence for consolidation: per-learning verdict counts, learnings whose
  * current version was judged `wrong`, and per-reviewer finding dispositions.
@@ -368,12 +361,14 @@ export function feedbackSummary({ workspace, home, learnings, verdicts = null })
     .filter(row => current.has(row.id))
     .sort((a, b) => Number(b.wrongCurrent) - Number(a.wrongCurrent) || b.wrong - a.wrong || a.id.localeCompare(b.id));
   const reviewerRows = [...perReviewer.values()].sort((a, b) => a.reviewer.localeCompare(b.reviewer));
+  const rules = reviewRules({ workspace, home, records });
   return {
     records: records.length,
     learnings: learningRows.slice(0, FEEDBACK_SECTION_CAP).map(({ plans, wrongCurrent, ...row }) => ({ ...row, plans: [...plans].sort().slice(0, 5) })),
     ...(learningRows.length > FEEDBACK_SECTION_CAP ? { omittedLearnings: learningRows.length - FEEDBACK_SECTION_CAP } : {}),
     review_required: learningRows.filter(row => row.wrongCurrent).map(row => row.id),
     reviewers: reviewerRows.map(row => ({ ...row, resolutionRate: Number((row.fixed / (row.fixed + row.dismissed)).toFixed(3)) })),
+    reviewRules: { active: rules.active, candidates: rules.candidates, ...(rules.omitted ? { omitted: rules.omitted } : {}) },
   };
 }
 

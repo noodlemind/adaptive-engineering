@@ -1,0 +1,205 @@
+{
+  "schema": "review-recall-cases-v1",
+  "note": "Pre-fix heads of merged AE pull requests whose defects an external reviewer found after AE's own review. Expected defects come from those review threads; each was confirmed and fixed. Clean controls are the merged results and carry no known defect, which is not proof that none exists.",
+  "repository": "noodlemind/adaptive-engineering",
+  "cases": [
+    {
+      "id": "pr122-state-model",
+      "split": "development",
+      "pull": 122,
+      "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
+      "head": "223bdc7cd7ceb6c87399234d97b9cecb4d3a4890",
+      "intent": "Replace the TLC starter with a Node state-model checker.",
+      "defects": [
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 71,
+          "flow_class": "malformed-input",
+          "summary": "Added edges are never validated; a control without `to` creates an undefined dead-end state and can pass as a caught violation.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 119,
+          "flow_class": "boundary",
+          "summary": "Backward reachability treats terminal [*] as the start, so a finished run can restart and wrongly satisfy a reachable rule.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 59,
+          "flow_class": "malformed-input",
+          "summary": "String-converting the rule id before validation accepts missing or null ids, and a missing expect matches a missing id.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 101,
+          "flow_class": "positive",
+          "summary": "Inert-rule witnesses hold only the breaking edge, not a path from the start.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 127,
+          "flow_class": "positive",
+          "summary": "firstReach keeps the shortest arrival regardless of the rule's after action, so the witness does not show the failure.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/corpus/skills/create-primitive/assets/state-model/check.mjs",
+          "line": 130,
+          "flow_class": "boundary",
+          "summary": "Deduplication keeps the last, longer witness and merges every missing required action into one failure.",
+          "source": "copilot"
+        }
+      ]
+    },
+    {
+      "id": "pr121-feedback-loop",
+      "split": "development",
+      "pull": 121,
+      "base": "349ed72010f050b0444ba76018b952faf0598b49",
+      "head": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
+      "intent": "Record recall verdicts and review-finding dispositions (memory plan phase 1a).",
+      "defects": [
+        {
+          "file": "packages/ae/lib/compound.mjs",
+          "line": 387,
+          "flow_class": "old-state",
+          "summary": "Replaying a completed decision revalidates feedback against mutable exposure and throws after the exposure cap evicts a recalled id.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/compound.mjs",
+          "line": 391,
+          "flow_class": "concurrency",
+          "summary": "Two worktrees with the same operation name publish to one feedback filename; the second decision's verdicts are silently dropped.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/decision-agent.mjs",
+          "line": 602,
+          "flow_class": "old-state",
+          "summary": "After compaction archives receipts, the live-only readiness lookup returns null or an older receipt.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/knowledge/consolidate.mjs",
+          "line": 244,
+          "flow_class": "cross-boundary",
+          "summary": "consolidate --status drops the verdict counts and reviewer resolution rates the change promised.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/learning-feedback.mjs",
+          "line": 36,
+          "flow_class": "cross-boundary",
+          "summary": "A golden and branch learning sharing an id record the branch version even when only the golden was delivered.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/learning-feedback.mjs",
+          "line": 68,
+          "flow_class": "concurrency",
+          "summary": "Concurrent orient calls lose exposure updates; a later decision rejects a delivered id.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/learning-feedback.mjs",
+          "line": 116,
+          "flow_class": "boundary",
+          "summary": "The 256-record hash-ordered prefix can skip the active plan's latest review and reject a valid finding.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/learning-feedback.mjs",
+          "line": 199,
+          "flow_class": "boundary",
+          "summary": "Past 512 records a hash-sorted prefix hides a current wrong verdict, so due reports false.",
+          "source": "copilot"
+        }
+      ]
+    },
+    {
+      "id": "pr124-evidence-first",
+      "split": "held-out",
+      "pull": 124,
+      "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
+      "head": "fe27ac8964bb58b7ec56786a5136d524db961ca3",
+      "intent": "Evidence fingerprints and resume-verify hint (memory plan phase 5).",
+      "defects": [
+        {
+          "file": "packages/ae/lib/compound.mjs",
+          "line": 474,
+          "flow_class": "abuse",
+          "summary": "The swallowed-flag check misses --flag=value and short flags, so a flag is stored as the evidence quote.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/knowledge/consolidate.mjs",
+          "line": 295,
+          "flow_class": "malformed-input",
+          "summary": "CRLF frontmatter is not stripped, so evidence_quote leaks into recall and consolidation excerpts.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/knowledge/evidence-quote.mjs",
+          "line": 73,
+          "flow_class": "abuse",
+          "summary": "Normalizing escape characters before redaction stops the connection-string detector and exposes a password.",
+          "source": "copilot"
+        }
+      ]
+    },
+    {
+      "id": "pr124-evidence-second",
+      "split": "held-out",
+      "pull": 124,
+      "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
+      "head": "7c079b2a73c1b54ce52cbdce4a2bba0f2857a091",
+      "intent": "Evidence fingerprints and resume-verify hint, after the first review round.",
+      "defects": [
+        {
+          "file": "packages/ae/lib/knowledge/evidence-quote.mjs",
+          "line": 54,
+          "flow_class": "abuse",
+          "summary": "Compacting the whole quote glues a preceding line onto a wrapped token and hides it from the token pattern.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/knowledge/evidence-quote.mjs",
+          "line": 98,
+          "flow_class": "abuse",
+          "summary": "The benign-log exemption lets a dotted-username connection string through with its password.",
+          "source": "copilot"
+        },
+        {
+          "file": "packages/ae/lib/compound.mjs",
+          "line": 201,
+          "flow_class": "malformed-input",
+          "summary": "The whole-document secret scan refuses benign multiline quotes that the quote screen accepts.",
+          "source": "copilot"
+        }
+      ]
+    },
+    {
+      "id": "clean-pr122-merged",
+      "split": "development",
+      "pull": 122,
+      "base": "600cf5c5c425193b4a7dfee5bdbf5657098773f4",
+      "head": "9441dca73e4f55081071777005bb79c2976f5a0c",
+      "intent": "Merged state-model checker with review fixes.",
+      "defects": []
+    },
+    {
+      "id": "clean-pr124-merged",
+      "split": "held-out",
+      "pull": 124,
+      "base": "3d09b09bb1a79babbf64a1762b8e7f60881fe1f2",
+      "head": "fd69526004c68fcc293ceb8e56980c82f88fa7a3",
+      "intent": "Merged evidence fingerprints with review fixes.",
+      "defects": []
+    }
+  ]
+}

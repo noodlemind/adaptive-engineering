@@ -160,6 +160,10 @@ An incremental arm must also pass against `stateless`. It cannot be promoted whe
 - This pilot has no recorded live run yet.
 - Dry runs, scripted tests and Auto-routed models never qualify for promotion. Neither does a live batch with even one `runtime-error` attempt (the agent process failed or returned no result) or one `setup-error` attempt (setup failed, the baseline already passed, or a baseline checker timed out): every attempt must be `live` for the batch to count, and otherwise the summary reports `not-a-complete-live-batch`. Any invalid attempt makes the batch ineligible too (`invalid-attempts-in-batch`). The summary's `eligibility` names the reason and the attempts responsible: their count, their ids and their kinds. A result applies only to the model and runtime that produced it.
 
+## Review recall
+
+`review/` measures whether code review catches the defects external reviewers later found in AE pull requests, and how much noise it adds on clean controls. It is a scaffold: cases, protocol and scorer are frozen and tested, and no arm has been run. See [review/README.md](review/README.md).
+
 ## Mechanical extraction comparison
 
 `node eval/mechanics/run.mjs --root <package-root> --out <new-external-directory> --label <revision-label> --lane common --runs 3` executes the maintained common regression fixtures repeatedly. The output argument is required and must be outside the candidate checkout, so receipts cannot make later comparisons dirty. Move any old in-checkout receipts outside before retrying; the evaluator never deletes them. Use lane `phase2` for the added record/proposal/report/install contracts. Run revisions sequentially with the same Node runtime and test concurrency; compare `fixtureHashes` before comparing shared trials. No paid/model calls occur.

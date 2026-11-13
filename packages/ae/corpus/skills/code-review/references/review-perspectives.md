@@ -2,6 +2,12 @@
 
 ## Always-Engaged Perspectives
 
+### Correctness (flow tracing)
+- One positive flow per changed entry point, with its covering test
+- Malformed input, boundaries, dependency failure, concurrency, old state, abuse
+- Consumers named in the packet's `impact` dependents
+- Harmful negative behavior is a defect; a safe refusal is not
+
 ### Architecture
 - Component boundaries and coupling
 - Dependency direction (toward stable abstractions)
@@ -50,7 +56,8 @@
 - Modern Java conventions
 - Test coverage at unit and integration boundaries
 
-### TypeScript
+### TypeScript and JavaScript
+- Runtime argument shapes and `undefined`/`null` flow in untyped modules
 - Type safety (no `any`, proper narrowing)
 - Strict mode compliance
 - Modern patterns (optional chaining, nullish coalescing)

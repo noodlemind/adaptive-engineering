@@ -12,7 +12,7 @@ import { readFileNoFollow, writeFileContained, readBoundedInput } from './fs-saf
 import { ensureHarnessDir, readSession } from './session.mjs';
 import { resolveCopilotHome } from './paths.mjs';
 import { redactedJson } from './redact.mjs';
-import { reviewPreparation, preparationIsCurrent, selectedDocumentSources, refreshDocumentSources, reviewHash, stableJson, compareText, DOCUMENT_REVIEW_DEFINITIONS } from './review-preparation.mjs';
+import { reviewPreparation, preparationIsCurrent, selectedDocumentSources, refreshDocumentSources, reviewHash, stableJson, compareText, DOCUMENT_REVIEW_DEFINITIONS, FLOW_REVIEWER } from './review-preparation.mjs';
 import { synthesizeReview, renderReview } from './review-synthesis.mjs';
 import { createReviewTour, validateReviewTour } from './review-tour.mjs';
 import { discoverCapabilities } from './capability-catalog.mjs';
@@ -117,7 +117,7 @@ export function prepareReview({ workspace, plan, base = null, copilotHome, kind 
   return packet;
 }
 
-export function assembleReview({ workspace, plan, packetId, input, copilotHome, dryRun = false, home }) {
+export function assembleReview({ workspace, plan, packetId, input, copilotHome, dryRun = false, home, verificationFor }) {
   const recordRoot = planRecordRoot(workspace, plan);
   if (!ID.test(packetId || '')) throw usage('--packet requires the captured packet ID');
   const packet = readReviewRecord(recordRoot, `.harness/reviews/packets/${packetId}.json`);
@@ -128,6 +128,8 @@ export function assembleReview({ workspace, plan, packetId, input, copilotHome, 
   if (input?.packet !== packetId || !Array.isArray(input.results)) throw usage('Results must reference the packet and contain a results array');
   const synthesis = synthesizeReview(workspace, packet.required, input, packet.preparation?.failures || [], packet.kind === 'document' ? packet.preparation.refs : [], scope.mode === 'selected-document-v1', {
     requireIndependent: Boolean(packet.adaptive?.independentReview), providers: packet.preparation?.providers || [],
+    ledgerReviewers: packet.kind !== 'document' && packet.required.includes(FLOW_REVIEWER) ? [FLOW_REVIEWER] : [],
+    packetId, verificationFor,
     observationFor: (result, provider) => nativeSpecialists.validateReviewObservation?.({ workspace, home: plan ? planHome(workspace, plan) : home,
       copilotHome, packetId, result, provider, sessionId: readSession(workspace)?.sessionId }),
   });
@@ -241,7 +243,13 @@ export async function reviewResultOf(argv) {
   let input;
   try { input = JSON.parse(text); } catch { throw usage('Review input must be JSON'); }
   if (verb === 'tour') return authorReviewTour({ workspace, plan, home: flags.harnessHome, packetId: flags.packet, input, copilotHome, dryRun: flags.dryRun });
-  const result = assembleReview({ workspace, plan, home: flags.harnessHome, packetId: flags.packet, input, copilotHome, dryRun: flags.dryRun });
+  // Loaded on demand: decision-agent already imports this module, and only assembly with verifications reads it.
+  let verificationFor;
+  if (input?.verifications !== undefined) {
+    const { findingVerification } = await import('./decision-agent.mjs');
+    verificationFor = requestId => findingVerification({ workspace, home: flags.harnessHome, requestId });
+  }
+  const result = assembleReview({ workspace, plan, home: flags.harnessHome, packetId: flags.packet, input, copilotHome, dryRun: flags.dryRun, verificationFor });
   const recordPath = `.harness/reviews/records/${result.id}.json`;
   const rendered = renderReview({ ...result, recordPath });
   return { ...result, results: result.results.map(({ raw, ...entry }) => entry), recordPath, report: rendered.text, reportOmittedRows: rendered.omittedRows, persisted: !flags.dryRun };
