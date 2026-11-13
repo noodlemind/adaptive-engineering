@@ -9,6 +9,7 @@ import { readDomain, inspectDomain } from './domain-contract.mjs';
 import { assertNoSymlinkAncestors, canonicalPath, readBoundedInput, readFileNoFollow } from './fs-safe.mjs';
 import { resolveDomainContext, validateDomainContext } from './domain-context.mjs';
 import { createDomainPlans } from './domain-plans.mjs';
+import { initDomainDraft, acceptDomainDraft, bindDomain } from './domain-init.mjs';
 import { domainStatus, domainCoordinatorCheck } from './domain-delivery.mjs';
 import { loadPlan } from './plan-parse.mjs';
 import { updatePlanDecision, planUpdateActorCheck } from './plan-update.mjs';
@@ -20,8 +21,10 @@ import { runCompound } from './compound.mjs';
 import { runGet } from './get-cmd.mjs';
 import { validateCompletion } from './completion.mjs';
 
-export const DOMAIN_VERBS = Object.freeze(['show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound']);
+export const DOMAIN_VERBS = Object.freeze(['init', 'bind', 'show', 'status', 'get', 'plan-new', 'plan-update', 'gate', 'review', 'verify', 'compound']);
+const REPEATABLE = new Set(['--repo', '--asset', '--source']);
 const OPTIONS = {
+  init: ['--from-workspace', '--from-spec', '--repo', '--asset', '--clone-root'], bind: ['--repo', '--source'],
   show: [], status: ['--plan'], get: ['--plan', '--offset', '--lines', '--max-bytes'], 'plan-new': ['--file'], 'plan-update': ['--plan', '--file'],
   gate: ['--plan', '--phase', '--enforcement'],
   review: ['--plan', '--base', '--domain', '--reviewer', '--file', '--max-bytes', '--packet'],
@@ -34,7 +37,7 @@ function usage(message, hint = 'ae help domain') {
 
 export function parseDomainArguments(argv) {
   const positionals = [], values = new Map(), seen = new Set();
-  const boolean = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v', '--validate-completion']);
+  const boolean = new Set(['--json', '--dry-run', '--no-events', '--no-color', '--verbose', '-v', '--validate-completion', '--accept']);
   const allValued = new Set(['--workspace', '--ae-home', '--harness-home', '--copilot-home', '--name', ...Object.values(OPTIONS).flat()]);
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index];
@@ -45,7 +48,7 @@ export function parseDomainArguments(argv) {
     if (!token.startsWith('-')) { positionals.push(token); continue; }
     const split = token.indexOf('='), name = split < 0 ? token : token.slice(0, split);
     const key = name === '-v' ? '--verbose' : name;
-    if (seen.has(key) && !['--reviewer', '--file'].includes(key)) throw usage(`duplicate option ${key}`);
+    if (seen.has(key) && !['--reviewer', '--file'].includes(key) && !REPEATABLE.has(key)) throw usage(`duplicate option ${key}`);
     seen.add(key);
     if (boolean.has(name) && split < 0) continue;
     if (!allValued.has(name)) throw usage(`unsupported option ${name}`, name === '--files' ? fileInputHint('domain') : undefined);
@@ -58,24 +61,26 @@ export function parseDomainArguments(argv) {
   const [verb, reviewVerb] = positionals;
   if (!DOMAIN_VERBS.includes(verb) || positionals.length !== (verb === 'review' ? 2 : 1) || (verb === 'review' && !['prepare', 'assemble'].includes(reviewVerb))) throw usage('unsupported verb or unexpected positional argument');
   if (seen.has('--validate-completion') && verb !== 'status') throw usage('--validate-completion is supported only for status');
+  if (seen.has('--accept') && verb !== 'init') throw usage('--accept is supported only for init');
   const allowed = new Set(['--workspace', '--ae-home', '--harness-home', '--copilot-home', '--name', ...OPTIONS[verb]]);
   for (const [key, entries] of values) {
     if (!allowed.has(key)) throw usage(`${key} is unsupported for ${verb}`);
-    if (entries.length > 1 && !(verb === 'review' && reviewVerb === 'prepare' && ['--reviewer', '--file'].includes(key))) throw usage(`duplicate option ${key}`);
+    if (entries.length > 1 && !REPEATABLE.has(key) && !(verb === 'review' && reviewVerb === 'prepare' && ['--reviewer', '--file'].includes(key))) throw usage(`duplicate option ${key}`);
   }
   const value = key => values.get(key)?.[0];
   if (value('--file') === '-' && !['plan-new', 'plan-update'].includes(verb)) throw usage('--file - is supported only for plan-new and plan-update');
   const name = value('--name');
   if (!name || name.length > 64 || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(name)) throw usage('--name must identify an existing bounded domain');
   const required = [];
-  if (!['show', 'plan-new'].includes(verb)) required.push('--plan');
+  if (verb === 'init' && seen.has('--accept') && OPTIONS.init.some(key => values.has(key))) throw usage('init --accept takes no inputs; it publishes the reviewed draft');
+  if (!['init', 'bind', 'show', 'plan-new'].includes(verb)) required.push('--plan');
   if (['plan-new', 'plan-update'].includes(verb)) required.push('--file');
   if (verb === 'compound') required.push('--learning-decision');
   if (reviewVerb === 'assemble') required.push('--packet', '--file');
   for (const key of required) if (!values.has(key)) throw usage(`${verb} requires ${key}`);
   if (value('--domain') && !['code', 'document'].includes(value('--domain'))) throw usage('review domain must be code or document');
   if (value('--max-bytes') && !/^\d+$/.test(value('--max-bytes'))) throw usage('--max-bytes requires an integer');
-  return { verb, reviewVerb, name, values, value, flags: parseFlags(argv) };
+  return { verb, reviewVerb, name, values, value, accept: seen.has('--accept'), flags: parseFlags(argv) };
 }
 
 export function resolveDomainCommandContext(argv, ctx = {}) {
@@ -83,7 +88,7 @@ export function resolveDomainCommandContext(argv, ctx = {}) {
 }
 
 function resolveParsedDomainContext(parsed, ctx) {
-  if (parsed.verb === 'show') return null;
+  if (['init', 'bind', 'show'].includes(parsed.verb)) return null;
   parsed.decision = ctx.domainInput?.decision;
   const workspace = path.resolve(parsed.flags.workspace), home = parsed.flags.harnessHome || ctx.harnessHome || harnessGlobalHome();
   let context = ctx.domainContext;
@@ -126,7 +131,19 @@ export function domainResultOf(argv, ctx = {}) {
   const parsed = parseDomainArguments(argv), { flags, verb, name } = parsed;
   const workspace = path.resolve(flags.workspace), home = flags.harnessHome || ctx.harnessHome || harnessGlobalHome();
   if (verb === 'show') return inspectDomain(readDomain(name, { home }));
+  if (verb === 'init' || verb === 'bind') return domainSetup(parsed, home);
   return runDomainOperation(parsed, { ...ctx, workspace, home, domainContext: resolveParsedDomainContext(parsed, ctx) });
+}
+
+function domainSetup(parsed, home) {
+  const { verb, name, value, values, flags } = parsed;
+  const absolute = key => value(key) ? path.resolve(flags.workspace, value(key)) : null;
+  const result = verb === 'bind'
+    ? bindDomain({ name, home, repos: values.get('--repo') || [], sources: values.get('--source') || [], dryRun: flags.dryRun })
+    : parsed.accept
+      ? acceptDomainDraft({ name, home, dryRun: flags.dryRun })
+      : initDomainDraft({ name, home, fromWorkspace: absolute('--from-workspace'), fromSpec: absolute('--from-spec'), repos: values.get('--repo') || [], assets: values.get('--asset') || [], cloneRoot: absolute('--clone-root'), dryRun: flags.dryRun });
+  return { schema: 1, mode: 'domain', ...result };
 }
 
 async function runDomainOperation(parsed, ctx) {

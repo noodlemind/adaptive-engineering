@@ -14,7 +14,7 @@ Doctor is read-only. Check K8 appears only under `knowledge.feedback` `suggest` 
 
 When a task names an editor or a host failure needs installation context, read `ae inventory show --json`. Missing or dated inventory is an observation, not a delivery blocker. Request an on-demand `ae inventory refresh --editor vscode|cursor|jetbrains --json` only when fresh metadata helps the diagnosis. Refresh writes the selected Harness home's cache; it does not change editor settings or open an editor. Installed extensions and settings overrides do not prove enabled, effective or running capabilities. Prove the actual task operation separately.
 
-Use `ae domain show --name <name> --json` for an existing local domain configuration. Version 1 reports membership and identity drift only. Shared conventions are advisory; the view cannot authorize cross-repository edits or create plans and worktrees.
+Use `ae domain show --name <name> --json` for an existing local domain configuration. `ae domain init` creates one from a named workspace file, spec repository or flags, and `ae domain bind` repoints a member at another checkout. Version 1 reports membership and identity drift only. Shared conventions are advisory; the view cannot authorize cross-repository edits or create plans and worktrees.
 
 ## Trigger Examples
 
