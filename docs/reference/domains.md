@@ -139,7 +139,7 @@ The domain commands reuse those lifecycle operations with explicit parent author
 
 ```mermaid
 flowchart LR
-  parent["Parent plan<br/>created in the coordinator checkout"] --> producer["producer child<br/>ordinary delivery"]
+  parent["Parent plan<br/>created from the coordinator checkout"] --> producer["producer child<br/>ordinary delivery"]
   parent --> consumer["consumer child<br/>ordinary delivery"]
   producer -->|"dependency order"| consumer
   producer --> review["Parent review"]

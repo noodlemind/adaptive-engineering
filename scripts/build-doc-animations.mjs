@@ -36,8 +36,15 @@ function keyframes(name, points, duration) {
 
 // Opacity that is 1 inside each [start, end] window and fades over `fade` seconds.
 function windowsTrack(windows, fade = 0.25) {
+  const merged = [];
+  for (const [start, end] of [...windows].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    // Back-to-back windows stay lit instead of blinking off and on.
+    if (last && start <= last[1] + 0.01) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
   const points = [[0, 'opacity:0']];
-  for (const [start, end] of windows) {
+  for (const [start, end] of merged) {
     points.push([start, 'opacity:0'], [start + fade, 'opacity:1'], [end - fade, 'opacity:1'], [end, 'opacity:0']);
   }
   return points;
@@ -301,7 +308,7 @@ const grows = {
     { id: 'tasks', x: 30, y: 70, w: 160, h: 34, shape: 'pill', kind: 'you', label: 'Tasks you ask for' },
     { id: 'engineer', x: 260, y: 100, w: 220, h: 92, kind: 'engineer', owner: 'Engineer', label: 'Engineer', sub: ['your host model,', 'one shared contract'] },
     { id: 'kernel', x: 260, y: 220, w: 220, h: 72, kind: 'harness', owner: 'Harness', label: 'orient · gate · verify', sub: 'records evidence' },
-    { id: 'episodes', x: 600, y: 90, w: 150, h: 70, kind: 'harness', owner: 'Private', label: 'Episodes', sub: 'one per verified task' },
+    { id: 'episodes', x: 600, y: 90, w: 150, h: 70, kind: 'harness', owner: 'Private', label: 'Episodes', sub: 'from a publish decision' },
     { id: 'learnings', x: 790, y: 90, w: 150, h: 70, kind: 'harness', owner: 'Knowledge store', label: 'Learnings', sub: 'written only by ae' },
     { id: 'gap', x: 600, y: 214, w: 150, h: 70, kind: 'neutral', owner: 'Gap', label: 'Missing capability', sub: '/ensure-capability' },
     { id: 'authority', x: 790, y: 214, w: 150, h: 70, kind: 'you', owner: 'You', label: 'Authority', sub: 'direct or standing grant' },
@@ -321,36 +328,37 @@ const grows = {
     { id: 'day1', windows: [[0.2, 3.0]], svg: `<text class="sub" x="600" y="368" text-anchor="middle">Nothing acquired yet: the Engineer and the Harness are a complete setup.</text>` },
     { id: 't1', windows: [[1.4, 5.2]], svg: chip(30, 120, 160, 'you', 'Task 1: fix importer') },
     { id: 'v1', windows: [[3.2, 5.2]], svg: badge(470, 112, 'ok', '✓') },
-    { id: 'ep1', windows: [[4.2, 27.4]], final: true, svg: chip(612, 168, 126, 'harness', 'episode: blank rows') },
-    { id: 'l1', windows: [[6.4, 27.4]], final: true, svg: chip(802, 168, 126, 'harness', 'learning #1') },
+    { id: 'ep1', windows: [[4.2, 27.4]], final: true, svg: chip(604, 168, 72, 'harness', 'episode 1') },
+    { id: 'l1', windows: [[6.4, 27.4]], final: true, svg: chip(794, 168, 72, 'harness', 'learning 1') },
     { id: 't2', windows: [[8.4, 18.6]], svg: chip(30, 120, 160, 'you', 'Task 2: payment retry') },
     { id: 'need', windows: [[10.4, 14.6]], svg: chip(30, 166, 160, 'deny', 'needs a security reviewer') },
-    { id: 'grant', windows: [[12.4, 27.4]], final: true, svg: badge(928, 222, 'ok', '✓') },
-    { id: 'sec', windows: [[14.6, 27.4]], final: true, svg: chip(286, 344, 190, 'review', 'security reviewer', 'specialist agent, acquired') },
+    { id: 'grant', windows: [[12.4, 14.6], [21.6, 27.4]], final: true, svg: badge(928, 222, 'ok', '✓') },
+    { id: 'sec', windows: [[14.6, 27.4]], final: true, svg: chip(286, 344, 190, 'review', 'security reviewer', 'specialist, once the host loads it') },
     { id: 'v2', windows: [[16.4, 18.6]], svg: badge(470, 112, 'ok', '✓') },
-    { id: 'ep2', windows: [[17.0, 27.4]], final: true, svg: chip(612, 168, 126, 'harness', 'episode: retries') },
-    { id: 'l2', windows: [[18.0, 27.4]], final: true, svg: chip(802, 168, 126, 'harness', 'learning #2') },
+    { id: 'ep2', windows: [[17.0, 27.4]], final: true, svg: chip(678, 168, 72, 'harness', 'episode 2') },
+    { id: 'l2', windows: [[18.0, 27.4]], final: true, svg: chip(868, 168, 72, 'harness', 'learning 2') },
     { id: 't3', windows: [[19.6, 25.0]], svg: chip(30, 120, 160, 'you', 'Task 3: same procedure') },
-    { id: 'evidence', windows: [[20.6, 23.4]], svg: chip(612, 296, 138, 'neutral', 'promotion evidence') },
-    { id: 'skill', windows: [[22.4, 27.4]], final: true, svg: chip(496, 344, 190, 'engineer', 'retry-safety skill', 'promoted from verified recurrence') },
+    { id: 'evidence', windows: [[20.6, 24.4]], svg: chip(612, 296, 138, 'neutral', 'promotion evidence') },
+    { id: 'skill', windows: [[22.8, 27.4]], final: true, svg: chip(496, 344, 190, 'engineer', 'retry-safety skill', 'candidate until its evals pass') },
     { id: 'more', windows: [[24.4, 27.4]], final: true, svg: chip(706, 344, 200, 'neutral', 'next: whatever the work proves', 'never acquired speculatively') },
   ],
   steps: [
     { t: 0.2, focus: ['engineer', 'kernel'], caption: 'Day one: one Engineer and the Harness. No skills or specialists are acquired yet.' },
     { t: 1.4, at: 'tasks', focus: ['tasks'], caption: 'Task 1 arrives. The Engineer delivers it through the Harness gates.' },
     { t: 2.6, at: 'engineer', focus: ['engineer', 'kernel'], caption: 'Checks pass on the final bytes, so the task is verified.' },
-    { t: 4.0, at: 'episodes', focus: ['episodes'], caption: 'What the task taught becomes a private episode. It never leaves your machine on its own.' },
+    { t: 4.0, at: 'episodes', focus: ['episodes'], caption: 'If the task taught something, the Engineer records a private episode. It stays on your machine.' },
     { t: 6.0, at: 'learnings', focus: ['learnings'], caption: '/consolidate turns episodes into learnings. Only ae commands write that store.' },
     { t: 8.0, at: 'tasks', focus: ['tasks'], move: 1.0, caption: 'Task 2 arrives.' },
     { t: 9.2, at: 'engineer', focus: ['engineer', 'learnings'], caption: 'Orient brings the learnings that match it into the task context.' },
     { t: 10.4, at: 'gap', focus: ['gap'], caption: 'The task needs an independent security reviewer the catalog does not have.' },
     { t: 12.4, at: 'authority', focus: ['authority'], caption: 'Acquisition needs your direct authorization or a standing grant that covers it.' },
-    { t: 14.4, at: { x: 381, y: 344 }, focus: ['toolbelt'], caption: '/create-primitive adds the smallest separate role, so the review stays independent.' },
-    { t: 16.0, at: 'engineer', focus: ['engineer', 'kernel'], caption: 'Task 2 is verified with that review in place.' },
+    { t: 14.4, at: { x: 381, y: 344 }, focus: ['toolbelt'], caption: '/create-primitive adds the smallest separate role. It is used only once the host has loaded it.' },
+    { t: 16.0, at: 'engineer', focus: ['engineer', 'kernel'], caption: 'With the new reviewer available, Task 2 is reviewed independently and verified.' },
     { t: 17.0, at: 'episodes', focus: ['episodes', 'learnings'], caption: 'Another episode, another learning. Knowledge compounds from verified work.' },
     { t: 19.4, at: 'tasks', focus: ['tasks'], move: 1.0, caption: 'Task 3 repeats a procedure that earlier tasks needed too.' },
     { t: 20.6, at: { x: 681, y: 296 }, focus: ['gap'], caption: 'A repeated procedure becomes a durable skill only with verified promotion evidence.' },
-    { t: 22.4, at: { x: 591, y: 344 }, focus: ['toolbelt'], caption: 'The skill joins the Engineer. Every later task can load it on demand.' },
+    { t: 21.6, at: 'authority', focus: ['authority'], caption: 'Creating it still needs authority that covers it.' },
+    { t: 22.8, at: { x: 591, y: 344 }, focus: ['toolbelt'], caption: 'It starts as a candidate and becomes active only after its trigger and outcome evals pass.' },
     { t: 24.4, at: 'engineer', focus: ['engineer'], caption: 'The Engineer grows from proven work, within the authority you granted.' },
   ],
 };
@@ -410,7 +418,7 @@ const decision = {
 const scenes = [deliver, grows, decision];
 const check = process.argv.includes('--check');
 let stale = 0;
-fs.mkdirSync(outDir, { recursive: true });
+if (!check) fs.mkdirSync(outDir, { recursive: true });
 for (const scene of scenes) {
   const file = path.join(outDir, `${scene.id}.svg`);
   const svg = render(scene);

@@ -100,8 +100,9 @@ sequenceDiagram
   end
   E->>H: ae compound with the learning decision
   E->>H: Completion decision
-  K->>H: Stop hook: is completion proven?
-  H-->>K: Yes, completion recorded
+  H-->>E: Completion recorded
+  K->>H: Stop hook: is completion current?
+  H-->>K: Yes
   E-->>You: What changed, evidence, review, learning
 ```
 
@@ -207,7 +208,7 @@ Knowledge has three tiers. Each tier has a single writer.
 
 ```mermaid
 flowchart LR
-  verify["ae verify passes"] --> episode["Episode<br/>private, per repository"]
+  verify["ae verify passes"] -->|"ae compound with a publish decision"| episode["Episode<br/>private, per repository"]
   teach["ae remember<br/>you teach directly"] --> learnings
   episode -->|"/consolidate, then ae consolidate --apply"| learnings[("Learnings<br/>~/.ae/knowledge/")]
   learnings -->|"ae orient brings the best matches"| next["Next task's context pack"]

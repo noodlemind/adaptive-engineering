@@ -55,7 +55,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .decision-receipt-hl-call{animation:decision-receipt-hl-call 22s linear infinite}
 @keyframes decision-receipt-hl-call{0.000%{opacity:0}40.000%{opacity:0}41.136%{opacity:1}46.136%{opacity:1}47.273%{opacity:0}68.182%{opacity:0}69.318%{opacity:1}72.500%{opacity:1}73.636%{opacity:0}100.000%{opacity:0}}
 .decision-receipt-hl-hook{animation:decision-receipt-hl-hook 22s linear infinite}
-@keyframes decision-receipt-hl-hook{0.000%{opacity:0}47.273%{opacity:0}48.409%{opacity:1}61.591%{opacity:1}62.727%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}83.409%{opacity:1}84.545%{opacity:0}84.550%{opacity:0}85.682%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+@keyframes decision-receipt-hl-hook{0.000%{opacity:0}47.273%{opacity:0}48.409%{opacity:1}61.591%{opacity:1}62.727%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
 .decision-receipt-mk-action1{animation:decision-receipt-mk-action1 22s linear infinite}
 @keyframes decision-receipt-mk-action1{0.000%{opacity:0}2.727%{opacity:0}3.864%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
 .decision-receipt-mk-frozen{animation:decision-receipt-mk-frozen 22s linear infinite}

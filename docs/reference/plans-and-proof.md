@@ -15,6 +15,7 @@ stateDiagram-v2
   Verified --> Amend: a locked spec is edited
   Amend --> Gated: amendment accepts the new text, fresh gate
   Verified --> Learned: learning decision for current proof
+  Learned --> Gated: product bytes change, evidence goes stale
   Learned --> Complete: completion decision
   Complete --> [*]
 ```

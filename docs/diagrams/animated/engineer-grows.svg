@@ -55,11 +55,11 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .engineer-grows-hl-learnings{animation:engineer-grows-hl-learnings 28s linear infinite}
 @keyframes engineer-grows-hl-learnings{0.000%{opacity:0}21.429%{opacity:0}22.321%{opacity:1}27.679%{opacity:1}28.571%{opacity:0}32.857%{opacity:0}33.750%{opacity:1}36.250%{opacity:1}37.143%{opacity:0}60.714%{opacity:0}61.607%{opacity:1}68.393%{opacity:1}69.286%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-hl-gap{animation:engineer-grows-hl-gap 28s linear infinite}
-@keyframes engineer-grows-hl-gap{0.000%{opacity:0}37.143%{opacity:0}38.036%{opacity:1}43.393%{opacity:1}44.286%{opacity:0}73.571%{opacity:0}74.464%{opacity:1}79.107%{opacity:1}80.000%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-hl-gap{0.000%{opacity:0}37.143%{opacity:0}38.036%{opacity:1}43.393%{opacity:1}44.286%{opacity:0}73.571%{opacity:0}74.464%{opacity:1}76.250%{opacity:1}77.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-hl-authority{animation:engineer-grows-hl-authority 28s linear infinite}
-@keyframes engineer-grows-hl-authority{0.000%{opacity:0}44.286%{opacity:0}45.179%{opacity:1}50.536%{opacity:1}51.429%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-hl-authority{0.000%{opacity:0}44.286%{opacity:0}45.179%{opacity:1}50.536%{opacity:1}51.429%{opacity:0}77.143%{opacity:0}78.036%{opacity:1}80.536%{opacity:1}81.429%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-hl-toolbelt{animation:engineer-grows-hl-toolbelt 28s linear infinite}
-@keyframes engineer-grows-hl-toolbelt{0.000%{opacity:0}51.429%{opacity:0}52.321%{opacity:1}56.250%{opacity:1}57.143%{opacity:0}80.000%{opacity:0}80.893%{opacity:1}86.250%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-hl-toolbelt{0.000%{opacity:0}51.429%{opacity:0}52.321%{opacity:1}56.250%{opacity:1}57.143%{opacity:0}81.429%{opacity:0}82.321%{opacity:1}86.250%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-day1{animation:engineer-grows-mk-day1 28s linear infinite}
 @keyframes engineer-grows-mk-day1{0.000%{opacity:0}0.714%{opacity:0}1.607%{opacity:1}9.821%{opacity:1}10.714%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-t1{animation:engineer-grows-mk-t1 28s linear infinite}
@@ -75,7 +75,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .engineer-grows-mk-need{animation:engineer-grows-mk-need 28s linear infinite}
 @keyframes engineer-grows-mk-need{0.000%{opacity:0}37.143%{opacity:0}38.036%{opacity:1}51.250%{opacity:1}52.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-grant{animation:engineer-grows-mk-grant 28s linear infinite}
-@keyframes engineer-grows-mk-grant{0.000%{opacity:0}44.286%{opacity:0}45.179%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-mk-grant{0.000%{opacity:0}44.286%{opacity:0}45.179%{opacity:1}51.250%{opacity:1}52.143%{opacity:0}77.143%{opacity:0}78.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-sec{animation:engineer-grows-mk-sec 28s linear infinite}
 @keyframes engineer-grows-mk-sec{0.000%{opacity:0}52.143%{opacity:0}53.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-v2{animation:engineer-grows-mk-v2 28s linear infinite}
@@ -87,13 +87,13 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .engineer-grows-mk-t3{animation:engineer-grows-mk-t3 28s linear infinite}
 @keyframes engineer-grows-mk-t3{0.000%{opacity:0}70.000%{opacity:0}70.893%{opacity:1}88.393%{opacity:1}89.286%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-evidence{animation:engineer-grows-mk-evidence 28s linear infinite}
-@keyframes engineer-grows-mk-evidence{0.000%{opacity:0}73.571%{opacity:0}74.464%{opacity:1}82.679%{opacity:1}83.571%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-mk-evidence{0.000%{opacity:0}73.571%{opacity:0}74.464%{opacity:1}86.250%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-skill{animation:engineer-grows-mk-skill 28s linear infinite}
-@keyframes engineer-grows-mk-skill{0.000%{opacity:0}80.000%{opacity:0}80.893%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-mk-skill{0.000%{opacity:0}81.429%{opacity:0}82.321%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-more{animation:engineer-grows-mk-more 28s linear infinite}
 @keyframes engineer-grows-mk-more{0.000%{opacity:0}87.143%{opacity:0}88.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-tok{animation:engineer-grows-tok 28s ease-in-out infinite}
-@keyframes engineer-grows-tok{0.000%{transform:translate(110px,70px)}5.000%{transform:translate(110px,70px)}9.286%{transform:translate(110px,70px)}11.786%{transform:translate(370px,100px)}14.286%{transform:translate(370px,100px)}16.786%{transform:translate(675px,90px)}21.429%{transform:translate(675px,90px)}23.929%{transform:translate(865px,90px)}28.571%{transform:translate(865px,90px)}32.143%{transform:translate(110px,70px)}32.857%{transform:translate(110px,70px)}35.357%{transform:translate(370px,100px)}37.143%{transform:translate(370px,100px)}39.643%{transform:translate(675px,214px)}44.286%{transform:translate(675px,214px)}46.786%{transform:translate(865px,214px)}51.429%{transform:translate(865px,214px)}53.929%{transform:translate(381px,344px)}57.143%{transform:translate(381px,344px)}59.643%{transform:translate(370px,100px)}60.714%{transform:translate(370px,100px)}63.214%{transform:translate(675px,90px)}69.286%{transform:translate(675px,90px)}72.857%{transform:translate(110px,70px)}73.571%{transform:translate(110px,70px)}76.071%{transform:translate(681px,296px)}80.000%{transform:translate(681px,296px)}82.500%{transform:translate(591px,344px)}87.143%{transform:translate(591px,344px)}89.643%{transform:translate(370px,100px)}100.000%{transform:translate(370px,100px)}}
+@keyframes engineer-grows-tok{0.000%{transform:translate(110px,70px)}5.000%{transform:translate(110px,70px)}9.286%{transform:translate(110px,70px)}11.786%{transform:translate(370px,100px)}14.286%{transform:translate(370px,100px)}16.786%{transform:translate(675px,90px)}21.429%{transform:translate(675px,90px)}23.929%{transform:translate(865px,90px)}28.571%{transform:translate(865px,90px)}32.143%{transform:translate(110px,70px)}32.857%{transform:translate(110px,70px)}35.357%{transform:translate(370px,100px)}37.143%{transform:translate(370px,100px)}39.643%{transform:translate(675px,214px)}44.286%{transform:translate(675px,214px)}46.786%{transform:translate(865px,214px)}51.429%{transform:translate(865px,214px)}53.929%{transform:translate(381px,344px)}57.143%{transform:translate(381px,344px)}59.643%{transform:translate(370px,100px)}60.714%{transform:translate(370px,100px)}63.214%{transform:translate(675px,90px)}69.286%{transform:translate(675px,90px)}72.857%{transform:translate(110px,70px)}73.571%{transform:translate(110px,70px)}76.071%{transform:translate(681px,296px)}77.143%{transform:translate(681px,296px)}79.643%{transform:translate(865px,214px)}81.429%{transform:translate(865px,214px)}83.929%{transform:translate(591px,344px)}87.143%{transform:translate(591px,344px)}89.643%{transform:translate(370px,100px)}100.000%{transform:translate(370px,100px)}}
 .engineer-grows-tok-o{animation:engineer-grows-tok-o 28s linear infinite}
 @keyframes engineer-grows-tok-o{0.000%{opacity:0}5.000%{opacity:0}6.071%{opacity:1}96.786%{opacity:1}98.571%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-cap-0{animation:engineer-grows-cap-0 28s linear infinite}
@@ -123,11 +123,13 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .engineer-grows-cap-12{animation:engineer-grows-cap-12 28s linear infinite}
 @keyframes engineer-grows-cap-12{0.000%{opacity:0}69.286%{opacity:0}70.357%{opacity:1}72.500%{opacity:1}73.571%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-cap-13{animation:engineer-grows-cap-13 28s linear infinite}
-@keyframes engineer-grows-cap-13{0.000%{opacity:0}73.571%{opacity:0}74.643%{opacity:1}78.929%{opacity:1}80.000%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-cap-13{0.000%{opacity:0}73.571%{opacity:0}74.643%{opacity:1}76.071%{opacity:1}77.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-cap-14{animation:engineer-grows-cap-14 28s linear infinite}
-@keyframes engineer-grows-cap-14{0.000%{opacity:0}80.000%{opacity:0}81.071%{opacity:1}86.071%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-cap-14{0.000%{opacity:0}77.143%{opacity:0}78.214%{opacity:1}80.357%{opacity:1}81.429%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-cap-15{animation:engineer-grows-cap-15 28s linear infinite}
-@keyframes engineer-grows-cap-15{0.000%{opacity:0}87.143%{opacity:0}88.214%{opacity:1}96.786%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
+@keyframes engineer-grows-cap-15{0.000%{opacity:0}81.429%{opacity:0}82.500%{opacity:1}86.071%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
+.engineer-grows-cap-16{animation:engineer-grows-cap-16 28s linear infinite}
+@keyframes engineer-grows-cap-16{0.000%{opacity:0}87.143%{opacity:0}88.214%{opacity:1}96.786%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-bar{animation:engineer-grows-bar 28s linear infinite}
 @keyframes engineer-grows-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
 <marker id="engineer-grows-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
@@ -169,7 +171,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 <rect class="box" x="600" y="90" width="150" height="70" rx="12"/>
 <rect class="hl engineer-grows-hl-episodes" x="597" y="87" width="156" height="76" rx="15"/>
 <text class="title" x="675" y="120.5">Episodes</text>
-<text class="sub" x="675" y="137.5">one per verified task</text>
+<text class="sub" x="675" y="137.5">from a publish decision</text>
 <text class="owner owner-harness" x="610" y="105">Private</text>
 </g>
 <g class="node node-harness">
@@ -202,36 +204,37 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 <g class="mark engineer-grows-mk-day1"><text class="sub" x="600" y="368" text-anchor="middle">Nothing acquired yet: the Engineer and the Harness are a complete setup.</text></g>
 <g class="mark engineer-grows-mk-t1"><g class="node-you"><rect class="box" x="30" y="120" width="160" height="26" rx="8"/><text class="chip-text" x="110" y="137">Task 1: fix importer</text></g></g>
 <g class="mark engineer-grows-mk-v1"><circle class="badge-ok" cx="470" cy="112" r="13"/><text class="badge-text" x="470" y="116.5">✓</text></g>
-<g class="mark engineer-grows-mk-ep1 final"><g class="node-harness"><rect class="box" x="612" y="168" width="126" height="26" rx="8"/><text class="chip-text" x="675" y="185">episode: blank rows</text></g></g>
-<g class="mark engineer-grows-mk-l1 final"><g class="node-harness"><rect class="box" x="802" y="168" width="126" height="26" rx="8"/><text class="chip-text" x="865" y="185">learning #1</text></g></g>
+<g class="mark engineer-grows-mk-ep1 final"><g class="node-harness"><rect class="box" x="604" y="168" width="72" height="26" rx="8"/><text class="chip-text" x="640" y="185">episode 1</text></g></g>
+<g class="mark engineer-grows-mk-l1 final"><g class="node-harness"><rect class="box" x="794" y="168" width="72" height="26" rx="8"/><text class="chip-text" x="830" y="185">learning 1</text></g></g>
 <g class="mark engineer-grows-mk-t2"><g class="node-you"><rect class="box" x="30" y="120" width="160" height="26" rx="8"/><text class="chip-text" x="110" y="137">Task 2: payment retry</text></g></g>
 <g class="mark engineer-grows-mk-need"><g class="node-deny"><rect class="box" x="30" y="166" width="160" height="26" rx="8"/><text class="chip-text" x="110" y="183">needs a security reviewer</text></g></g>
 <g class="mark engineer-grows-mk-grant final"><circle class="badge-ok" cx="928" cy="222" r="13"/><text class="badge-text" x="928" y="226.5">✓</text></g>
-<g class="mark engineer-grows-mk-sec final"><g class="node-review"><rect class="box" x="286" y="344" width="190" height="38" rx="8"/><text class="chip-text" x="381" y="361">security reviewer</text><text class="chip-sub" x="381" y="375">specialist agent, acquired</text></g></g>
+<g class="mark engineer-grows-mk-sec final"><g class="node-review"><rect class="box" x="286" y="344" width="190" height="38" rx="8"/><text class="chip-text" x="381" y="361">security reviewer</text><text class="chip-sub" x="381" y="375">specialist, once the host loads it</text></g></g>
 <g class="mark engineer-grows-mk-v2"><circle class="badge-ok" cx="470" cy="112" r="13"/><text class="badge-text" x="470" y="116.5">✓</text></g>
-<g class="mark engineer-grows-mk-ep2 final"><g class="node-harness"><rect class="box" x="612" y="168" width="126" height="26" rx="8"/><text class="chip-text" x="675" y="185">episode: retries</text></g></g>
-<g class="mark engineer-grows-mk-l2 final"><g class="node-harness"><rect class="box" x="802" y="168" width="126" height="26" rx="8"/><text class="chip-text" x="865" y="185">learning #2</text></g></g>
+<g class="mark engineer-grows-mk-ep2 final"><g class="node-harness"><rect class="box" x="678" y="168" width="72" height="26" rx="8"/><text class="chip-text" x="714" y="185">episode 2</text></g></g>
+<g class="mark engineer-grows-mk-l2 final"><g class="node-harness"><rect class="box" x="868" y="168" width="72" height="26" rx="8"/><text class="chip-text" x="904" y="185">learning 2</text></g></g>
 <g class="mark engineer-grows-mk-t3"><g class="node-you"><rect class="box" x="30" y="120" width="160" height="26" rx="8"/><text class="chip-text" x="110" y="137">Task 3: same procedure</text></g></g>
 <g class="mark engineer-grows-mk-evidence"><g class="node-neutral"><rect class="box" x="612" y="296" width="138" height="26" rx="8"/><text class="chip-text" x="681" y="313">promotion evidence</text></g></g>
-<g class="mark engineer-grows-mk-skill final"><g class="node-engineer"><rect class="box" x="496" y="344" width="190" height="38" rx="8"/><text class="chip-text" x="591" y="361">retry-safety skill</text><text class="chip-sub" x="591" y="375">promoted from verified recurrence</text></g></g>
+<g class="mark engineer-grows-mk-skill final"><g class="node-engineer"><rect class="box" x="496" y="344" width="190" height="38" rx="8"/><text class="chip-text" x="591" y="361">retry-safety skill</text><text class="chip-sub" x="591" y="375">candidate until its evals pass</text></g></g>
 <g class="mark engineer-grows-mk-more final"><g class="node-neutral"><rect class="box" x="706" y="344" width="200" height="38" rx="8"/><text class="chip-text" x="806" y="361">next: whatever the work proves</text><text class="chip-sub" x="806" y="375">never acquired speculatively</text></g></g>
 <g class="engineer-grows-tok-o anim"><g class="engineer-grows-tok"><circle class="tok-glow" r="15"/><circle class="tok" r="8"/></g></g>
 <text class="caption anim engineer-grows-cap-0" x="480" y="474">Day one: one Engineer and the Harness. No skills or specialists are acquired yet.</text>
 <text class="caption anim engineer-grows-cap-1" x="480" y="474">Task 1 arrives. The Engineer delivers it through the Harness gates.</text>
 <text class="caption anim engineer-grows-cap-2" x="480" y="474">Checks pass on the final bytes, so the task is verified.</text>
-<text class="caption anim engineer-grows-cap-3" x="480" y="474">What the task taught becomes a private episode. It never leaves your machine on its own.</text>
+<text class="caption anim engineer-grows-cap-3" x="480" y="474">If the task taught something, the Engineer records a private episode. It stays on your machine.</text>
 <text class="caption anim engineer-grows-cap-4" x="480" y="474">/consolidate turns episodes into learnings. Only ae commands write that store.</text>
 <text class="caption anim engineer-grows-cap-5" x="480" y="474">Task 2 arrives.</text>
 <text class="caption anim engineer-grows-cap-6" x="480" y="474">Orient brings the learnings that match it into the task context.</text>
 <text class="caption anim engineer-grows-cap-7" x="480" y="474">The task needs an independent security reviewer the catalog does not have.</text>
 <text class="caption anim engineer-grows-cap-8" x="480" y="474">Acquisition needs your direct authorization or a standing grant that covers it.</text>
-<text class="caption anim engineer-grows-cap-9" x="480" y="474">/create-primitive adds the smallest separate role, so the review stays independent.</text>
-<text class="caption anim engineer-grows-cap-10" x="480" y="474">Task 2 is verified with that review in place.</text>
+<text class="caption anim engineer-grows-cap-9" x="480" y="474">/create-primitive adds the smallest separate role. It is used only once the host has loaded it.</text>
+<text class="caption anim engineer-grows-cap-10" x="480" y="474">With the new reviewer available, Task 2 is reviewed independently and verified.</text>
 <text class="caption anim engineer-grows-cap-11" x="480" y="474">Another episode, another learning. Knowledge compounds from verified work.</text>
 <text class="caption anim engineer-grows-cap-12" x="480" y="474">Task 3 repeats a procedure that earlier tasks needed too.</text>
 <text class="caption anim engineer-grows-cap-13" x="480" y="474">A repeated procedure becomes a durable skill only with verified promotion evidence.</text>
-<text class="caption anim engineer-grows-cap-14" x="480" y="474">The skill joins the Engineer. Every later task can load it on demand.</text>
-<text class="caption anim engineer-grows-cap-15" x="480" y="474">The Engineer grows from proven work, within the authority you granted.</text>
+<text class="caption anim engineer-grows-cap-14" x="480" y="474">Creating it still needs authority that covers it.</text>
+<text class="caption anim engineer-grows-cap-15" x="480" y="474">It starts as a candidate and becomes active only after its trigger and outcome evals pass.</text>
+<text class="caption anim engineer-grows-cap-16" x="480" y="474">The Engineer grows from proven work, within the authority you granted.</text>
 <text class="caption static" x="480" y="474">Verified work leaves episodes, episodes become learnings, and gaps become skills or specialists, within the authority you grant.</text>
 <rect class="bar-track" x="0" y="494" width="960" height="6"/>
 <rect class="bar engineer-grows-bar" x="0" y="494" width="960" height="6"/>
