@@ -37,8 +37,21 @@ function rewriteLinks(content, input) {
   return content.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, index) => (index % 2 ? part : rewriteProse(part, input))).join('');
 }
 
+// Diagram images are copied into the site so they render there instead of linking to a GitHub page.
+function rewriteImages(content, input) {
+  return content.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, href) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^[#?]/.test(href)) return match;
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(input), href));
+    if (!resolved.startsWith('docs/diagrams/') || !/\.(svg|png|gif)$/i.test(resolved)) return match;
+    const destination = path.join(output, 'assets', resolved);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(root, resolved), destination);
+    return `![${alt}]({{ "/assets/${resolved}" | relative_url }})`;
+  });
+}
+
 function rewriteProse(content, input) {
-  return content.replace(/\]\(([^)\s]+)\)/g, (match, href) => {
+  return rewriteImages(content, input).replace(/\]\(([^)\s]+)\)/g, (match, href) => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^[#?]/.test(href)) return match;
     const [target, anchor] = href.split('#');
     const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(input), target));

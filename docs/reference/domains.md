@@ -33,6 +33,16 @@ The draft lives at `<harness-home>/domains/<name>.draft.yaml`. It lists every re
 
 Running `init` again with new inputs extends the pending draft, or the published domain when there is no draft, and keeps existing repository and source bindings; a checkout without an origin is recognised by its path. `--asset core=ledger,gateway` moves whole repositories into an asset, and a spec source whose asset or component scope no longer exists is dropped with a note. `ae domain bind --name payments --repo ledger=/work/ledger` points a repository (or `--source` a spec source) at another checkout; the checkout must have the expected origin. `--dry-run` shows either step without cloning or writing.
 
+```mermaid
+flowchart LR
+  inputs["--from-workspace<br/>--from-spec<br/>--repo and --asset"] --> draft["Draft<br/>domains/name.draft.yaml"]
+  draft -->|"review or edit it"| accept["ae domain init --accept"]
+  accept -->|"missing repositories"| clone["shallow clone at the<br/>default branch head"]
+  clone --> published["Published domain<br/>domains/name.yaml"]
+  accept -->|"present with the expected origin"| published
+  accept -.->|"a clone failed or a repository is unbound"| draft
+```
+
 The domain lives in the selected Harness home beside each repository's knowledge, plans and configuration, never in a product or spec repository. Init and bind grant no trust and create no plans.
 
 ### Assets, components and spec sources
@@ -50,6 +60,21 @@ spec_sources:
   - { source: payments-spec, scope: asset/core }
   - { source: payments-spec, scope: component/ledger-worker, authority: reference }
 ```
+
+```mermaid
+flowchart TD
+  domain["Domain: payments"] --> core["Asset: core"]
+  domain --> edge["Asset: edge"]
+  core --> api["Component: ledger-api<br/>repository ledger"]
+  core --> worker["Component: ledger-worker<br/>repository ledger, path worker"]
+  edge --> gateway["Component: gateway<br/>repository gateway"]
+  spec[("Spec repository<br/>payments-spec")]
+  spec -.->|"scope: domain"| domain
+  spec -.->|"scope: asset/core"| core
+  spec -.->|"scope: component/ledger-worker"| worker
+```
+
+Dotted edges are spec sources. With the default `reference` authority they inform the Engineer and never block a gate.
 
 Component IDs are unique across the domain and name a member repository, with an optional safe relative `path` and lowercase `role`. A spec source names a declared source, a `scope` of `domain`, `asset/<id>` or `component/<id>`, optional include patterns, and an `authority` of `reference` (the default) or `authoritative`. A reference spec informs the Engineer and never blocks a gate. Both keys stay out of the logical execution digest, so adding or editing them does not invalidate accepted domain plans; `shared_specs` remains the binding mechanism for parent plans. `ae domain show` reports them as `assets` and `specSources`.
 
@@ -111,6 +136,18 @@ The domain commands reuse those lifecycle operations with explicit parent author
 | `domain review assemble --name <name> --plan <path> --packet <id> --file <results>` | Bind collected review results to that packet. |
 | `domain verify --name <name> --plan <path> --base <base>` | Run the coordinator check and declared joint checks after child completion. |
 | `domain compound --name <name> --plan <path> --learning-decision -` | Record accepted publication or no-learning for current parent proof, with the decision piped on stdin (a decision carrying `evidence_quote` is refused from a file). |
+
+```mermaid
+flowchart LR
+  parent["Parent plan<br/>created in the coordinator checkout"] --> producer["producer child<br/>ordinary delivery"]
+  parent --> consumer["consumer child<br/>ordinary delivery"]
+  producer -->|"dependency order"| consumer
+  producer --> review["Parent review"]
+  consumer --> review
+  review --> verify["domain verify<br/>coordinator check and joint checks"]
+  verify --> learn["Parent learning decision"]
+  learn --> done["Parent completion"]
+```
 
 Use the same selected Harness home for the parent and its children. Run each child's ordinary delivery lifecycle in its returned workspace, in dependency order. Then collect parent review, run parent verification, record learning, and submit the complete decision. `domain status` is a derived rollup, not a second task lifecycle.
 

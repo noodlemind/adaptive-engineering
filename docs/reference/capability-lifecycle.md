@@ -10,6 +10,30 @@ A missing required independent reviewer is an acquisition prerequisite, not perm
 
 The internal `decision-agent` is a native host role, not a decision API. The host selects an effectively available small model for the `decision` role when it supports that choice; otherwise it inherits the session model and reports that limitation. No provider key, service, inference endpoint, or model pin is introduced. `ae resources decision --file - --json` prepares, records, and reads bounded decisions. Preparation freezes action/capability/memory/readiness inputs, source hashes, consent revision, and budgets. A host completion observation binds the native reply; manually declared verdicts and invocation provenance do not establish approval. The [native decision input reference](../../packages/ae/corpus/skills/references/native-decisions.md) gives concrete request shapes, actual observed session binding and the complete prepare/invoke/observe/record cycle.
 
+![Animated walkthrough of a decision-agent judgment: the Engineer proposes an exact action, the Harness freezes it with source hashes, consent revision and budgets, the read-only decision-agent judges it, the Harness records a receipt for that action, the hook allows the identical call, and a changed argument gets no approval from that receipt](../diagrams/animated/decision-receipt.svg)
+
+```mermaid
+sequenceDiagram
+  participant E as Engineer
+  participant H as Harness (ae)
+  participant D as decision-agent (host role)
+  participant K as Host hook
+  E->>H: resources decision prepare: exact action and sources
+  H-->>E: Frozen request: inputs, source hashes, consent revision, budgets
+  E->>D: Invoke the native role with that request
+  D-->>E: Verdict
+  Note over E,H: A host completion observation binds the native reply
+  E->>H: resources decision record
+  H-->>E: Receipt for that exact action
+  E->>K: Tool call with identical arguments
+  K->>H: Matching receipt, and do the other guards pass?
+  alt receipt matches and every remaining guard passes
+    H-->>K: Native permission approved, receipt consumed
+  else an argument or bound source changed
+    H-->>K: The receipt does not apply, so a fresh judgment is needed
+  end
+```
+
 There are two approval tiers. The internal tier judges an exact action, applies authorized work, obtains required specialist review, repairs defects, and runs named verification before assessing readiness. An exact consumed action receipt can supply a supported native permission approval after all remaining Harness guards pass; a later denial wins, and sandbox escape or expanded user scope is not granted. The human tier receives the verified result and its visual tour for final review, and supplies authority only where existing scope does not cover the action. A readiness verdict cannot replace passed checks, observed independent coverage, current source binding, or human authority. Repair, acquisition, decision, and time budgets stop unproductive loops. The same boundary applies to primitive and memory updates. Routine covered work should not require a new manual command allowlist entry, while host restrictions, project trust, and deterministic execution boundaries remain authoritative.
 
 ```mermaid

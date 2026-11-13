@@ -2,6 +2,25 @@
 
 What a plan records, how the implement gate and `ae verify` decide, and how hooks treat terminal commands. The overview is in [How Adaptive Engineering works](../adaptive-engineering.md).
 
+## The plan lifecycle at a glance
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Draft: plan-new
+  Draft --> Gated: start decision, with an accepted named check
+  Gated --> Verified: verify passes, reviews in, no critical finding
+  Verified --> Gated: product bytes change, evidence goes stale
+  Gated --> Amend: a locked spec is edited
+  Verified --> Amend: a locked spec is edited
+  Amend --> Gated: amendment accepts the new text, fresh gate
+  Verified --> Learned: learning decision for current proof
+  Learned --> Complete: completion decision
+  Complete --> [*]
+```
+
+A plan without an accepted named check stays a draft. Changing product bytes, the goal, criteria, scope or check mappings invalidates the evidence that depends on them, and under `content-v1` an edit to a locked spec invalidates the gate and the proof until an amendment accepts it. The sections below give the exact rules.
+
 ## Intent sources and isolation
 
 Deliver is host-first. The Engineer works in the editor. Kernel-always means orient, plan lock, gate, and verify run in the Harness even when no extra agent is loaded. Orient names in-repo specs as `intentSources` and whether the checkout is isolated. The implement gate fails when those specs are missing from plan `intent_sources`, or when issue work is still on the default branch of the primary checkout. `ae worktree --slug` opens a linked worktree. A plan that exists only as an uncommitted `docs/plans` file or a gitignored `.harness/plans` file is copied into the project store. A later worktree run replaces that copy when the checkout file is newer and no plan-update holds the file, and leaves the store copy when the store file is newer. A worktree with no `origin` remote shares that store, so the same `--plan` still resolves. A checkout created with `git init --separate-git-dir` keeps its own store. `.gitignore` is not followed when it is a symlink. Orient and `plan-new` share one selection for the same text. A non-empty `intent_sources` list is frozen. The implement gate requires those paths and does not rank again. An empty list in a repo that has a spec still fails and names the selection. Plan lock records `{ path, sha256 }` of the file bytes for each readable in-checkout `intent_sources` file on that tip. A symlink or a missing file fails the lock instead of hashing something outside the checkout or saving a path with no hash. `ae prepare` publishes a missing starter with an exclusive create, so a file that appears during the write is left as it is. Under content-v1, a later edit to a selected source invalidates its gate and proof until an explicit amendment accepts the reviewed bytes. Harness records old/new hashes, rationale, declared authority scope, and affected evidence. A relock preserves the frozen selection and cannot silently rehash it. Legacy plans retain their paths-only guarantee until deliberately migrated. If shipped behavior contradicts a locked spec, update that spec in the same PR or a stacked PR. Do not rewrite the spec from the code in silence. Ambiguous specs become `needs-info` questions, not guesses. Agent-optional means a specialist is consulted only when the task needs that judgment. Benchmark-test-only means the unattended agent loop is for a measured eval, not for normal delivery.

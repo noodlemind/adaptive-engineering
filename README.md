@@ -27,6 +27,22 @@ AE answers each one with a mechanism rather than a prompt. Host hooks deny produ
 
 You ask the Engineer for an outcome. It picks one of four modes. Only Deliver can edit files, and every Deliver task runs the same loop. The `ae` harness never calls a model: it orients the task, locks the plan, gates edits, runs checks without a shell, and stores evidence and learnings outside your repository.
 
+```mermaid
+flowchart TD
+  you(["You"]) -->|"ask for an outcome"| eng["Engineer in your coding host<br/>your model, one shared contract"]
+  eng -->|"Answer, Investigate, Review"| reply["Read-only reply or report"]
+  eng -->|"Deliver"| harness
+  hooks["AE host hooks"] -.->|"deny product edits without a gate"| eng
+  subgraph harness["Harness: the ae CLI, which never calls a model"]
+    direction LR
+    orient["orient"] --> lock["lock the plan"] --> gate["implement gate"] --> verify["verify named checks"] --> record["record evidence and learnings"]
+  end
+  harness --> state[("~/.ae<br/>plans, episodes, learnings")]
+  state -.->|"the next task starts here"| harness
+```
+
+![Animated walkthrough of one Deliver task: orient, an edit denied before the plan is locked, lock intent, gate, work, review, a failing check sent back to work, a passing verify, compound and report](docs/diagrams/animated/deliver-loop.svg)
+
 Read [How Adaptive Engineering works](docs/adaptive-engineering.md) for the full model.
 
 ## Quick start

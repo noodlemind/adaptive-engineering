@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" width="960" height="440" role="img" aria-labelledby="decision-receipt-title decision-receipt-desc">
+<title id="decision-receipt-title">The decision-agent and its receipts</title>
+<desc id="decision-receipt-desc">Animated walkthrough of a decision-agent judgment. The Engineer proposes an exact action. The Harness prepares a bounded request that freezes the action, source hashes, consent revision and budgets. The host runs the read-only decision-agent role, on a small model where the host allows it. The Harness records the observed native reply as a receipt tied to that exact action. When the tool call arrives, the hook allows it only if the receipt matches and every remaining Harness guard passes. A changed argument does not match the receipt and needs a fresh judgment.</desc>
+<defs>
+<style>
+:root{--bg:#ffffff;--panel:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#afb8c1;--eng:#0969da;--eng-t:#ddf4ff;--har:#1a7f37;--har-t:#dafbe1;--rev:#8250df;--rev-t:#fbefff;--you:#9a6700;--you-t:#fff8c5;--deny:#cf222e;--deny-t:#ffebe9;--ok:#1a7f37;--neutral:#59636e;--neutral-t:#f6f8fa}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#656c76;--eng:#4493f8;--eng-t:#0c2d6b;--har:#3fb950;--har-t:#0f2e1a;--rev:#ab7df8;--rev-t:#2b1c4a;--you:#d29922;--you-t:#3b2a06;--deny:#f85149;--deny-t:#4c1a1a;--ok:#3fb950;--neutral:#9198a1;--neutral-t:#161b22}}
+svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif}
+.bg{fill:var(--bg)}
+.heading{fill:var(--ink);font-size:18px;font-weight:600}
+.legend{fill:var(--muted);font-size:12px}
+.box{stroke-width:1.5}
+.node-engineer .box{fill:var(--eng-t);stroke:var(--eng)}
+.node-harness .box{fill:var(--har-t);stroke:var(--har)}
+.node-review .box{fill:var(--rev-t);stroke:var(--rev)}
+.node-you .box{fill:var(--you-t);stroke:var(--you)}
+.node-neutral .box{fill:var(--neutral-t);stroke:var(--line)}
+.node-deny .box{fill:var(--deny-t);stroke:var(--deny)}
+.hl{fill:none;stroke-width:3.5;opacity:0}
+.node-engineer .hl{stroke:var(--eng)}.node-harness .hl{stroke:var(--har)}.node-review .hl{stroke:var(--rev)}.node-you .hl{stroke:var(--you)}.node-neutral .hl{stroke:var(--ink)}.node-deny .hl{stroke:var(--deny)}
+.title{fill:var(--ink);font-size:15px;font-weight:600;text-anchor:middle}
+.sub{fill:var(--muted);font-size:11.5px;text-anchor:middle}
+.owner{font-size:9.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.owner-engineer{fill:var(--eng)}.owner-harness{fill:var(--har)}.owner-review{fill:var(--rev)}.owner-you{fill:var(--you)}.owner-neutral{fill:var(--muted)}
+.edge{fill:none;stroke:var(--line);stroke-width:1.6}
+.edge-loop{stroke:var(--deny);stroke-dasharray:5 4}
+.edge-feed{stroke:var(--har);stroke-dasharray:5 4}
+.arrow{fill:var(--line)}.arrow-loop{fill:var(--deny)}.arrow-feed{fill:var(--har)}
+.edge-label{fill:var(--muted);font-size:11px}
+.edge-label-loop{fill:var(--deny)}.edge-label-feed{fill:var(--har)}
+.tok{fill:var(--you);stroke:var(--bg);stroke-width:2}
+.tok-glow{fill:var(--you);opacity:.25}
+.mark{opacity:0}
+.badge-deny{fill:var(--deny)}.badge-ok{fill:var(--ok)}
+.badge-text{fill:#ffffff;font-size:13px;font-weight:700;text-anchor:middle}
+.chip-text{fill:var(--ink);font-size:11.5px;font-weight:600;text-anchor:middle}
+.chip-sub{fill:var(--muted);font-size:10.5px;text-anchor:middle}
+.caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
+.static{opacity:0}
+.bar-track{fill:var(--panel)}
+.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important}
+  .anim,.hl,.bar{opacity:0 !important}
+  .static,.mark.final{opacity:1 !important}
+}
+.decision-receipt-hl-propose{animation:decision-receipt-hl-propose 22s linear infinite}
+@keyframes decision-receipt-hl-propose{0.000%{opacity:0}2.727%{opacity:0}3.864%{opacity:1}10.682%{opacity:1}11.818%{opacity:0}62.727%{opacity:0}63.864%{opacity:1}67.045%{opacity:1}68.182%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-hl-prepare{animation:decision-receipt-hl-prepare 22s linear infinite}
+@keyframes decision-receipt-hl-prepare{0.000%{opacity:0}11.818%{opacity:0}12.955%{opacity:1}19.773%{opacity:1}20.909%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-hl-judge{animation:decision-receipt-hl-judge 22s linear infinite}
+@keyframes decision-receipt-hl-judge{0.000%{opacity:0}20.909%{opacity:0}22.045%{opacity:1}29.773%{opacity:1}30.909%{opacity:0}84.545%{opacity:0}85.682%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-hl-record{animation:decision-receipt-hl-record 22s linear infinite}
+@keyframes decision-receipt-hl-record{0.000%{opacity:0}30.909%{opacity:0}32.045%{opacity:1}38.864%{opacity:1}40.000%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-hl-call{animation:decision-receipt-hl-call 22s linear infinite}
+@keyframes decision-receipt-hl-call{0.000%{opacity:0}40.000%{opacity:0}41.136%{opacity:1}46.136%{opacity:1}47.273%{opacity:0}68.182%{opacity:0}69.318%{opacity:1}72.500%{opacity:1}73.636%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-hl-hook{animation:decision-receipt-hl-hook 22s linear infinite}
+@keyframes decision-receipt-hl-hook{0.000%{opacity:0}47.273%{opacity:0}48.409%{opacity:1}61.591%{opacity:1}62.727%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}83.409%{opacity:1}84.545%{opacity:0}84.550%{opacity:0}85.682%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-action1{animation:decision-receipt-mk-action1 22s linear infinite}
+@keyframes decision-receipt-mk-action1{0.000%{opacity:0}2.727%{opacity:0}3.864%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-frozen{animation:decision-receipt-mk-frozen 22s linear infinite}
+@keyframes decision-receipt-mk-frozen{0.000%{opacity:0}11.818%{opacity:0}12.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-verdict{animation:decision-receipt-mk-verdict 22s linear infinite}
+@keyframes decision-receipt-mk-verdict{0.000%{opacity:0}21.818%{opacity:0}22.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-receipt{animation:decision-receipt-mk-receipt 22s linear infinite}
+@keyframes decision-receipt-mk-receipt{0.000%{opacity:0}31.818%{opacity:0}32.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-allow{animation:decision-receipt-mk-allow 22s linear infinite}
+@keyframes decision-receipt-mk-allow{0.000%{opacity:0}48.182%{opacity:0}49.318%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-action2{animation:decision-receipt-mk-action2 22s linear infinite}
+@keyframes decision-receipt-mk-action2{0.000%{opacity:0}63.636%{opacity:0}64.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-mk-deny{animation:decision-receipt-mk-deny 22s linear infinite}
+@keyframes decision-receipt-mk-deny{0.000%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-tok{animation:decision-receipt-tok 22s ease-in-out infinite}
+@keyframes decision-receipt-tok{0.000%{transform:translate(130px,96px)}2.727%{transform:translate(130px,96px)}11.818%{transform:translate(130px,96px)}15.000%{transform:translate(362px,96px)}20.909%{transform:translate(362px,96px)}24.091%{transform:translate(594px,96px)}30.909%{transform:translate(594px,96px)}34.091%{transform:translate(826px,96px)}40.000%{transform:translate(826px,96px)}44.545%{transform:translate(362px,250px)}47.273%{transform:translate(362px,250px)}50.455%{transform:translate(710px,250px)}62.727%{transform:translate(710px,250px)}67.273%{transform:translate(130px,96px)}68.182%{transform:translate(130px,96px)}71.818%{transform:translate(362px,250px)}73.636%{transform:translate(362px,250px)}76.818%{transform:translate(710px,250px)}100.000%{transform:translate(710px,250px)}}
+.decision-receipt-tok-o{animation:decision-receipt-tok-o 22s linear infinite}
+@keyframes decision-receipt-tok-o{0.000%{opacity:0}2.727%{opacity:0}4.091%{opacity:1}95.909%{opacity:1}98.182%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-0{animation:decision-receipt-cap-0 22s linear infinite}
+@keyframes decision-receipt-cap-0{0.000%{opacity:0}2.727%{opacity:0}4.091%{opacity:1}10.455%{opacity:1}11.818%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-1{animation:decision-receipt-cap-1 22s linear infinite}
+@keyframes decision-receipt-cap-1{0.000%{opacity:0}11.818%{opacity:0}13.182%{opacity:1}19.545%{opacity:1}20.909%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-2{animation:decision-receipt-cap-2 22s linear infinite}
+@keyframes decision-receipt-cap-2{0.000%{opacity:0}20.909%{opacity:0}22.273%{opacity:1}29.545%{opacity:1}30.909%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-3{animation:decision-receipt-cap-3 22s linear infinite}
+@keyframes decision-receipt-cap-3{0.000%{opacity:0}30.909%{opacity:0}32.273%{opacity:1}38.636%{opacity:1}40.000%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-4{animation:decision-receipt-cap-4 22s linear infinite}
+@keyframes decision-receipt-cap-4{0.000%{opacity:0}40.000%{opacity:0}41.364%{opacity:1}45.909%{opacity:1}47.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-5{animation:decision-receipt-cap-5 22s linear infinite}
+@keyframes decision-receipt-cap-5{0.000%{opacity:0}47.273%{opacity:0}48.636%{opacity:1}61.364%{opacity:1}62.727%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-6{animation:decision-receipt-cap-6 22s linear infinite}
+@keyframes decision-receipt-cap-6{0.000%{opacity:0}62.727%{opacity:0}64.091%{opacity:1}66.818%{opacity:1}68.182%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-7{animation:decision-receipt-cap-7 22s linear infinite}
+@keyframes decision-receipt-cap-7{0.000%{opacity:0}68.182%{opacity:0}69.545%{opacity:1}72.273%{opacity:1}73.636%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-8{animation:decision-receipt-cap-8 22s linear infinite}
+@keyframes decision-receipt-cap-8{0.000%{opacity:0}73.636%{opacity:0}75.000%{opacity:1}83.182%{opacity:1}84.545%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-cap-9{animation:decision-receipt-cap-9 22s linear infinite}
+@keyframes decision-receipt-cap-9{0.000%{opacity:0}84.545%{opacity:0}85.909%{opacity:1}95.909%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
+.decision-receipt-bar{animation:decision-receipt-bar 22s linear infinite}
+@keyframes decision-receipt-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
+<marker id="decision-receipt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
+<marker id="decision-receipt-arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-loop" d="M0 0L10 5L0 10z"/></marker>
+<marker id="decision-receipt-arrow-feed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-feed" d="M0 0L10 5L0 10z"/></marker>
+</defs>
+<rect class="bg" width="960" height="440" rx="14"/>
+<text class="heading" x="24" y="33">The decision-agent and its receipts</text>
+<g class="node-engineer"><rect class="box" x="600" y="20" width="14" height="14" rx="4"/><text class="legend" x="620" y="31">Engineer</text></g><g class="node-harness"><rect class="box" x="712" y="20" width="14" height="14" rx="4"/><text class="legend" x="732" y="31">Harness (ae)</text></g><g class="node-review"><rect class="box" x="824" y="20" width="14" height="14" rx="4"/><text class="legend" x="844" y="31">decision-agent</text></g>
+<path class="edge" d="M230 142 L260 142" marker-end="url(#decision-receipt-arrow)"/>
+<path class="edge" d="M462 142 L492 142" marker-end="url(#decision-receipt-arrow)"/>
+<path class="edge" d="M694 142 L724 142" marker-end="url(#decision-receipt-arrow)"/>
+<path class="edge" d="M130 188 C130 296, 202 296, 260 296" marker-end="url(#decision-receipt-arrow)"/>
+<path class="edge" d="M462 296 L608 296" marker-end="url(#decision-receipt-arrow)"/>
+<path class="edge edge-feed" d="M826 190 C826 240, 794 236, 784 248" marker-end="url(#decision-receipt-arrow-feed)"/>
+<text class="edge-label edge-label-feed" x="834" y="244">receipt</text>
+<g class="node node-engineer">
+<rect class="box" x="30" y="96" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-propose" x="27" y="93" width="206" height="98" rx="15"/>
+<text class="title" x="130" y="131">Propose action</text>
+<text class="sub" x="130" y="148">tool, full input, cwd</text><text class="sub" x="130" y="162.95">and the sources it reads</text>
+<text class="owner owner-engineer" x="40" y="111">Engineer</text>
+</g>
+<g class="node node-harness">
+<rect class="box" x="262" y="96" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-prepare" x="259" y="93" width="206" height="98" rx="15"/>
+<text class="title" x="362" y="131">Prepare</text>
+<text class="sub" x="362" y="148">freeze action, source hashes,</text><text class="sub" x="362" y="162.95">consent revision, budgets</text>
+<text class="owner owner-harness" x="272" y="111">Harness</text>
+</g>
+<g class="node node-review">
+<rect class="box" x="494" y="96" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-judge" x="491" y="93" width="206" height="98" rx="15"/>
+<text class="title" x="594" y="131">decision-agent</text>
+<text class="sub" x="594" y="148">small model where the host</text><text class="sub" x="594" y="162.95">allows; else inherits</text>
+<text class="owner owner-review" x="504" y="111">Host role, read-only</text>
+</g>
+<g class="node node-harness">
+<rect class="box" x="726" y="96" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-record" x="723" y="93" width="206" height="98" rx="15"/>
+<text class="title" x="826" y="131">Record receipt</text>
+<text class="sub" x="826" y="148">observed native reply</text><text class="sub" x="826" y="162.95">bound to the exact action</text>
+<text class="owner owner-harness" x="736" y="111">Harness</text>
+</g>
+<g class="node node-engineer">
+<rect class="box" x="262" y="250" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-call" x="259" y="247" width="206" height="98" rx="15"/>
+<text class="title" x="362" y="291.5">Tool call</text>
+<text class="sub" x="362" y="308.5">the host runs the action</text>
+<text class="owner owner-engineer" x="272" y="265">Engineer</text>
+</g>
+<g class="node node-harness">
+<rect class="box" x="610" y="250" width="200" height="92" rx="12"/>
+<rect class="hl decision-receipt-hl-hook" x="607" y="247" width="206" height="98" rx="15"/>
+<text class="title" x="710" y="285">Guard</text>
+<text class="sub" x="710" y="302">receipt matches and</text><text class="sub" x="710" y="316.95">every other guard passes</text>
+<text class="owner owner-harness" x="620" y="265">Host hook + Harness</text>
+</g>
+<g class="mark decision-receipt-mk-action1"><g class="node-neutral"><rect class="box" x="30" y="56" width="280" height="26" rx="8"/><text class="chip-text" x="170" y="73">Bash: node --test test/payment.test.mjs</text></g></g>
+<g class="mark decision-receipt-mk-frozen"><g class="node-harness"><rect class="box" x="282" y="196" width="160" height="26" rx="8"/><text class="chip-text" x="362" y="213">request frozen</text></g></g>
+<g class="mark decision-receipt-mk-verdict"><g class="node-review"><rect class="box" x="524" y="196" width="140" height="26" rx="8"/><text class="chip-text" x="594" y="213">verdict: allow</text></g></g>
+<g class="mark decision-receipt-mk-receipt"><g class="node-harness"><rect class="box" x="746" y="196" width="160" height="26" rx="8"/><text class="chip-text" x="826" y="213">receipt for that action</text></g></g>
+<g class="mark decision-receipt-mk-allow"><circle class="badge-ok" cx="798" cy="258" r="13"/><text class="badge-text" x="798" y="262.5">✓</text><g class="node-harness"><rect class="box" x="630" y="350" width="160" height="26" rx="8"/><text class="chip-text" x="710" y="367">allowed, receipt consumed</text></g></g>
+<g class="mark decision-receipt-mk-action2"><g class="node-deny"><rect class="box" x="30" y="56" width="280" height="26" rx="8"/><text class="chip-text" x="170" y="73">Bash: node --test test/  (changed argument)</text></g></g>
+<g class="mark decision-receipt-mk-deny"><circle class="badge-deny" cx="798" cy="258" r="13"/><text class="badge-text" x="798" y="262.5">✕</text><g class="node-deny"><rect class="box" x="620" y="350" width="180" height="26" rx="8"/><text class="chip-text" x="710" y="367">receipt does not apply</text></g></g>
+<g class="decision-receipt-tok-o anim"><g class="decision-receipt-tok"><circle class="tok-glow" r="15"/><circle class="tok" r="8"/></g></g>
+<text class="caption anim decision-receipt-cap-0" x="480" y="414">The Engineer proposes one exact action: the tool, its full input and where it runs.</text>
+<text class="caption anim decision-receipt-cap-1" x="480" y="414">The Harness freezes that action with source hashes, consent revision and budgets.</text>
+<text class="caption anim decision-receipt-cap-2" x="480" y="414">The host runs the read-only decision-agent, on a small model where the host allows it.</text>
+<text class="caption anim decision-receipt-cap-3" x="480" y="414">The Harness records the observed reply as a receipt tied to that exact action.</text>
+<text class="caption anim decision-receipt-cap-4" x="480" y="414">The Engineer makes the tool call with the identical arguments.</text>
+<text class="caption anim decision-receipt-cap-5" x="480" y="414">The receipt matches and every remaining guard passes, so the call is allowed.</text>
+<text class="caption anim decision-receipt-cap-6" x="480" y="414">Now one argument changes.</text>
+<text class="caption anim decision-receipt-cap-7" x="480" y="414">The new call is not the action that was judged.</text>
+<text class="caption anim decision-receipt-cap-8" x="480" y="414">No receipt matches it, so it needs a fresh judgment. A later denial always wins.</text>
+<text class="caption anim decision-receipt-cap-9" x="480" y="414">A receipt never grants trust, user authority or wider scope, and never replaces named checks.</text>
+<text class="caption static" x="480" y="414">A receipt approves one exact action. It never grants trust, user authority or scope, and never replaces named checks.</text>
+<rect class="bar-track" x="0" y="434" width="960" height="6"/>
+<rect class="bar decision-receipt-bar" x="0" y="434" width="960" height="6"/>
+</svg>
