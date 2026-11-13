@@ -203,3 +203,25 @@ test('a repeated prepare and a record replay of an archived request leave no orp
   assert.equal(Object.hasOwn(tasks(), key), false, 'the archived task budget does not come back');
   assert.equal(decisionStatus({ ...f, now: 1006, requestId: first.prepared.requestId }).counts.decisions, 1, 'and still counts from its retained record');
 });
+
+// Copilot review of PR #130: finding judgments retire once recorded, and the finding counter survives archive reconciliation.
+test('recorded finding judgments retire from live state and the finding budget survives archive reconciliation', async t => {
+  const { findingVerification, MAX_FINDING_DECISIONS } = await import('../lib/decision-agent.mjs');
+  const f = fixture(t);
+  const policy = { ...f.policy, types: ['finding'], budgets: { ...f.policy.budgets, maxDecisions: 1 } };
+  const finding = index => ({ packet: 'a'.repeat(64), id: index.toString(16).padStart(64, '0'), file: 'test.mjs', line: 1, severity: 'P2', title: `Finding ${index}` });
+  const input = index => ({ schema: 1, taskId: 'verify', sessionId: 'session-v', type: 'finding', intent: 'Verify one review finding against the code.', finding: finding(index), context: { inspectedEvidence: 'x'.repeat(30000) } });
+  let first;
+  for (let index = 0; index < MAX_FINDING_DECISIONS; index++) {
+    const prepared = prepareDecision({ ...f, policy, now: 1000, input: input(index) });
+    first ||= prepared;
+    const judgment = { schema: 1, requestId: prepared.requestId, verdict: index % 2 ? 'deny' : 'allow', reason: 'Checked against the code.', evidence: ['test.mjs:1'] };
+    assert.equal(observeDecisionInvocation({ ...f, policy, now: 1001, payload: { cwd: f.workspace, session_id: 'session-v', tool_name: 'Agent', tool_input: { subagent_type: 'decision-agent' }, tool_use_id: `call-${index}`, tool_response: judgment, success: true } }).observed, true);
+    recordDecision({ ...f, policy, now: 1002, input: { schema: 1, requestId: prepared.requestId } });
+  }
+  assert.ok(fs.statSync(first.storePath).size < 1024 * 1024, 'confirmed finding receipts do not stay live until the task expires');
+  const archive = path.join(f.home, 'decision-archives', path.basename(first.storePath, '.json'), 'requests', `${first.requestId}.json`);
+  assert.ok(fs.existsSync(archive), 'a recorded finding judgment is archived');
+  assert.equal(findingVerification({ ...f, requestId: first.requestId }).verdict, 'allow', 'exact-ID lookup still reads an archived judgment');
+  assert.throws(() => prepareDecision({ ...f, policy, now: 1003, input: input(MAX_FINDING_DECISIONS) }), /finding verification budget exhausted/);
+});

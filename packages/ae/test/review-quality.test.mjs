@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { validateFlowLedger, synthesizeReview, workspaceLines, FLOW_CLASSES } from '../lib/review-synthesis.mjs';
+import { validateFlowLedger, synthesizeReview, renderReview, workspaceLines, FLOW_CLASSES } from '../lib/review-synthesis.mjs';
 import { reviewBudget, FLOW_REVIEWER } from '../lib/review-preparation.mjs';
 import { reviewImpact, impactDependents, MAX_IMPACT_SEEDS } from '../lib/review-impact.mjs';
 import { prepareDecision, observeDecisionInvocation, recordDecision, findingVerification } from '../lib/decision-agent.mjs';
@@ -278,4 +278,29 @@ test('old decision state with a malformed finding counter is refused', t => {
   for (const task of Object.values(state.tasks)) task.counts.findings = -5;
   fs.writeFileSync(store, JSON.stringify(state));
   assert.throws(() => prepareDecision({ workspace, home, policy, input: { ...input, finding: { ...input.finding, id: 'd'.repeat(64) } } }), /malformed/);
+});
+
+// Copilot review of PR #130.
+test('a reviewer cannot author a verification marker, and the summary counts unverified P1/P2 findings without receipts', t => {
+  const ws = synthesisWorkspace(t);
+  const authored = { results: [{ reviewer: 'code-simplicity-reviewer', status: 'completed', residual_risks: [], testing_gaps: [], findings: [finding({ verification: { state: 'refuted', verdict: 'deny' } })] }] };
+  for (const verifications of [undefined, []]) {
+    const result = synthesizeReview(ws, ['code-simplicity-reviewer'], { ...authored, ...(verifications ? { verifications } : {}) }, [], [], false, { packetId: PACKET });
+    assert.equal(result.findings[0].verification, undefined, 'only a recorded receipt marks a finding');
+  }
+  const plain = synthesizeReview(ws, ['code-simplicity-reviewer'], authored, [], [], false, { packetId: PACKET });
+  assert.match(renderReview({ ...plain, kind: 'code' }).text, /Verification: 0 confirmed, 0 refuted, 0 disputed, 0 unresolved; 1 P1\/P2 unverified\./);
+  const minor = synthesizeReview(ws, ['code-simplicity-reviewer'], { results: [{ ...authored.results[0], findings: [finding({ severity: 'P3' })] }] }, [], [], false, { packetId: PACKET });
+  assert.doesNotMatch(renderReview({ ...minor, kind: 'code' }).text, /Verification:/);
+});
+
+test('impact reports partial dependents with the traversal bound that cut them', t => {
+  const { ws, home } = graphRepo(t);
+  fs.writeFileSync(path.join(ws, 'src/apex.mjs'), "import { top } from './top.mjs';\nexport const apex = top;\n");
+  git(ws, 'add', '.'); git(ws, 'commit', '-qm', 'apex');
+  const core = reviewImpact({ workspace: ws, home, files: ['src/core.mjs'] }).seeds[0];
+  assert.equal(core.outcome, 'found');
+  assert.equal(core.depthLimitReached, true);
+  assert.equal(core.complete, false, 'a depth-bounded list is never complete');
+  assert.match(core.reason, /beyond depth 2/);
 });

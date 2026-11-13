@@ -195,3 +195,17 @@ test('Codex stages only one new whole Add File JSON input through the same close
   fs.linkSync(protectedFile, target);
   assert.equal(f.allowed(input), false);
 });
+
+// Copilot review of PR #130: finding prepares and learning feedback fields stage through Write and Add File.
+test('finding prepare inputs and learning decisions with feedback fields stage in both native write formats', t => {
+  const f = fixture(t);
+  const inputs = [
+    { schema: 1, operation: 'prepare', taskId: 'verify', sessionId: 's', type: 'finding', intent: 'Verify one finding.', finding: { packet: 'a'.repeat(64), id: 'b'.repeat(64), file: 'src/a.mjs', line: 1, severity: 'P2', title: 'T' } },
+    { operation: 'record-learning', decision: 'no-learning', rationale: 'Nothing new.', recalled: [], findings: [], missed: [{ file: 'src/a.mjs', title: 'Missed check', source: 'copilot' }] },
+  ];
+  for (const input of inputs) {
+    const patch = `*** Begin Patch\n*** Add File: .harness/decisions/staged.json\n+${JSON.stringify(input)}\n*** End Patch\n`;
+    for (const payload of [f.payload(input), { workspace: f.workspace, session_id: 'stage-session', tool_name: 'apply_patch', tool_input: { input: patch } }]) assert.equal(f.allowed(payload), true, `${payload.tool_name}: ${Object.keys(input).join(',')}`);
+  }
+  assert.equal(f.allowed(f.payload({ ...inputs[1], approved: true })), false, 'the learning allowlist stays closed');
+});

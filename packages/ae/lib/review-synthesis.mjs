@@ -107,7 +107,9 @@ export function normalizeFinding(workspace, finding, sourceRefs = [], selectedOn
   if (!Object.hasOwn(actionRank, finding.autofix_class)) errors.push('Invalid action routing');
   if (!Array.isArray(finding.evidence) || !finding.evidence.length || !finding.evidence.every(s => typeof s === 'string' && s.trim())) errors.push('Missing finding evidence');
   if (errors.length) return { errors };
-  const value = { ...finding, file, title: finding.title.trim(), evidence: unique(finding.evidence) };
+  // Only a recorded decision-agent receipt sets `verification` (applyVerifications); a reviewer cannot author it.
+  const { verification: _authored, ...rest } = finding;
+  const value = { ...rest, file, title: finding.title.trim(), evidence: unique(finding.evidence) };
   return { errors, value: { ...value, id: findingIdentity(value) } };
 }
 
@@ -305,7 +307,7 @@ export function renderReview(record, maxBytes = 16384) {
     if (Buffer.byteLength(lines.join('\n') + line) + 512 > maxBytes) omitted++; else lines.push(line);
   }
   const verified = state => record.findings.filter(f => f.verification?.state === state).length;
-  if (record.findings.some(f => f.verification)) {
+  if (record.findings.some(f => f.verification || f.severity === 'P1' || f.severity === 'P2')) {
     const unverified = record.findings.filter(f => !f.verification && (f.severity === 'P1' || f.severity === 'P2')).length;
     lines.push('', `Verification: ${verified('confirmed')} confirmed, ${verified('refuted')} refuted, ${verified('disputed')} disputed, ${verified('unresolved')} unresolved; ${unverified} P1/P2 unverified.`);
   }

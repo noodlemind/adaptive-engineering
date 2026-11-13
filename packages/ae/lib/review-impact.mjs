@@ -27,14 +27,34 @@ function outcomeReason(graph) {
   return `Graph outcome ${graph.outcome || 'missing'}; relationships were not established.`;
 }
 
+// Why a found result is still partial: bounded traversal, then the graph's own coverage gaps.
+function coverageGaps(graph) {
+  const c = graph.coverage || {}, gaps = [];
+  if (graph.omitted?.edges) gaps.push(`${graph.omitted.edges} dependent edge(s) beyond the ${IMPACT_LIMIT}-edge limit`);
+  if (graph.depthLimitReached) gaps.push(`dependents beyond depth ${IMPACT_DEPTH}`);
+  if (c.filesTruncated) gaps.push(`only ${c.scanned} of ${c.tracked} tracked source files scanned`);
+  if (c.unreadable) gaps.push(`${c.unreadable} unreadable file(s)`);
+  if (c.parseErrors) gaps.push(`${c.parseErrors} file(s) with parse errors`);
+  if (c.extractionTruncated) gaps.push('import extraction hit a per-file limit');
+  if (c.extractionUnknown) gaps.push('extraction coverage unknown for some files');
+  if (c.moduleEdgesTruncated || c.unresolvedTruncated) gaps.push('the import graph was truncated');
+  if (c.unresolvedImports) gaps.push(`${c.unresolvedImports} unresolved import(s)`);
+  if (c.heuristicEdges) gaps.push(`${c.heuristicEdges} heuristically resolved edge(s)`);
+  return gaps;
+}
+
 function seedImpact(workspace, home, file) {
   try {
     const graph = queryGraph({ workspace, home, operation: 'impact', files: [file], depth: IMPACT_DEPTH, limit: IMPACT_LIMIT });
     const dependents = (graph.affected || []).map(node => ({ file: node.file, distance: node.distance, sha256: node.hash }));
+    const gaps = graph.outcome === 'found' ? coverageGaps(graph) : [];
+    const complete = graph.outcome === 'found' && graph.coverage?.complete === true && gaps.length === 0;
+    const reason = graph.outcome !== 'found' ? outcomeReason(graph)
+      : complete ? null : `Listed dependents may be partial: ${gaps.length ? gaps.join('; ') : 'graph coverage is incomplete'}.`.slice(0, 300);
     return {
-      file, outcome: graph.outcome, freshness: graph.freshness?.state || 'unknown', complete: graph.coverage?.complete === true,
+      file, outcome: graph.outcome, freshness: graph.freshness?.state || 'unknown', complete,
       dependents, omittedEdges: graph.omitted?.edges || 0, depthLimitReached: graph.depthLimitReached === true,
-      ...(graph.outcome === 'found' ? {} : { reason: outcomeReason(graph) }),
+      ...(reason ? { reason } : {}),
     };
   } catch (error) {
     return { file, outcome: 'unknown', freshness: 'unknown', complete: false, dependents: [], omittedEdges: 0, depthLimitReached: false,
