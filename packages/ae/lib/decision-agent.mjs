@@ -591,7 +591,7 @@ export function decisionStatus(options) {
   }
   const taskId = options.taskId || request?.taskId;
   const live = [...readinessWarnings(loc, state), ...archiveWarnings(loc, state, [requestFault, taskFault])], warnings = live.length ? { warnings: live } : {};
-  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0 }, current: false, ...warnings };
+  if (!task) return { schema: 1, status: 'missing', counts: { decisions: 0, repairs: 0, acquisitions: 0, findings: 0 }, current: false, ...warnings };
   let result = request ? currentRequest({ ...options, ...loc }, request, policy) : { current: policy.enabled, reason: 'Task status; inspect an exact request for freshness' };
   try { taskBudget(task, policy, options.now ?? Date.now()); } catch (error) { result = { current: false, reason: error.message }; }
   return { schema: 1, status: result.current ? 'current' : 'stale', taskId, counts: task.counts, budgets: policy.budgets, ...result, receipt: request ? state.receipts[request.requestId] || null : null, ...warnings };

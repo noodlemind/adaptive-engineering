@@ -224,4 +224,28 @@ test('recorded finding judgments retire from live state and the finding budget s
   assert.ok(fs.existsSync(archive), 'a recorded finding judgment is archived');
   assert.equal(findingVerification({ ...f, requestId: first.requestId }).verdict, 'allow', 'exact-ID lookup still reads an archived judgment');
   assert.throws(() => prepareDecision({ ...f, policy, now: 1003, input: input(MAX_FINDING_DECISIONS) }), /finding verification budget exhausted/);
+  assert.equal(decisionStatus({ ...f, policy, now: 1003, requestId: first.requestId }).counts.findings, MAX_FINDING_DECISIONS);
+});
+
+test('a live finding counter merged with a retained task budget keeps the greater count', async t => {
+  const { decisionTask } = await import('../lib/decision-archive.mjs');
+  const { createHash } = await import('node:crypto');
+  const f = fixture(t);
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const stable = value => JSON.stringify(value, (_, item) => object(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+  const hash = value => createHash('sha256').update(typeof value === 'string' ? value : stable(value)).digest('hex');
+  const key = 'e'.repeat(64), loc = { home: f.home, workspace: f.workspace };
+  const retain = task => {
+    const dir = path.join(f.home, 'decision-archives', hash(f.workspace), 'tasks');
+    fs.mkdirSync(dir, { recursive: true });
+    const value = { schema: 1, workspace: f.workspace, budgetKey: key, task };
+    fs.writeFileSync(path.join(dir, `${key}.json`), `${stable({ ...value, id: hash(value) })}\n`);
+  };
+  retain({ startedAt: 1000, counts: { decisions: 0, repairs: 0, acquisitions: 0, findings: 64 } });
+  const live = { tasks: { [key]: { startedAt: 1500, counts: { decisions: 0, repairs: 0, acquisitions: 0, findings: 1 } } } };
+  assert.equal(decisionTask(loc, live, key).counts.findings, 64, 'the retained finding count is never dropped');
+  const legacy = { tasks: { [key]: { startedAt: 1500, counts: { decisions: 2, repairs: 0, acquisitions: 0 } } } };
+  assert.deepEqual(decisionTask(loc, legacy, key).counts, { decisions: 2, repairs: 0, acquisitions: 0, findings: 64 }, 'a legacy live task counts findings as zero');
+  retain({ startedAt: 1000, counts: { decisions: 3, repairs: 0, acquisitions: 0 } });
+  assert.deepEqual(decisionTask(loc, { tasks: { [key]: { startedAt: 1500, counts: { decisions: 1, repairs: 0, acquisitions: 0 } } } }, key).counts, { decisions: 3, repairs: 0, acquisitions: 0 }, 'records without the counter keep their shape');
 });

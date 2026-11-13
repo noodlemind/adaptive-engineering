@@ -307,7 +307,8 @@ export function renderReview(record, maxBytes = 16384) {
     if (Buffer.byteLength(lines.join('\n') + line) + 512 > maxBytes) omitted++; else lines.push(line);
   }
   const verified = state => record.findings.filter(f => f.verification?.state === state).length;
-  if (record.findings.some(f => f.verification || f.severity === 'P1' || f.severity === 'P2')) {
+  // Only code reviews offer finding verification, so document reviews show the line only when a receipt applied.
+  if (record.findings.some(f => f.verification || record.kind !== 'document' && (f.severity === 'P1' || f.severity === 'P2'))) {
     const unverified = record.findings.filter(f => !f.verification && (f.severity === 'P1' || f.severity === 'P2')).length;
     lines.push('', `Verification: ${verified('confirmed')} confirmed, ${verified('refuted')} refuted, ${verified('disputed')} disputed, ${verified('unresolved')} unresolved; ${unverified} P1/P2 unverified.`);
   }

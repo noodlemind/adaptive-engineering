@@ -292,6 +292,7 @@ test('a reviewer cannot author a verification marker, and the summary counts unv
   assert.match(renderReview({ ...plain, kind: 'code' }).text, /Verification: 0 confirmed, 0 refuted, 0 disputed, 0 unresolved; 1 P1\/P2 unverified\./);
   const minor = synthesizeReview(ws, ['code-simplicity-reviewer'], { results: [{ ...authored.results[0], findings: [finding({ severity: 'P3' })] }] }, [], [], false, { packetId: PACKET });
   assert.doesNotMatch(renderReview({ ...minor, kind: 'code' }).text, /Verification:/);
+  assert.doesNotMatch(renderReview({ ...plain, kind: 'document' }).text, /Verification:/, 'document reviews offer no finding verification');
 });
 
 test('impact reports partial dependents with the traversal bound that cut them', t => {
