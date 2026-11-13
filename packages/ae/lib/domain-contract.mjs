@@ -95,6 +95,8 @@ export function normalizeDomainOrigin(value) {
     if (!scp || !scp[2] || scp[2].startsWith('/') || scp[2].startsWith(':') || scp[2].includes('@')) throw failure('origin must be a supported repository identity without credentials');
     try { parsed = new URL(`ssh://${scp[1]}/${scp[2]}`); } catch { throw failure('origin must be a supported repository identity'); }
   }
+  // A host that starts with `-` could be read as an ssh option.
+  if (parsed.hostname.startsWith('-') || decodeURIComponent(parsed.username || '').startsWith('-')) throw failure('origin host must not start with -');
   const pathname = parsed.pathname.replace(/\/+$/, '').replace(/\.git$/, '');
   if (!pathname || pathname === '/') throw failure('origin must identify a repository path');
   return `${parsed.protocol}//${parsed.host}${pathname}`;

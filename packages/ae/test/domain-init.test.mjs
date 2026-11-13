@@ -217,12 +217,42 @@ test('init and accept handle hostile drafts, occupied clone targets and remote h
   assert.deepEqual(second.repos.map(r => r.id), ['ledger', 'gateway']);
   assert.deepEqual(second.clones.map(c => c.repo).sort(), ['gateway', 'ledger']);
 
-  for (const broken of [{ draft_version: 1, config: { name: 'payments', repos: 'x', bindings: {} }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: [] }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: {} }, clones: [null] }]) {
+  for (const broken of [{ draft_version: 1, config: { name: 'payments', repos: 'x', bindings: {} }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: [] }, clones: [] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: {} }, clones: [null] }, { draft_version: 1, config: { name: 'payments', repos: [], bindings: { repos: { x: 7 } } }, clones: [] }]) {
     fs.writeFileSync(second.draftPath, YAML.stringify(broken));
     assert.throws(() => f.run(['init', '--name', 'payments', '--accept']), /unsupported shape/);
   }
   assert.throws(() => f.run(['init', '--name', 'other', '--repo', 'x=ext::sh -c touch% /tmp/pwned', '--clone-root', cloneRoot]), /absolute/);
   assert.throws(() => f.run(['init', '--name', 'other', '--repo', 'x=https://example.invalid/a::b', '--clone-root', cloneRoot]), /remote helper/);
+  assert.throws(() => f.run(['init', '--name', 'other', '--repo', 'x=git@-oProxyCommand=touch:repo', '--clone-root', cloneRoot]), /must not start with -/);
+});
+
+test('an occupied clone target keeps its repository in the draft, and accept never reverts a later bind', t => {
+  const f = fixture(t);
+  f.remote('ledger');
+  f.remote('gateway');
+  const ledger = f.checkout('ledger');
+  const cloneRoot = path.join(f.dir, 'clones');
+  fs.mkdirSync(path.join(cloneRoot, 'gateway'), { recursive: true });
+  fs.writeFileSync(path.join(cloneRoot, 'gateway', 'junk'), 'x');
+  f.run(['init', '--name', 'payments', '--repo', `ledger=${ledger}`, '--repo', `gateway=${REMOTE}gateway.git`, '--clone-root', cloneRoot]);
+  const accepted = f.run(['init', '--name', 'payments', '--accept']);
+  assert.equal(accepted.status, 'partial');
+  assert.deepEqual(accepted.unbound, ['gateway']);
+  assert.ok(fs.existsSync(accepted.draftPath), 'the unbound repository stays in the draft');
+
+  // A bind after the partial accept survives the retry.
+  const moved = f.checkout('ledger', path.join(f.dir, 'moved'));
+  f.run(['bind', '--name', 'payments', '--repo', `ledger=${moved}`]);
+  const gateway = f.checkout('gateway');
+  const doc = YAML.parse(fs.readFileSync(accepted.draftPath, 'utf8'));
+  doc.config.bindings.repos.gateway = gateway;
+  fs.writeFileSync(accepted.draftPath, YAML.stringify(doc));
+  const retried = f.run(['init', '--name', 'payments', '--accept']);
+  assert.equal(retried.status, 'ok');
+  const { config } = readDomain('payments', { home: f.home });
+  assert.equal(config.bindings.repos.ledger, moved);
+  assert.equal(config.bindings.repos.gateway, gateway);
+  assert.equal(fs.existsSync(accepted.draftPath), false);
 });
 
 test('accept refuses two repositories bound to the same checkout', t => {

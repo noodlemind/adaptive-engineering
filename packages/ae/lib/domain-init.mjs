@@ -287,7 +287,7 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
   // A pending draft already holds the published config plus earlier inputs,
   // so a second init extends it rather than starting over.
   const prior = fs.existsSync(draftPath(home, name)) ? readDraft(home, name).draft : null;
-  const base = prior?.config || existing;
+  const base = prior?.config ? overlayPublished(structuredClone(prior.config), existing) : existing;
   const repos = base ? base.repos.map(repo => ({ ...repo })) : [];
   const bindings = { repos: { ...(base?.bindings?.repos || {}) }, sources: { ...(base?.bindings?.sources || {}) } };
   const sources = base?.sources ? base.sources.map(source => ({ ...source })) : [];
@@ -407,7 +407,7 @@ export function initDomainDraft({ name, home, fromWorkspace = null, fromSpec = n
     const target = path.join(root, repo.id);
     const present = observeCheckout(target);
     if (present && present.origin === repo.origin && present.root === canonicalPath(target)) { bindings.repos[repo.id] = present.root; continue; }
-    if (!cloneTargetFree(target)) { notes.push(`clone target ${target} exists and is not a checkout of ${repo.origin}; bind ${repo.id} with ae domain bind after accepting, or pass another --clone-root`); continue; }
+    if (!cloneTargetFree(target)) { notes.push(`clone target ${target} exists and is not a checkout of ${repo.origin}; set its binding in the draft before accepting, or pass another --clone-root`); continue; }
     clones.push({ repo: repo.id, url: urls[repo.id] || `${repo.origin}.git`, path: target });
   }
 
@@ -454,7 +454,7 @@ function readDraft(home, name) {
   const members = value => value === undefined || (Array.isArray(value) && value.every(m => mapping(m) && typeof m.id === 'string'));
   const shaped = draft?.draft_version === DRAFT_VERSION && mapping(draft.config) && Array.isArray(draft.clones) && draft.clones.every(mapping)
     && Array.isArray(draft.config.repos) && members(draft.config.repos) && members(draft.config.sources)
-    && mapping(draft.config.bindings) && [draft.config.bindings.repos, draft.config.bindings.sources].every(b => b === undefined || mapping(b))
+    && mapping(draft.config.bindings) && [draft.config.bindings.repos, draft.config.bindings.sources].every(b => b === undefined || (mapping(b) && Object.values(b).every(v => typeof v === 'string')))
     && (draft.config.assets === undefined || (Array.isArray(draft.config.assets) && draft.config.assets.every(a => mapping(a) && Array.isArray(a.components) && a.components.every(mapping))))
     && (draft.config.spec_sources === undefined || (Array.isArray(draft.config.spec_sources) && draft.config.spec_sources.every(r => mapping(r) && typeof r.scope === 'string')));
   if (!shaped) throw failure(`the domain draft has an unsupported shape; fix or delete ${file} and run init again`);
@@ -478,12 +478,29 @@ function publishable(validated) {
   return { ...rest, ...(specs?.length ? { shared_specs: specs } : {}), ...(conventions?.length ? { shared_conventions: conventions } : {}) };
 }
 
+/**
+ * Bindings published after the draft was written (ae domain bind, an
+ * earlier partial accept) win over the draft's copy for the same member.
+ */
+function overlayPublished(config, existing) {
+  if (!existing) return config;
+  config.bindings ??= {};
+  for (const kind of ['repos', 'sources']) {
+    config.bindings[kind] ??= {};
+    for (const member of config[kind] || []) {
+      const published = existing.bindings?.[kind]?.[member.id];
+      if (published && existing[kind]?.some(m => m.id === member.id)) config.bindings[kind][member.id] = published;
+    }
+  }
+  return config;
+}
+
 /** Clone the draft's missing repositories and publish the domain config. */
 export function acceptDomainDraft({ name, home, dryRun = false }) {
   if (!NAME.test(name)) throw failure('--name must be a lowercase hyphenated name', 'E_USAGE');
   home = selectedHome(home);
   const { draft, file } = readDraft(home, name);
-  const config = structuredClone(draft.config);
+  const config = overlayPublished(structuredClone(draft.config), existingConfig(name, home));
   config.bindings ??= { repos: {}, sources: {} };
   config.bindings.repos ??= {};
   config.bindings.sources ??= {};
@@ -535,16 +552,16 @@ export function acceptDomainDraft({ name, home, dryRun = false }) {
   const configPath = path.join(home, 'domains', `${name}.yaml`);
   if (!dryRun) {
     if (!writeFileContained(home, path.relative(home, configPath), YAML.stringify(publishable(validated)))) throw failure('could not write the domain config');
-    if (pending.length) {
+    if (pending.length || unbound.length) {
       const rest = { draft_version: DRAFT_VERSION, config, clones: pending };
       if (!writeFileContained(home, path.relative(home, file), YAML.stringify(rest))) throw failure('could not update the domain draft');
     } else fs.rmSync(file, { force: true });
   }
   return {
-    verb: 'init', status: failed.length ? 'partial' : 'ok', exitCode: 0, stage: 'accepted', name, home, configPath, written: !dryRun,
+    verb: 'init', status: failed.length || unbound.length ? 'partial' : 'ok', exitCode: 0, stage: 'accepted', name, home, configPath, written: !dryRun,
     repos: validated.repos.map(repo => ({ id: repo.id, binding: validated.bindings.repos[repo.id] })),
     cloned, failed, unbound, warnings,
-    ...(pending.length ? { draftPath: file, next: `fix the failed clones, then rerun: ae domain init --name ${name} --accept` } : {}),
+    ...(pending.length || unbound.length ? { draftPath: file, next: `fix the failed clones or set the missing bindings in ${file}, then rerun: ae domain init --name ${name} --accept` } : {}),
   };
 }
 

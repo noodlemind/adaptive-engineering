@@ -304,7 +304,7 @@ test('contract status cannot authorize a child after its accepted shared source 
 test('domain command forms declare precise diagnostic, coordination and execution effects', () => {
   const entry = getCommand('domain');
   const effects = Object.fromEntries(entry.verbs.map(row => [row.verb, row.sideEffect || entry.sideEffect]));
-  assert.deepEqual(effects, { show: 'read', status: 'read', get: 'read', 'plan-new': 'mutate', 'plan-update': 'mutate', gate: 'mutate', review: 'mutate', verify: 'execute', compound: 'mutate' });
+  assert.deepEqual(effects, { init: 'execute', bind: 'mutate', show: 'read', status: 'read', get: 'read', 'plan-new': 'mutate', 'plan-update': 'mutate', gate: 'mutate', review: 'mutate', verify: 'execute', compound: 'mutate' });
 });
 
 test('native domain controls admit exact lifecycle shapes and reject malformed authority', () => {
