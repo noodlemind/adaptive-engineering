@@ -200,7 +200,7 @@ export function indexDomainSpecs({ name, home, dryRun = false }) {
     const root = config.bindings.sources[sourceId];
     const descriptor = config.sources.find(s => s.id === sourceId);
     const allTracked = trackedFiles(root);
-    if (allTracked === null) { sources.push({ id: sourceId, origin: descriptor.origin ?? null, root, status: 'unavailable', reason: 'not a readable Git checkout, or its file list exceeds 64 MiB', files: [] }); continue; }
+    if (allTracked === null) { sources.push({ id: sourceId, origin: descriptor.origin ?? null, root, status: 'unavailable', reason: 'not a readable Git checkout, or its file list exceeds 64 MiB', refs: JSON.stringify(refs.map(ref => [ref.scope, ref.authority, ref.include])), files: [] }); continue; }
     const tracked = markdownOf(allTracked);
     const head = (git(root, ['rev-parse', '--verify', 'HEAD']) || '').trim() || null;
     const dirty = (git(root, ['status', '--porcelain', '--untracked-files=no']) || '') !== '';
@@ -219,7 +219,7 @@ export function indexDomainSpecs({ name, home, dryRun = false }) {
       const sections = split.map(s => ({ id: s.id, title: s.title, headingPath: s.headingPath, level: s.level, startLine: s.startLine, endLine: s.endLine, sha256: sha256(s.text), terms: termCounts(`${s.headingPath.join(' ')}\n${s.text}`), length: s.text.length }));
       files.push({ path: rel, sha256: sha256(text), scopes, sections });
     }
-    sources.push({ id: sourceId, origin: descriptor.origin ?? null, root, status: 'indexed', head, dirty, formats: detectFormats(allTracked), files });
+    sources.push({ id: sourceId, origin: descriptor.origin ?? null, root, status: 'indexed', refs: JSON.stringify(refs.map(ref => [ref.scope, ref.authority, ref.include])), head, dirty, formats: detectFormats(allTracked), files });
   }
   const index = { version: INDEX_VERSION, domain: name, sources, omitted };
   const file = indexPath(record.home, name);
@@ -273,8 +273,12 @@ export function specStatus({ name, home }) {
   const { index, record } = loadIndex(name, home);
   const bySource = sourceEntries(record.config);
   index.omitted = Array.isArray(index.omitted) ? index.omitted.filter(o => o && typeof o.path === 'string') : [];
+  const indexedIds = new Set(index.sources.map(s => s.id));
   const sources = index.sources.map(source => {
-    if (source.status !== 'indexed') return { id: source.id, status: source.status };
+    if (!bySource.has(source.id)) return { id: source.id, status: 'stale', reason: 'the domain no longer declares this spec source' };
+    const declared = JSON.stringify(bySource.get(source.id).map(ref => [ref.scope, ref.authority, ref.include]));
+    if (source.refs !== undefined && source.refs !== declared) return { id: source.id, status: 'stale', reason: 'the spec source scopes or include patterns changed' };
+    if (source.status !== 'indexed') return { id: source.id, status: 'stale', reason: `the source was ${source.status} when indexed` };
     if (!source.root || source.root !== source.indexedRoot) return { id: source.id, status: 'stale', reason: 'the source is bound to a different checkout than the one indexed', indexedRoot: source.indexedRoot, root: source.root };
     const head = (git(source.root, ['rev-parse', '--verify', 'HEAD']) || '').trim() || null;
     const changed = [], missing = [];
@@ -291,6 +295,7 @@ export function specStatus({ name, home }) {
     const fresh = !changed.length && !missing.length && !added && head === source.head;
     return { id: source.id, status: fresh ? 'current' : 'stale', indexedHead: source.head, head, changed: changed.slice(0, 50), missing: missing.slice(0, 50), unindexedTracked: added };
   });
+  for (const id of bySource.keys()) if (!indexedIds.has(id)) sources.push({ id, status: 'stale', reason: 'the spec source was added after indexing' });
   return { verb: 'status', status: 'ok', exitCode: 0, name, sources, stale: sources.some(s => s.status === 'stale') };
 }
 
@@ -341,7 +346,7 @@ export function searchSpecs({ name, home, query, scope = null, limit = 10 }) {
     }
     const text = changedFiles.get(key);
     const stale = text === null || sha256(text) !== file.sha256;
-    const body = stale ? '' : redactSecrets(text.split('\n').slice(section.startLine, section.endLine).join(' ')).replace(/\s+/g, ' ').trim();
+    const body = stale ? '' : redactSecrets(text.split('\n').slice(section.level ? section.startLine : section.startLine - 1, section.endLine).join(' ')).replace(/\s+/g, ' ').trim();
     return {
       ref: sectionRef(source.id, file.path, section), source: source.id, path: file.path, section: section.id, title: redactSecrets(section.title), headingPath: section.headingPath.map(h => redactSecrets(h)),
       lines: [section.startLine, section.endLine], scopes: file.scopes, score: Number(score.toFixed(6)), stale, snippet: [...body].slice(0, SNIPPET).join(''),

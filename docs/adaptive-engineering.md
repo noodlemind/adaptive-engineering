@@ -43,7 +43,7 @@ The Harness is deterministic. Given the same plan, files and checks, it gives th
 orient → lock intent → gate → work → review → verify → compound → report
 ```
 
-1. **Orient.** The Harness gathers context, including any in-repository specs it finds (`intentSources`). Besides `spec/`, ADR, RFC and intent paths, discovery recognises BMAD-style PRDs (`docs/prd.md`, `docs/prd/`), epics and stories (`docs/epics/`, `docs/stories/*.story.md`), Kiro spec documents (`.kiro/specs/<feature>/`), and OpenSpec specs and changes. General documents such as `ARCHITECTURE.md` stay out of this list; index them through a domain spec source instead.
+1. **Orient.** The Harness gathers context, including any in-repository specs it finds (`intentSources`). Besides `spec/`, ADR, RFC and intent paths, discovery recognises BMAD-style PRDs (`docs/prd.md`, `docs/prd/`), epics and stories (`docs/epics/`, `docs/stories/*.story.md`), Kiro spec documents (`.kiro/specs/<feature>/`), and OpenSpec specs and changes. General documents such as `ARCHITECTURE.md` stay out of this list; index them through a domain spec source instead. These layout documents are offered to new plans; the implement gate requires them only once a plan records them, so earlier plans keep passing.
 2. **Lock intent.** The Engineer writes a plan: goal, scope, acceptance criteria, and which checks prove each criterion. The Harness locks it and records a hash of each spec it depends on.
 3. **Gate.** The Harness grants the implement gate. Issue work on the default branch of your main checkout is refused; `ae worktree --slug <name>` opens an isolated worktree.
 4. **Work.** The Engineer edits within the plan's scope and runs focused tests as it goes.

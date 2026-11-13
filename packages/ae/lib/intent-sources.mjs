@@ -16,6 +16,10 @@ const LINE_SEPARATOR = ', ';
  */
 
 export function kindOf(rel) {
+  return legacyKindOf(rel) ?? (isLayoutSpec(rel) ? 'spec' : null);
+}
+
+function legacyKindOf(rel) {
   const posix = String(rel || '').replace(/\\/g, '/');
   if (posix === '.specify/memory/constitution.md') return 'spec';
   const lower = posix.toLowerCase();
@@ -25,17 +29,24 @@ export function kindOf(rel) {
   if (/(^|\/)(intent|intents)(\/|$)/.test(lower) || base.endsWith('.intent.md')) return 'intent';
   if (/(^|\/)(spec|specs)(\/|$)/.test(lower) || base.endsWith('.spec.md')) return 'spec';
   if (/(^|\/)issues?(\/|$)/.test(lower)) return 'issue';
-  if (!base.endsWith('.md')) return null;
-  // Spec-writing layouts AE recognises: BMAD-style PRDs, epics and stories;
-  // Kiro spec documents; OpenSpec specs and changes.
-  // Only the documented layouts count. General docs such as ARCHITECTURE.md
-  // or Storybook stories folders stay out, so plans that passed the intent
-  // gate before keep passing it.
-  if (/^(docs\/)?prd\.md$/.test(lower) || base.endsWith('.prd.md') || lower.startsWith('docs/prd/')) return 'spec';
-  if (/^docs\/stories\/[^/]+\.story\.md$/.test(lower) || lower.startsWith('docs/epics/') || /^(docs\/)?epic-\d+[^/]*\.md$/.test(lower)) return 'spec';
-  if (/^\.kiro\/specs\/[^/]+\/(requirements|design|tasks)\.md$/.test(lower)) return 'spec';
-  if (/^openspec\/(specs|changes)\//.test(lower)) return 'spec';
   return null;
+}
+
+/**
+ * Spec-writing layouts recognised for discovery: BMAD-style PRDs, epics and
+ * stories, and OpenSpec changes (Kiro and OpenSpec specs already sit under a
+ * specs/ folder). General docs such as ARCHITECTURE.md or Storybook stories
+ * stay out. These are advisory for the implement gate: a plan must cover
+ * them only once it records them, so plans written before AE recognised
+ * these layouts keep passing.
+ */
+export function isLayoutSpec(rel) {
+  const lower = String(rel || '').replace(/\\/g, '/').toLowerCase();
+  const base = lower.slice(lower.lastIndexOf('/') + 1);
+  if (!base.endsWith('.md')) return false;
+  return /^(docs\/)?prd\.md$/.test(lower) || base.endsWith('.prd.md') || lower.startsWith('docs/prd/')
+    || /^docs\/stories\/[^/]+\.story\.md$/.test(lower) || lower.startsWith('docs/epics/') || /^(docs\/)?epic-\d+[^/]*\.md$/.test(lower)
+    || /^\.kiro\/specs\/[^/]+\/(requirements|design|tasks)\.md$/.test(lower) || /^openspec\/(specs|changes)\//.test(lower);
 }
 
 function queryTokens(text) {
@@ -72,7 +83,7 @@ function preferredBasename(item) {
   return base === 'spec.md' || base === 'constitution.md' ? 0 : 1;
 }
 
-function catalog(workspace) {
+function catalog(workspace, { legacyOnly = false } = {}) {
   if (!workspace) return [];
   const listed = spawnGitSync(['-C', workspace, '-c', 'core.fsmonitor=false', '-c', 'core.longpaths=true', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     encoding: 'buffer',
@@ -89,7 +100,7 @@ function catalog(workspace) {
     if (!rel) continue;
     const posix = rel.replace(/\\/g, '/');
     if (posix === '.harness' || posix.startsWith('.harness/')) continue;
-    const kind = kindOf(posix);
+    const kind = legacyOnly ? legacyKindOf(posix) : kindOf(posix);
     if (!kind) continue;
     found.push({ path: posix, kind });
   }
@@ -111,9 +122,9 @@ function takeLine(ranked) {
   return kept.map(({ path, kind }) => ({ path, kind }));
 }
 
-function rankedIntent(workspace, text) {
+function rankedIntent(workspace, text, options) {
   const tokens = queryTokens(text);
-  const ranked = catalog(workspace);
+  const ranked = catalog(workspace, options);
   for (const item of ranked) {
     item.score = tokens.length === 0 ? 0 : scoreSource(item, tokens, prefixText(workspace, item.path));
   }
@@ -138,8 +149,8 @@ function metadataFor(candidates, paths) {
   };
 }
 
-export function discoverIntent(workspace, text = '') {
-  const ranked = rankedIntent(workspace, text);
+export function discoverIntent(workspace, text = '', options = {}) {
+  const ranked = rankedIntent(workspace, text, options);
   const paths = takeLine(ranked);
   return { paths, metadata: metadataFor(ranked, paths) };
 }
@@ -164,7 +175,8 @@ export function resolveObligation(workspace, plan, text = '') {
     const paths = stored.map((path) => ({ path, kind: kindOf(path) }));
     return { reason: 'frozen', paths, metadata: metadataFor(catalog(workspace), paths) };
   }
-  const discovered = discoverIntent(workspace, plan ? (typeof plan.fm?.intent === 'string' ? plan.fm.intent : '') : text);
+  // A plan is held only to legacy kinds it did not record; layout specs are advisory.
+  const discovered = discoverIntent(workspace, plan ? (typeof plan.fm?.intent === 'string' ? plan.fm.intent : '') : text, { legacyOnly: Boolean(plan) });
   if (!discovered.paths.length) return { reason: discovered.metadata.candidateCount ? 'omitted' : 'none', ...discovered };
   return { reason: plan ? 'missing' : 'selected', ...discovered };
 }

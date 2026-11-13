@@ -55,7 +55,7 @@ export function cmdSpecs(argv, ctx = {}) {
   else if (result.verb === 'search') {
     console.log(`${result.results.length} of ${result.total} section(s) for "${inertLine(result.query)}"`);
     for (const hit of result.results) console.log(`  ${inertLine(hit.ref)}${hit.stale ? ' (stale)' : ''}\n    ${inertLine(hit.headingPath.join(' > '))}: ${inertLine(hit.snippet)}`);
-  } else if (result.verb === 'get') console.log(result.text);
+  } else if (result.verb === 'get') console.log(result.text.replace(/[\x00-\x08\x0b-\x1f\x7f\x9b]/g, ''));
   else console.log(redactedJson(result, { pretty: true }));
   ctx.reportStatus?.(result.status);
   return result.exitCode;

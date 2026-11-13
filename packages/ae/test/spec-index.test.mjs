@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import YAML from 'yaml';
 import { specsResultOf, parseSpecArguments } from '../lib/specs-cmd.mjs';
 import { splitSections, labelOf, globToRegExp, detectFormats, parseSectionRef } from '../lib/spec-index.mjs';
-import { kindOf } from '../lib/intent-sources.mjs';
+import { kindOf, intentSourcesCheck, discoverIntent } from '../lib/intent-sources.mjs';
 
 const PRD = `---
 title: Payments PRD
@@ -225,4 +225,29 @@ test('status follows the current binding and counts only new files the includes 
   fs.writeFileSync(indexFile, JSON.stringify(index));
   assert.throws(() => f.run(['search', 'refund']), /unsupported shape/);
   assert.throws(() => f.run(['status']), /unsupported shape/);
+});
+
+test('layout specs are discovered for new plans but do not fail plans that never recorded them', t => {
+  const f = fixture(t);
+  const repo = path.join(f.dir, 'bmad-only');
+  fs.mkdirSync(path.join(repo, 'docs'), { recursive: true });
+  f.git(repo, ['init', '-q']);
+  fs.writeFileSync(path.join(repo, 'docs/prd.md'), '# PRD\n\n## FR1: Refund window\n');
+  f.git(repo, ['add', '.']);
+  assert.deepEqual(discoverIntent(repo, 'refund window').paths.map(p => p.path), ['docs/prd.md']);
+  assert.equal(intentSourcesCheck({ fm: { intent: 'refund window change' } }, repo).pass, true);
+  fs.mkdirSync(path.join(repo, 'specs'));
+  fs.writeFileSync(path.join(repo, 'specs/refund.md'), '# Refund\n');
+  f.git(repo, ['add', '.']);
+  assert.equal(intentSourcesCheck({ fm: { intent: 'refund window change' } }, repo).pass, false, 'legacy spec paths still bind');
+});
+
+test('status reports spec sources added, removed or re-scoped after indexing', t => {
+  const f = fixture(t);
+  f.run(['index']);
+  const configPath = path.join(f.home, 'domains/payments.yaml');
+  const config = YAML.parse(fs.readFileSync(configPath, 'utf8'));
+  config.spec_sources[0].include = ['docs/*.md'];
+  fs.writeFileSync(configPath, YAML.stringify(config));
+  assert.match(f.run(['status']).sources[0].reason, /scopes or include patterns changed/);
 });
