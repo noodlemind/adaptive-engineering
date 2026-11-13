@@ -15,7 +15,7 @@ const LINE_SEPARATOR = ', ';
  * @typedef {{ reason: ObligationReason, paths: IntentSource[], metadata: IntentMetadata }} IntentObligation
  */
 
-function kindOf(rel) {
+export function kindOf(rel) {
   const posix = String(rel || '').replace(/\\/g, '/');
   if (posix === '.specify/memory/constitution.md') return 'spec';
   const lower = posix.toLowerCase();
@@ -24,7 +24,15 @@ function kindOf(rel) {
   if (/(^|\/)(rfc|rfcs)(\/|$)/.test(lower) || base.endsWith('.rfc.md')) return 'rfc';
   if (/(^|\/)(intent|intents)(\/|$)/.test(lower) || base.endsWith('.intent.md')) return 'intent';
   if (/(^|\/)(spec|specs)(\/|$)/.test(lower) || base.endsWith('.spec.md')) return 'spec';
+  // Spec-writing layouts AE recognises: BMAD-style PRDs, architecture docs,
+  // epics and stories; Kiro requirements and designs; OpenSpec trees.
   if (/(^|\/)issues?(\/|$)/.test(lower)) return 'issue';
+  if (!base.endsWith('.md')) return null;
+  if (base === 'prd.md' || base.endsWith('.prd.md') || /(^|\/)prd(\/|$)/.test(lower)) return 'spec';
+  if (base === 'architecture.md' || /(^|\/)docs\/architecture(\/|$)/.test(lower)) return 'spec';
+  if (/^epic[-_.\d]/.test(base) || /(^|\/)(epics|stories)(\/|$)/.test(lower) || base.endsWith('.story.md')) return 'spec';
+  if (/(^|\/)\.kiro\//.test(lower) && ['requirements.md', 'design.md'].includes(base)) return 'spec';
+  if (/(^|\/)openspec\//.test(lower)) return 'spec';
   return null;
 }
 
