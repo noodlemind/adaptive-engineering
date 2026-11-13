@@ -26,3 +26,24 @@ The JSON result supplies immutable `.harness/diagrams/<id>/` paths for the SVG, 
 The bundled renderers load on demand; these operations require no MCP server, network request, runtime package installation, or global rendering executable. Only a bounded subset of Mermaid/D2 is accepted. Keep examples plain: no imports, remote assets, links, directives, configuration, or injected markup. The Harness chooses renderer options and TALA seeds.
 
 In regular work, ask the Engineer to inspect the sources and explain one boundary or recovery question. Use the import view to check dependency assumptions, author the explanation in D2 or Mermaid, render it, and inspect the returned HTML. Before reusing it during review, run receipt status. The editable diagram source stays with the design; SVG, HTML, and PNG are derived outputs. PNGs in this folder are documentation previews of the same views. Pass `--png` on the commands above to write `diagram.png` beside the SVG.
+
+## Animated walkthroughs
+
+The [animated](animated/) folder holds three short walkthroughs used in the documentation:
+
+| Animation | Shows | Used in |
+| --- | --- | --- |
+| [deliver-loop.svg](animated/deliver-loop.svg) | One Deliver task: orient, an edit denied before the gate, lock intent, gate, work, review, a failing check sent back to work, verify, compound and report | [README](../../README.md#how-it-works), [How a Deliver task runs](../adaptive-engineering.md#how-a-deliver-task-runs) |
+| [engineer-grows.svg](animated/engineer-grows.svg) | How verified tasks compound into learnings, and how an authorized gap or a proven recurrence becomes a specialist or a skill | [How capability is acquired](../adaptive-engineering.md#how-capability-is-acquired) |
+| [decision-receipt.svg](animated/decision-receipt.svg) | How the decision-agent judges one exact action and why its receipt does not cover a changed one | [Adaptive capability lifecycle](../reference/capability-lifecycle.md) |
+
+They are explanatory sketches of the documented contracts, like the diagrams above, not recordings of a real session. The task names, check names and commands in them are examples.
+
+Each one is a self-contained SVG animated with CSS. GitHub and the documentation site show it as an ordinary image, it follows the light or dark preference of the reader's system or browser (not GitHub's own theme setting) on its own opaque background, and readers who ask for reduced motion see a static summary. Nothing is installed to view or build them: [build-doc-animations.mjs](../../scripts/build-doc-animations.mjs) generates all three from scene timelines using Node built-ins only. Edit the timeline there, never the SVG, then run:
+
+```bash
+node scripts/build-doc-animations.mjs          # write the SVGs
+node scripts/build-doc-animations.mjs --check  # report SVGs that no longer match their timeline
+```
+
+The flow diagrams in the guides themselves are Mermaid blocks, which GitHub and the documentation site render from the Markdown source.

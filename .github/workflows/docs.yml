@@ -22,6 +22,7 @@ on:
       - 'docs/reference/capability-lifecycle.md'
       - 'docs/reference/model-preferences.md'
       - 'docs/site/**'
+      - 'docs/diagrams/animated/**'
       - 'scripts/build-docs.mjs'
       - '.github/workflows/docs.yml'
   workflow_dispatch:

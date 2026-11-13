@@ -27,6 +27,20 @@ Every request runs in one of four task modes. The Engineer names the mode before
 
 Only Deliver can change product files. A request that needs an edit switches to Deliver before the first edit, so a question never turns into an unplanned change.
 
+```mermaid
+flowchart TD
+  ask["Your request"] --> mode{"The Engineer names the mode"}
+  mode -->|"a question"| answer["Answer<br/>direct reply"]
+  mode -->|"understand a system or a bug"| investigate["Investigate<br/>evidence-backed report"]
+  mode -->|"assess a change or document"| review["Review<br/>independent assessment"]
+  mode -->|"change files"| deliver["Deliver<br/>plan, gate, work, verify"]
+  investigate -.->|"a fix worth making, if you want it"| deliver
+  answer --> readonly["No product edits"]
+  investigate --> readonly
+  review --> readonly
+  deliver --> proof["A verified change with evidence"]
+```
+
 ## The Harness
 
 The Harness is deterministic. Given the same plan, files and checks, it gives the same answer. It owns the things a model should not be trusted to judge about its own work:
@@ -43,6 +57,8 @@ The Harness is deterministic. Given the same plan, files and checks, it gives th
 orient → lock intent → gate → work → review → verify → compound → report
 ```
 
+![Animated walkthrough of one Deliver task: orient, an edit denied before the plan is locked, lock intent, gate, work, review, a failing check sent back to work, a passing verify, compound and report](diagrams/animated/deliver-loop.svg)
+
 1. **Orient.** The Harness gathers context, including any in-repository specs it finds (`intentSources`).
 2. **Lock intent.** The Engineer writes a plan: goal, scope, acceptance criteria, and which checks prove each criterion. The Harness locks it and records a hash of each spec it depends on.
 3. **Gate.** The Harness grants the implement gate. Issue work on the default branch of your main checkout is refused; `ae worktree --slug <name>` opens an isolated worktree.
@@ -51,6 +67,46 @@ orient → lock intent → gate → work → review → verify → compound → 
 6. **Verify.** `ae verify` runs the named checks. Delivery passes only when current checks pass, required reviews are in, and no critical finding is open.
 7. **Compound.** The Engineer decides what the task taught, if anything. A fact worth keeping becomes a learning; a detail that matters only to this task stays on the plan.
 8. **Report.** The Engineer reports what changed and the evidence. The Harness records completion.
+
+The same task as a sequence, showing who talks to whom:
+
+```mermaid
+sequenceDiagram
+  actor You
+  participant E as Engineer (host model)
+  participant K as Host hooks
+  participant H as Harness (ae)
+  participant R as Reviewers
+  You->>E: Ask for an outcome
+  E->>H: ae orient
+  H-->>E: Context pack: specs, plans, learnings
+  E->>H: Plan decision: goal, criteria, named checks
+  H-->>E: Plan locked, spec hashes recorded, implement gate granted
+  E->>K: Edit a product file
+  K->>H: Is there a current gate for this edit?
+  H-->>K: Yes
+  K-->>E: Edit allowed
+  E->>H: ae review prepare
+  H-->>E: Review packet bound to the exact diff
+  E->>R: Required reviews
+  R-->>E: Findings
+  E->>H: ae review assemble
+  E->>H: ae verify
+  H->>H: Run the named checks without a shell
+  alt a check fails, a review is missing or a critical finding is open
+    H-->>E: Not done: repair, review and verify again
+  else every current check passes
+    H-->>E: Evidence bound to these bytes
+  end
+  E->>H: ae compound with the learning decision
+  E->>H: Completion decision
+  H-->>E: Completion recorded
+  K->>H: Stop hook: is completion current?
+  H-->>K: Yes
+  E-->>You: What changed, evidence, review, learning
+```
+
+The Stop hook holds the session open until completion is proven on Claude Code and Codex; on Cursor it is advisory, and the terminal host has no hooks. See [Hosts](hosts.md).
 
 Four principles shape this loop:
 
@@ -128,6 +184,8 @@ Setup first inventories the skills, agents and instructions you already have and
 
 When a task needs something the catalog lacks, the Engineer does one bounded refresh if discovery is allowed, then reuses, acquires or reports the gap. A specialist the task needs, such as a missing independent reviewer, can be acquired on first need: `/ensure-capability` records the gap and `/create-primitive` creates the smallest separate role. That needs direct authorization or a current standing grant that covers it; anything outside that scope goes back to a person. A repeated procedure becomes a durable skill only with verified promotion evidence.
 
+![Animated walkthrough of capability growth: verified tasks leave episodes, consolidate turns them into learnings that orient brings into the next task, an authorized gap becomes a specialist reviewer, and a recurring procedure becomes a skill only with promotion evidence](diagrams/animated/engineer-grows.svg)
+
 An internal `decision-agent`, running in the host on a small model where the host allows, judges exact actions and readiness. It cannot grant trust or user authority, and neither a model verdict nor a recurrence count can authorize a merge. After internal review, repair and passing verification, `ae review tour` gives the person a source-linked tour of the change for final review. See [Adaptive capability lifecycle](reference/capability-lifecycle.md).
 
 A capability moves through five states: candidate, experimental, active, deprecated and retired. Promotion to active needs a trigger eval (it activates when it should, and not when it should not), an outcome eval (using it produces better results), and recorded promotion evidence. Retirement leaves a tombstone, so a later task can see the overlap with whatever replaced it, and upgrades remove retired files.
@@ -147,6 +205,18 @@ The registry of shipped capabilities and their states is [capability-registry.ya
 ## How knowledge compounds
 
 Knowledge has three tiers. Each tier has a single writer.
+
+```mermaid
+flowchart LR
+  verify["ae verify passes"] -->|"ae compound with a publish decision"| episode["Episode<br/>private, per repository"]
+  teach["ae remember<br/>you teach directly"] --> learnings
+  episode -->|"/consolidate, then ae consolidate --apply"| learnings[("Learnings<br/>~/.ae/knowledge/")]
+  learnings -->|"ae orient brings the best matches"| next["Next task's context pack"]
+  next -->|"helped, irrelevant or wrong"| feedback["Feedback records"]
+  feedback -.->|"evidence for /consolidate when enabled"| learnings
+  person["ae learning<br/>confirm, dispute, retire, promote"] -.-> learnings
+  learnings -->|"reviewed corpus change"| behavior["Behavior<br/>skill, agent or instruction"]
+```
 
 1. **Episodes.** After `ae verify` passes, the Engineer records what the task taught as a private solution episode in `~/.ae/projects/<repo-id>/docs/solutions/`. An episode can cite the one failing line of check output that showed the lesson (`evidence_quote`, a single line of up to 600 bytes). Harness never stores or shows that line: it keeps only a fingerprint, the SHA-256 of the line after normalisation (a leading byte-order mark and terminal escape sequences removed, Unicode NFC applied, both ends trimmed), plus its length. The line is accepted only on stdin, never in argv: pipe it to `--evidence-quote -` from a command that never names it (for example `sed -n '<N>p' <check-log>`), run in the host shell rather than through `ae bash`, `ae exec` or the TUI `!`, or put it in a learning decision piped to `--learning-decision -`; Harness refuses an evidence line from a decision file. `/consolidate` sees the fingerprint prefix and length, and confirms the evidence by re-running the check and matching its output with `ae compound --match-evidence <prefix> --evidence-bytes <bytes> --check-output <file>`. `ae remember` records something a person teaches directly. Episodes never leave your machine on their own.
 2. **Learnings.** `/consolidate` clusters episodes into learnings, stored in a local Git repository at `~/.ae/knowledge/<repo-id>/`, outside your working tree. Only `ae` commands write that store: `ae consolidate --apply` and `ae remember` add learnings, and `ae learning` changes their status. `ae orient` injects the best-matching learnings into the next task's context.
