@@ -24,15 +24,17 @@ export function kindOf(rel) {
   if (/(^|\/)(rfc|rfcs)(\/|$)/.test(lower) || base.endsWith('.rfc.md')) return 'rfc';
   if (/(^|\/)(intent|intents)(\/|$)/.test(lower) || base.endsWith('.intent.md')) return 'intent';
   if (/(^|\/)(spec|specs)(\/|$)/.test(lower) || base.endsWith('.spec.md')) return 'spec';
-  // Spec-writing layouts AE recognises: BMAD-style PRDs, architecture docs,
-  // epics and stories; Kiro requirements and designs; OpenSpec trees.
   if (/(^|\/)issues?(\/|$)/.test(lower)) return 'issue';
   if (!base.endsWith('.md')) return null;
-  if (base === 'prd.md' || base.endsWith('.prd.md') || /(^|\/)prd(\/|$)/.test(lower)) return 'spec';
-  if (base === 'architecture.md' || /(^|\/)docs\/architecture(\/|$)/.test(lower)) return 'spec';
-  if (/^epic[-_.\d]/.test(base) || /(^|\/)(epics|stories)(\/|$)/.test(lower) || base.endsWith('.story.md')) return 'spec';
-  if (/(^|\/)\.kiro\//.test(lower) && ['requirements.md', 'design.md'].includes(base)) return 'spec';
-  if (/(^|\/)openspec\//.test(lower)) return 'spec';
+  // Spec-writing layouts AE recognises: BMAD-style PRDs, epics and stories;
+  // Kiro spec documents; OpenSpec specs and changes.
+  // Only the documented layouts count. General docs such as ARCHITECTURE.md
+  // or Storybook stories folders stay out, so plans that passed the intent
+  // gate before keep passing it.
+  if (/^(docs\/)?prd\.md$/.test(lower) || base.endsWith('.prd.md') || lower.startsWith('docs/prd/')) return 'spec';
+  if (/^docs\/stories\/[^/]+\.story\.md$/.test(lower) || lower.startsWith('docs/epics/') || /^(docs\/)?epic-\d+[^/]*\.md$/.test(lower)) return 'spec';
+  if (/^\.kiro\/specs\/[^/]+\/(requirements|design|tasks)\.md$/.test(lower)) return 'spec';
+  if (/^openspec\/(specs|changes)\//.test(lower)) return 'spec';
   return null;
 }
 

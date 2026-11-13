@@ -158,7 +158,71 @@ test('section splitting, labels, globs and layout detection', () => {
 });
 
 test('in-repository intent discovery recognises BMAD, Kiro and OpenSpec documents', () => {
-  for (const rel of ['docs/prd.md', 'prd.md', 'docs/prd/epic-1.md', 'docs/architecture.md', 'docs/architecture/tech-stack.md', 'docs/stories/1.2.story.md', 'docs/epics/epic-2.md', 'epic-3.md', '.kiro/specs/login/requirements.md', '.kiro/steering/design.md', 'openspec/changes/add-x/proposal.md']) assert.equal(kindOf(rel), 'spec', rel);
-  for (const rel of ['src/prd.ts', 'docs/architecture.png', 'README.md', 'docs/epicenter.md']) assert.equal(kindOf(rel), null, rel);
+  for (const rel of ['docs/prd.md', 'prd.md', 'docs/prd/epic-1.md', 'payments.prd.md', 'docs/stories/1.2.story.md', 'docs/epics/epic-2.md', 'epic-3.md', '.kiro/specs/login/requirements.md', '.kiro/specs/login/design.md', 'openspec/changes/add-x/proposal.md', 'openspec/specs/auth/spec.md']) assert.equal(kindOf(rel), 'spec', rel);
+  // General documentation keeps its old classification, so existing plans keep passing the intent gate.
+  for (const rel of ['src/prd.ts', 'docs/architecture.png', 'README.md', 'docs/epicenter.md', 'ARCHITECTURE.md', 'docs/architecture.md', 'docs/architecture/overview.md', 'src/stories/button.md', 'web/epics/notes.md', 'lib/prd/notes.md', '.kiro/steering/design.md', 'tools/openspec/readme.md']) assert.equal(kindOf(rel), null, rel);
   assert.equal(kindOf('issues/12.yaml'), 'issue');
+});
+
+test('splitting follows CommonMark fences, front matter and closing hashes', () => {
+  assert.deepEqual(splitSections('# A\n```\ncode\n```js\n# not heading\n```\n# B\n').map(s => s.id), ['a', 'b']);
+  assert.deepEqual(splitSections('---\ntitle: x\n# yaml comment\n---\n# Real\n').map(s => s.id), ['real']);
+  assert.deepEqual(splitSections('# Support for C#\n## Closing ##\n').map(s => s.title), ['Support for C#', 'Closing']);
+  const many = Array.from({ length: 5 }, (_, i) => `# H${i}\nbody ${i}`).join('\n') + '\n';
+  const capped = splitSections(many, 'x.md', { limit: 3 });
+  assert.equal(capped.length, 3);
+  assert.equal(capped.truncated, true);
+  assert.match(capped[2].text, /body 4/, 'the last section runs to the end of the file');
+});
+
+test('search survives prototype-named terms, refs survive shifted lines, and snippets are redacted before clipping', t => {
+  const f = fixture(t);
+  const token = `ghp_${'A'.repeat(36)}`;
+  const prdPath = path.join(f.spec, 'docs/prd.md');
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, 'utf8').replace('Refunds are allowed for 30 days.', `Refunds are allowed for 30 days with constructor injection. ${'x'.repeat(170)} ${token}`));
+  f.git(f.spec, ['commit', '-qam', 'secret']);
+  f.run(['index']);
+  assert.equal(f.run(['search', 'constructor']).results[0].section, 'fr2');
+  assert.equal(f.run(['search', 'refund', 'constructor']).results[0].section, 'fr2');
+  const hit = f.run(['search', 'refund']).results.find(r => r.section === 'fr2');
+  assert.doesNotMatch(hit.snippet, /ghp_A/);
+  assert.doesNotMatch(f.run(['get', '--ref', hit.ref]).text, /ghp_A{10}/);
+
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, 'utf8').replace('# Payments PRD\n', '# Payments PRD\n\nA new paragraph.\n'));
+  const got = f.run(['get', '--ref', hit.ref]);
+  assert.match(got.text, /^### FR2: Refund window/);
+  assert.equal(got.lines[0], 13, 'lines follow the current file (11 before the two inserted lines)');
+  assert.throws(() => f.run(['search', 'x', '--limit', '0']), /1 to 50/);
+});
+
+test('status follows the current binding and counts only new files the includes would index; a corrupt index is refused', t => {
+  const f = fixture(t);
+  f.run(['index']);
+  assert.equal(f.run(['status']).sources[0].unindexedTracked, 0, 'README.md and notes are outside the includes');
+  fs.writeFileSync(path.join(f.spec, 'docs/new.md'), '# New\n');
+  f.git(f.spec, ['add', '.']);
+  f.git(f.spec, ['commit', '-qm', 'new']);
+  f.run(['index']);
+  fs.writeFileSync(path.join(f.spec, 'docs/later.md'), '# Later\n');
+  f.git(f.spec, ['add', '.']);
+  f.git(f.spec, ['commit', '-qm', 'later']);
+  const status = f.run(['status']).sources[0];
+  assert.equal(status.unindexedTracked, 1);
+  assert.equal(status.status, 'stale');
+
+  const configPath = path.join(f.home, 'domains/payments.yaml');
+  const config = YAML.parse(fs.readFileSync(configPath, 'utf8'));
+  const copy = path.join(f.dir, 'spec-copy');
+  f.git(f.dir, ['clone', '-q', f.spec, copy]);
+  f.git(copy, ['remote', 'set-url', 'origin', 'https://example.invalid/pay/payments-spec.git']);
+  config.bindings.sources.spec = copy;
+  fs.writeFileSync(configPath, YAML.stringify(config));
+  assert.match(f.run(['status']).sources[0].reason, /different checkout/);
+
+  const indexFile = f.run(['index']).indexPath;
+  const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+  index.sources[0].files[0].sections = null;
+  fs.writeFileSync(indexFile, JSON.stringify(index));
+  assert.throws(() => f.run(['search', 'refund']), /unsupported shape/);
+  assert.throws(() => f.run(['status']), /unsupported shape/);
 });
