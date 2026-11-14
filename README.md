@@ -41,7 +41,12 @@ flowchart TD
   state -.->|"the next task starts here"| harness
 ```
 
+<details open markdown="1">
+<summary>Animated walkthrough: plays three times, then shows a summary. Collapse to hide it.</summary>
+
 ![Animated walkthrough of one Deliver task: orient, an edit denied before the plan is locked, lock intent, gate, work, review, a failing check sent back to work, a passing verify, compound and report](docs/diagrams/animated/deliver-loop.svg)
+
+</details>
 
 Read [How Adaptive Engineering works](docs/adaptive-engineering.md) for the full model.
 

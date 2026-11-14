@@ -30,9 +30,9 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .edge-label-loop{fill:var(--deny)}.edge-label-feed{fill:var(--har)}
 .tok{fill:var(--you);stroke:var(--bg);stroke-width:2}
 .tok-glow{fill:var(--you);opacity:.25}
-.mark{opacity:0}
+.mark,.anim{opacity:0}
 .badge-deny{fill:var(--deny)}.badge-ok{fill:var(--ok)}
-.badge-text{fill:#ffffff;font-size:13px;font-weight:700;text-anchor:middle}
+.badge-text{fill:var(--bg);font-size:13px;font-weight:700;text-anchor:middle}
 .chip-text{fill:var(--ink);font-size:11.5px;font-weight:600;text-anchor:middle}
 .chip-sub{fill:var(--muted);font-size:10.5px;text-anchor:middle}
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
@@ -44,65 +44,67 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
   .anim,.hl,.bar{opacity:0 !important}
   .static,.mark.final{opacity:1 !important}
 }
-.deliver-loop-hl-you{animation:deliver-loop-hl-you 26s linear infinite}
+.deliver-loop-hl-you{animation:deliver-loop-hl-you 26s linear 3}
 @keyframes deliver-loop-hl-you{0.000%{opacity:0}0.769%{opacity:0}1.731%{opacity:1}5.962%{opacity:1}6.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-orient{animation:deliver-loop-hl-orient 26s linear infinite}
+.deliver-loop-hl-orient{animation:deliver-loop-hl-orient 26s linear 3}
 @keyframes deliver-loop-hl-orient{0.000%{opacity:0}6.923%{opacity:0}7.885%{opacity:1}12.885%{opacity:1}13.846%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-plan{animation:deliver-loop-hl-plan 26s linear infinite}
+.deliver-loop-hl-plan{animation:deliver-loop-hl-plan 26s linear 3}
 @keyframes deliver-loop-hl-plan{0.000%{opacity:0}24.615%{opacity:0}25.577%{opacity:1}29.808%{opacity:1}30.769%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-gate{animation:deliver-loop-hl-gate 26s linear infinite}
+.deliver-loop-hl-gate{animation:deliver-loop-hl-gate 26s linear 3}
 @keyframes deliver-loop-hl-gate{0.000%{opacity:0}13.846%{opacity:0}14.808%{opacity:1}23.654%{opacity:1}24.615%{opacity:0}30.769%{opacity:0}31.731%{opacity:1}35.962%{opacity:1}36.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-work{animation:deliver-loop-hl-work 26s linear infinite}
+.deliver-loop-hl-work{animation:deliver-loop-hl-work 26s linear 3}
 @keyframes deliver-loop-hl-work{0.000%{opacity:0}36.923%{opacity:0}37.885%{opacity:1}42.885%{opacity:1}43.846%{opacity:0}60.000%{opacity:0}60.962%{opacity:1}64.423%{opacity:1}65.385%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-review{animation:deliver-loop-hl-review 26s linear infinite}
+.deliver-loop-hl-review{animation:deliver-loop-hl-review 26s linear 3}
 @keyframes deliver-loop-hl-review{0.000%{opacity:0}43.846%{opacity:0}44.808%{opacity:1}49.808%{opacity:1}50.769%{opacity:0}65.385%{opacity:0}66.346%{opacity:1}70.577%{opacity:1}71.538%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-verify{animation:deliver-loop-hl-verify 26s linear infinite}
+.deliver-loop-hl-verify{animation:deliver-loop-hl-verify 26s linear 3}
 @keyframes deliver-loop-hl-verify{0.000%{opacity:0}50.769%{opacity:0}51.731%{opacity:1}59.038%{opacity:1}60.000%{opacity:0}71.538%{opacity:0}72.500%{opacity:1}78.269%{opacity:1}79.231%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-compound{animation:deliver-loop-hl-compound 26s linear infinite}
+.deliver-loop-hl-compound{animation:deliver-loop-hl-compound 26s linear 3}
 @keyframes deliver-loop-hl-compound{0.000%{opacity:0}79.231%{opacity:0}80.192%{opacity:1}85.962%{opacity:1}86.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-hl-report{animation:deliver-loop-hl-report 26s linear infinite}
+.deliver-loop-hl-report{animation:deliver-loop-hl-report 26s linear 3}
 @keyframes deliver-loop-hl-report{0.000%{opacity:0}86.923%{opacity:0}87.885%{opacity:1}96.731%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-mk-deny{animation:deliver-loop-mk-deny 26s linear infinite}
+.deliver-loop-mk-deny{animation:deliver-loop-mk-deny 26s linear 3}
 @keyframes deliver-loop-mk-deny{0.000%{opacity:0}13.846%{opacity:0}14.808%{opacity:1}23.654%{opacity:1}24.615%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-mk-granted{animation:deliver-loop-mk-granted 26s linear infinite}
+.deliver-loop-mk-granted{animation:deliver-loop-mk-granted 26s linear 3}
 @keyframes deliver-loop-mk-granted{0.000%{opacity:0}30.769%{opacity:0}31.731%{opacity:1}96.731%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-mk-fail{animation:deliver-loop-mk-fail 26s linear infinite}
+.deliver-loop-mk-fail{animation:deliver-loop-mk-fail 26s linear 3}
 @keyframes deliver-loop-mk-fail{0.000%{opacity:0}52.308%{opacity:0}53.269%{opacity:1}60.577%{opacity:1}61.538%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-mk-pass{animation:deliver-loop-mk-pass 26s linear infinite}
+.deliver-loop-mk-pass{animation:deliver-loop-mk-pass 26s linear 3}
 @keyframes deliver-loop-mk-pass{0.000%{opacity:0}73.077%{opacity:0}74.038%{opacity:1}96.731%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-mk-learned{animation:deliver-loop-mk-learned 26s linear infinite}
+.deliver-loop-mk-learned{animation:deliver-loop-mk-learned 26s linear 3}
 @keyframes deliver-loop-mk-learned{0.000%{opacity:0}80.769%{opacity:0}81.731%{opacity:1}96.731%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-tok{animation:deliver-loop-tok 26s ease-in-out infinite}
+.deliver-loop-tok{animation:deliver-loop-tok 26s ease-in-out 3}
 @keyframes deliver-loop-tok{0.000%{transform:translate(115px,50px)}0.769%{transform:translate(115px,50px)}6.923%{transform:translate(115px,50px)}9.615%{transform:translate(135px,110px)}13.846%{transform:translate(135px,110px)}17.308%{transform:translate(595px,110px)}24.615%{transform:translate(595px,110px)}27.308%{transform:translate(365px,110px)}30.769%{transform:translate(365px,110px)}33.462%{transform:translate(595px,110px)}36.923%{transform:translate(595px,110px)}39.615%{transform:translate(825px,110px)}43.846%{transform:translate(825px,110px)}46.538%{transform:translate(825px,262px)}50.769%{transform:translate(825px,262px)}53.462%{transform:translate(595px,262px)}60.000%{transform:translate(595px,262px)}63.462%{transform:translate(825px,110px)}65.385%{transform:translate(825px,110px)}68.077%{transform:translate(825px,262px)}71.538%{transform:translate(825px,262px)}74.231%{transform:translate(595px,262px)}79.231%{transform:translate(595px,262px)}81.923%{transform:translate(365px,262px)}86.923%{transform:translate(365px,262px)}89.615%{transform:translate(135px,262px)}100.000%{transform:translate(135px,262px)}}
-.deliver-loop-tok-o{animation:deliver-loop-tok-o 26s linear infinite}
+.deliver-loop-tok-o{animation:deliver-loop-tok-o 26s linear 3}
 @keyframes deliver-loop-tok-o{0.000%{opacity:0}0.769%{opacity:0}1.923%{opacity:1}96.538%{opacity:1}98.462%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-0{animation:deliver-loop-cap-0 26s linear infinite}
+.deliver-loop-cap-0{animation:deliver-loop-cap-0 26s linear 3}
 @keyframes deliver-loop-cap-0{0.000%{opacity:0}0.769%{opacity:0}1.923%{opacity:1}5.769%{opacity:1}6.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-1{animation:deliver-loop-cap-1 26s linear infinite}
+.deliver-loop-cap-1{animation:deliver-loop-cap-1 26s linear 3}
 @keyframes deliver-loop-cap-1{0.000%{opacity:0}6.923%{opacity:0}8.077%{opacity:1}12.692%{opacity:1}13.846%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-2{animation:deliver-loop-cap-2 26s linear infinite}
+.deliver-loop-cap-2{animation:deliver-loop-cap-2 26s linear 3}
 @keyframes deliver-loop-cap-2{0.000%{opacity:0}13.846%{opacity:0}15.000%{opacity:1}23.462%{opacity:1}24.615%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-3{animation:deliver-loop-cap-3 26s linear infinite}
+.deliver-loop-cap-3{animation:deliver-loop-cap-3 26s linear 3}
 @keyframes deliver-loop-cap-3{0.000%{opacity:0}24.615%{opacity:0}25.769%{opacity:1}29.615%{opacity:1}30.769%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-4{animation:deliver-loop-cap-4 26s linear infinite}
+.deliver-loop-cap-4{animation:deliver-loop-cap-4 26s linear 3}
 @keyframes deliver-loop-cap-4{0.000%{opacity:0}30.769%{opacity:0}31.923%{opacity:1}35.769%{opacity:1}36.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-5{animation:deliver-loop-cap-5 26s linear infinite}
+.deliver-loop-cap-5{animation:deliver-loop-cap-5 26s linear 3}
 @keyframes deliver-loop-cap-5{0.000%{opacity:0}36.923%{opacity:0}38.077%{opacity:1}42.692%{opacity:1}43.846%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-6{animation:deliver-loop-cap-6 26s linear infinite}
+.deliver-loop-cap-6{animation:deliver-loop-cap-6 26s linear 3}
 @keyframes deliver-loop-cap-6{0.000%{opacity:0}43.846%{opacity:0}45.000%{opacity:1}49.615%{opacity:1}50.769%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-7{animation:deliver-loop-cap-7 26s linear infinite}
+.deliver-loop-cap-7{animation:deliver-loop-cap-7 26s linear 3}
 @keyframes deliver-loop-cap-7{0.000%{opacity:0}50.769%{opacity:0}51.923%{opacity:1}58.846%{opacity:1}60.000%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-8{animation:deliver-loop-cap-8 26s linear infinite}
+.deliver-loop-cap-8{animation:deliver-loop-cap-8 26s linear 3}
 @keyframes deliver-loop-cap-8{0.000%{opacity:0}60.000%{opacity:0}61.154%{opacity:1}64.231%{opacity:1}65.385%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-9{animation:deliver-loop-cap-9 26s linear infinite}
+.deliver-loop-cap-9{animation:deliver-loop-cap-9 26s linear 3}
 @keyframes deliver-loop-cap-9{0.000%{opacity:0}65.385%{opacity:0}66.538%{opacity:1}70.385%{opacity:1}71.538%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-10{animation:deliver-loop-cap-10 26s linear infinite}
+.deliver-loop-cap-10{animation:deliver-loop-cap-10 26s linear 3}
 @keyframes deliver-loop-cap-10{0.000%{opacity:0}71.538%{opacity:0}72.692%{opacity:1}78.077%{opacity:1}79.231%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-11{animation:deliver-loop-cap-11 26s linear infinite}
+.deliver-loop-cap-11{animation:deliver-loop-cap-11 26s linear 3}
 @keyframes deliver-loop-cap-11{0.000%{opacity:0}79.231%{opacity:0}80.385%{opacity:1}85.769%{opacity:1}86.923%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-cap-12{animation:deliver-loop-cap-12 26s linear infinite}
+.deliver-loop-cap-12{animation:deliver-loop-cap-12 26s linear 3}
 @keyframes deliver-loop-cap-12{0.000%{opacity:0}86.923%{opacity:0}88.077%{opacity:1}96.538%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-bar{animation:deliver-loop-bar 26s linear infinite}
+.deliver-loop-static{animation:deliver-loop-end .4s linear 78s forwards}
+@keyframes deliver-loop-end{from{opacity:0}to{opacity:1}}
+.deliver-loop-bar{animation:deliver-loop-bar 26s linear 3}
 @keyframes deliver-loop-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
 <marker id="deliver-loop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
 <marker id="deliver-loop-arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-loop" d="M0 0L10 5L0 10z"/></marker>
@@ -203,7 +205,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 <text class="caption anim deliver-loop-cap-10" x="480" y="414">Checks pass on the final bytes. The evidence is bound to them.</text>
 <text class="caption anim deliver-loop-cap-11" x="480" y="414">The Engineer decides what the task taught. The Harness stores it outside your repo.</text>
 <text class="caption anim deliver-loop-cap-12" x="480" y="414">The report carries the evidence. The next task starts with what this one learned.</text>
-<text class="caption static" x="480" y="414">Orient, lock intent, gate, work, review, verify, compound, report. A failing check sends the task back to work.</text>
+<text class="caption static deliver-loop-static" x="480" y="414">Orient, lock intent, gate, work, review, verify, compound, report. A failing check sends the task back to work.</text>
 <rect class="bar-track" x="0" y="434" width="960" height="6"/>
 <rect class="bar deliver-loop-bar" x="0" y="434" width="960" height="6"/>
 </svg>

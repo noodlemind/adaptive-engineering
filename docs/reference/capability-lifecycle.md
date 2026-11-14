@@ -10,7 +10,12 @@ A missing required independent reviewer is an acquisition prerequisite, not perm
 
 The internal `decision-agent` is a native host role, not a decision API. The host selects an effectively available small model for the `decision` role when it supports that choice; otherwise it inherits the session model and reports that limitation. No provider key, service, inference endpoint, or model pin is introduced. `ae resources decision --file - --json` prepares, records, and reads bounded decisions. Preparation freezes action/capability/memory/readiness inputs, source hashes, consent revision, and budgets. A host completion observation binds the native reply; manually declared verdicts and invocation provenance do not establish approval. The [native decision input reference](../../packages/ae/corpus/skills/references/native-decisions.md) gives concrete request shapes, actual observed session binding and the complete prepare/invoke/observe/record cycle.
 
+<details open markdown="1">
+<summary>Animated walkthrough: plays three times, then shows a summary. Collapse to hide it.</summary>
+
 ![Animated walkthrough of a decision-agent judgment: the Engineer proposes an exact action, the Harness freezes it with source hashes, consent revision and budgets, the read-only decision-agent judges it, the Harness records a receipt for that action, the hook allows the identical call, and a changed argument gets no approval from that receipt](../diagrams/animated/decision-receipt.svg)
+
+</details>
 
 ```mermaid
 sequenceDiagram

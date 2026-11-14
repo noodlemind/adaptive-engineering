@@ -16,6 +16,10 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = path.join(root, 'docs/diagrams/animated');
 
+// Each walkthrough plays this many times, then stops on its static summary, so the
+// motion ends on its own instead of looping beside the text.
+const PLAYS = 3;
+
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const num = (n) => Number(n.toFixed(2)).toString();
 
@@ -96,7 +100,7 @@ function render(scene) {
     const windows = focus.get(n.id);
     if (windows.length) {
       const name = `${id}-hl-${n.id}`;
-      css.push(`.${name}{animation:${name} ${duration}s linear infinite}`, keyframes(name, windowsTrack(windows), duration));
+      css.push(`.${name}{animation:${name} ${duration}s linear ${PLAYS}}`, keyframes(name, windowsTrack(windows), duration));
       body.push(`<rect class="hl ${name}" x="${n.x - 3}" y="${n.y - 3}" width="${n.w + 6}" height="${n.h + 6}" rx="${rx + 3}"/>`);
     }
     const cx = n.x + n.w / 2;
@@ -115,7 +119,8 @@ function render(scene) {
   // Marks: badges and cards that appear for a window of time.
   for (const m of marks) {
     const name = `${id}-mk-${m.id}`;
-    css.push(`.${name}{animation:${name} ${duration}s linear infinite}`, keyframes(name, windowsTrack(m.windows), duration));
+    const finale = m.final ? `,${id}-end .4s linear ${duration * PLAYS}s forwards` : '';
+    css.push(`.${name}{animation:${name} ${duration}s linear ${PLAYS}${finale}}`, keyframes(name, windowsTrack(m.windows), duration));
     body.push(`<g class="mark ${name}${m.final ? ' final' : ''}">${m.svg}</g>`);
   }
 
@@ -137,8 +142,8 @@ function render(scene) {
     prev = p;
   });
   tokOpacity.push([duration - 0.9, 'opacity:1'], [duration - 0.4, 'opacity:0']);
-  css.push(`.${tokName}{animation:${tokName} ${duration}s ease-in-out infinite}`, keyframes(tokName, tokPoints, duration));
-  css.push(`.${tokName}-o{animation:${tokName}-o ${duration}s linear infinite}`, keyframes(`${tokName}-o`, tokOpacity, duration));
+  css.push(`.${tokName}{animation:${tokName} ${duration}s ease-in-out ${PLAYS}}`, keyframes(tokName, tokPoints, duration));
+  css.push(`.${tokName}-o{animation:${tokName}-o ${duration}s linear ${PLAYS}}`, keyframes(`${tokName}-o`, tokOpacity, duration));
   body.push(`<g class="${tokName}-o anim"><g class="${tokName}"><circle class="tok-glow" r="15"/><circle class="tok" r="8"/></g></g>`);
 
   // Captions, one per step that has one.
@@ -147,13 +152,14 @@ function render(scene) {
     if (!step.caption) return;
     const end = i + 1 < steps.length ? steps[i + 1].t : duration - 0.6;
     const name = `${id}-cap-${i}`;
-    css.push(`.${name}{animation:${name} ${duration}s linear infinite}`, keyframes(name, windowsTrack([[step.t, end]], 0.3), duration));
+    css.push(`.${name}{animation:${name} ${duration}s linear ${PLAYS}}`, keyframes(name, windowsTrack([[step.t, end]], 0.3), duration));
     body.push(`<text class="caption anim ${name}" x="${width / 2}" y="${capY}">${esc(step.caption)}</text>`);
   });
-  body.push(`<text class="caption static" x="${width / 2}" y="${capY}">${esc(staticCaption)}</text>`);
+  css.push(`.${id}-static{animation:${id}-end .4s linear ${duration * PLAYS}s forwards}`, `@keyframes ${id}-end{from{opacity:0}to{opacity:1}}`);
+  body.push(`<text class="caption static ${id}-static" x="${width / 2}" y="${capY}">${esc(staticCaption)}</text>`);
 
   // Progress bar along the bottom edge.
-  css.push(`.${id}-bar{animation:${id}-bar ${duration}s linear infinite}`, keyframes(`${id}-bar`, [[0, 'transform:scaleX(0)'], [duration, 'transform:scaleX(1)']], duration));
+  css.push(`.${id}-bar{animation:${id}-bar ${duration}s linear ${PLAYS}}`, keyframes(`${id}-bar`, [[0, 'transform:scaleX(0)'], [duration, 'transform:scaleX(1)']], duration));
 
   const legendSvg = legend.map((l, i) => {
     const x = width - 24 - (legend.length - i) * 112;
@@ -188,9 +194,9 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .edge-label-loop{fill:var(--deny)}.edge-label-feed{fill:var(--har)}
 .tok{fill:var(--you);stroke:var(--bg);stroke-width:2}
 .tok-glow{fill:var(--you);opacity:.25}
-.mark{opacity:0}
+.mark,.anim{opacity:0}
 .badge-deny{fill:var(--deny)}.badge-ok{fill:var(--ok)}
-.badge-text{fill:#ffffff;font-size:13px;font-weight:700;text-anchor:middle}
+.badge-text{fill:var(--bg);font-size:13px;font-weight:700;text-anchor:middle}
 .chip-text{fill:var(--ink);font-size:11.5px;font-weight:600;text-anchor:middle}
 .chip-sub{fill:var(--muted);font-size:10.5px;text-anchor:middle}
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}

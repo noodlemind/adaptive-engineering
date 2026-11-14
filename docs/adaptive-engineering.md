@@ -57,7 +57,12 @@ The Harness is deterministic. Given the same plan, files and checks, it gives th
 orient → lock intent → gate → work → review → verify → compound → report
 ```
 
+<details open markdown="1">
+<summary>Animated walkthrough: plays three times, then shows a summary. Collapse to hide it.</summary>
+
 ![Animated walkthrough of one Deliver task: orient, an edit denied before the plan is locked, lock intent, gate, work, review, a failing check sent back to work, a passing verify, compound and report](diagrams/animated/deliver-loop.svg)
+
+</details>
 
 1. **Orient.** The Harness gathers context, including any in-repository specs it finds (`intentSources`).
 2. **Lock intent.** The Engineer writes a plan: goal, scope, acceptance criteria, and which checks prove each criterion. The Harness locks it and records a hash of each spec it depends on.
@@ -184,7 +189,12 @@ Setup first inventories the skills, agents and instructions you already have and
 
 When a task needs something the catalog lacks, the Engineer does one bounded refresh if discovery is allowed, then reuses, acquires or reports the gap. A specialist the task needs, such as a missing independent reviewer, can be acquired on first need: `/ensure-capability` records the gap and `/create-primitive` creates the smallest separate role. That needs direct authorization or a current standing grant that covers it; anything outside that scope goes back to a person. A repeated procedure becomes a durable skill only with verified promotion evidence.
 
+<details open markdown="1">
+<summary>Animated walkthrough: plays three times, then shows a summary. Collapse to hide it.</summary>
+
 ![Animated walkthrough of capability growth: verified tasks leave episodes, consolidate turns them into learnings that orient brings into the next task, an authorized gap becomes a specialist reviewer, and a recurring procedure becomes a skill only with promotion evidence](diagrams/animated/engineer-grows.svg)
+
+</details>
 
 An internal `decision-agent`, running in the host on a small model where the host allows, judges exact actions and readiness. It cannot grant trust or user authority, and neither a model verdict nor a recurrence count can authorize a merge. After internal review, repair and passing verification, `ae review tour` gives the person a source-linked tour of the change for final review. See [Adaptive capability lifecycle](reference/capability-lifecycle.md).
 

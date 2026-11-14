@@ -39,7 +39,7 @@ The [animated](animated/) folder holds three short walkthroughs used in the docu
 
 They are explanatory sketches of the documented contracts, like the diagrams above, not recordings of a real session. The task names, check names and commands in them are examples.
 
-Each one is a self-contained SVG animated with CSS. GitHub and the documentation site show it as an ordinary image, it follows the light or dark preference of the reader's system or browser (not GitHub's own theme setting) on its own opaque background, and readers who ask for reduced motion see a static summary. Nothing is installed to view or build them: [build-doc-animations.mjs](../../scripts/build-doc-animations.mjs) generates all three from scene timelines using Node built-ins only. Edit the timeline there, never the SVG, then run:
+Each one is a self-contained SVG animated with CSS. GitHub and the documentation site show it as an ordinary image, it follows the light or dark preference of the reader's system or browser (not GitHub's own theme setting) on its own opaque background, and readers who ask for reduced motion see a static summary. Each one plays three times and then stops on that summary, and the guides embed it in an open `<details>` block so a reader can collapse it at any time. Nothing is installed to view or build them: [build-doc-animations.mjs](../../scripts/build-doc-animations.mjs) generates all three from scene timelines using Node built-ins only. Edit the timeline there, never the SVG, then run:
 
 ```bash
 node scripts/build-doc-animations.mjs          # write the SVGs

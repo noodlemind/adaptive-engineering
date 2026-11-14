@@ -30,9 +30,9 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .edge-label-loop{fill:var(--deny)}.edge-label-feed{fill:var(--har)}
 .tok{fill:var(--you);stroke:var(--bg);stroke-width:2}
 .tok-glow{fill:var(--you);opacity:.25}
-.mark{opacity:0}
+.mark,.anim{opacity:0}
 .badge-deny{fill:var(--deny)}.badge-ok{fill:var(--ok)}
-.badge-text{fill:#ffffff;font-size:13px;font-weight:700;text-anchor:middle}
+.badge-text{fill:var(--bg);font-size:13px;font-weight:700;text-anchor:middle}
 .chip-text{fill:var(--ink);font-size:11.5px;font-weight:600;text-anchor:middle}
 .chip-sub{fill:var(--muted);font-size:10.5px;text-anchor:middle}
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
@@ -44,57 +44,59 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
   .anim,.hl,.bar{opacity:0 !important}
   .static,.mark.final{opacity:1 !important}
 }
-.decision-receipt-hl-propose{animation:decision-receipt-hl-propose 22s linear infinite}
+.decision-receipt-hl-propose{animation:decision-receipt-hl-propose 22s linear 3}
 @keyframes decision-receipt-hl-propose{0.000%{opacity:0}2.727%{opacity:0}3.864%{opacity:1}10.682%{opacity:1}11.818%{opacity:0}62.727%{opacity:0}63.864%{opacity:1}67.045%{opacity:1}68.182%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-hl-prepare{animation:decision-receipt-hl-prepare 22s linear infinite}
+.decision-receipt-hl-prepare{animation:decision-receipt-hl-prepare 22s linear 3}
 @keyframes decision-receipt-hl-prepare{0.000%{opacity:0}11.818%{opacity:0}12.955%{opacity:1}19.773%{opacity:1}20.909%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-hl-judge{animation:decision-receipt-hl-judge 22s linear infinite}
+.decision-receipt-hl-judge{animation:decision-receipt-hl-judge 22s linear 3}
 @keyframes decision-receipt-hl-judge{0.000%{opacity:0}20.909%{opacity:0}22.045%{opacity:1}29.773%{opacity:1}30.909%{opacity:0}84.545%{opacity:0}85.682%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-hl-record{animation:decision-receipt-hl-record 22s linear infinite}
+.decision-receipt-hl-record{animation:decision-receipt-hl-record 22s linear 3}
 @keyframes decision-receipt-hl-record{0.000%{opacity:0}30.909%{opacity:0}32.045%{opacity:1}38.864%{opacity:1}40.000%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-hl-call{animation:decision-receipt-hl-call 22s linear infinite}
+.decision-receipt-hl-call{animation:decision-receipt-hl-call 22s linear 3}
 @keyframes decision-receipt-hl-call{0.000%{opacity:0}40.000%{opacity:0}41.136%{opacity:1}46.136%{opacity:1}47.273%{opacity:0}68.182%{opacity:0}69.318%{opacity:1}72.500%{opacity:1}73.636%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-hl-hook{animation:decision-receipt-hl-hook 22s linear infinite}
+.decision-receipt-hl-hook{animation:decision-receipt-hl-hook 22s linear 3}
 @keyframes decision-receipt-hl-hook{0.000%{opacity:0}47.273%{opacity:0}48.409%{opacity:1}61.591%{opacity:1}62.727%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-action1{animation:decision-receipt-mk-action1 22s linear infinite}
+.decision-receipt-mk-action1{animation:decision-receipt-mk-action1 22s linear 3}
 @keyframes decision-receipt-mk-action1{0.000%{opacity:0}2.727%{opacity:0}3.864%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-frozen{animation:decision-receipt-mk-frozen 22s linear infinite}
+.decision-receipt-mk-frozen{animation:decision-receipt-mk-frozen 22s linear 3}
 @keyframes decision-receipt-mk-frozen{0.000%{opacity:0}11.818%{opacity:0}12.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-verdict{animation:decision-receipt-mk-verdict 22s linear infinite}
+.decision-receipt-mk-verdict{animation:decision-receipt-mk-verdict 22s linear 3}
 @keyframes decision-receipt-mk-verdict{0.000%{opacity:0}21.818%{opacity:0}22.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-receipt{animation:decision-receipt-mk-receipt 22s linear infinite}
+.decision-receipt-mk-receipt{animation:decision-receipt-mk-receipt 22s linear 3}
 @keyframes decision-receipt-mk-receipt{0.000%{opacity:0}31.818%{opacity:0}32.955%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-allow{animation:decision-receipt-mk-allow 22s linear infinite}
+.decision-receipt-mk-allow{animation:decision-receipt-mk-allow 22s linear 3}
 @keyframes decision-receipt-mk-allow{0.000%{opacity:0}48.182%{opacity:0}49.318%{opacity:1}60.682%{opacity:1}61.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-action2{animation:decision-receipt-mk-action2 22s linear infinite}
+.decision-receipt-mk-action2{animation:decision-receipt-mk-action2 22s linear 3}
 @keyframes decision-receipt-mk-action2{0.000%{opacity:0}63.636%{opacity:0}64.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-mk-deny{animation:decision-receipt-mk-deny 22s linear infinite}
+.decision-receipt-mk-deny{animation:decision-receipt-mk-deny 22s linear 3}
 @keyframes decision-receipt-mk-deny{0.000%{opacity:0}73.636%{opacity:0}74.773%{opacity:1}96.136%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-tok{animation:decision-receipt-tok 22s ease-in-out infinite}
+.decision-receipt-tok{animation:decision-receipt-tok 22s ease-in-out 3}
 @keyframes decision-receipt-tok{0.000%{transform:translate(130px,96px)}2.727%{transform:translate(130px,96px)}11.818%{transform:translate(130px,96px)}15.000%{transform:translate(362px,96px)}20.909%{transform:translate(362px,96px)}24.091%{transform:translate(594px,96px)}30.909%{transform:translate(594px,96px)}34.091%{transform:translate(826px,96px)}40.000%{transform:translate(826px,96px)}44.545%{transform:translate(362px,250px)}47.273%{transform:translate(362px,250px)}50.455%{transform:translate(710px,250px)}62.727%{transform:translate(710px,250px)}67.273%{transform:translate(130px,96px)}68.182%{transform:translate(130px,96px)}71.818%{transform:translate(362px,250px)}73.636%{transform:translate(362px,250px)}76.818%{transform:translate(710px,250px)}100.000%{transform:translate(710px,250px)}}
-.decision-receipt-tok-o{animation:decision-receipt-tok-o 22s linear infinite}
+.decision-receipt-tok-o{animation:decision-receipt-tok-o 22s linear 3}
 @keyframes decision-receipt-tok-o{0.000%{opacity:0}2.727%{opacity:0}4.091%{opacity:1}95.909%{opacity:1}98.182%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-0{animation:decision-receipt-cap-0 22s linear infinite}
+.decision-receipt-cap-0{animation:decision-receipt-cap-0 22s linear 3}
 @keyframes decision-receipt-cap-0{0.000%{opacity:0}2.727%{opacity:0}4.091%{opacity:1}10.455%{opacity:1}11.818%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-1{animation:decision-receipt-cap-1 22s linear infinite}
+.decision-receipt-cap-1{animation:decision-receipt-cap-1 22s linear 3}
 @keyframes decision-receipt-cap-1{0.000%{opacity:0}11.818%{opacity:0}13.182%{opacity:1}19.545%{opacity:1}20.909%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-2{animation:decision-receipt-cap-2 22s linear infinite}
+.decision-receipt-cap-2{animation:decision-receipt-cap-2 22s linear 3}
 @keyframes decision-receipt-cap-2{0.000%{opacity:0}20.909%{opacity:0}22.273%{opacity:1}29.545%{opacity:1}30.909%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-3{animation:decision-receipt-cap-3 22s linear infinite}
+.decision-receipt-cap-3{animation:decision-receipt-cap-3 22s linear 3}
 @keyframes decision-receipt-cap-3{0.000%{opacity:0}30.909%{opacity:0}32.273%{opacity:1}38.636%{opacity:1}40.000%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-4{animation:decision-receipt-cap-4 22s linear infinite}
+.decision-receipt-cap-4{animation:decision-receipt-cap-4 22s linear 3}
 @keyframes decision-receipt-cap-4{0.000%{opacity:0}40.000%{opacity:0}41.364%{opacity:1}45.909%{opacity:1}47.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-5{animation:decision-receipt-cap-5 22s linear infinite}
+.decision-receipt-cap-5{animation:decision-receipt-cap-5 22s linear 3}
 @keyframes decision-receipt-cap-5{0.000%{opacity:0}47.273%{opacity:0}48.636%{opacity:1}61.364%{opacity:1}62.727%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-6{animation:decision-receipt-cap-6 22s linear infinite}
+.decision-receipt-cap-6{animation:decision-receipt-cap-6 22s linear 3}
 @keyframes decision-receipt-cap-6{0.000%{opacity:0}62.727%{opacity:0}64.091%{opacity:1}66.818%{opacity:1}68.182%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-7{animation:decision-receipt-cap-7 22s linear infinite}
+.decision-receipt-cap-7{animation:decision-receipt-cap-7 22s linear 3}
 @keyframes decision-receipt-cap-7{0.000%{opacity:0}68.182%{opacity:0}69.545%{opacity:1}72.273%{opacity:1}73.636%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-8{animation:decision-receipt-cap-8 22s linear infinite}
+.decision-receipt-cap-8{animation:decision-receipt-cap-8 22s linear 3}
 @keyframes decision-receipt-cap-8{0.000%{opacity:0}73.636%{opacity:0}75.000%{opacity:1}83.182%{opacity:1}84.545%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-cap-9{animation:decision-receipt-cap-9 22s linear infinite}
+.decision-receipt-cap-9{animation:decision-receipt-cap-9 22s linear 3}
 @keyframes decision-receipt-cap-9{0.000%{opacity:0}84.545%{opacity:0}85.909%{opacity:1}95.909%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-bar{animation:decision-receipt-bar 22s linear infinite}
+.decision-receipt-static{animation:decision-receipt-end .4s linear 66s forwards}
+@keyframes decision-receipt-end{from{opacity:0}to{opacity:1}}
+.decision-receipt-bar{animation:decision-receipt-bar 22s linear 3}
 @keyframes decision-receipt-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
 <marker id="decision-receipt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
 <marker id="decision-receipt-arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-loop" d="M0 0L10 5L0 10z"/></marker>
@@ -170,7 +172,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 <text class="caption anim decision-receipt-cap-7" x="480" y="414">The new call is not the action that was judged.</text>
 <text class="caption anim decision-receipt-cap-8" x="480" y="414">No receipt matches it, so it needs a fresh judgment. A later denial always wins.</text>
 <text class="caption anim decision-receipt-cap-9" x="480" y="414">A receipt never grants trust, user authority or wider scope, and never replaces named checks.</text>
-<text class="caption static" x="480" y="414">A receipt approves one exact action. It never grants trust, user authority or scope, and never replaces named checks.</text>
+<text class="caption static decision-receipt-static" x="480" y="414">A receipt approves one exact action. It never grants trust, user authority or scope, and never replaces named checks.</text>
 <rect class="bar-track" x="0" y="434" width="960" height="6"/>
 <rect class="bar decision-receipt-bar" x="0" y="434" width="960" height="6"/>
 </svg>
