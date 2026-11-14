@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import YAML from 'yaml';
-import { initGit } from './cli-fixtures.mjs';
+import { initGit, scriptedFlowLedger } from './cli-fixtures.mjs';
 
 export const experimentBin = path.resolve(import.meta.dirname, '../../bin/ae.mjs');
 export const evaluatorPath = path.resolve(import.meta.dirname, '../../lib/experiment-evaluator.mjs');
@@ -81,7 +81,7 @@ export function experimentFixture(t, { linked = true, candidate = [0, 0], contra
   const resolve = (id, attempt, decision, description = 'Authored acceptance of the observed result.') => invoke('experiment', 'resolve', '--plan', plan, '--file', writeDecision({ version: 1, id, expect: revision(), attempt, decision, description }));
   const review = () => {
     const packet = invoke('review', 'prepare', '--plan', plan, '--base', 'HEAD');
-    const results = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture validates CLI behavior without a model quality claim.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Finite JSON workload CLI acceptance fixture.' } }));
+    const results = packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture validates CLI behavior without a model quality claim.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Finite JSON workload CLI acceptance fixture.' } }));
     return invoke('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', writeDecision({ packet: packet.id, results }));
   };
   const hook = filePath => {

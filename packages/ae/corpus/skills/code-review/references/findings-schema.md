@@ -66,6 +66,7 @@ Each persona returns a single JSON object:
 | `findings` | array | List of finding objects |
 | `residual_risks` | array[string] | Risks that remain even after all findings are addressed |
 | `testing_gaps` | array[string] | Areas where test coverage is insufficient |
+| `flow_ledger` | array | Required from `spec-flow-analyzer` in a code review, and ignored from other reviewers: one positive flow and every negative flow class, each row shaped as `flow-tracing.md` defines. A `defect` row names the exact title of a finding in the same result. |
 
 ## Severity Definitions
 
@@ -110,4 +111,4 @@ Before submitting findings, each persona should verify:
 4. **Line numbers are accurate** — verified against the actual file content
 5. **Confidence is honest** — don't inflate confidence to get past the threshold
 6. **Evidence supports the claim** — each finding has at least one concrete code reference
-7. **Extra code is the defect** — a suggested fix that only adds a helper, option, comment, abstraction, or defensive check the spec did not name. Flag that extra code. Keep a missing check at a real boundary.
+7. **Extra code is the defect** — a suggested fix that only adds a helper, option, comment, abstraction, or defensive check the spec did not name. Flag that extra code. Keep a missing check at a real boundary, and keep a negative flow whose current behavior is harmful.

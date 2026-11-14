@@ -12,7 +12,7 @@ import { validatePlanSchema } from '../lib/plan-schema.mjs';
 import { planDigest, readEvidence } from '../lib/evidence.mjs';
 import { applyPlanUpdate } from '../lib/plan-update.mjs';
 import { redactedJson } from '../lib/redact.mjs';
-import { writeChecks, writeVersionedPlan, initGit } from './helpers/cli-fixtures.mjs';
+import { writeChecks, writeVersionedPlan, initGit, scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -63,7 +63,7 @@ test('installed product proof entry rejects placeholders and proves broken/fixed
   assert.notEqual(proof('fixed').status, 0);
   fs.writeFileSync(path.join(f.ws, 'src/example.js'), 'export const value = 2;\n');
   const packet = JSON.parse(f.cli('review', 'prepare', '--plan', plan, '--base', 'HEAD', '--json').stdout), input = path.join(f.ws, '.harness/proof-review.json');
-  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
+  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
   assert.equal(f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json').status, 0);
   assert.equal(f.cli('verify', '--plan', plan, '--base', 'HEAD', '--json').status, 0);
   const learning = path.join(f.ws, '.harness/proof-learning.json');
@@ -147,7 +147,7 @@ test('installed package proves behavior, hook layout, stale replay and completio
   fs.writeFileSync(path.join(f.ws, 'src/example.js'), 'export const value = 2;\n');
   const packet = JSON.parse(f.cli('review', 'prepare', '--plan', plan, '--base', 'HEAD', '--json').stdout);
   const input = path.join(f.ws, '.harness/review-input.json');
-  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
+  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
   assert.equal(f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json').status, 0);
   assert.equal(f.cli('verify', '--plan', plan, '--base', 'HEAD', '--json').status, 0);
   const learning = path.join(f.ws, '.harness/no-learning.json');
@@ -193,7 +193,7 @@ test('oversized serialized review records reject without changing current covera
   const f = deliveryFixture(t);
   const plan = JSON.parse(f.cli('plan-new', '--goal', 'Review bytes', '--acceptance', 'Behavior works', '--constraint', 'Keep API', '--verification-check', 'behavior', '--json').stdout).path;
   const packet = JSON.parse(f.cli('review', 'prepare', '--plan', plan, '--base', 'HEAD', '--json').stdout);
-  const results = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
+  const results = packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
   const input = path.join(f.ws, '.harness/results.json');
   fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results }));
   assert.equal(f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json').status, 0);
@@ -357,7 +357,7 @@ test('short plan runs its bound behavior check and rejects broken product', (t) 
   fs.writeFileSync(path.join(f.ws, 'src/example.js'), 'export const value = 2;\n');
   const packet = JSON.parse(f.cli('review', 'prepare', '--plan', plan, '--base', 'HEAD', '--json').stdout);
   const input = path.join(f.ws, '.harness/review-input.json');
-  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
+  fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
   assert.equal(f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json').status, 0);
   const repaired = f.cli('verify', '--plan', plan, '--base', 'HEAD', '--json');
   assert.equal(JSON.parse(repaired.stdout).outcome, 'passed', repaired.stdout + repaired.stderr);
@@ -450,7 +450,7 @@ for (const format of ['short', 'full']) for (const learning of ['no-learning', '
     fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: [] }));
     const missing = f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json');
     assert.equal(JSON.parse(missing.stdout).coverage.complete, false);
-    fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
+    fs.writeFileSync(input, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] })) }));
     const reviewed = f.cli('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', input, '--json');
     assert.equal(reviewed.status, 0, reviewed.stdout + reviewed.stderr);
     const verified = f.cli('verify', '--plan', plan, '--base', 'HEAD', '--json');

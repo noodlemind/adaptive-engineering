@@ -9,7 +9,7 @@ import { bindPlaybook, caffeinatedPointer } from '../lib/playbook-binding.mjs';
 import { dispatchToolCall, runAgentLoop, DELIVER_PROFILE } from '../lib/agent-loop.mjs';
 import { approveProject } from '../lib/trust.mjs';
 import { tempDir } from './helpers/temp.mjs';
-import { initGit, writeVersionedPlan } from './helpers/cli-fixtures.mjs';
+import { initGit, writeVersionedPlan, scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 
 const shouldLoad = [
   ['Resume the accepted feature.', 'feature', 'planned'],
@@ -128,7 +128,7 @@ test('Deliver traces procedure loading, scoped work, review, proof and completio
     () => {
       const packets = path.join(workspace, '.harness/reviews/packets');
       const packet = JSON.parse(fs.readFileSync(path.join(packets, fs.readdirSync(packets)[0])));
-      return call('harness', { argv: ['review', 'assemble', '--plan', plan, '--packet', packet.id], decision: { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted provider fixture does not measure model quality.'], testing_gaps: [] })) } });
+      return call('harness', { argv: ['review', 'assemble', '--plan', plan, '--packet', packet.id], decision: { packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Scripted provider fixture does not measure model quality.'], testing_gaps: [] })) } });
     },
     () => call('harness', { argv: ['verify', '--plan', plan, '--base', 'HEAD'] }),
     () => call('harness', { argv: ['compound', '--plan', plan], decision: { operation: 'journey-no-learning', decision: 'no-learning', rationale: 'Disposable behavior fixture.' } }),

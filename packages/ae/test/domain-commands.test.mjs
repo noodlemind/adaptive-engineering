@@ -11,7 +11,7 @@ import { harnessControlCommand } from '../corpus/hooks/lib/tool-payload.mjs';
 import { beforeDeliveryTool, runDeliveryCommand, deliveryCompletion } from '../lib/agent-delivery.mjs';
 import { DELIVER_PROFILE, dispatchToolCall, runAgentLoop } from '../lib/agent-loop.mjs';
 import { approveProject } from '../lib/trust.mjs';
-import { initGit } from './helpers/cli-fixtures.mjs';
+import { initGit, scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 import { resolveDomainContext } from '../lib/domain-context.mjs';
 import { resolveDomainCommandContext } from '../lib/domain-cmd.mjs';
 import parentProfile from './helpers/domain-parent-profile.cjs';
@@ -227,7 +227,7 @@ test('actual parent CLI routes review, proof, learning, completion and journals 
   assert.equal(f.invoke('gate', '--plan', plan, '--phase', 'implement').pass, true);
   op('cli-progress', 'progress', { progress: { tasks: ['P1T1'], criteria: ['AC1'], phase: 1 } });
   const packet = f.invoke('review', 'prepare', '--plan', plan, '--base', 'HEAD');
-  await native(['review', 'assemble', '--plan', plan, '--packet', packet.id], { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Deterministic fixture exercises record validation, without a model review claim.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Scripted CLI acceptance fixture.' } })) });
+  await native(['review', 'assemble', '--plan', plan, '--packet', packet.id], { packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Deterministic fixture exercises record validation, without a model review claim.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Scripted CLI acceptance fixture.' } })) });
   const proof = f.invoke('verify', '--plan', plan, '--base', 'HEAD');
   assert.equal(proof.outcome, 'passed');
   // Evidence lines reach domain compound only on stdin, by CLI or delivery.

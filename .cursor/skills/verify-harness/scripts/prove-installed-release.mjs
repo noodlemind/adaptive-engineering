@@ -3,6 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+const FLOW_CLASSES_FIXTURE = ['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary'];
+// Scripted spec-flow-analyzer ledger: every class left as a gap through line 1 of the first changed non-prose file.
+function scriptedFlowLedger(packet, reviewer) {
+  const file = reviewer === 'spec-flow-analyzer' && (packet?.scope?.changedFiles || []).find(name => !/\.(?:md|markdown|mdx|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico)$/i.test(name));
+  return file ? { flow_ledger: FLOW_CLASSES_FIXTURE.map(flow_class => ({ flow_class, entry: `scripted ${file}`, input: `${flow_class} fixture input`, path: [`${file}:1`], expected: 'Scripted fixture expectation', observed: 'Not traced by the scripted fixture', verdict: 'gap', test: null })) } : {};
+}
 import { createHash } from 'node:crypto';
 
 assert.equal(process.argv.length, 2, 'Run this check from the repository checkout without arguments.');
@@ -234,7 +241,7 @@ try {
   raw(['experiment', 'begin', '--plan', plan, '--file', decision({ version: 1, id: 'after-target', expect: revision(), hypothesis: 'A new pair must be denied after the target.' })], { expected: 'nonzero' });
   update('progress', 'progress', { progress: { tasks: ['P1T1'], criteria: ['AC1'], phase: 1 } });
   const packet = invoke('review', 'prepare', '--plan', plan, '--base', 'HEAD');
-  const results = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted installed-package fixture does not measure model quality or native editor activation.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Read and execute the installed finite JSON workload acceptance fixture.' } }));
+  const results = packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Scripted installed-package fixture does not measure model quality or native editor activation.'], testing_gaps: [], provenance: { kind: 'same-context', method: 'Read and execute the installed finite JSON workload acceptance fixture.' } }));
   invoke('review', 'assemble', '--plan', plan, '--packet', packet.id, '--file', decision({ packet: packet.id, results }));
   const proof = invoke('verify', '--plan', plan, '--base', 'HEAD');
   assert.equal(proof.outcome, 'passed');

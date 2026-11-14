@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { DELIVER_AGENT_TOOLS, DELIVER_PROFILE, buildSystemPrompt, dispatchToolBatch, dispatchToolCall, runAgentLoop } from '../lib/agent-loop.mjs';
 import { approveProject, trustStatus } from '../lib/trust.mjs';
 import { deliveryCompletion, afterDeliveryTool, beforeDeliveryTool } from '../lib/agent-delivery.mjs';
-import { initGit, writeVersionedPlan } from './helpers/cli-fixtures.mjs';
+import { initGit, writeVersionedPlan, scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 import { cliHarnessHome } from './helpers/cli.mjs';
 
 process.env.HARNESS_HOME = cliHarnessHome();
@@ -155,7 +155,7 @@ test('Deliver completion reads a reviewed managed plan from its explicit home', 
   fs.writeFileSync(path.join(f.ws, 'src/example.js'), 'export const value = 2;\n');
   decide('worklist-progress', 'progress', { progress: { tasks: ['P1T1'], criteria: ['AC1'] } });
   const packet = f.worklistCli('review', 'prepare', '--plan', f.worklistPlan, '--base', 'HEAD');
-  fs.writeFileSync(f.decisionFile, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture has no model quality claim.'], testing_gaps: [] })) }));
+  fs.writeFileSync(f.decisionFile, JSON.stringify({ packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture has no model quality claim.'], testing_gaps: [] })) }));
   f.worklistCli('review', 'assemble', '--plan', f.worklistPlan, '--packet', packet.id, '--file', f.decisionFile);
   f.worklistCli('verify', '--plan', f.worklistPlan, '--base', 'HEAD');
   fs.writeFileSync(f.decisionFile, JSON.stringify({ operation: 'worklist-no-learning', decision: 'no-learning', rationale: 'Disposable integration fixture has no durable lesson.' }));
@@ -376,7 +376,7 @@ test('passed verify still requires compounding and bound completion; repair can 
     () => {
       const packets = path.join(f.ws, '.harness/reviews/packets');
       const packet = JSON.parse(fs.readFileSync(path.join(packets, fs.readdirSync(packets)[0])));
-      return call('harness', { argv: ['review', 'assemble', '--plan', f.plan, '--packet', packet.id], decision: { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture judgment; no model quality claim.'], testing_gaps: [] })) } });
+      return call('harness', { argv: ['review', 'assemble', '--plan', f.plan, '--packet', packet.id], decision: { packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: ['Scripted fixture judgment; no model quality claim.'], testing_gaps: [] })) } });
     },
     call('harness', { argv: ['verify', '--plan', f.plan, '--base', 'HEAD'] }),
     say('done'),

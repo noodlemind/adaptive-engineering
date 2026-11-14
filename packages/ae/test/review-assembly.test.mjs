@@ -44,7 +44,10 @@ function fixture(t, { changed = true, copyPackage = false } = {}) {
   };
   return { dir, ws, plan, packageRoot, cliEnv, cli, prepare, assemble };
 }
-const clean = reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] });
+const FLOW_CLASSES = ['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary'];
+// A minimal valid ledger: every class traced as a gap through the changed file.
+const ledger = () => FLOW_CLASSES.map(flow_class => ({ flow_class, entry: 'value export', input: `${flow_class} input`, path: ['src/example.js:1'], expected: 'Export the value', observed: 'Exports the value', verdict: 'gap', test: null }));
+const clean = reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], ...(reviewer === 'spec-flow-analyzer' ? { flow_ledger: ledger() } : {}) });
 const finding = (fields = {}) => ({ file: './src/example.js', line: 3, title: 'Missing guard', description: 'The input is unchecked.', suggested_fix: 'Validate the input.', severity: 'P2', confidence: 0.7, autofix_class: 'manual', evidence: ['src/example.js:3'], ...fields });
 function prepareDocument(f, ...files) {
   const result = f.cli('prepare', '--domain', 'document', '--base', 'HEAD', ...files.flatMap(file => ['--file', file]));
@@ -151,7 +154,9 @@ test('the review budget grows for a large diff, a real boundary, and one languag
   const large = fixture(t);
   for (let i = 0; i < 8; i += 1) fs.writeFileSync(path.join(large.ws, `src/extra-${i}.js`), `export const extra${i} = ${i};\n`);
   const largePacket = large.prepare();
-  for (const name of ['code-simplicity-reviewer', 'security-sentinel', 'architecture-strategist']) assert.ok(largePacket.required.includes(name), name);
+  for (const name of ['spec-flow-analyzer', 'security-sentinel', 'architecture-strategist']) assert.ok(largePacket.required.includes(name), name);
+  // A large diff spends the cap on correctness, security and architecture; simplicity yields.
+  assert.equal(largePacket.required.includes('code-simplicity-reviewer'), false);
   assert.equal(largePacket.required.includes('performance-oracle'), false);
   const boundary = fixture(t);
   fs.mkdirSync(path.join(boundary.ws, 'src/auth'), { recursive: true });
@@ -159,10 +164,12 @@ test('the review budget grows for a large diff, a real boundary, and one languag
   const boundaryPacket = boundary.prepare();
   assert.ok(boundaryPacket.required.includes('security-sentinel'));
   assert.equal(boundaryPacket.required.includes('architecture-strategist'), false);
-  const java = fixture(t);
+  const java = fixture(t, { changed: false });
   fs.writeFileSync(path.join(java.ws, 'src/Order.java'), 'public record Order() {}\n');
   const javaPacket = java.prepare();
   assert.ok(javaPacket.required.includes('java-reviewer'));
+  assert.ok(javaPacket.required.includes('spec-flow-analyzer'));
+  assert.ok(javaPacket.required.length <= 3);
   assert.equal(javaPacket.required.includes('python-reviewer'), false);
   assert.ok(javaPacket.required.filter(id => id.endsWith('reviewer') || id.endsWith('strategist') || id.endsWith('sentinel')).length <= 3);
 });
@@ -628,7 +635,9 @@ test('the coordinator output example records the required invocation provenance'
   const instructions = fs.readFileSync(path.join(root, 'corpus/agents/code-review-coordinator.agent.md'), 'utf8');
   const example = instructions.match(/Return `([^`]+)`\./)?.[1];
   assert.ok(example);
-  const results = packet.required.map(reviewer => JSON.parse(example.replaceAll('<supplied id>', packet.id).replaceAll('<required id>', reviewer)).results[0]);
+  const results = packet.required.map(reviewer => JSON.parse(example.replaceAll('<supplied id>', packet.id).replaceAll('<required id>', reviewer)).results[0])
+    .map(result => result.reviewer === 'spec-flow-analyzer' ? { ...result, flow_ledger: ledger() } : result);
+  assert.match(instructions, /flow_ledger/);
   const assembled = f.assemble(packet, results);
   assert.equal(assembled.status, 0, assembled.stderr + assembled.stdout);
   const facts = coverageIdentity(f);
@@ -666,4 +675,57 @@ test('contradictory adjudications block coverage without silently deleting findi
   assert.equal(a.value.id, b.value.id);
   assert.equal(a.value.findings.length, 2);
   assert.ok(a.value.failures.some(f => f.errors.includes('Conflicting merge and retain adjudications')));
+});
+
+test('the code packet binds reverse dependents, and a changed dependent makes the packet stale', t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.ws, 'src/dep.js'), "import { value0 } from './example.js';\nexport const dep = value0;\n");
+  spawnSync('git', ['add', 'src/dep.js'], { cwd: f.ws });
+  spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'dep', '--', 'src/dep.js'], { cwd: f.ws });
+  const packet = f.prepare();
+  const impact = packet.preparation.impact;
+  assert.equal(impact.schema, 'review-impact-v1');
+  const seed = impact.seeds.find(s => s.file === 'src/example.js');
+  assert.ok(seed, JSON.stringify(impact));
+  assert.deepEqual(seed.dependents.map(d => d.file), ['src/dep.js']);
+  assert.equal(f.assemble(packet, packet.required.map(clean)).status, 0);
+  fs.appendFileSync(path.join(f.ws, 'src/dep.js'), 'export const later = 1;\n');
+  const stale = f.assemble(packet, packet.required.map(clean));
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr + stale.stdout, /stale|changed/);
+});
+
+test('a diff with no source file needs no flow ledger, but a supplied ledger is still checked', t => {
+  const f = fixture(t, { changed: false });
+  fs.appendFileSync(path.join(f.ws, f.plan), '\nA clarifying note.\n');
+  const packet = f.prepare();
+  assert.ok(packet.required.includes('spec-flow-analyzer'));
+  assert.ok(packet.scope.changedFiles.every(file => file.endsWith('.md')), JSON.stringify(packet.scope.changedFiles));
+  const bare = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
+  const accepted = f.assemble(packet, bare);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  const malformed = bare.map(r => r.reviewer === 'spec-flow-analyzer' ? { ...r, flow_ledger: [] } : r);
+  assert.equal(f.assemble(packet, malformed).status, 1);
+});
+
+test('assembly loads recorded finding verifications through the CLI and refuses one without a receipt', t => {
+  const f = fixture(t), packet = f.prepare();
+  const results = packet.required.map(clean);
+  results[0].findings = [finding()];
+  const first = f.assemble(packet, results).value;
+  const id = first.findings[0].id;
+  const output = f.assemble(packet, results, { verifications: [{ finding: id, request: '1'.repeat(64) }] });
+  assert.equal(output.status, 1);
+  assert.ok(output.value.failures.some(entry => entry.errors.some(e => /no recorded decision-agent receipt/.test(e))), output.stdout);
+});
+
+test('any changed file that is not prose or media needs the flow ledger', t => {
+  const f = fixture(t, { changed: false });
+  fs.appendFileSync(path.join(f.ws, '.gitignore'), 'build/\n');
+  const packet = f.prepare();
+  assert.deepEqual(packet.scope.changedFiles.filter(file => !file.endsWith('.md')), ['.gitignore']);
+  const bare = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [] }));
+  const refused = f.assemble(packet, bare);
+  assert.equal(refused.status, 1);
+  assert.ok(refused.value.failures.some(entry => entry.errors.some(e => /Missing flow_ledger/.test(e))));
 });
