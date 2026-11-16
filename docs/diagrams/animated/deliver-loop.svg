@@ -38,7 +38,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
 .static{opacity:0}
 .bar-track{fill:var(--panel)}
-.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center}
+.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center;transform:scaleX(0)}
 @media (prefers-reduced-motion:reduce){
   *{animation:none !important}
   .anim,.hl,.bar{opacity:0 !important}
@@ -102,7 +102,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 @keyframes deliver-loop-cap-11{0.000%{opacity:0}79.231%{opacity:0}80.385%{opacity:1}85.769%{opacity:1}86.923%{opacity:0}100.000%{opacity:0}}
 .deliver-loop-cap-12{animation:deliver-loop-cap-12 26s linear 3}
 @keyframes deliver-loop-cap-12{0.000%{opacity:0}86.923%{opacity:0}88.077%{opacity:1}96.538%{opacity:1}97.692%{opacity:0}100.000%{opacity:0}}
-.deliver-loop-static{animation:deliver-loop-end .4s linear 78s forwards}
+.deliver-loop-static{animation:deliver-loop-end .4s linear 77.1s forwards}
 @keyframes deliver-loop-end{from{opacity:0}to{opacity:1}}
 .deliver-loop-bar{animation:deliver-loop-bar 26s linear 3}
 @keyframes deliver-loop-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>

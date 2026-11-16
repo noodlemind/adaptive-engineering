@@ -39,14 +39,15 @@ function rewriteLinks(content, input) {
 
 // Diagram images are copied into the site so they render there instead of linking to a GitHub page.
 function rewriteImages(content, input) {
-  return content.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, href) => {
+  return content.replace(/!\[([^\]]*)\]\(([^)\s]+)(\s+"[^"]*")?\)/g, (match, alt, href, title = '') => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^[#?]/.test(href)) return match;
-    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(input), href));
+    const [file, query] = href.split('?');
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(input), file));
     if (!resolved.startsWith('docs/diagrams/') || !/\.(svg|png|gif)$/i.test(resolved)) return match;
     const destination = path.join(output, 'assets', resolved);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(path.join(root, resolved), destination);
-    return `![${alt}]({{ "/assets/${resolved}" | relative_url }})`;
+    return `![${alt}]({{ "/assets/${resolved}" | relative_url }}${query === undefined ? '' : `?${query}`}${title})`;
   });
 }
 

@@ -38,7 +38,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
 .static{opacity:0}
 .bar-track{fill:var(--panel)}
-.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center}
+.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center;transform:scaleX(0)}
 @media (prefers-reduced-motion:reduce){
   *{animation:none !important}
   .anim,.hl,.bar{opacity:0 !important}
@@ -94,7 +94,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 @keyframes decision-receipt-cap-8{0.000%{opacity:0}73.636%{opacity:0}75.000%{opacity:1}83.182%{opacity:1}84.545%{opacity:0}100.000%{opacity:0}}
 .decision-receipt-cap-9{animation:decision-receipt-cap-9 22s linear 3}
 @keyframes decision-receipt-cap-9{0.000%{opacity:0}84.545%{opacity:0}85.909%{opacity:1}95.909%{opacity:1}97.273%{opacity:0}100.000%{opacity:0}}
-.decision-receipt-static{animation:decision-receipt-end .4s linear 66s forwards}
+.decision-receipt-static{animation:decision-receipt-end .4s linear 65.1s forwards}
 @keyframes decision-receipt-end{from{opacity:0}to{opacity:1}}
 .decision-receipt-bar{animation:decision-receipt-bar 22s linear 3}
 @keyframes decision-receipt-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
@@ -167,10 +167,10 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 <text class="caption anim decision-receipt-cap-2" x="480" y="414">The host runs the read-only decision-agent, on a small model where the host allows it.</text>
 <text class="caption anim decision-receipt-cap-3" x="480" y="414">The Harness records the observed reply as a receipt tied to that exact action.</text>
 <text class="caption anim decision-receipt-cap-4" x="480" y="414">The Engineer makes the tool call with the identical arguments.</text>
-<text class="caption anim decision-receipt-cap-5" x="480" y="414">The receipt matches and every remaining guard passes, so the call is allowed.</text>
+<text class="caption anim decision-receipt-cap-5" x="480" y="414">The receipt matches and every remaining guard passes, so the call is allowed. A later denial still wins.</text>
 <text class="caption anim decision-receipt-cap-6" x="480" y="414">Now one argument changes.</text>
 <text class="caption anim decision-receipt-cap-7" x="480" y="414">The new call is not the action that was judged.</text>
-<text class="caption anim decision-receipt-cap-8" x="480" y="414">No receipt matches it, so it needs a fresh judgment. A later denial always wins.</text>
+<text class="caption anim decision-receipt-cap-8" x="480" y="414">No receipt matches the changed call, so it needs a fresh judgment.</text>
 <text class="caption anim decision-receipt-cap-9" x="480" y="414">A receipt never grants trust, user authority or wider scope, and never replaces named checks.</text>
 <text class="caption static decision-receipt-static" x="480" y="414">A receipt approves one exact action. It never grants trust, user authority or scope, and never replaces named checks.</text>
 <rect class="bar-track" x="0" y="434" width="960" height="6"/>

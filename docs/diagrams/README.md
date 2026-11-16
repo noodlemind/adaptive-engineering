@@ -33,7 +33,7 @@ The [animated](animated/) folder holds three short walkthroughs used in the docu
 
 | Animation | Shows | Used in |
 | --- | --- | --- |
-| [deliver-loop.svg](animated/deliver-loop.svg) | One Deliver task: orient, an edit denied before the gate, lock intent, gate, work, review, a failing check sent back to work, verify, compound and report | [README](../../README.md#how-it-works), [How a Deliver task runs](../adaptive-engineering.md#how-a-deliver-task-runs) |
+| [deliver-loop.svg](animated/deliver-loop.svg) | One Deliver task: orient, an edit denied before the plan is locked, lock intent, gate, work, review, a failing check sent back to work, verify, compound and report | [README](../../README.md#how-it-works), [How a Deliver task runs](../adaptive-engineering.md#how-a-deliver-task-runs) |
 | [engineer-grows.svg](animated/engineer-grows.svg) | How verified tasks compound into learnings, and how an authorized gap or a proven recurrence becomes a specialist or a skill | [How capability is acquired](../adaptive-engineering.md#how-capability-is-acquired) |
 | [decision-receipt.svg](animated/decision-receipt.svg) | How the decision-agent judges one exact action and why its receipt does not cover a changed one | [Adaptive capability lifecycle](../reference/capability-lifecycle.md) |
 

@@ -64,10 +64,8 @@ spec_sources:
 ```mermaid
 flowchart TD
   domain["Domain: payments"] --> core["Asset: core"]
-  domain --> edge["Asset: edge"]
   core --> api["Component: ledger-api<br/>repository ledger"]
   core --> worker["Component: ledger-worker<br/>repository ledger, path worker"]
-  edge --> gateway["Component: gateway<br/>repository gateway"]
   spec[("Spec repository<br/>payments-spec")]
   spec -.->|"scope: domain"| domain
   spec -.->|"scope: asset/core"| core

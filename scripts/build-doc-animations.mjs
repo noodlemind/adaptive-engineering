@@ -119,7 +119,8 @@ function render(scene) {
   // Marks: badges and cards that appear for a window of time.
   for (const m of marks) {
     const name = `${id}-mk-${m.id}`;
-    const finale = m.final ? `,${id}-end .4s linear ${duration * PLAYS}s forwards` : '';
+    // Final marks fade into the end state before their last window closes, so they never blink out.
+    const finale = m.final ? `,${id}-end .4s linear ${num(duration * PLAYS - 0.9)}s forwards` : '';
     css.push(`.${name}{animation:${name} ${duration}s linear ${PLAYS}${finale}}`, keyframes(name, windowsTrack(m.windows), duration));
     body.push(`<g class="mark ${name}${m.final ? ' final' : ''}">${m.svg}</g>`);
   }
@@ -155,7 +156,7 @@ function render(scene) {
     css.push(`.${name}{animation:${name} ${duration}s linear ${PLAYS}}`, keyframes(name, windowsTrack([[step.t, end]], 0.3), duration));
     body.push(`<text class="caption anim ${name}" x="${width / 2}" y="${capY}">${esc(step.caption)}</text>`);
   });
-  css.push(`.${id}-static{animation:${id}-end .4s linear ${duration * PLAYS}s forwards}`, `@keyframes ${id}-end{from{opacity:0}to{opacity:1}}`);
+  css.push(`.${id}-static{animation:${id}-end .4s linear ${num(duration * PLAYS - 0.9)}s forwards}`, `@keyframes ${id}-end{from{opacity:0}to{opacity:1}}`);
   body.push(`<text class="caption static ${id}-static" x="${width / 2}" y="${capY}">${esc(staticCaption)}</text>`);
 
   // Progress bar along the bottom edge.
@@ -202,7 +203,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
 .static{opacity:0}
 .bar-track{fill:var(--panel)}
-.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center}
+.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center;transform:scaleX(0)}
 @media (prefers-reduced-motion:reduce){
   *{animation:none !important}
   .anim,.hl,.bar{opacity:0 !important}
@@ -413,10 +414,10 @@ const decision = {
     { t: 4.6, at: 'judge', focus: ['judge'], caption: 'The host runs the read-only decision-agent, on a small model where the host allows it.' },
     { t: 6.8, at: 'record', focus: ['record'], caption: 'The Harness records the observed reply as a receipt tied to that exact action.' },
     { t: 8.8, at: 'call', focus: ['call'], move: 1.0, caption: 'The Engineer makes the tool call with the identical arguments.' },
-    { t: 10.4, at: 'hook', focus: ['hook'], caption: 'The receipt matches and every remaining guard passes, so the call is allowed.' },
+    { t: 10.4, at: 'hook', focus: ['hook'], caption: 'The receipt matches and every remaining guard passes, so the call is allowed. A later denial still wins.' },
     { t: 13.8, at: 'propose', focus: ['propose'], move: 1.0, caption: 'Now one argument changes.' },
     { t: 15.0, at: 'call', focus: ['call'], move: 0.8, caption: 'The new call is not the action that was judged.' },
-    { t: 16.2, at: 'hook', focus: ['hook'], caption: 'No receipt matches it, so it needs a fresh judgment. A later denial always wins.' },
+    { t: 16.2, at: 'hook', focus: ['hook'], caption: 'No receipt matches the changed call, so it needs a fresh judgment.' },
     { t: 18.6, focus: ['judge', 'hook'], caption: 'A receipt never grants trust, user authority or wider scope, and never replaces named checks.' },
   ],
 };

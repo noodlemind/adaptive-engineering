@@ -38,7 +38,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 .caption{fill:var(--ink);font-size:14.5px;text-anchor:middle;opacity:0}
 .static{opacity:0}
 .bar-track{fill:var(--panel)}
-.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center}
+.bar{fill:var(--you);transform-box:fill-box;transform-origin:left center;transform:scaleX(0)}
 @media (prefers-reduced-motion:reduce){
   *{animation:none !important}
   .anim,.hl,.bar{opacity:0 !important}
@@ -66,31 +66,31 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 @keyframes engineer-grows-mk-t1{0.000%{opacity:0}5.000%{opacity:0}5.893%{opacity:1}17.679%{opacity:1}18.571%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-v1{animation:engineer-grows-mk-v1 28s linear 3}
 @keyframes engineer-grows-mk-v1{0.000%{opacity:0}11.429%{opacity:0}12.321%{opacity:1}17.679%{opacity:1}18.571%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-ep1{animation:engineer-grows-mk-ep1 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-ep1{animation:engineer-grows-mk-ep1 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-ep1{0.000%{opacity:0}15.000%{opacity:0}15.893%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-l1{animation:engineer-grows-mk-l1 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-l1{animation:engineer-grows-mk-l1 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-l1{0.000%{opacity:0}22.857%{opacity:0}23.750%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-t2{animation:engineer-grows-mk-t2 28s linear 3}
 @keyframes engineer-grows-mk-t2{0.000%{opacity:0}30.000%{opacity:0}30.893%{opacity:1}65.536%{opacity:1}66.429%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-need{animation:engineer-grows-mk-need 28s linear 3}
 @keyframes engineer-grows-mk-need{0.000%{opacity:0}37.143%{opacity:0}38.036%{opacity:1}51.250%{opacity:1}52.143%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-grant{animation:engineer-grows-mk-grant 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-grant{animation:engineer-grows-mk-grant 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-grant{0.000%{opacity:0}44.286%{opacity:0}45.179%{opacity:1}51.250%{opacity:1}52.143%{opacity:0}77.143%{opacity:0}78.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-sec{animation:engineer-grows-mk-sec 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-sec{animation:engineer-grows-mk-sec 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-sec{0.000%{opacity:0}52.143%{opacity:0}53.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-v2{animation:engineer-grows-mk-v2 28s linear 3}
 @keyframes engineer-grows-mk-v2{0.000%{opacity:0}58.571%{opacity:0}59.464%{opacity:1}65.536%{opacity:1}66.429%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-ep2{animation:engineer-grows-mk-ep2 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-ep2{animation:engineer-grows-mk-ep2 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-ep2{0.000%{opacity:0}60.714%{opacity:0}61.607%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-l2{animation:engineer-grows-mk-l2 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-l2{animation:engineer-grows-mk-l2 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-l2{0.000%{opacity:0}64.286%{opacity:0}65.179%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-t3{animation:engineer-grows-mk-t3 28s linear 3}
 @keyframes engineer-grows-mk-t3{0.000%{opacity:0}70.000%{opacity:0}70.893%{opacity:1}88.393%{opacity:1}89.286%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-mk-evidence{animation:engineer-grows-mk-evidence 28s linear 3}
 @keyframes engineer-grows-mk-evidence{0.000%{opacity:0}73.571%{opacity:0}74.464%{opacity:1}86.250%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-skill{animation:engineer-grows-mk-skill 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-skill{animation:engineer-grows-mk-skill 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-skill{0.000%{opacity:0}81.429%{opacity:0}82.321%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-mk-more{animation:engineer-grows-mk-more 28s linear 3,engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-mk-more{animation:engineer-grows-mk-more 28s linear 3,engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-mk-more{0.000%{opacity:0}87.143%{opacity:0}88.036%{opacity:1}96.964%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-tok{animation:engineer-grows-tok 28s ease-in-out 3}
 @keyframes engineer-grows-tok{0.000%{transform:translate(110px,70px)}5.000%{transform:translate(110px,70px)}9.286%{transform:translate(110px,70px)}11.786%{transform:translate(370px,100px)}14.286%{transform:translate(370px,100px)}16.786%{transform:translate(675px,90px)}21.429%{transform:translate(675px,90px)}23.929%{transform:translate(865px,90px)}28.571%{transform:translate(865px,90px)}32.143%{transform:translate(110px,70px)}32.857%{transform:translate(110px,70px)}35.357%{transform:translate(370px,100px)}37.143%{transform:translate(370px,100px)}39.643%{transform:translate(675px,214px)}44.286%{transform:translate(675px,214px)}46.786%{transform:translate(865px,214px)}51.429%{transform:translate(865px,214px)}53.929%{transform:translate(381px,344px)}57.143%{transform:translate(381px,344px)}59.643%{transform:translate(370px,100px)}60.714%{transform:translate(370px,100px)}63.214%{transform:translate(675px,90px)}69.286%{transform:translate(675px,90px)}72.857%{transform:translate(110px,70px)}73.571%{transform:translate(110px,70px)}76.071%{transform:translate(681px,296px)}77.143%{transform:translate(681px,296px)}79.643%{transform:translate(865px,214px)}81.429%{transform:translate(865px,214px)}83.929%{transform:translate(591px,344px)}87.143%{transform:translate(591px,344px)}89.643%{transform:translate(370px,100px)}100.000%{transform:translate(370px,100px)}}
@@ -130,7 +130,7 @@ svg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetic
 @keyframes engineer-grows-cap-15{0.000%{opacity:0}81.429%{opacity:0}82.500%{opacity:1}86.071%{opacity:1}87.143%{opacity:0}100.000%{opacity:0}}
 .engineer-grows-cap-16{animation:engineer-grows-cap-16 28s linear 3}
 @keyframes engineer-grows-cap-16{0.000%{opacity:0}87.143%{opacity:0}88.214%{opacity:1}96.786%{opacity:1}97.857%{opacity:0}100.000%{opacity:0}}
-.engineer-grows-static{animation:engineer-grows-end .4s linear 84s forwards}
+.engineer-grows-static{animation:engineer-grows-end .4s linear 83.1s forwards}
 @keyframes engineer-grows-end{from{opacity:0}to{opacity:1}}
 .engineer-grows-bar{animation:engineer-grows-bar 28s linear 3}
 @keyframes engineer-grows-bar{0.000%{transform:scaleX(0)}100.000%{transform:scaleX(1)}}</style>
