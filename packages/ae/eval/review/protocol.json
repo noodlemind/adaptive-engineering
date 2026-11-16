@@ -1,0 +1,49 @@
+{
+  "schema": "review-recall-protocol-v1",
+  "match": {
+    "rule": "same-file-line-window",
+    "lineWindow": 8,
+    "severities": [
+      "P1",
+      "P2",
+      "P3"
+    ],
+    "note": "A finding matches an expected defect when it names the same file and a line within the window. One finding matches at most one defect."
+  },
+  "arms": [
+    {
+      "id": "baseline",
+      "describe": "Review budget and corpus as of main ced3f9f: no flow ledger, no impact, no verification, no learned rules.",
+      "ref": "ced3f9f1"
+    },
+    {
+      "id": "flow",
+      "describe": "Adds the spec-flow-analyzer seat, flow ledger and defect-vs-extra-scope rule."
+    },
+    {
+      "id": "flow+impact",
+      "describe": "Adds the packet impact section (reverse dependents, flow models)."
+    },
+    {
+      "id": "flow+impact+verify",
+      "describe": "Adds decision-agent verification of P1/P2 findings before the report."
+    },
+    {
+      "id": "flow+impact+verify+rules",
+      "describe": "Adds learned review rules from dispositions and authored misses (knowledge.feedback=suggest)."
+    }
+  ],
+  "metrics": [
+    "recall",
+    "perClassRecall",
+    "cleanFindings",
+    "precisionProxy",
+    "verifiedRefutedShare"
+  ],
+  "repeats": 3,
+  "promotion": {
+    "note": "Arms are compared incrementally on the same model, host and budget. A change is kept when held-out recall rises without a rise in clean-control findings. Thresholds are set before the first held-out run."
+  },
+  "status": "scaffold: no arm has been run",
+  "heldOut": "pending: no held-out case exists yet; recall on these cases measures fit to lessons the corpus already encodes"
+}

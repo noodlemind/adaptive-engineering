@@ -454,8 +454,17 @@ export function latestArchivedReadiness(loc, planPath) {
   return archivedReadiness(loc, planPath, index.receipt?.requestId, index.receipt?.id);
 }
 
+// `findings` (finding verifications) is optional: records written before it count as zero.
+const COUNTERS = ['decisions', 'repairs', 'acquisitions'], OPTIONAL_COUNTERS = ['findings'];
+const count = (task, name) => task.counts[name] ?? 0;
 function validTask(value) {
-  return object(value) && Number.isFinite(value.startedAt) && object(value.counts) && ['decisions', 'repairs', 'acquisitions'].every(key => Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0);
+  return object(value) && Number.isFinite(value.startedAt) && object(value.counts) && COUNTERS.every(key => Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0)
+    && OPTIONAL_COUNTERS.every(key => value.counts[key] === undefined || Number.isSafeInteger(value.counts[key]) && value.counts[key] >= 0);
+}
+function mergedCounts(a, b) {
+  const counts = Object.fromEntries(COUNTERS.map(name => [name, Math.max(a.counts[name], b.counts[name])]));
+  for (const name of OPTIONAL_COUNTERS) if (a.counts[name] !== undefined || b.counts[name] !== undefined) counts[name] = Math.max(count(a, name), count(b, name));
+  return counts;
 }
 
 /**
@@ -490,7 +499,7 @@ function taskRecord(loc, state, key) {
   const current = state.tasks[key];
   if (current && !validTask(current)) throw fail('live task budget is malformed');
   if (!current && !retained) return null;
-  const task = current && retained ? { startedAt: Math.min(current.startedAt, retained.task.startedAt), counts: Object.fromEntries(['decisions', 'repairs', 'acquisitions'].map(name => [name, Math.max(current.counts[name], retained.task.counts[name])])) } : current || retained.task;
+  const task = current && retained ? { startedAt: Math.min(current.startedAt, retained.task.startedAt), counts: mergedCounts(current, retained.task) } : current || retained.task;
   state.tasks[key] = task;
   return task;
 }
@@ -575,7 +584,7 @@ export function compactDecisions(loc, state, options = {}) {
     let retained = null;
     try { retained = readRecord(loc, path.join(root(loc), 'tasks', `${key}.json`)); } catch { continue; }
     if (retained?.budgetKey === key && validTask(retained.task) && retained.task.startedAt <= live.startedAt
-      && ['decisions', 'repairs', 'acquisitions'].every(name => retained.task.counts[name] >= live.counts[name])) delete state.tasks[key];
+      && [...COUNTERS, ...OPTIONAL_COUNTERS].every(name => count(retained.task, name) >= count(live, name))) delete state.tasks[key];
   }
   // Small state with no deferred record retires nothing; it still retries noted index writes.
   // Deferred records are retried by a decision prepare or record pass (never a guarded tool call), at most
@@ -652,7 +661,8 @@ export function compactDecisions(loc, state, options = {}) {
     const task = taskOf(request.budgetKey), receipt = state.receipts[requestId];
     const seconds = request.budgets?.maxSeconds;
     const expired = task && Number.isSafeInteger(seconds) && now >= task.startedAt && now - task.startedAt > seconds * 1000;
-    const terminal = receipt && (!receipt.authorized || receipt.consumedAt !== null);
+    // A finding judgment is complete once recorded: it authorizes nothing and is only looked up by exact ID.
+    const terminal = receipt && (!receipt.authorized || receipt.consumedAt !== null || receipt.type === 'finding');
     // A first-invocation probe must remain discoverable by role/session until
     // its original task budget expires; retained exact-ID lookup remains possible.
     if (!expired && (!terminal || state.nativeProbes[requestId])) continue;

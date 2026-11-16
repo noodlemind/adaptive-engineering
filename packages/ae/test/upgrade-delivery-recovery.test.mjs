@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { gitExecutable } from '../corpus/hooks/lib/git-executable.mjs';
+import { scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 import { projectStoreDir } from '../lib/project-layout.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,7 +128,7 @@ for (const shared of [true, false]) {
     assert.deepEqual(packet.scope.changedFiles, ['src/value.mjs']);
     f.cli(['review', 'assemble', '--plan', created.path, '--packet', packet.id, '--file', '-'], {
       packet: packet.id,
-      results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [],
+      results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [],
         residual_risks: ['Synthetic review protocol fixture; no claim of native reviewer identity.'], testing_gaps: [] })),
     });
     const proof = f.cli(['verify', '--plan', created.path, '--base', 'HEAD']);
@@ -200,7 +201,7 @@ test('trusted empty shared setup recovers through upgrade, hooks and the complet
   assert.deepEqual(packet.scope.changedFiles, ['.github/harness/checks.yaml', 'src/value.mjs']);
   const review = f.cli(['review', 'assemble', '--plan', created.path, '--packet', packet.id, '--file', '-'], {
     packet: packet.id,
-    results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [],
+    results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [],
       residual_risks: ['Synthetic protocol fixture only; this does not attest to host reviewer identity or model quality.'], testing_gaps: [] })),
   });
   assert.equal(review.coverage.complete, true);

@@ -39,6 +39,7 @@ Read these installed files with the host read tool. Do not search the product wo
 
 - **Persona definitions:** Read `<copilot-home>/skills/code-review/references/review-personas.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/code-review/references/review-personas.md --json` prints the same file.
 - **Findings schema:** Read `<copilot-home>/skills/code-review/references/findings-schema.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/code-review/references/findings-schema.md --json` prints the same file.
+- **Flow tracing:** Read `<copilot-home>/skills/code-review/references/flow-tracing.md` with the host read tool. Outside the enforce hook, `ae get --reference skills/code-review/references/flow-tracing.md --json` prints the same file.
 
 ## Workflow
 
@@ -49,6 +50,8 @@ Use `ae review prepare --plan <path> --base <base> --json` for delivery review. 
 Review criteria and executable named checks have separate roles. Missing executable checks or unapproved project trust do not prevent `prepare` or `assemble`; preserve the actual review results. For delivery, complete any needed check configuration and approval before the final review, because changing policy or trust makes an earlier packet stale. Diagnose a refused assembly from its actual error rather than attributing it to missing executable checks.
 
 Read the full packet at `packetPath` and retrieve omitted source content before judging that area. Do not manually discover checks or reconstruct the packet. A changed source requires fresh preparation.
+
+The packet's `preparation.impact` lists each changed source file's reverse dependents from the import graph, matched flow models, and active review rules learned from earlier dispositions. Pass it to every reviewer. It is descriptive context: an `unknown` or incomplete seed means relationships were not established, never that none exist. Read a dependent before claiming it breaks.
 
 ### 2. Gather Context and Detect Intent
 
@@ -80,9 +83,9 @@ Each persona receives:
 3. Review context: intent summary, file list, diff, project type
 4. Instruction to return structured JSON matching the schema
 
-### Test scenario design
+### Flow tracing and test scenario design
 
-Owned by `spec-flow-analyzer` and by any review check whose criteria ask whether tests cover the change. List candidate files with the host search or list tool. Search file text with the host search tool. Do not run rg, grep, find, sed, awk, jq, or any program other than `node` and `git`. Outside the enforce hook, `ae tree workspace --files --json` and `ae search <query> --match literal --source code --json` are optional.
+`spec-flow-analyzer` is required for every code diff. It traces one positive flow and every negative flow class through each changed entry point and returns `flow_ledger` with its findings, as `flow-tracing.md` defines. Assembly refuses its result without a complete ledger. Test scenario design is owned by `spec-flow-analyzer` and by any review check whose criteria ask whether tests cover the change. List candidate files with the host search or list tool. Search file text with the host search tool. Do not run rg, grep, find, sed, awk, jq, or any program other than `node` and `git`. Outside the enforce hook, `ae tree workspace --files --json` and `ae search <query> --match literal --source code --json` are optional.
 
 **Check dispatch:** Each discovered check is dispatched as a focused subagent. The subagent receives:
 1. The check's full content (criteria, examples)
@@ -109,6 +112,8 @@ Pipe `{ "packet": "<id>", "results": [...] }` to `ae review assemble --plan <pat
 
 Harness validates locations and schema, applies the confidence floor before aggregation, merges exact claims, preserves suppressed/raw results, and renders `report`. Exact claims share location, normalized title, description, and suggested fix. Different claims at one location and nearby locations remain candidate overlaps. Decide whether they describe the same defect from their evidence. Submit explicit `adjudications` with `action: merge|retain`, member IDs, and a rationale. Include prior adjudications when deciding a surviving overlap involving a merged finding. No automatic proximity clustering or severity escalation is permitted.
 
+Verify before acting. When the decision agent is enabled, send each P1 and P2 finding to it as a `finding` moment (see `<copilot-home>/skills/references/native-decisions.md`), then assemble the same packet again with the recorded `verifications`. A refuted P2 or P3 stays listed and marked refuted; a refuted P1 stays open as disputed. The report counts P1/P2 findings left unverified. Without the decision agent, findings stay unverified, as before.
+
 Use the returned report and coverage counts. Retrieve full raw evidence at `recordPath` and exact invocation payload at `observationPath`. Incomplete coverage blocks delivery completion. A supplied reviewer name does not authenticate the invocation; a confidence boost does not establish independent corroboration. Do not recalculate tables or counts in prose.
 
 ### 6. Quality Gates
@@ -120,7 +125,7 @@ Before delivering the review, verify:
 3. **Severity is calibrated** — a style nit is never P1; a SQL injection is never P3
 4. **Line numbers are accurate** — verified against file content
 5. **Findings don't duplicate linter output** — focus on semantic issues the linter won't catch
-6. **Extra code is the defect** — a finding whose only fix adds a helper, option, comment, abstraction, or defensive check the spec did not name. Flag that extra code. Keep an exploitable bug and a missing check at a real boundary.
+6. **Extra code is the defect** — a finding whose only fix adds a helper, option, comment, abstraction, or defensive check the spec did not name. Flag that extra code. Keep an exploitable bug, a missing check at a real boundary, and a negative flow whose current behavior is harmful.
 
 ### 7. Continue from Evidence
 

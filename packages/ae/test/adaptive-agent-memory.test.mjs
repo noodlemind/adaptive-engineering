@@ -28,7 +28,7 @@ function fixture(t) {
   initGit(options.workspace);
   fs.writeFileSync(path.join(options.workspace, 'src/example.js'), 'export const value = 2;\n');
   const providerPath = path.join(options.copilotHome, 'agents/acme-reviewer.agent.md');
-  fs.writeFileSync(providerPath, '---\nname: acme-reviewer\ndescription: Independent simplicity review\ntools: [read]\nagents: []\ncapabilities: [code-simplicity-reviewer]\n---\nReview the selected scope.\n');
+  fs.writeFileSync(providerPath, '---\nname: acme-reviewer\ndescription: Independent simplicity review\ntools: [read]\nagents: []\ncapabilities: [code-simplicity-reviewer, compounding-typescript-reviewer, spec-flow-analyzer]\n---\nReview the selected scope.\n');
   configureDiscovery({ ...options, input: { schema: 1, roots: [{ path: options.copilotHome, kind: 'config', included: true }], ongoing: false, grants: { tools: ['read'] } } });
   const plan = loadPlan(options.workspace, planPath, { home: options.home });
   return { ...options, options, plan, planPath, providerPath };
@@ -36,7 +36,9 @@ function fixture(t) {
 async function review(f, { observe = true, plan = f.plan, sessionId = 'actual-review-session' } = {}) {
   writeSession(f.workspace, { sessionId, activePlan: plan.path });
   const packet = prepareReview({ ...f.options, plan, base: 'HEAD' });
-  const results = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'host-invocation', agent: 'acme-reviewer', via: 'engineer' } }));
+  const ledger = ['positive', 'malformed-input', 'boundary', 'dependency-failure', 'concurrency', 'old-state', 'abuse', 'cross-boundary']
+    .map(flow_class => ({ flow_class, entry: 'value export', input: `${flow_class} input`, path: ['src/example.js:1'], expected: 'Export the value', observed: 'Exports the value', verdict: 'gap', test: null }));
+  const results = packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'host-invocation', agent: 'acme-reviewer', via: 'engineer' }, ...(reviewer === 'spec-flow-analyzer' ? { flow_ledger: ledger } : {}) }));
   if (observe) {
     // Native hook adapter fixture, not a claim of an authenticated host run.
     const observed = await observeNativeSpecialist({ ...f.options, configured: true, policy: decisionPolicyFromDiscovery(discoveryPolicy(f.options)), payload: {
@@ -95,7 +97,7 @@ test('a hash-valid authored review record cannot substitute different native fin
   const f = fixture(t), { record } = await review(f);
   const { id, recordedAt, ...value } = record;
   delete value.observationPath;
-  value.results[0].raw.testing_gaps = ['Authored replacement after the native result.'];
+  for (const result of value.results) result.raw.testing_gaps = ['Authored replacement after the native result.'];
   const forgedId = reviewHash(value);
   publishReviewRecord(f.workspace, `.harness/reviews/records/${forgedId}.json`, { ...value, id: forgedId, recordedAt });
   publishReviewRecord(f.workspace, `.harness/reviews/latest/${recordHash(f.plan.path)}.json`, { version: 2, id: forgedId });

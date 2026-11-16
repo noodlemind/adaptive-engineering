@@ -68,7 +68,7 @@ const nonempty = value => typeof value === 'string' && value.trim() && !value.in
 const digest = value => /^[a-f0-9]{64}$/.test(value || '');
 function nativeInput(value, bytes) {
   if (value.schema !== 1 || bytes > 65536) return false;
-  const keys = value.operation === 'prepare' ? ['schema', 'operation', 'taskId', 'sessionId', 'type', 'intent', 'action', 'sources', 'context', 'planPath', 'capability', 'memory']
+  const keys = value.operation === 'prepare' ? ['schema', 'operation', 'taskId', 'sessionId', 'type', 'intent', 'action', 'sources', 'context', 'planPath', 'capability', 'memory', 'finding']
     : value.operation === 'record' ? ['schema', 'operation', 'requestId'] : value.operation === 'status' ? ['schema', 'operation', 'taskId', 'requestId'] : null;
   return Boolean(keys && only(value, keys));
 }
@@ -99,7 +99,7 @@ function lifecycleInput(value) {
       && observedIntentInput(value)
       && (authority === undefined || authority && typeof authority === 'object' && !Array.isArray(authority) && only(authority, ['scope', 'basis']) && ['plan-intent', 'domain-intent', 'experiment-intent'].includes(authority.scope) && line(authority.basis));
   }
-  if (['publish', 'no-learning'].includes(value.decision)) return only(value, ['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim'])
+  if (['publish', 'no-learning'].includes(value.decision)) return only(value, ['operation', 'decision', 'rationale', 'scope', 'title', 'body', 'category', 'tags', 'trigger', 'claim', 'recalled', 'findings', 'missed'])
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.operation || '') && nonempty(value.rationale) && (value.scope === undefined || ['private', 'global', 'ship-set-proposal'].includes(value.scope))
     && (value.decision === 'no-learning' || nonempty(value.title) && nonempty(value.body)) && (value.tags === undefined || Array.isArray(value.tags) && value.tags.every(value => typeof value === 'string'));
   // Personal writers validate the canonical text and exact expected digests;

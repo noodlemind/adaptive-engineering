@@ -22,6 +22,7 @@ import { runVerify } from '../lib/verify.mjs';
 import { runCompound } from '../lib/compound.mjs';
 import { validateCompletion } from '../lib/completion.mjs';
 import { domainExecutionBinding, domainPrerequisites, runDomainJointChecks, domainStatus, snapshotDomainCoordinator, domainCoordinatorCheck } from '../lib/domain-delivery.mjs';
+import { scriptedFlowLedger } from './helpers/cli-fixtures.mjs';
 import { withGitObservationCache } from '../lib/git-observation-cache.mjs';
 
 function git(root, args) {
@@ -257,7 +258,7 @@ async function completeChild(f, child, iteration) {
   }
   const plan = read();
   const packet = prepareReview({ workspace: child.workspace, plan, base: 'HEAD', copilotHome: f.copilotHome, maxBytes: 131072 });
-  const review = assembleReview({ workspace: child.workspace, plan, packetId: packet.id, copilotHome: f.copilotHome, input: { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of this deterministic acceptance workspace' } })) } });
+  const review = assembleReview({ workspace: child.workspace, plan, packetId: packet.id, copilotHome: f.copilotHome, input: { packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of this deterministic acceptance workspace' } })) } });
   assert.equal(review.coverage.complete, true, JSON.stringify(review));
   const verification = await runVerify({ workspace: child.workspace, flags: { plan: child.path, base: 'HEAD', harnessHome: f.home, copilotHome: f.copilotHome } });
   assert.equal(verification.outcome, 'passed', JSON.stringify(verification.checks));
@@ -295,7 +296,7 @@ test('completed per-repo proof remains separate from joint compatibility, repair
   assert.equal(childrenReady.pass, true, childrenReady.message);
   const mismatchParent = readParent();
   const mismatchPacket = prepareReview({ workspace: f.coordinator, plan: mismatchParent, base: 'HEAD', copilotHome: f.copilotHome, maxBytes: 131072 });
-  assembleReview({ workspace: f.coordinator, plan: mismatchParent, packetId: mismatchPacket.id, copilotHome: f.copilotHome, input: { packet: mismatchPacket.id, results: mismatchPacket.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of the exact compatibility obligations' } })) } });
+  assembleReview({ workspace: f.coordinator, plan: mismatchParent, packetId: mismatchPacket.id, copilotHome: f.copilotHome, input: { packet: mismatchPacket.id, results: mismatchPacket.required.map(reviewer => ({ ...scriptedFlowLedger(mismatchPacket, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of the exact compatibility obligations' } })) } });
   const failedParent = await runVerify({ workspace: f.coordinator, flags: { plan: mismatchParent.path, base: 'HEAD', harnessHome: f.home, copilotHome: f.copilotHome }, domainContext: context });
   assert.equal(failedParent.outcome, 'failed');
   assert.equal(failedParent.checks.find(check => check.id === 'domain-joint:consumer:compatibility').status, 'failed');
@@ -305,7 +306,7 @@ test('completed per-repo proof remains separate from joint compatibility, repair
   await completeChild(f, consumer, 2);
   const currentParent = readParent();
   const packet = prepareReview({ workspace: f.coordinator, plan: currentParent, base: 'HEAD', copilotHome: f.copilotHome, maxBytes: 131072 });
-  assembleReview({ workspace: f.coordinator, plan: currentParent, packetId: packet.id, copilotHome: f.copilotHome, input: { packet: packet.id, results: packet.required.map(reviewer => ({ reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of the exact bound producer and consumer proof' } })) } });
+  assembleReview({ workspace: f.coordinator, plan: currentParent, packetId: packet.id, copilotHome: f.copilotHome, input: { packet: packet.id, results: packet.required.map(reviewer => ({ ...scriptedFlowLedger(packet, reviewer), reviewer, status: 'completed', findings: [], residual_risks: [], testing_gaps: [], provenance: { kind: 'same-context', method: 'Fixture review of the exact bound producer and consumer proof' } })) } });
   const verification = await runVerify({ workspace: f.coordinator, flags: { plan: currentParent.path, base: 'HEAD', harnessHome: f.home, copilotHome: f.copilotHome }, domainContext: context });
   assert.equal(verification.outcome, 'passed', JSON.stringify(verification.checks));
   assert.equal(verification.checks.find(check => check.id === 'domain-joint:consumer:compatibility').status, 'passed');

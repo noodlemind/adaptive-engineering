@@ -4,9 +4,11 @@ This file defines WHAT each reviewer persona looks for. The skill body (SKILL.md
 
 ## Always-On Personas
 
-The packet's required reviewers are the budget. These personas are the pool, not a fan-out. A small diff uses code-simplicity-reviewer. Security joins when a path crosses a real boundary or the diff exceeds eight files. Architecture joins only for that larger diff. One language reviewer joins when the diff is that language and the default cap of three has room.
+The packet's required reviewers are the budget. These personas are the pool, not a fan-out. Every code diff gets spec-flow-analyzer, the correctness perspective, and the cap of three never drops it. Security joins when a path crosses a real boundary or the diff exceeds eight files. Architecture joins only for that larger diff. One language reviewer joins when the diff is that language. code-simplicity-reviewer fills a remaining slot on a diff of eight files or fewer.
 
-Flag extra code. A finding whose only fix adds a helper, option, comment, abstraction, or defensive check the spec did not name is itself the defect. Keep a finding for an exploitable bug or a missing check at a real boundary. A real boundary is untrusted input, auth, persistence, or a process edge.
+Every reviewer reads the packet's `impact` section before judging: changed files' reverse dependents, matched flow models, and active review rules. A dependent listed there is a consumer the change can break. Missing coverage means unknown, never "no dependents".
+
+Flag extra code. A finding whose only fix adds a helper, option, comment, abstraction, or defensive check the spec did not name is itself the defect. Keep a finding for an exploitable bug or a missing check at a real boundary. A real boundary is untrusted input, auth, persistence, or a process edge. A negative flow whose current behavior is harmful (a crash, wrong output, data loss, a security exposure, a silent success) is a defect, not extra code, even when the spec did not name the input.
 
 ### architecture-strategist
 - **Focus:** Architectural compliance, design patterns, SOLID principles, boundary integrity
@@ -43,7 +45,7 @@ Engage these when the diff contains files of the matching language.
 - **Look for:** Nullability ambiguity, resource leaks, unsafe shared state, weak exception handling, brittle tests, unsafe deserialization, query parameterization issues.
 
 ### compounding-typescript-reviewer
-- **Trigger:** `.ts`/`.tsx` files with tsconfig.json
+- **Trigger:** `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` or `.cts` files
 - **Focus:** Type safety, modern TypeScript patterns, strict mode compliance
 - **Look for:** `any` types, a missing null check on untrusted input, improper type narrowing, unused generics, missing discriminated unions for state.
 
@@ -70,7 +72,7 @@ Engage these when the diff contains files of the matching language.
 - **Look for:** Missing reversible migrations, missing foreign key constraints, data backfills without batch processing, missing indexes on new columns.
 
 ### spec-flow-analyzer
-- **Trigger:** Diff references a plan file or spec document
-- **Focus:** Spec completeness, edge cases, flow gaps, test scenario design
-- **Look for:** A behavior the spec requires and the code does not implement. An edge case the spec did not name is extra scope.
+- **Trigger:** Every code diff (correctness), and plan or spec review
+- **Focus:** Positive and negative flow tracing, spec completeness, test scenario design
+- **Look for:** For each changed entry point, one positive flow and every negative flow class in `<copilot-home>/skills/code-review/references/flow-tracing.md`: malformed input, boundaries, dependency failure, concurrency, old state, abuse, and cross-boundary consumers. Return the flow ledger. A behavior the spec requires and the code does not implement is a finding. A negative flow with harmful behavior is a defect; one that already fails safely is extra scope.
 - **Files:** List candidate files with the host search or list tool. Search text with the host search tool. Do not run rg, grep, find, or any program other than `node` and `git`. Outside the enforce hook, `ae tree workspace --files --json` and `ae search <query> --match literal --source code --json` are optional.

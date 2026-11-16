@@ -9,7 +9,7 @@ import { scanSecrets } from './secret-scan.mjs';
 import { createRedactor } from './redact.mjs';
 import { externalPlansDir, normalizePlanRel } from './project-layout.mjs';
 import { loadNamedChecks } from './checks.mjs';
-import { CODE_REVIEWERS, DOCUMENT_REVIEWERS, LANGUAGE_REVIEWER_IDS } from './review-preparation.mjs';
+import { CODE_REVIEWERS, DOCUMENT_REVIEWERS, FLOW_REVIEWER, LANGUAGE_REVIEWER_IDS } from './review-preparation.mjs';
 import { hasCommand } from './command-names.mjs';
 
 // Consolidation re-check (agent memory plan, Phase 2). Every signal here is
@@ -164,7 +164,7 @@ const checkoutFile = (workspace, value) => {
 };
 
 /** Every review perspective Harness itself defines: code, language and document reviewers. */
-const KNOWN_PERSPECTIVES = new Set([...CODE_REVIEWERS, ...LANGUAGE_REVIEWER_IDS, ...DOCUMENT_REVIEWERS]);
+const KNOWN_PERSPECTIVES = new Set([...CODE_REVIEWERS, FLOW_REVIEWER, ...LANGUAGE_REVIEWER_IDS, ...DOCUMENT_REVIEWERS]);
 
 /** A finding category (the reviewer perspective) as shown: only a perspective Harness defines, otherwise a digest. */
 const perspectiveName = value => (typeof value === 'string' && KNOWN_PERSPECTIVES.has(value) ? value : digestName('reviewer', value));
