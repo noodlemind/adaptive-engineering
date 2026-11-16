@@ -159,6 +159,10 @@ test('documentation relative links and heading anchors resolve', () => {
   assert.deepEqual(broken, []);
 });
 
+test('animated documentation SVGs match their scene timelines', () => {
+  execFileSync(process.execPath, [path.join(repoRoot, 'scripts/build-doc-animations.mjs'), '--check'], { stdio: 'pipe' });
+});
+
 test('adaptive engineering doc states the start and the growth path', () => {
   const doc = read('docs/adaptive-engineering.md');
   for (const phrase of ['Engineer', 'Harness', 'acquired', 'compound', 'argv arrays', 'without a shell']) {
