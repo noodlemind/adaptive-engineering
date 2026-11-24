@@ -9,6 +9,7 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const ID = /^[a-f0-9]{64}$/;
 const componentId = /^[a-z][a-z0-9-]{0,63}$/;
 const fail = message => Object.assign(new Error(`review tour: ${message}`), { code: 'E_USAGE', exit: 2, hint: 'ae help review' });
+const READING_ORDER_SHAPES = 'code-only {"code":[{"path":"<file>","line":<n>}]}; test-only {"tests":[{"path":"<file>","line":<n>}]}; code and tests {"code":[{"path":"<file>","line":<n>}],"tests":[{"path":"<file>","line":<n>}]}; per-entry test reference {"test":{"path":"<file>","line":<n>}}';
 function text(value, label) {
   if (typeof value !== 'string' || !value.trim() || value.length > 10000 || /[\0]/.test(value)) throw fail(`${label} requires bounded nonempty text`);
   return value.trim();
@@ -33,6 +34,25 @@ function sourceRef(workspace, ref) {
   return { path: ref.path, line: ref.line, ...(ref.symbol === undefined ? {} : { symbol: ref.symbol }), sha256: digest(bytes) };
 }
 
+function boundedRefs(value) {
+  return Array.isArray(value) && value.length <= 128 ? value : null;
+}
+
+function readingOrderEntry(value, index, ids, capture) {
+  if (!ids.has(value?.component)) throw fail('reading step must name a context component');
+  const hasCode = Object.hasOwn(value, 'code');
+  const hasTests = Object.hasOwn(value, 'tests');
+  const hasTest = Object.hasOwn(value, 'test');
+  const code = hasCode ? boundedRefs(value.code) : [];
+  const tests = hasTests ? boundedRefs(value.tests) : [];
+  const single = hasTest && value.test && typeof value.test === 'object' && !Array.isArray(value.test) ? value.test : null;
+  const testRefs = [...(tests || []), ...(single ? [single] : [])];
+  if ((hasCode && !code) || (hasTests && !tests) || (hasTest && !single) || (!code?.length && !testRefs.length) || testRefs.length > 128) {
+    throw fail(`readingOrder[${index}] violates constraint reading-order-entry. Allowed shapes: ${READING_ORDER_SHAPES}`);
+  }
+  return { step: text(value.step, 'reading step'), component: value.component, code: code.map(capture), tests: testRefs.map(capture) };
+}
+
 function normalizeInput(workspace, packet, input) {
   if (!input || input.schema !== 1 || input.packet !== packet.id) throw fail('input must bind schema 1 and the exact review packet');
   const refs = new Map();
@@ -47,10 +67,7 @@ function normalizeInput(workspace, packet, input) {
     if (!ids.has(value?.from) || !ids.has(value?.to) || !['observed', 'inferred'].includes(value.kind)) throw fail('context edge must name existing components and observed/inferred evidence');
     return { from: value.from, to: value.to, claim: text(value.claim, 'edge claim'), kind: value.kind, evidence: list(value.evidence, 'edge evidence').map(capture) };
   });
-  const readingOrder = list(input.readingOrder, 'readingOrder').map(value => {
-    if (!ids.has(value?.component)) throw fail('reading step must name a context component');
-    return { step: text(value.step, 'reading step'), component: value.component, code: list(value.code, 'reading code').map(capture), tests: list(value.tests, 'reading tests', 0).map(capture) };
-  });
+  const readingOrder = list(input.readingOrder, 'readingOrder').map((value, index) => readingOrderEntry(value, index, ids, capture));
   const covered = new Set(readingOrder.flatMap(value => [...value.code, ...value.tests].map(ref => ref.path)));
   const required = packet.preparation.refs.filter(ref => ref.origin === 'product' && ref.state === 'regular' && packet.scope.changedFiles?.includes(ref.path));
   if (required.some(ref => !covered.has(ref.path))) throw fail('reading order omits a changed source or test');
@@ -76,7 +93,7 @@ function markdownOf(input, packet, markdownPath, diagram, workspace, recordRoot)
   for (const component of input.context.components) lines.push(`- ${markdownText(component.label)} (${component.role}): ${link(component.source)}`);
   for (const edge of input.context.edges) lines.push(`- ${markdownText(edge.from)} → ${markdownText(edge.to)}: ${markdownText(edge.claim)} (${edge.kind}); ${edge.evidence.map(link).join(', ')}`);
   lines.push('', '## Reading order', '');
-  input.readingOrder.forEach((value, index) => lines.push(`${index + 1}. ${markdownText(value.step)} Code: ${value.code.map(link).join(', ')}. Tests: ${value.tests.map(link).join(', ') || 'none in this step'}.`));
+  input.readingOrder.forEach((value, index) => lines.push(`${index + 1}. ${markdownText(value.step)} Code: ${value.code.map(link).join(', ') || 'none in this step'}. Tests: ${value.tests.map(link).join(', ') || 'none in this step'}.`));
   lines.push('', '## Verification evidence', '', ...input.verification.map(value => `- ${markdownText(value.claim)} ${value.refs.map(link).join(', ')}`), '', '## Risks and assumptions', '', ...(input.risks.length ? input.risks.map(value => `- ${markdownText(value)}`) : ['No residual risks declared.']), '', '## Human review questions', '', ...(input.questions.length ? input.questions.map(value => `- ${markdownText(value)}`) : ['No open questions declared.']), '');
   return lines.join('\n');
 }

@@ -69,6 +69,42 @@ test('tour rejects missing behavioral fields, absent symbols, unmapped edges and
   }
 });
 
+test('tour accepts test-only entries, code-only work refs, and a per-entry test reference', async t => {
+  const { workspace, input, args } = fixture(t);
+  const source = (file, symbol) => ({ path: file, line: 1, symbol });
+  const cases = [
+    [
+      { step: 'Read the request.', component: 'request', code: [source('src.js', 'run')] },
+      { step: 'Read the assertion.', component: 'test', tests: [source('test.js', 'assert.equal')] },
+    ],
+    [
+      { step: 'Read the request beside its assertion.', component: 'request', code: [source('src.js', 'run')], test: source('test.js', 'assert.equal') },
+    ],
+  ];
+  for (const [index, readingOrder] of cases.entries()) {
+    const tour = await createReviewTour({ ...args, input: { ...structuredClone(input), readingOrder } });
+    const markdown = fs.readFileSync(path.join(workspace, tour.markdownPath), 'utf8');
+    assert.match(markdown, /src\.js#L1/);
+    assert.match(markdown, /test\.js#L1/);
+    if (index === 0) assert.match(markdown, /Code: none in this step/);
+    assert.equal(validateReviewTour(args).pass, true);
+  }
+});
+
+test('tour rejection names the reading-order constraint and allowed shapes', async t => {
+  const { input, args } = fixture(t);
+  const invalid = structuredClone(input);
+  invalid.readingOrder = [{ step: 'Read the request.', component: 'request', code: { path: 'src.js', line: 1, symbol: 'run' } }];
+  await assert.rejects(createReviewTour({ ...args, input: invalid }), error => {
+    assert.equal(error.code, 'E_USAGE');
+    assert.match(error.message, /readingOrder\[0\] violates constraint reading-order-entry/);
+    assert.match(error.message, /code-only \{"code":\[\{"path":"<file>","line":<n>\}\]\}/);
+    assert.match(error.message, /test-only \{"tests":\[\{"path":"<file>","line":<n>\}\]\}/);
+    assert.match(error.message, /per-entry test reference \{"test":\{"path":"<file>","line":<n>\}\}/);
+    return true;
+  });
+});
+
 test('tour cannot establish readiness after head, context source, packet or artifact changes', async t => {
   const { workspace, packet, input, args } = fixture(t);
   const tour = await createReviewTour({ ...args, input });

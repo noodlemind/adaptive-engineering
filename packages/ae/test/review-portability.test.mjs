@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { configureDiscovery, discoveryPolicy } from '../lib/capability-catalog.mjs';
 import { decisionPolicyFromDiscovery } from '../lib/decision-agent.mjs';
@@ -112,4 +114,37 @@ test('adaptive review becomes current only after a tour and remains separate fro
   fs.writeFileSync(path.join(f.workspace, 'src/example.js'), 'export const value = 3;\n');
   assert.equal(validateReview({ ...f.options, plan: f.plan }).pass, false);
   assert.equal(reviewReadinessEvidence({ ...f.options, planPath: f.planPath }).ready, false);
+});
+
+test('review tour CLI accepts code-only and test-only refs and names shapes when the entry is rejected', async t => {
+  const f = fixture(t);
+  const packet = prepareReview({ ...f.options, plan: f.plan, base: 'HEAD' });
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/ae.mjs');
+  const code = { path: 'src/example.js', line: 1, symbol: 'value' };
+  const planSource = { path: f.planPath, line: 2, symbol: 'plan_schema' };
+  const base = {
+    schema: 1, packet: packet.id, purpose: 'Change the exported value.', before: 'The value was one.', after: 'The value is two.',
+    context: { summary: 'The accepted plan governs this source change.', components: [{ id: 'source', label: 'Value export', role: 'changed', source: code }, { id: 'plan', label: 'Accepted plan', role: 'context', source: planSource }], edges: [{ from: 'plan', to: 'source', claim: 'Scopes the value change', kind: 'inferred', evidence: [planSource] }] },
+    verification: [{ claim: 'Named behavioral verification remains a separate prerequisite.', refs: [code] }], risks: [], questions: [],
+  };
+  const run = readingOrder => {
+    fs.writeFileSync(path.join(f.workspace, '.harness/tour-input.json'), JSON.stringify({ ...base, readingOrder }));
+    return spawnSync(process.execPath, [bin, 'review', 'tour', '--plan', f.planPath, '--packet', packet.id, '--file', '.harness/tour-input.json', '--json', '--workspace', f.workspace, '--harness-home', f.home, '--copilot-home', f.copilotHome, '--no-events'], { cwd: f.workspace, encoding: 'utf8', timeout: 20000 });
+  };
+  for (const readingOrder of [
+    [{ step: 'Inspect the exported value.', component: 'source', code: [code] }],
+    [{ step: 'Inspect the exported value.', component: 'source', tests: [code] }],
+    [{ step: 'Inspect the exported value.', component: 'source', test: code }],
+  ]) {
+    const accepted = run(readingOrder);
+    assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  }
+  const rejected = run([{ step: 'Inspect the exported value.', component: 'source' }]);
+  assert.equal(rejected.status, 2, rejected.stderr + rejected.stdout);
+  const error = JSON.parse(rejected.stderr).error;
+  assert.equal(error.code, 'E_USAGE');
+  assert.match(error.message, /constraint reading-order-entry/);
+  assert.match(error.message, /Allowed shapes: code-only /);
+  assert.match(error.message, /test-only /);
+  assert.match(error.message, /per-entry test reference /);
 });
